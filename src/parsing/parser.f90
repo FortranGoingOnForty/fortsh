@@ -6,6 +6,8 @@ module parser
   use shell_types
   use system_interface
   use variables
+  use glob
+  use error_handling
   use iso_fortran_env, only: error_unit, input_unit
   implicit none
 
@@ -20,6 +22,15 @@ contains
     integer :: i
     type(command_t), allocatable :: temp_commands(:)
     logical :: background
+    
+    ! Validate input
+    if (.not. validate_command(input)) then
+      call parser_error(101, 'Invalid command input', 'parse_pipeline')
+      pipeline%num_commands = 0
+      return
+    end if
+    
+    call debug_log('Parsing pipeline: ' // trim(input), 'parse_pipeline')
     
     allocate(temp_commands(MAX_PIPELINE))
     working_input = input
@@ -509,6 +520,47 @@ contains
     
     allocate(character(len=pos-1) :: content)
     content = buffer(:pos-1)
+  end subroutine
+
+  ! Expand glob patterns in command tokens
+  subroutine expand_command_globs(cmd)
+    type(command_t), intent(inout) :: cmd
+    
+    character(len=MAX_TOKEN_LEN), allocatable :: expanded_tokens(:)
+    character(len=MAX_TOKEN_LEN), allocatable :: original_tokens(:)
+    integer :: expanded_count, i
+    
+    if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
+    
+    ! Save original tokens
+    allocate(original_tokens(cmd%num_tokens))
+    do i = 1, cmd%num_tokens
+      original_tokens(i) = cmd%tokens(i)
+    end do
+    
+    ! Expand glob patterns
+    call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count)
+    
+    ! Replace command tokens with expanded ones
+    if (allocated(cmd%tokens)) deallocate(cmd%tokens)
+    
+    if (expanded_count > 0) then
+      allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(expanded_count))
+      do i = 1, expanded_count
+        cmd%tokens(i) = expanded_tokens(i)
+      end do
+      cmd%num_tokens = expanded_count
+    else
+      ! No expansion occurred - restore original
+      allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(cmd%num_tokens))
+      do i = 1, cmd%num_tokens
+        cmd%tokens(i) = original_tokens(i)
+      end do
+    end if
+    
+    ! Cleanup
+    if (allocated(expanded_tokens)) deallocate(expanded_tokens)
+    if (allocated(original_tokens)) deallocate(original_tokens)
   end subroutine
 
 end module parser

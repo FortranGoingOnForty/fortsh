@@ -44,8 +44,12 @@ program fortran_shell
       call notify_job_status(shell)
     end if
 
-    ! Read input with readline (includes prompt)
-    call readline_simple(trim(shell%username) // '@' // trim(shell%hostname) // ' :: ', input_line, iostat)
+    ! Read input with readline (includes prompt only if interactive)
+    if (shell%is_interactive) then
+      call readline_simple(trim(shell%username) // '@' // trim(shell%hostname) // ' :: ', input_line, iostat)
+    else
+      read(input_unit, '(a)', iostat=iostat) input_line
+    end if
 
     ! Check for EOF (Ctrl-D)
     if (iostat /= 0) then

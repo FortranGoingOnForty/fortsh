@@ -181,25 +181,15 @@ contains
   subroutine builtin_jobs(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i
-    character(len=20) :: status_str
+    logical :: show_pids
     
-    do i = 1, MAX_JOBS
-      if (shell%jobs(i)%job_id > 0) then
-        select case(shell%jobs(i)%state)
-        case(JOB_RUNNING)
-          status_str = 'Running'
-        case(JOB_STOPPED)
-          status_str = 'Stopped'
-        case(JOB_DONE)
-          status_str = 'Done'
-        end select
-        
-        write(output_unit, '(a,i0,a,a,a,a)') '[', shell%jobs(i)%job_id, ']  ', &
-              status_str, '                 ', trim(shell%jobs(i)%command_line)
-      end if
-    end do
+    ! Check for -p flag to show PIDs
+    show_pids = .false.
+    if (cmd%num_tokens > 1 .and. trim(cmd%tokens(2)) == '-p') then
+      show_pids = .true.
+    end if
     
+    call list_jobs(shell, show_pids)
     shell%last_exit_status = 0
   end subroutine
 
@@ -209,17 +199,17 @@ contains
     integer :: job_id, iostat, i
     
     if (cmd%num_tokens < 2) then
-      ! Bring most recent job to foreground
+      ! Bring most recent stopped job to foreground
       job_id = 0
       do i = MAX_JOBS, 1, -1
-        if (shell%jobs(i)%job_id > 0) then
+        if (shell%jobs(i)%job_id > 0 .and. shell%jobs(i)%state == JOB_STOPPED) then
           job_id = shell%jobs(i)%job_id
           exit
         end if
       end do
       
       if (job_id == 0) then
-        write(error_unit, '(a)') 'fg: no current job'
+        write(error_unit, '(a)') 'fg: no stopped job'
         shell%last_exit_status = 1
         return
       end if
@@ -238,8 +228,7 @@ contains
       end if
     end if
     
-    call put_job_foreground(shell, job_id, .true.)
-    shell%last_exit_status = 0
+    call resume_job_fg(shell, job_id)
   end subroutine
 
   subroutine builtin_bg(cmd, shell)
@@ -278,8 +267,7 @@ contains
       end if
     end if
     
-    call put_job_background(shell, job_id, .true.)
-    shell%last_exit_status = 0
+    call resume_job_bg(shell, job_id)
   end subroutine
 
   subroutine builtin_source(cmd, shell)
@@ -422,20 +410,6 @@ contains
     end if
   end subroutine
 
-  function find_job_pgid(shell, job_id) result(pgid)
-    type(shell_state_t), intent(in) :: shell
-    integer, intent(in) :: job_id
-    integer :: pgid
-    integer :: i
-    
-    pgid = 0
-    do i = 1, MAX_JOBS
-      if (shell%jobs(i)%job_id == job_id) then
-        pgid = shell%jobs(i)%pgid
-        return
-      end if
-    end do
-  end function
 
   subroutine builtin_wait(cmd, shell)
     type(command_t), intent(in) :: cmd

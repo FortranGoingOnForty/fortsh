@@ -9,6 +9,7 @@ module executor
   use job_control
   use variables
   use control_flow
+  use error_handling
   use iso_fortran_env, only: error_unit, input_unit
   use iso_c_binding
   implicit none
@@ -139,6 +140,9 @@ contains
         ! Expand variables and execute
         call expand_tokens(pipeline%commands(i), shell)
         
+        ! Expand glob patterns
+        call expand_command_globs(pipeline%commands(i))
+        
         if (is_builtin(pipeline%commands(i)%tokens(1))) then
           call execute_builtin(pipeline%commands(i), shell)
           call c_exit(int(shell%last_exit_status, c_int))
@@ -221,6 +225,9 @@ contains
     
     ! Expand variables in all tokens
     call expand_tokens(cmd, shell)
+    
+    ! Expand glob patterns
+    call expand_command_globs(cmd)
     
     ! Check if it's a builtin
     if (is_builtin(cmd%tokens(1))) then
