@@ -15,6 +15,7 @@ contains
     character(len=*), intent(in) :: name, value
     integer :: i, empty_slot
     
+    
     empty_slot = -1
     
     ! Check if variable already exists
@@ -25,9 +26,10 @@ contains
       end if
     end do
     
-    ! Find empty slot
+    ! Find empty slot  
     do i = 1, size(shell%variables)
-      if (len_trim(shell%variables(i)%name) == 0) then
+      ! Check for empty name (null character or spaces)
+      if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
         empty_slot = i
         exit
       end if
@@ -71,12 +73,16 @@ contains
     character(len=*), intent(in) :: input_line
     integer :: eq_pos
     character(len=256) :: var_name, var_value
+    character(len=:), allocatable :: expanded_value
     
     eq_pos = index(input_line, '=')
     if (eq_pos > 1) then
       var_name = input_line(:eq_pos-1)
       var_value = input_line(eq_pos+1:)
-      call set_shell_variable(shell, trim(var_name), trim(var_value))
+      
+      ! Simple variable expansion during assignment
+      call simple_expand_variables(var_value, expanded_value, shell)
+      call set_shell_variable(shell, trim(var_name), expanded_value)
       shell%last_exit_status = 0
     else
       shell%last_exit_status = 1
