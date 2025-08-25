@@ -202,9 +202,13 @@ contains
       return
     end if
     
-    ! Check for control flow keywords
+    ! Check for control flow keywords and apply control flow state
     if (allocated(cmd%tokens) .and. cmd%num_tokens > 0) then
       if (is_control_flow_keyword(cmd%tokens(1))) then
+        call process_control_flow(cmd, shell, should_execute)
+        if (.not. should_execute) return
+      else
+        ! For regular commands, check if we should execute based on control flow state
         call process_control_flow(cmd, shell, should_execute)
         if (.not. should_execute) return
       end if

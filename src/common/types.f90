@@ -16,6 +16,7 @@ module shell_types
   integer, parameter :: MAX_PIPELINE = 10
   integer, parameter :: MAX_JOBS = 100
   integer, parameter :: MAX_HEREDOC_LEN = 65536
+  integer, parameter :: MAX_CONTROL_DEPTH = 20
 
   ! Command separator types
   integer, parameter :: SEP_NONE = 0
@@ -29,6 +30,11 @@ module shell_types
   integer, parameter :: JOB_RUNNING = 1
   integer, parameter :: JOB_STOPPED = 2
   integer, parameter :: JOB_DONE = 3
+
+  ! Control flow block types
+  integer, parameter :: BLOCK_IF = 1
+  integer, parameter :: BLOCK_WHILE = 2
+  integer, parameter :: BLOCK_FOR = 3
 
   type :: command_t
     character(len=:), allocatable :: tokens(:)
@@ -67,6 +73,15 @@ module shell_types
     character(len=1024) :: value
   end type shell_var_t
 
+  ! Control flow block state
+  type :: control_block_t
+    integer :: block_type = 0        ! BLOCK_IF, BLOCK_WHILE, BLOCK_FOR
+    logical :: condition_met = .false.
+    logical :: in_else_branch = .false.
+    logical :: should_execute = .true.
+    character(len=256) :: loop_variable = ''  ! for 'for' loops
+  end type control_block_t
+
   type :: shell_state_t
     character(len=256) :: username
     character(len=256) :: hostname
@@ -83,6 +98,9 @@ module shell_types
     ! Shell variables (local scope)
     type(shell_var_t) :: variables(50)
     integer :: num_variables = 0
+    ! Control flow state
+    type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)
+    integer :: control_depth = 0
   end type shell_state_t
 
 end module shell_types

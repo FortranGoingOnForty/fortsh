@@ -89,4 +89,64 @@ contains
     end if
   end subroutine
 
+  subroutine simple_expand_variables(input, expanded, shell)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable, intent(out) :: expanded
+    type(shell_state_t), intent(in) :: shell
+    
+    character(len=1024) :: result
+    integer :: i, j, var_start
+    character(len=256) :: var_name
+    character(len=1024) :: var_value
+    character(len=:), allocatable :: env_value
+    
+    result = ''
+    i = 1
+    j = 1
+    
+    do while (i <= len_trim(input))
+      if (input(i:i) == '$' .and. i < len_trim(input)) then
+        i = i + 1
+        var_start = i
+        
+        ! Extract variable name  
+        do while (i <= len_trim(input))
+          if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
+          i = i + 1
+        end do
+        
+        var_name = input(var_start:i-1)
+        
+        ! Check shell variables first
+        var_value = get_shell_variable(shell, trim(var_name))
+        if (len_trim(var_value) > 0) then
+          result(j:j+len_trim(var_value)-1) = trim(var_value)
+          j = j + len_trim(var_value)
+        else
+          ! Fall back to environment variables
+          env_value = get_environment_var(trim(var_name))
+          if (allocated(env_value) .and. len(env_value) > 0) then
+            result(j:j+len(env_value)-1) = env_value
+            j = j + len(env_value)
+          end if
+        end if
+      else
+        result(j:j) = input(i:i)
+        i = i + 1
+        j = j + 1
+      end if
+    end do
+    
+    expanded = trim(result)
+    
+  contains
+    function is_alnum(ch) result(res)
+      character, intent(in) :: ch
+      logical :: res
+      res = (ch >= 'a' .and. ch <= 'z') .or. &
+            (ch >= 'A' .and. ch <= 'Z') .or. &
+            (ch >= '0' .and. ch <= '9')
+    end function
+  end subroutine
+
 end module variables
