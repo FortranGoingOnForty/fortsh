@@ -17,6 +17,9 @@ module control_flow
   integer, parameter :: FLOW_FOR = 6
   integer, parameter :: FLOW_DO = 7
   integer, parameter :: FLOW_DONE = 8
+  integer, parameter :: FLOW_FUNCTION = 9
+  integer, parameter :: FLOW_RETURN = 10
+  integer, parameter :: FLOW_LOCAL = 11
 
   type :: conditional_block_t
     logical :: condition_result
@@ -39,7 +42,10 @@ contains
                trim(word) == 'while' .or. &
                trim(word) == 'for' .or. &
                trim(word) == 'do' .or. &
-               trim(word) == 'done')
+               trim(word) == 'done' .or. &
+               trim(word) == 'function' .or. &
+               trim(word) == 'return' .or. &
+               trim(word) == 'local')
   end function
 
   function identify_flow_keyword(word) result(flow_type)
@@ -63,6 +69,12 @@ contains
       flow_type = FLOW_DO
     case('done')
       flow_type = FLOW_DONE
+    case('function')
+      flow_type = FLOW_FUNCTION
+    case('return')
+      flow_type = FLOW_RETURN
+    case('local')
+      flow_type = FLOW_LOCAL
     case default
       flow_type = 0
     end select
@@ -114,6 +126,12 @@ contains
       call process_done_statement(shell, should_execute)
     case('for')
       call process_for_statement(cmd, shell, should_execute)
+    case('function')
+      call process_function_statement(cmd, shell, should_execute)
+    case('return')
+      call process_return_statement(cmd, shell, should_execute)
+    case('local')
+      call process_local_statement(cmd, shell, should_execute)
     case default
       ! Check if we should execute this command based on control flow state
       should_execute = should_execute_command(shell)
@@ -196,10 +214,54 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
     
-    ! For basic for statement: for var in list; do
+    character(len=256) :: var_name, list_part
+    integer :: in_pos, i, j, word_start, word_end
+    
     should_execute = .false.  ! Don't execute the for command itself
     
-    write(output_unit, '(a)') 'for loops not fully implemented yet'
+    ! Parse: for var in word1 word2 word3
+    if (cmd%num_tokens < 4 .or. trim(cmd%tokens(3)) /= 'in') then
+      write(error_unit, '(a)') 'for: syntax error, expected "for var in list"'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    var_name = trim(cmd%tokens(2))
+    
+    ! Build the list from remaining tokens
+    list_part = ''
+    do i = 4, cmd%num_tokens
+      if (len_trim(list_part) > 0) then
+        list_part = trim(list_part) // ' ' // trim(cmd%tokens(i))
+      else
+        list_part = trim(cmd%tokens(i))
+      end if
+    end do
+    
+    ! Push for block onto control stack and parse values
+    if (shell%control_depth < MAX_CONTROL_DEPTH) then
+      shell%control_depth = shell%control_depth + 1
+      shell%control_stack(shell%control_depth)%block_type = BLOCK_FOR
+      shell%control_stack(shell%control_depth)%loop_variable = var_name
+      shell%control_stack(shell%control_depth)%for_list = list_part
+      
+      ! Parse space-separated values
+      call parse_for_values(shell%control_stack(shell%control_depth), list_part)
+      
+      ! Set up for first iteration
+      shell%control_stack(shell%control_depth)%for_index = 1
+      if (shell%control_stack(shell%control_depth)%for_count > 0 .and. &
+          allocated(shell%control_stack(shell%control_depth)%for_values)) then
+        shell%control_stack(shell%control_depth)%should_execute = .true.
+        ! Set loop variable to first value
+        call set_shell_variable(shell, var_name, &
+          trim(shell%control_stack(shell%control_depth)%for_values(1)))
+      else
+        shell%control_stack(shell%control_depth)%should_execute = .false.
+      end if
+    else
+      write(error_unit, '(a)') 'Error: Control flow nesting too deep'
+    end if
   end subroutine
 
   subroutine process_then_statement(shell, should_execute)
@@ -280,6 +342,31 @@ contains
       write(error_unit, '(a)') 'done: no matching while/for'
       shell%last_exit_status = 1
       return
+    end if
+    
+    ! Handle for loop iteration
+    if (shell%control_stack(shell%control_depth)%block_type == BLOCK_FOR) then
+      shell%control_stack(shell%control_depth)%for_index = &
+        shell%control_stack(shell%control_depth)%for_index + 1
+      
+      if (shell%control_stack(shell%control_depth)%for_index <= &
+          shell%control_stack(shell%control_depth)%for_count .and. &
+          allocated(shell%control_stack(shell%control_depth)%for_values)) then
+        ! More iterations to do - set variable to next value
+        call set_shell_variable(shell, &
+          trim(shell%control_stack(shell%control_depth)%loop_variable), &
+          trim(shell%control_stack(shell%control_depth)%for_values(&
+            shell%control_stack(shell%control_depth)%for_index)))
+        
+        ! Don't pop the stack - continue the loop
+        ! In a real shell, we'd jump back to after the 'do'
+        write(output_unit, '(a)') '# For loop iteration (limited shell - would loop back)'
+        return
+      end if
+    else if (shell%control_stack(shell%control_depth)%block_type == BLOCK_WHILE) then
+      ! For while loops, re-evaluate condition
+      ! In a real implementation, this would jump back to the while statement
+      write(output_unit, '(a)') '# While loop done (limited shell - would jump back to condition)'
     end if
     
     ! Pop the loop block from the stack
@@ -391,5 +478,130 @@ contains
       start = start + pos + len(substring) - 1
     end do
   end function
+
+  subroutine parse_for_values(block, list_str)
+    type(control_block_t), intent(inout) :: block
+    character(len=*), intent(in) :: list_str
+    
+    character(len=256) :: temp_values(20)  ! Max 20 values
+    integer :: count, start_pos, end_pos, i
+    
+    count = 0
+    start_pos = 1
+    
+    ! Parse space-separated values
+    do
+      ! Skip leading spaces
+      do while (start_pos <= len_trim(list_str) .and. list_str(start_pos:start_pos) == ' ')
+        start_pos = start_pos + 1
+      end do
+      
+      if (start_pos > len_trim(list_str)) exit
+      
+      ! Find end of current word
+      end_pos = start_pos
+      do while (end_pos <= len_trim(list_str) .and. list_str(end_pos:end_pos) /= ' ')
+        end_pos = end_pos + 1
+      end do
+      
+      count = count + 1
+      if (count <= 20) then
+        temp_values(count) = list_str(start_pos:end_pos-1)
+      end if
+      
+      start_pos = end_pos + 1
+    end do
+    
+    block%for_count = count
+    if (count > 0) then
+      allocate(block%for_values(count))
+      do i = 1, count
+        block%for_values(i) = trim(temp_values(i))
+      end do
+    end if
+  end subroutine
+
+  subroutine process_function_statement(cmd, shell, should_execute)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(out) :: should_execute
+    
+    should_execute = .false.  ! Don't execute function definition itself
+    
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'function: missing function name'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    write(output_unit, '(a)') 'function definitions not fully implemented yet'
+    write(output_unit, '(a,a)') 'Would define function: ', trim(cmd%tokens(2))
+  end subroutine
+
+  subroutine process_return_statement(cmd, shell, should_execute)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(out) :: should_execute
+    
+    integer :: exit_code
+    
+    should_execute = .false.
+    
+    ! Parse return code if provided
+    if (cmd%num_tokens >= 2) then
+      read(cmd%tokens(2), *, iostat=exit_code) exit_code
+      if (exit_code /= 0) exit_code = 0  ! Default to 0 on parse error
+    else
+      exit_code = shell%last_exit_status  ! Use last exit status
+    end if
+    
+    shell%last_exit_status = exit_code
+    write(output_unit, '(a)') 'return statements not fully implemented yet'
+  end subroutine
+
+  subroutine process_local_statement(cmd, shell, should_execute)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(out) :: should_execute
+    
+    should_execute = .false.
+    
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'local: missing variable assignment'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    write(output_unit, '(a)') 'local variables not fully implemented yet'
+    write(output_unit, '(a,a)') 'Would create local variable: ', trim(cmd%tokens(2))
+  end subroutine
+
+  subroutine set_shell_variable(shell, name, value)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: name, value
+    integer :: i, empty_slot
+    
+    empty_slot = -1
+    
+    ! Look for existing variable or empty slot
+    do i = 1, size(shell%variables)
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        ! Update existing variable
+        shell%variables(i)%value = value
+        return
+      else if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+        if (empty_slot == -1) empty_slot = i
+      end if
+    end do
+    
+    ! Add new variable if there's space
+    if (empty_slot > 0) then
+      shell%variables(empty_slot)%name = name
+      shell%variables(empty_slot)%value = value
+      shell%num_variables = shell%num_variables + 1
+    else
+      write(error_unit, '(a)') 'Too many variables defined'
+    end if
+  end subroutine
 
 end module control_flow

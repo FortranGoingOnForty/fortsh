@@ -8,12 +8,16 @@ program fortran_shell
   use parser
   use executor
   use job_control
+  use readline
+  use shell_config
+  use aliases
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
   type(shell_state_t) :: shell
   type(pipeline_t) :: pipeline
   character(len=1024) :: input_line
+  character(len=:), allocatable :: expanded_line
   integer :: iostat, i
 
   ! Initialize shell state
@@ -22,6 +26,14 @@ program fortran_shell
   ! Setup signal handlers if interactive
   if (shell%is_interactive) then
     call setup_signal_handlers()
+    
+    ! Welcome message for interactive mode
+    write(output_unit, '(a)') 'Welcome to Fortran Shell (fortsh)!'
+    write(output_unit, '(a)') 'Type "help" for available commands or "exit" to quit.'
+    write(output_unit, '(a)') ''
+    
+    ! Load configuration file
+    call load_config_file(shell)
   end if
 
   ! Main REPL loop
@@ -32,13 +44,8 @@ program fortran_shell
       call notify_job_status(shell)
     end if
 
-    ! Print prompt
-    write(output_unit, '(a,a,a,a,a)', advance='no') &
-      trim(shell%username), '@', trim(shell%hostname), ' :: '
-    flush(output_unit)
-
-    ! Read input
-    read(input_unit, '(a)', iostat=iostat) input_line
+    ! Read input with readline (includes prompt)
+    call readline_simple(trim(shell%username) // '@' // trim(shell%hostname) // ' :: ', input_line, iostat)
 
     ! Check for EOF (Ctrl-D)
     if (iostat /= 0) then
@@ -49,12 +56,15 @@ program fortran_shell
     ! Skip empty lines
     if (len_trim(input_line) == 0) cycle
 
+    ! Expand aliases
+    call expand_alias(shell, trim(input_line), expanded_line)
+
     ! Parse pipeline
-    call parse_pipeline(trim(input_line), pipeline)
+    call parse_pipeline(expanded_line, pipeline)
 
     ! Execute pipeline
     if (pipeline%num_commands > 0) then
-      call execute_pipeline(pipeline, shell, trim(input_line))
+      call execute_pipeline(pipeline, shell, expanded_line)
     end if
 
     ! Clean up pipeline
@@ -66,6 +76,14 @@ program fortran_shell
         if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
         if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
         if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+        if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+      end do
+      
+      ! Clean up control stack allocatable fields
+      do i = 1, shell%control_depth
+        if (allocated(shell%control_stack(i)%for_values)) then
+          deallocate(shell%control_stack(i)%for_values)
+        end if
       end do
       deallocate(pipeline%commands)
     end if

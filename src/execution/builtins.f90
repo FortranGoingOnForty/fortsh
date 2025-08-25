@@ -6,6 +6,9 @@ module builtins
   use system_interface
   use job_control
   use test_builtin
+  use readline
+  use shell_config
+  use aliases
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -25,6 +28,14 @@ contains
                 trim(cmd_name) == 'bg' .or. &
                 trim(cmd_name) == 'source' .or. &
                 trim(cmd_name) == '.' .or. &
+                trim(cmd_name) == 'history' .or. &
+                trim(cmd_name) == 'kill' .or. &
+                trim(cmd_name) == 'wait' .or. &
+                trim(cmd_name) == 'trap' .or. &
+                trim(cmd_name) == 'config' .or. &
+                trim(cmd_name) == 'alias' .or. &
+                trim(cmd_name) == 'unalias' .or. &
+                trim(cmd_name) == 'help' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -51,6 +62,22 @@ contains
       call builtin_bg(cmd, shell)
     case('source', '.')
       call builtin_source(cmd, shell)
+    case('history')
+      call builtin_history(cmd, shell)
+    case('kill')
+      call builtin_kill(cmd, shell)
+    case('wait')
+      call builtin_wait(cmd, shell)
+    case('trap')
+      call builtin_trap(cmd, shell)
+    case('config')
+      call builtin_config(cmd, shell)
+    case('alias')
+      call builtin_alias(cmd, shell)
+    case('unalias')
+      call builtin_unalias(cmd, shell)
+    case('help')
+      call builtin_help(cmd, shell)
     case('test', '[', '[[')
       call execute_test_command(cmd, shell)
     case default
@@ -84,7 +111,8 @@ contains
       shell%cwd = get_current_directory()
       shell%last_exit_status = 0
     else
-      write(error_unit, '(3a)') 'cd: ', trim(target_dir), ': No such file or directory'
+      write(error_unit, '(a)') 'cd: cannot access ' // trim(target_dir) // &
+                              ': No such file or directory. Use "pwd" to see current location.'
       shell%last_exit_status = 1
     end if
   end subroutine
@@ -261,6 +289,364 @@ contains
     ! Simplified version - would need file reading implementation
     write(error_unit, '(a)') 'source: not yet implemented'
     shell%last_exit_status = 1
+  end subroutine
+
+  subroutine builtin_history(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! Handle history command options
+    if (cmd%num_tokens > 1) then
+      select case(trim(cmd%tokens(2)))
+      case('-c', '--clear')
+        call clear_history()
+        write(output_unit, '(a)') 'Command history cleared.'
+      case default
+        write(error_unit, '(a)') 'history: unknown option'
+        shell%last_exit_status = 1
+        return
+      end select
+    else
+      ! Show all history
+      call show_history()
+    end if
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_kill(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: signal_num, target_pid, iostat, ret
+    integer :: i, arg_start
+    logical :: found_signal
+    
+    signal_num = 15  ! Default: SIGTERM
+    arg_start = 2
+    found_signal = .false.
+    
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'kill: usage: kill [-signal] pid...'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Check if first argument is a signal specifier or -l flag
+    if (cmd%tokens(2)(1:1) == '-') then
+      if (len_trim(cmd%tokens(2)) > 1) then
+        ! Check for -l flag (list signals)
+        if (trim(cmd%tokens(2)) == '-l') then
+          write(output_unit, '(a)') 'Available signals:'
+          write(output_unit, '(a)') '  1) SIGHUP    2) SIGINT    3) SIGQUIT   4) SIGILL'
+          write(output_unit, '(a)') '  5) SIGTRAP   6) SIGABRT   7) SIGBUS    8) SIGFPE'
+          write(output_unit, '(a)') '  9) SIGKILL  10) SIGUSR1  11) SIGSEGV  12) SIGUSR2'
+          write(output_unit, '(a)') ' 13) SIGPIPE  14) SIGALRM  15) SIGTERM  16) SIGSTKFLT'
+          write(output_unit, '(a)') ' 17) SIGCHLD  18) SIGCONT  19) SIGSTOP  20) SIGTSTP'
+          write(output_unit, '(a)') ' 21) SIGTTIN  22) SIGTTOU'
+          shell%last_exit_status = 0
+          return
+        end if
+        
+        read(cmd%tokens(2)(2:), *, iostat=iostat) signal_num
+        if (iostat /= 0) then
+          ! Try named signals
+          select case(trim(cmd%tokens(2)(2:)))
+          case('TERM', 'term')
+            signal_num = 15
+          case('KILL', 'kill') 
+            signal_num = 9
+          case('INT', 'int')
+            signal_num = 2
+          case('STOP', 'stop')
+            signal_num = 19
+          case('CONT', 'cont')
+            signal_num = 18
+          case('HUP', 'hup')
+            signal_num = 1
+          case('QUIT', 'quit')
+            signal_num = 3
+          case default
+            write(error_unit, '(a)') 'kill: invalid signal specification'
+            shell%last_exit_status = 1
+            return
+          end select
+        end if
+        found_signal = .true.
+        arg_start = 3
+      end if
+    end if
+    
+    if (cmd%num_tokens < arg_start) then
+      write(error_unit, '(a)') 'kill: usage: kill [-signal] pid...'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Kill each specified process
+    do i = arg_start, cmd%num_tokens
+      ! Handle job syntax (%n)
+      if (cmd%tokens(i)(1:1) == '%') then
+        read(cmd%tokens(i)(2:), *, iostat=iostat) target_pid
+        if (iostat == 0) then
+          ! Find job by job_id and get its pgid
+          target_pid = find_job_pgid(shell, target_pid)
+          if (target_pid <= 0) then
+            write(error_unit, '(a)') 'kill: no such job'
+            shell%last_exit_status = 1
+            cycle
+          end if
+          target_pid = -target_pid  ! Kill entire process group
+        else
+          write(error_unit, '(a)') 'kill: invalid job specification'
+          shell%last_exit_status = 1
+          cycle
+        end if
+      else
+        read(cmd%tokens(i), *, iostat=iostat) target_pid
+        if (iostat /= 0) then
+          write(error_unit, '(a)') 'kill: invalid pid'
+          shell%last_exit_status = 1
+          cycle
+        end if
+      end if
+      
+      ret = c_kill(int(target_pid, c_pid_t), int(signal_num, c_int))
+      if (ret /= 0) then
+        write(error_unit, '(a,i0)') 'kill: failed to kill process ', target_pid
+        shell%last_exit_status = 1
+      end if
+    end do
+    
+    if (shell%last_exit_status /= 1) then
+      shell%last_exit_status = 0
+    end if
+  end subroutine
+
+  function find_job_pgid(shell, job_id) result(pgid)
+    type(shell_state_t), intent(in) :: shell
+    integer, intent(in) :: job_id
+    integer :: pgid
+    integer :: i
+    
+    pgid = 0
+    do i = 1, MAX_JOBS
+      if (shell%jobs(i)%job_id == job_id) then
+        pgid = shell%jobs(i)%pgid
+        return
+      end if
+    end do
+  end function
+
+  subroutine builtin_wait(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: target_pid, iostat, ret
+    integer(c_int), target :: wait_status
+    integer :: i
+    
+    if (cmd%num_tokens == 1) then
+      ! Wait for all background jobs
+      do i = 1, MAX_JOBS
+        if (shell%jobs(i)%job_id > 0 .and. &
+            shell%jobs(i)%state == JOB_RUNNING) then
+          ret = c_waitpid(shell%jobs(i)%pgid, c_loc(wait_status), 0)
+          if (WIFEXITED(wait_status)) then
+            shell%jobs(i)%state = JOB_DONE
+          end if
+        end if
+      end do
+    else
+      ! Wait for specific job or PID
+      do i = 2, cmd%num_tokens
+        if (cmd%tokens(i)(1:1) == '%') then
+          ! Job syntax
+          read(cmd%tokens(i)(2:), *, iostat=iostat) target_pid
+          if (iostat == 0) then
+            target_pid = find_job_pgid(shell, target_pid)
+          else
+            write(error_unit, '(a)') 'wait: invalid job specification'
+            shell%last_exit_status = 1
+            cycle
+          end if
+        else
+          read(cmd%tokens(i), *, iostat=iostat) target_pid
+          if (iostat /= 0) then
+            write(error_unit, '(a)') 'wait: invalid pid'
+            shell%last_exit_status = 1
+            cycle
+          end if
+        end if
+        
+        if (target_pid > 0) then
+          ret = c_waitpid(int(target_pid, c_pid_t), c_loc(wait_status), 0)
+          if (ret > 0) then
+            if (WIFEXITED(wait_status)) then
+              shell%last_exit_status = WEXITSTATUS(wait_status)
+            else
+              shell%last_exit_status = 1
+            end if
+          else
+            write(error_unit, '(a,i0)') 'wait: pid ', target_pid, ' is not a child of this shell'
+            shell%last_exit_status = 1
+          end if
+        end if
+      end do
+    end if
+    
+    if (shell%last_exit_status /= 1) then
+      shell%last_exit_status = 0
+    end if
+  end subroutine
+
+  subroutine builtin_trap(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! Simplified trap implementation - in a full shell this would
+    ! handle signal trap management
+    if (cmd%num_tokens < 3) then
+      write(error_unit, '(a)') 'trap: usage: trap action signal...'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! For now, just acknowledge the trap command
+    write(output_unit, '(a)') 'trap: signal trapping not yet fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_config(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    if (cmd%num_tokens == 1) then
+      ! Show current config
+      call show_config()
+    else
+      select case(trim(cmd%tokens(2)))
+      case('show')
+        call show_config()
+      case('create')
+        call create_default_config()
+      case('reload')
+        call load_config_file(shell)
+      case default
+        write(error_unit, '(a)') 'config: usage: config [show|create|reload]'
+        shell%last_exit_status = 1
+        return
+      end select
+    end if
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_alias(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: eq_pos
+    character(len=256) :: alias_name, alias_command
+    
+    if (cmd%num_tokens == 1) then
+      ! Show all aliases
+      call show_aliases(shell)
+    else if (cmd%num_tokens == 2) then
+      ! Check for alias=command format
+      eq_pos = index(cmd%tokens(2), '=')
+      if (eq_pos > 0) then
+        alias_name = cmd%tokens(2)(:eq_pos-1)
+        alias_command = cmd%tokens(2)(eq_pos+1:)
+        
+        ! Remove quotes if present
+        if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
+          alias_command = alias_command(2:len_trim(alias_command)-1)
+        else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
+          alias_command = alias_command(2:len_trim(alias_command)-1)
+        end if
+        
+        call set_alias(shell, trim(alias_name), trim(alias_command))
+      else
+        ! Show specific alias
+        alias_name = cmd%tokens(2)
+        alias_command = get_alias(shell, trim(alias_name))
+        if (len(alias_command) > 0) then
+          write(output_unit, '(a)') 'alias ' // trim(alias_name) // &
+                                   '=' // "'" // trim(alias_command) // "'"
+        else
+          write(error_unit, '(a)') 'alias: ' // trim(alias_name) // ': not found'
+          shell%last_exit_status = 1
+          return
+        end if
+      end if
+    else
+      write(error_unit, '(a)') 'alias: usage: alias [name[=value]...]'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_unalias(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i
+    
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'unalias: usage: unalias name...'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Remove each specified alias
+    do i = 2, cmd%num_tokens
+      call unset_alias(shell, trim(cmd%tokens(i)))
+    end do
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_help(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    write(output_unit, '(a)') 'Fortran Shell (fortsh) - Built-in Commands:'
+    write(output_unit, '(a)') '========================================'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Navigation & Files:'
+    write(output_unit, '(a)') '  cd [dir]      - Change directory (use cd ~ for home)'
+    write(output_unit, '(a)') '  pwd           - Print working directory'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Variables & Environment:'
+    write(output_unit, '(a)') '  export VAR=val - Set environment variable'
+    write(output_unit, '(a)') '  echo [args]    - Display text'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Job Control:'
+    write(output_unit, '(a)') '  jobs          - List active jobs'
+    write(output_unit, '(a)') '  fg [%n]       - Bring job to foreground'
+    write(output_unit, '(a)') '  bg [%n]       - Send job to background'  
+    write(output_unit, '(a)') '  kill [-sig] pid - Send signal to process'
+    write(output_unit, '(a)') '  wait [pid]    - Wait for process to complete'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Shell Features:'
+    write(output_unit, '(a)') '  history       - Show command history'
+    write(output_unit, '(a)') '  alias [n=cmd] - Create/show command aliases'
+    write(output_unit, '(a)') '  unalias name  - Remove alias'
+    write(output_unit, '(a)') '  config [cmd]  - Manage shell configuration (.fshrc)'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Control Flow:'
+    write(output_unit, '(a)') '  test / [ ]    - Evaluate conditions'
+    write(output_unit, '(a)') '  if/then/else/fi - Conditional execution'
+    write(output_unit, '(a)') '  while/do/done - Loop constructs'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Other:'
+    write(output_unit, '(a)') '  source file   - Execute script (not yet implemented)'
+    write(output_unit, '(a)') '  trap          - Signal handling (basic support)'
+    write(output_unit, '(a)') '  help          - Show this help message'
+    write(output_unit, '(a)') '  exit [code]   - Exit shell'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Features: Tab completion, command history, aliases, variables, job control'
+    
+    shell%last_exit_status = 0
   end subroutine
 
 end module builtins

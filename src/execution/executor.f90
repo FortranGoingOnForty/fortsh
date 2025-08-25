@@ -281,7 +281,8 @@ contains
       
       ! Execute
       call exec_child(cmd%tokens, cmd%num_tokens)
-      write(error_unit, '(3a)') 'fsh: command not found: ', trim(cmd%tokens(1))
+      write(error_unit, '(a)') 'fortsh: command not found: ' // trim(cmd%tokens(1)) // &
+                               '. Try "which ' // trim(cmd%tokens(1)) // '" or check your PATH.'
       call c_exit(127)
     else
       ! Parent process
@@ -324,26 +325,34 @@ contains
     integer(c_size_t) :: bytes_written
     character(kind=c_char), target :: c_content(MAX_HEREDOC_LEN)
     integer :: i
+    character(len=:), allocatable :: content_to_write
     
-    if (allocated(cmd%heredoc_content)) then
-      ! Create pipe for heredoc
-      ret = c_pipe(c_loc(pipefd))
-      if (ret == 0) then
-        ! Convert content to C string
-        do i = 1, len(cmd%heredoc_content)
-          c_content(i) = cmd%heredoc_content(i:i)
-        end do
-        c_content(len(cmd%heredoc_content)+1) = c_null_char
-        
-        ! Write content to pipe
-        bytes_written = c_write(pipefd(2), c_loc(c_content), &
-                               int(len(cmd%heredoc_content), c_size_t))
-        
-        ! Close write end and redirect stdin to read end
-        ret = c_close(pipefd(2))
-        ret = c_dup2(pipefd(1), STDIN_FD)
-        ret = c_close(pipefd(1))
-      end if
+    ! Handle here-string (<<<)
+    if (allocated(cmd%here_string)) then
+      content_to_write = cmd%here_string // char(10)  ! Add newline
+    else if (allocated(cmd%heredoc_content)) then
+      content_to_write = cmd%heredoc_content
+    else
+      return
+    end if
+    
+    ! Create pipe for input
+    ret = c_pipe(c_loc(pipefd))
+    if (ret == 0) then
+      ! Convert content to C string
+      do i = 1, min(len(content_to_write), MAX_HEREDOC_LEN-1)
+        c_content(i) = content_to_write(i:i)
+      end do
+      c_content(min(len(content_to_write), MAX_HEREDOC_LEN-1)+1) = c_null_char
+      
+      ! Write content to pipe
+      bytes_written = c_write(pipefd(2), c_loc(c_content), &
+                             int(min(len(content_to_write), MAX_HEREDOC_LEN-1), c_size_t))
+      
+      ! Close write end and redirect stdin to read end
+      ret = c_close(pipefd(2))
+      ret = c_dup2(pipefd(1), STDIN_FD)
+      ret = c_close(pipefd(1))
     end if
   end subroutine
 
@@ -404,9 +413,13 @@ contains
       end if
     end if
     
-    ! Handle 2>&1
+    ! Handle advanced redirections
     if (cmd%redirect_stderr_to_stdout) then
       ret = c_dup2(STDOUT_FD, STDERR_FD)
+    end if
+    
+    if (cmd%redirect_stdout_to_stderr) then
+      ret = c_dup2(STDERR_FD, STDOUT_FD)
     end if
   end subroutine
 

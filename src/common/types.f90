@@ -35,6 +35,7 @@ module shell_types
   integer, parameter :: BLOCK_IF = 1
   integer, parameter :: BLOCK_WHILE = 2
   integer, parameter :: BLOCK_FOR = 3
+  integer, parameter :: BLOCK_FUNCTION = 4
 
   type :: command_t
     character(len=:), allocatable :: tokens(:)
@@ -47,6 +48,9 @@ module shell_types
     logical :: append_output = .false.
     logical :: append_error = .false.
     logical :: redirect_stderr_to_stdout = .false.
+    logical :: redirect_stdout_to_stderr = .false.
+    logical :: redirect_both_to_file = .false.  ! &> redirection
+    character(len=:), allocatable :: here_string  ! <<< redirection
     logical :: background = .false.
     integer :: separator = SEP_NONE
   end type command_t
@@ -73,14 +77,35 @@ module shell_types
     character(len=1024) :: value
   end type shell_var_t
 
+  ! Shell alias entry
+  type :: shell_alias_t
+    character(len=256) :: name
+    character(len=1024) :: command
+  end type shell_alias_t
+
   ! Control flow block state
   type :: control_block_t
-    integer :: block_type = 0        ! BLOCK_IF, BLOCK_WHILE, BLOCK_FOR
+    integer :: block_type = 0        ! BLOCK_IF, BLOCK_WHILE, BLOCK_FOR, BLOCK_FUNCTION
     logical :: condition_met = .false.
     logical :: in_else_branch = .false.
     logical :: should_execute = .true.
     character(len=256) :: loop_variable = ''  ! for 'for' loops
+    character(len=256) :: for_list = ''       ! space-separated list for 'for' loops
+    character(len=256), allocatable :: for_values(:)  ! parsed for-loop values
+    integer :: for_index = 0         ! current index in for loop
+    integer :: for_count = 0         ! total count of for loop values
+    character(len=256) :: condition_cmd = ''  ! while condition command
+    integer :: loop_start_line = 0   ! for loop replay
   end type control_block_t
+
+  ! Shell function definition
+  type :: shell_function_t
+    character(len=256) :: name
+    character(len=1024), allocatable :: body(:)  ! function body lines
+    integer :: body_lines = 0
+    character(len=256) :: params(10)  ! parameter names
+    integer :: param_count = 0
+  end type shell_function_t
 
   type :: shell_state_t
     character(len=256) :: username
@@ -98,9 +123,18 @@ module shell_types
     ! Shell variables (local scope)
     type(shell_var_t) :: variables(50)
     integer :: num_variables = 0
+    ! Shell aliases
+    type(shell_alias_t) :: aliases(50)
+    integer :: num_aliases = 0
+    ! Shell functions
+    type(shell_function_t) :: functions(20)
+    integer :: num_functions = 0
     ! Control flow state
     type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)
     integer :: control_depth = 0
+    ! Function call stack for local variables
+    type(shell_var_t) :: local_vars(MAX_CONTROL_DEPTH, 20)  ! stack of local variable scopes
+    integer :: local_var_counts(MAX_CONTROL_DEPTH) = 0
   end type shell_state_t
 
 end module shell_types

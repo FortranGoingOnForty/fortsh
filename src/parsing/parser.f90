@@ -106,6 +106,8 @@ contains
         pipeline%commands(i)%append_output = temp_commands(i)%append_output
         pipeline%commands(i)%append_error = temp_commands(i)%append_error
         pipeline%commands(i)%redirect_stderr_to_stdout = temp_commands(i)%redirect_stderr_to_stdout
+        pipeline%commands(i)%redirect_stdout_to_stderr = temp_commands(i)%redirect_stdout_to_stderr
+        pipeline%commands(i)%redirect_both_to_file = temp_commands(i)%redirect_both_to_file
         pipeline%commands(i)%background = temp_commands(i)%background
         pipeline%commands(i)%separator = temp_commands(i)%separator
         
@@ -130,6 +132,10 @@ contains
         if (allocated(temp_commands(i)%heredoc_content)) then
           pipeline%commands(i)%heredoc_content = temp_commands(i)%heredoc_content
         end if
+        
+        if (allocated(temp_commands(i)%here_string)) then
+          pipeline%commands(i)%here_string = temp_commands(i)%here_string
+        end if
       end do
     end if
     
@@ -146,19 +152,66 @@ contains
     
     working_input = adjustl(input)
     
-    ! Check for here document (<<)
-    pos = index(working_input, '<<')
+    ! Check for here-string (<<<) - must come before here document
+    pos = index(working_input, '<<<')
     if (pos > 0) then
-      call extract_word(working_input(pos+2:), temp_str)
-      cmd%heredoc_delimiter = trim(temp_str)
+      call extract_filename(working_input(pos+3:), temp_str)
+      cmd%here_string = trim(temp_str)
       working_input = working_input(:pos-1)
+    else
+      ! Check for here document (<<)
+      pos = index(working_input, '<<')
+      if (pos > 0) then
+        call extract_word(working_input(pos+2:), temp_str)
+        cmd%heredoc_delimiter = trim(temp_str)
+        working_input = working_input(:pos-1)
+      end if
     end if
     
-    ! Check for 2>&1 (must come before other redirections)
+    ! Check for advanced redirections first (must come before simpler ones)
+    
+    ! Check for 1>&2 (stdout to stderr)
+    pos = index(working_input, '1>&2')
+    if (pos > 0) then
+      cmd%redirect_stdout_to_stderr = .true.
+      working_input = working_input(:pos-1) // ' ' // working_input(pos+5:)
+    else
+      ! Check for >&2 (stdout to stderr shorthand)
+      pos = index(working_input, '>&2')
+      if (pos > 0) then
+        cmd%redirect_stdout_to_stderr = .true.
+        working_input = working_input(:pos-1) // ' ' // working_input(pos+4:)
+      end if
+    end if
+    
+    ! Check for 2>&1 (stderr to stdout)  
     pos = index(working_input, '2>&1')
     if (pos > 0) then
       cmd%redirect_stderr_to_stdout = .true.
       working_input = working_input(:pos-1) // ' ' // working_input(pos+4:)
+    else
+      ! Check for &>file or &>>file (both stdout and stderr to file)
+      pos = index(working_input, '&>>')
+      if (pos > 0) then
+        cmd%redirect_both_to_file = .true.
+        cmd%append_output = .true.
+        cmd%append_error = .true.
+        call extract_filename(working_input(pos+3:), temp_str)
+        cmd%output_file = trim(temp_str)
+        cmd%error_file = trim(temp_str)
+        working_input = working_input(:pos-1)
+      else
+        pos = index(working_input, '&>')
+        if (pos > 0) then
+          cmd%redirect_both_to_file = .true.
+          cmd%append_output = .false.
+          cmd%append_error = .false.
+          call extract_filename(working_input(pos+2:), temp_str)
+          cmd%output_file = trim(temp_str)
+          cmd%error_file = trim(temp_str)
+          working_input = working_input(:pos-1)
+        end if
+      end if
     end if
     
     ! Check for error redirection (2>>)
