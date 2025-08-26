@@ -9,6 +9,7 @@ module builtins
   use readline
   use shell_config
   use aliases
+  use performance
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -36,6 +37,8 @@ contains
                 trim(cmd_name) == 'alias' .or. &
                 trim(cmd_name) == 'unalias' .or. &
                 trim(cmd_name) == 'help' .or. &
+                trim(cmd_name) == 'perf' .or. &
+                trim(cmd_name) == 'memory' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -78,6 +81,10 @@ contains
       call builtin_unalias(cmd, shell)
     case('help')
       call builtin_help(cmd, shell)
+    case('perf')
+      call builtin_perf(cmd, shell)
+    case('memory')
+      call builtin_memory(cmd, shell)
     case('test', '[', '[[')
       call execute_test_command(cmd, shell)
     case default
@@ -619,6 +626,82 @@ contains
     write(output_unit, '(a)') '  exit [code]   - Exit shell'
     write(output_unit, '(a)') ''
     write(output_unit, '(a)') 'Features: Tab completion, command history, aliases, variables, job control'
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_perf(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    if (cmd%num_tokens > 1) then
+      select case(trim(cmd%tokens(2)))
+      case('on')
+        call set_performance_monitoring(.true.)
+        write(output_unit, '(a)') 'Performance monitoring enabled'
+      case('off')
+        call set_performance_monitoring(.false.)
+        write(output_unit, '(a)') 'Performance monitoring disabled'
+      case('stats', 'status')
+        call print_performance_stats()
+      case('reset')
+        total_commands = 0
+        total_parse_time = 0
+        total_exec_time = 0
+        total_glob_time = 0
+        write(output_unit, '(a)') 'Performance counters reset'
+      case default
+        write(error_unit, '(a)') 'perf: Usage: perf [on|off|stats|reset]'
+        shell%last_exit_status = 1
+        return
+      end select
+    else
+      ! Show current status
+      if (perf_monitoring_enabled) then
+        write(output_unit, '(a)') 'Performance monitoring: ENABLED'
+      else
+        write(output_unit, '(a)') 'Performance monitoring: DISABLED'
+      end if
+      write(output_unit, '(a,i0)') 'Commands processed: ', total_commands
+      write(output_unit, '(a,i0,a)') 'Memory usage: ', get_memory_usage(), ' KB'
+    end if
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_memory(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    if (cmd%num_tokens > 1) then
+      select case(trim(cmd%tokens(2)))
+      case('optimize')
+        call optimize_memory_pools()
+        write(output_unit, '(a)') 'Memory pools optimized'
+      case('stats')
+        call print_pool_stats()
+      case('auto')
+        call auto_optimize_memory()
+        write(output_unit, '(a)') 'Auto memory optimization triggered'
+      case default
+        write(error_unit, '(a)') 'memory: Usage: memory [optimize|stats|auto]'
+        shell%last_exit_status = 1
+        return
+      end select
+    else
+      ! Show memory status
+      write(output_unit, '(a)') 'Memory Usage Summary:'
+      write(output_unit, '(a)') '===================='
+      write(output_unit, '(a,i0)') 'Current allocations: ', current_allocations
+      write(output_unit, '(a,i0)') 'Peak allocations:    ', peak_allocations
+      write(output_unit, '(a,i0,a)') 'Current memory:      ', current_memory_used, ' bytes'
+      write(output_unit, '(a,i0,a)') 'Peak memory:         ', peak_memory_used, ' bytes'
+      
+      if (needs_memory_optimization()) then
+        write(output_unit, '(a)') ''
+        write(output_unit, '(a)') 'Tip: Memory optimization recommended. Run "memory optimize"'
+      end if
+    end if
     
     shell%last_exit_status = 0
   end subroutine

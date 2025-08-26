@@ -11,6 +11,7 @@ program fortran_shell
   use readline
   use shell_config
   use aliases
+  use performance
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
@@ -19,6 +20,9 @@ program fortran_shell
   character(len=1024) :: input_line
   character(len=:), allocatable :: expanded_line
   integer :: iostat, i
+
+  ! Initialize performance monitoring
+  call init_performance_monitoring()
 
   ! Initialize shell state
   call initialize_shell(shell)
@@ -93,6 +97,14 @@ program fortran_shell
     end if
   end do
 
+  ! Print performance statistics if monitoring was enabled
+  if (perf_monitoring_enabled) then
+    call print_performance_stats()
+  end if
+
+  ! Cleanup performance monitoring
+  call cleanup_performance_monitoring()
+
   write(output_unit, '(a)') 'Goodbye!'
 
 contains
@@ -148,6 +160,12 @@ contains
     do i = 1, MAX_JOBS
       shell%jobs(i)%job_id = 0
     end do
+    
+    ! Check for performance monitoring environment variable
+    temp = get_environment_var('FORTSH_PERF')
+    if (len(temp) > 0 .and. trim(temp) == '1') then
+      call set_performance_monitoring(.true.)
+    end if
   end subroutine
 
 end program fortran_shell

@@ -8,6 +8,7 @@ module parser
   use variables
   use glob
   use error_handling
+  use performance
   use iso_fortran_env, only: error_unit, input_unit
   implicit none
 
@@ -23,6 +24,11 @@ contains
     type(command_t), allocatable :: temp_commands(:)
     logical :: background
     
+    integer(int64) :: parse_start_time
+    
+    ! Start performance timing
+    call start_timer('parse_pipeline', parse_start_time)
+    
     ! Validate input
     if (.not. validate_command(input)) then
       call parser_error(101, 'Invalid command input', 'parse_pipeline')
@@ -33,6 +39,7 @@ contains
     call debug_log('Parsing pipeline: ' // trim(input), 'parse_pipeline')
     
     allocate(temp_commands(MAX_PIPELINE))
+    call track_allocation(MAX_PIPELINE * 1024, 'temp_commands')
     working_input = input
     cmd_count = 0
     start = 1
@@ -151,6 +158,16 @@ contains
     end if
     
     deallocate(temp_commands)
+    call track_deallocation(MAX_PIPELINE * 1024, 'temp_commands')
+    
+    ! End performance timing
+    call end_timer('parse_pipeline', parse_start_time, total_parse_time)
+    total_commands = total_commands + 1
+    
+    ! Trigger auto memory optimization periodically
+    if (mod(total_commands, 50_int64) == 0) then
+      call auto_optimize_memory()
+    end if
   end subroutine
 
   subroutine parse_single_command(input, cmd)

@@ -5,6 +5,7 @@
 module glob
   use shell_types
   use system_interface
+  use performance
   use iso_fortran_env, only: output_unit, error_unit
   use iso_c_binding
   implicit none
@@ -25,6 +26,10 @@ contains
     integer :: i, j, match_count, total_count
     character(len=MAX_TOKEN_LEN) :: matches(MAX_GLOB_MATCHES)
     logical :: has_glob_chars
+    integer(int64) :: glob_start_time
+    
+    ! Start performance timing
+    call start_timer('glob_expansion', glob_start_time)
     
     total_count = 0
     
@@ -74,6 +79,14 @@ contains
       expanded_tokens(1) = ''
       expanded_count = 0
     end if
+    
+    ! Track memory allocation
+    if (allocated(expanded_tokens)) then
+      call track_allocation(size(expanded_tokens) * MAX_TOKEN_LEN, 'expanded_tokens')
+    end if
+    
+    ! End performance timing
+    call end_timer('glob_expansion', glob_start_time, total_glob_time)
   end subroutine
 
   ! Match a glob pattern against files in current directory

@@ -10,6 +10,7 @@ module executor
   use variables
   use control_flow
   use error_handling
+  use performance
   use iso_fortran_env, only: error_unit, input_unit
   use iso_c_binding
   implicit none
@@ -197,6 +198,10 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
     logical :: should_execute
+    integer(int64) :: exec_start_time
+    
+    ! Start performance timing
+    call start_timer('execute_single', exec_start_time)
     
     if (cmd%num_tokens == 0) return
     
@@ -235,6 +240,9 @@ contains
     else
       call execute_external(cmd, shell, original_input)
     end if
+    
+    ! End performance timing
+    call end_timer('execute_single', exec_start_time, total_exec_time)
   end subroutine
 
   subroutine expand_tokens(cmd, shell)
