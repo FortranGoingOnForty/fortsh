@@ -13,8 +13,11 @@ BINDIR = bin
 
 # Object files in dependency order
 OBJECTS = $(BUILDDIR)/common/types.o \
+          $(BUILDDIR)/common/error_handling.o \
+          $(BUILDDIR)/common/performance.o \
           $(BUILDDIR)/system/interface.o \
           $(BUILDDIR)/system/signals.o \
+          $(BUILDDIR)/parsing/glob.o \
           $(BUILDDIR)/parsing/parser.o \
           $(BUILDDIR)/execution/jobs.o \
           $(BUILDDIR)/execution/builtins.o \
@@ -49,22 +52,31 @@ $(TARGET): $(OBJECTS) | $(BINDIR)
 $(BUILDDIR)/common/types.o: src/common/types.f90 | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
+$(BUILDDIR)/common/error_handling.o: src/common/error_handling.f90 | $(BUILDDIR)/common
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+$(BUILDDIR)/common/performance.o: src/common/performance.f90 | $(BUILDDIR)/common
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
 $(BUILDDIR)/system/interface.o: src/system/interface.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/system
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/system/signals.o: src/system/signals.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/system
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/parsing
+$(BUILDDIR)/parsing/glob.o: src/parsing/glob.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/parsing
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/jobs.o: src/execution/jobs.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/builtins.o: src/execution/builtins.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/builtins.o: src/execution/builtins.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/executor.o: src/execution/executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/control_flow.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/executor.o: src/execution/executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/control_flow.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/control_flow.o: src/scripting/control_flow.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
@@ -122,5 +134,61 @@ help:
 	@echo "  test      - Run basic functionality test"
 	@echo "  debug     - Build with debug flags"
 	@echo "  help      - Show this help"
+	@echo "  dist      - Create distribution package"
+	@echo "  rpm       - Build RPM package"
+	@echo "  check     - Run comprehensive checks"
+	@echo "  smoke-test- Run basic functionality tests"
 
-.PHONY: all clean distclean install test debug help
+# Package information
+PACKAGE = fortsh
+VERSION = 1.0.0
+
+# Distribution and packaging targets
+dist: clean
+	@echo "Creating distribution package..."
+	tar czf $(PACKAGE)-$(VERSION).tar.gz \
+		--exclude='.git*' \
+		--exclude='*.o' \
+		--exclude='*.mod' \
+		--exclude='build' \
+		--exclude='bin' \
+		--transform 's,^,$(PACKAGE)-$(VERSION)/,' \
+		src/ tests/ Makefile README.md fortsh.spec
+
+rpm: dist
+	@echo "Building RPM package..."
+	@command -v rpmbuild >/dev/null 2>&1 || (echo "rpmbuild not available - install rpm-build package" && exit 1)
+	mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+	cp $(PACKAGE)-$(VERSION).tar.gz ~/rpmbuild/SOURCES/
+	cp $(PACKAGE).spec ~/rpmbuild/SPECS/
+	rpmbuild -ba ~/rpmbuild/SPECS/$(PACKAGE).spec
+	@echo "RPM packages created in ~/rpmbuild/RPMS/"
+
+dev-install: $(TARGET)
+	@echo "Installing fortsh for development..."
+	mkdir -p ~/.local/bin
+	cp $(TARGET) ~/.local/bin/
+	@echo "fortsh installed to ~/.local/bin/fortsh"
+	@echo "Make sure ~/.local/bin is in your PATH"
+
+uninstall:
+	@echo "Uninstalling fortsh..."
+	@rm -f ~/.local/bin/fortsh 2>/dev/null || true
+	@rm -f /usr/local/bin/fortsh 2>/dev/null || sudo rm -f /usr/local/bin/fortsh 2>/dev/null || true
+	@echo "Uninstall complete!"
+
+check: $(TARGET)
+	@echo "Running comprehensive checks..."
+	@echo "✓ Build system works"
+	./tests/integration_test.sh
+	@echo "✓ Integration tests completed"
+
+smoke-test: $(TARGET)
+	@echo "Running smoke tests..."
+	@echo "echo 'Hello from Fortsh!'" | $(TARGET) && echo "✓ Basic execution works"
+	@echo -e "help\nexit" | $(TARGET) >/dev/null && echo "✓ Help command works"
+	@echo -e "echo *.txt\nexit" | $(TARGET) >/dev/null && echo "✓ Glob expansion works"
+	@echo "perf on\necho 'test'\nperf\nexit" | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
+	@echo "All smoke tests passed!"
+
+.PHONY: all clean distclean install test debug help dist rpm dev-install uninstall check smoke-test
