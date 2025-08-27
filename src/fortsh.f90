@@ -53,6 +53,10 @@ program fortran_shell
       call readline_enhanced(trim(shell%username) // '@' // trim(shell%hostname) // ' :: ', input_line, iostat)
     else
       read(input_unit, '(a)', iostat=iostat) input_line
+      ! Add to history in non-interactive mode too
+      if (iostat == 0 .and. len_trim(input_line) > 0) then
+        call add_to_history(input_line)
+      end if
     end if
 
     ! Check for EOF (Ctrl-D)

@@ -33,9 +33,12 @@ module readline
   ! Input state management
   type :: input_state_t
     character(len=MAX_LINE_LEN) :: buffer = ''
+    character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
     integer :: length = 0
     integer :: cursor_pos = 0  ! 0-based position in buffer
+    integer :: history_pos = 0  ! Current position in history (0 = not browsing)
     logical :: dirty = .false. ! Needs redraw
+    logical :: in_history = .false. ! Currently browsing history
   end type input_state_t
 
   type :: history_t
@@ -76,9 +79,12 @@ contains
     
     ! Initialize input state
     input_state%buffer = ''
+    input_state%original_buffer = ''
     input_state%length = 0
     input_state%cursor_pos = 0
+    input_state%history_pos = 0
     input_state%dirty = .false.
+    input_state%in_history = .false.
     
     if (raw_enabled) then
       ! Enhanced input processing
@@ -151,11 +157,13 @@ contains
     ! Return the result
     if (iostat == 0) then
       line = input_state%buffer(:input_state%length)
+      ! write(error_unit, '(a,a,a,i0)') 'DEBUG: Got line: "', trim(line), '", length: ', input_state%length
       if (input_state%length > 0) then
         call add_to_history(line)
       end if
     else
       line = ''
+      ! write(error_unit, '(a)') 'DEBUG: iostat not 0, no line returned'
     end if
   end subroutine
 
@@ -242,6 +250,9 @@ contains
     character(len=*), intent(in) :: line
     integer :: i
     
+    ! Debug: Show what we're trying to add
+    ! write(error_unit, '(a,a)') 'DEBUG: Adding to history: "', trim(line) // '"'
+    
     ! Don't add duplicate consecutive commands
     if (command_history%count > 0) then
       if (trim(command_history%lines(command_history%count)) == trim(line)) then
@@ -263,6 +274,9 @@ contains
     
     ! Reset current position
     command_history%current = command_history%count + 1
+    
+    ! Debug: Show history count
+    ! write(error_unit, '(a,i0)') 'DEBUG: History count now: ', command_history%count
   end subroutine
 
   subroutine get_history_line(index, line, found)
@@ -288,9 +302,13 @@ contains
   subroutine show_history()
     integer :: i
     
-    do i = 1, command_history%count
-      write(output_unit, '(i4,2x,a)') i, trim(command_history%lines(i))
-    end do
+    if (command_history%count == 0) then
+      write(output_unit, '(a)') 'No commands in history.'
+    else
+      do i = 1, command_history%count
+        write(output_unit, '(i4,2x,a)') i, trim(command_history%lines(i))
+      end do
+    end if
   end subroutine
 
   ! Clear history
@@ -533,6 +551,12 @@ contains
     ! Check if we have room
     if (input_state%length >= MAX_LINE_LEN) return
     
+    ! If we're browsing history, exit history mode when typing
+    if (input_state%in_history) then
+      input_state%in_history = .false.
+      input_state%history_pos = 0
+    end if
+    
     ! If cursor is at end, simple append
     if (input_state%cursor_pos >= input_state%length) then
       input_state%length = input_state%length + 1
@@ -557,6 +581,12 @@ contains
     integer :: i
     
     if (input_state%cursor_pos <= 0) return
+    
+    ! If we're browsing history, exit history mode when editing
+    if (input_state%in_history) then
+      input_state%in_history = .false.
+      input_state%history_pos = 0
+    end if
     
     ! If cursor is at end, simple deletion
     if (input_state%cursor_pos >= input_state%length) then
@@ -602,11 +632,9 @@ contains
       
       select case(ch2)
       case('A')  ! Up arrow
-        ! TODO: Navigate history up
-        continue
+        call handle_history_up(input_state)
       case('B')  ! Down arrow  
-        ! TODO: Navigate history down
-        continue
+        call handle_history_down(input_state)
       case('C')  ! Right arrow
         call handle_cursor_right(input_state)
       case('D')  ! Left arrow
@@ -635,6 +663,62 @@ contains
       input_state%cursor_pos = input_state%cursor_pos + 1
       write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
       flush(output_unit)
+    end if
+  end subroutine
+  
+  subroutine handle_history_up(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: history_line
+    logical :: found
+    
+    ! If not currently browsing history, save the current input
+    if (.not. input_state%in_history) then
+      input_state%original_buffer = input_state%buffer
+      input_state%history_pos = command_history%count + 1
+      input_state%in_history = .true.
+    end if
+    
+    ! Move up in history
+    if (input_state%history_pos > 1) then
+      input_state%history_pos = input_state%history_pos - 1
+      call get_history_line(input_state%history_pos, history_line, found)
+      
+      if (found) then
+        input_state%buffer = history_line
+        input_state%length = len_trim(history_line)
+        input_state%cursor_pos = input_state%length
+        input_state%dirty = .true.
+      end if
+    end if
+  end subroutine
+  
+  subroutine handle_history_down(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: history_line
+    logical :: found
+    
+    ! Only navigate down if we're currently in history
+    if (.not. input_state%in_history) return
+    
+    ! Move down in history
+    if (input_state%history_pos < command_history%count) then
+      input_state%history_pos = input_state%history_pos + 1
+      call get_history_line(input_state%history_pos, history_line, found)
+      
+      if (found) then
+        input_state%buffer = history_line
+        input_state%length = len_trim(history_line)
+        input_state%cursor_pos = input_state%length
+        input_state%dirty = .true.
+      end if
+    else if (input_state%history_pos <= command_history%count) then
+      ! Reached the end of history, restore original input
+      input_state%buffer = input_state%original_buffer
+      input_state%length = len_trim(input_state%original_buffer)
+      input_state%cursor_pos = input_state%length
+      input_state%history_pos = command_history%count + 1
+      input_state%in_history = .false.
+      input_state%dirty = .true.
     end if
   end subroutine
   
