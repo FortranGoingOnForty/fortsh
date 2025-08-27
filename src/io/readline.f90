@@ -12,18 +12,31 @@ module readline
   ! Constants for special keys
   integer, parameter :: KEY_ENTER = 10
   integer, parameter :: KEY_BACKSPACE = 127
+  integer, parameter :: KEY_DELETE = 127  ! Same as backspace on most terminals
   integer, parameter :: KEY_TAB = 9
   integer, parameter :: KEY_CTRL_C = 3
   integer, parameter :: KEY_CTRL_D = 4
+  integer, parameter :: KEY_CTRL_A = 1    ! Home
+  integer, parameter :: KEY_CTRL_E = 5    ! End
+  integer, parameter :: KEY_CTRL_K = 11   ! Kill to end of line
+  integer, parameter :: KEY_CTRL_L = 12   ! Clear screen
   integer, parameter :: KEY_ESC = 27
   integer, parameter :: KEY_UP = 65
   integer, parameter :: KEY_DOWN = 66
   integer, parameter :: KEY_RIGHT = 67
   integer, parameter :: KEY_LEFT = 68
   
-  ! History management
+  ! History and line management
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
+  
+  ! Input state management
+  type :: input_state_t
+    character(len=MAX_LINE_LEN) :: buffer = ''
+    integer :: length = 0
+    integer :: cursor_pos = 0  ! 0-based position in buffer
+    logical :: dirty = .false. ! Needs redraw
+  end type input_state_t
 
   type :: history_t
     character(len=MAX_LINE_LEN) :: lines(MAX_HISTORY)
@@ -34,6 +47,117 @@ module readline
   type(history_t), save :: command_history
 
 contains
+
+  ! Enhanced readline with character-by-character input processing
+  subroutine readline_enhanced(prompt, line, iostat)
+    character(len=*), intent(in) :: prompt
+    character(len=*), intent(out) :: line
+    integer, intent(out) :: iostat
+    
+    type(input_state_t) :: input_state
+    type(termios_t) :: original_termios
+    character :: ch
+    logical :: success, done, raw_enabled
+    integer :: char_code
+    
+    iostat = 0
+    done = .false.
+    raw_enabled = .false.
+    
+    ! Try to enable raw mode (only works in interactive mode)
+    success = enable_raw_mode(original_termios)
+    if (success) then
+      raw_enabled = .true.
+    end if
+    
+    ! Print prompt
+    write(output_unit, '(a)', advance='no') prompt
+    flush(output_unit)
+    
+    ! Initialize input state
+    input_state%buffer = ''
+    input_state%length = 0
+    input_state%cursor_pos = 0
+    input_state%dirty = .false.
+    
+    if (raw_enabled) then
+      ! Enhanced input processing
+      do while (.not. done)
+        success = read_single_char(ch)
+        if (.not. success) then
+          iostat = -1
+          exit
+        end if
+        
+        char_code = iachar(ch)
+        
+        select case(char_code)
+        case(KEY_ENTER)
+          ! Enter - finish input
+          write(output_unit, '()')  ! New line
+          done = .true.
+          
+        case(KEY_CTRL_D)
+          ! Ctrl+D - EOF
+          if (input_state%length == 0) then
+            iostat = -1
+            done = .true.
+          end if
+          
+        case(KEY_CTRL_C)
+          ! Ctrl+C - cancel input
+          write(output_unit, '(a)') '^C'
+          input_state%buffer = ''
+          input_state%length = 0
+          done = .true.
+          
+        case(KEY_BACKSPACE)
+          ! Backspace
+          call handle_backspace(input_state)
+          
+        case(KEY_TAB)
+          ! Tab completion (placeholder)
+          call handle_tab_completion(input_state)
+          
+        case(KEY_ESC)
+          ! Escape sequence - try to read more
+          call handle_escape_sequence(input_state, done)
+          
+        case(32:126)
+          ! Regular printable characters
+          call insert_char(input_state, ch)
+          
+        case default
+          ! Ignore other control characters for now
+        end select
+        
+        ! Redraw line if needed
+        if (input_state%dirty) then
+          call redraw_line(prompt, input_state)
+          input_state%dirty = .false.
+        end if
+      end do
+      
+      ! Restore terminal
+      if (.not. restore_terminal(original_termios)) then
+        ! Warning but don't fail
+      end if
+    else
+      ! Fallback to line-based input
+      read(input_unit, '(a)', iostat=iostat) input_state%buffer
+      if (iostat == 0) input_state%length = len_trim(input_state%buffer)
+    end if
+    
+    ! Return the result
+    if (iostat == 0) then
+      line = input_state%buffer(:input_state%length)
+      if (input_state%length > 0) then
+        call add_to_history(line)
+      end if
+    else
+      line = ''
+    end if
+  end subroutine
 
   ! Simple fallback readline - uses standard input for now
   ! This is a placeholder for a full readline implementation
@@ -398,6 +522,142 @@ contains
       ! Show all completions
       call show_completions(completions, num_completions)
     end if
+  end subroutine
+
+  ! Helper functions for enhanced readline
+  subroutine insert_char(input_state, ch)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: ch
+    integer :: i
+    
+    ! Check if we have room
+    if (input_state%length >= MAX_LINE_LEN) return
+    
+    ! If cursor is at end, simple append
+    if (input_state%cursor_pos >= input_state%length) then
+      input_state%length = input_state%length + 1
+      input_state%buffer(input_state%length:input_state%length) = ch
+      input_state%cursor_pos = input_state%length
+      write(output_unit, '(a)', advance='no') ch
+      flush(output_unit)
+    else
+      ! Insert in middle - shift characters right
+      do i = input_state%length, input_state%cursor_pos + 1, -1
+        input_state%buffer(i+1:i+1) = input_state%buffer(i:i)
+      end do
+      input_state%cursor_pos = input_state%cursor_pos + 1
+      input_state%buffer(input_state%cursor_pos:input_state%cursor_pos) = ch
+      input_state%length = input_state%length + 1
+      input_state%dirty = .true.
+    end if
+  end subroutine
+  
+  subroutine handle_backspace(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i
+    
+    if (input_state%cursor_pos <= 0) return
+    
+    ! If cursor is at end, simple deletion
+    if (input_state%cursor_pos >= input_state%length) then
+      input_state%length = input_state%length - 1
+      input_state%cursor_pos = input_state%cursor_pos - 1
+      input_state%buffer(input_state%length+1:input_state%length+1) = ' '
+      write(output_unit, '(a)', advance='no') char(8) // ' ' // char(8)  ! Backspace, space, backspace
+      flush(output_unit)
+    else
+      ! Delete in middle - shift characters left
+      do i = input_state%cursor_pos, input_state%length - 1
+        input_state%buffer(i:i) = input_state%buffer(i+1:i+1)
+      end do
+      input_state%cursor_pos = input_state%cursor_pos - 1
+      input_state%length = input_state%length - 1
+      input_state%buffer(input_state%length+1:input_state%length+1) = ' '
+      input_state%dirty = .true.
+    end if
+  end subroutine
+  
+  subroutine handle_tab_completion(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    ! TODO: Implement tab completion
+    ! For now, just insert spaces
+    call insert_char(input_state, ' ')
+    call insert_char(input_state, ' ')
+  end subroutine
+  
+  subroutine handle_escape_sequence(input_state, done)
+    type(input_state_t), intent(inout) :: input_state
+    logical, intent(inout) :: done
+    character :: ch1, ch2
+    logical :: success
+    
+    ! Try to read the next character
+    success = read_single_char(ch1)
+    if (.not. success) return
+    
+    if (ch1 == '[') then
+      ! ANSI escape sequence
+      success = read_single_char(ch2)
+      if (.not. success) return
+      
+      select case(ch2)
+      case('A')  ! Up arrow
+        ! TODO: Navigate history up
+        continue
+      case('B')  ! Down arrow  
+        ! TODO: Navigate history down
+        continue
+      case('C')  ! Right arrow
+        call handle_cursor_right(input_state)
+      case('D')  ! Left arrow
+        call handle_cursor_left(input_state)
+      case default
+        ! Unknown escape sequence
+        continue
+      end select
+    end if
+  end subroutine
+  
+  subroutine handle_cursor_left(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    if (input_state%cursor_pos > 0) then
+      input_state%cursor_pos = input_state%cursor_pos - 1
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      flush(output_unit)
+    end if
+  end subroutine
+  
+  subroutine handle_cursor_right(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    if (input_state%cursor_pos < input_state%length) then
+      input_state%cursor_pos = input_state%cursor_pos + 1
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
+      flush(output_unit)
+    end if
+  end subroutine
+  
+  subroutine redraw_line(prompt, input_state)
+    character(len=*), intent(in) :: prompt
+    type(input_state_t), intent(in) :: input_state
+    integer :: i
+    
+    ! Move to beginning of line and clear it
+    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
+    
+    ! Redraw prompt and current buffer
+    write(output_unit, '(a)', advance='no') prompt
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+    end if
+    
+    ! Position cursor correctly
+    do i = input_state%length, input_state%cursor_pos + 1, -1
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+    end do
+    
+    flush(output_unit)
   end subroutine
 
 end module readline
