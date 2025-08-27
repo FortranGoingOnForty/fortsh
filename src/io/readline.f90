@@ -16,10 +16,15 @@ module readline
   integer, parameter :: KEY_TAB = 9
   integer, parameter :: KEY_CTRL_C = 3
   integer, parameter :: KEY_CTRL_D = 4
-  integer, parameter :: KEY_CTRL_A = 1    ! Home
-  integer, parameter :: KEY_CTRL_E = 5    ! End
+  integer, parameter :: KEY_CTRL_A = 1    ! Home (beginning of line)
+  integer, parameter :: KEY_CTRL_E = 5    ! End (end of line)
   integer, parameter :: KEY_CTRL_K = 11   ! Kill to end of line
   integer, parameter :: KEY_CTRL_L = 12   ! Clear screen
+  integer, parameter :: KEY_CTRL_W = 23   ! Kill previous word
+  integer, parameter :: KEY_CTRL_U = 21   ! Kill entire line
+  integer, parameter :: KEY_CTRL_Y = 25   ! Yank (paste) killed text
+  integer, parameter :: KEY_CTRL_F = 6    ! Forward character (same as right arrow)
+  integer, parameter :: KEY_CTRL_B = 2    ! Backward character (same as left arrow)
   integer, parameter :: KEY_ESC = 27
   integer, parameter :: KEY_UP = 65
   integer, parameter :: KEY_DOWN = 66
@@ -34,9 +39,11 @@ module readline
   type :: input_state_t
     character(len=MAX_LINE_LEN) :: buffer = ''
     character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
+    character(len=MAX_LINE_LEN) :: kill_buffer = ''    ! Kill ring buffer for cut/paste
     integer :: length = 0
     integer :: cursor_pos = 0  ! 0-based position in buffer
     integer :: history_pos = 0  ! Current position in history (0 = not browsing)
+    integer :: kill_length = 0  ! Length of text in kill buffer
     logical :: dirty = .false. ! Needs redraw
     logical :: in_history = .false. ! Currently browsing history
   end type input_state_t
@@ -80,9 +87,11 @@ contains
     ! Initialize input state
     input_state%buffer = ''
     input_state%original_buffer = ''
+    input_state%kill_buffer = ''
     input_state%length = 0
     input_state%cursor_pos = 0
     input_state%history_pos = 0
+    input_state%kill_length = 0
     input_state%dirty = .false.
     input_state%in_history = .false.
     
@@ -128,6 +137,42 @@ contains
         case(KEY_ESC)
           ! Escape sequence - try to read more
           call handle_escape_sequence(input_state, done)
+          
+        case(KEY_CTRL_A)
+          ! Home - move to beginning of line
+          call handle_home(input_state)
+          
+        case(KEY_CTRL_E)
+          ! End - move to end of line
+          call handle_end(input_state)
+          
+        case(KEY_CTRL_F)
+          ! Forward character (same as right arrow)
+          call handle_cursor_right(input_state)
+          
+        case(KEY_CTRL_B)
+          ! Backward character (same as left arrow)
+          call handle_cursor_left(input_state)
+          
+        case(KEY_CTRL_K)
+          ! Kill to end of line
+          call handle_kill_to_end(input_state)
+          
+        case(KEY_CTRL_U)
+          ! Kill entire line
+          call handle_kill_line(input_state)
+          
+        case(KEY_CTRL_W)
+          ! Kill previous word
+          call handle_kill_word(input_state)
+          
+        case(KEY_CTRL_Y)
+          ! Yank (paste) killed text
+          call handle_yank(input_state)
+          
+        case(KEY_CTRL_L)
+          ! Clear screen and redraw
+          call handle_clear_screen(input_state)
           
         case(32:126)
           ! Regular printable characters
@@ -1015,6 +1060,152 @@ contains
     end do
     
     flush(output_unit)
+  end subroutine
+
+  ! Advanced line editing functions for Phase 5
+  subroutine handle_home(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    ! Move cursor to beginning of line
+    if (input_state%cursor_pos > 0) then
+      do while (input_state%cursor_pos > 0)
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+        input_state%cursor_pos = input_state%cursor_pos - 1
+      end do
+      flush(output_unit)
+    end if
+  end subroutine
+  
+  subroutine handle_end(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    ! Move cursor to end of line
+    do while (input_state%cursor_pos < input_state%length)
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
+      input_state%cursor_pos = input_state%cursor_pos + 1
+    end do
+    flush(output_unit)
+  end subroutine
+  
+  subroutine handle_kill_to_end(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    ! Save text from cursor to end of line in kill buffer
+    if (input_state%cursor_pos < input_state%length) then
+      input_state%kill_buffer = input_state%buffer(input_state%cursor_pos+1:input_state%length)
+      input_state%kill_length = input_state%length - input_state%cursor_pos
+      
+      ! Clear from cursor to end of line
+      input_state%length = input_state%cursor_pos
+      input_state%dirty = .true.
+    else
+      ! Nothing to kill
+      input_state%kill_length = 0
+    end if
+  end subroutine
+  
+  subroutine handle_kill_line(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    ! Save entire line in kill buffer
+    if (input_state%length > 0) then
+      input_state%kill_buffer = input_state%buffer(:input_state%length)
+      input_state%kill_length = input_state%length
+      
+      ! Clear the line
+      input_state%buffer = ''
+      input_state%length = 0
+      input_state%cursor_pos = 0
+      input_state%dirty = .true.
+    else
+      input_state%kill_length = 0
+    end if
+  end subroutine
+  
+  subroutine handle_kill_word(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: word_start, i
+    
+    if (input_state%cursor_pos == 0) then
+      input_state%kill_length = 0
+      return
+    end if
+    
+    ! Find start of current word (skip trailing spaces first)
+    word_start = input_state%cursor_pos
+    
+    ! Skip any trailing whitespace
+    do while (word_start > 0 .and. input_state%buffer(word_start:word_start) == ' ')
+      word_start = word_start - 1
+    end do
+    
+    ! Find beginning of word (non-space characters)
+    do while (word_start > 0 .and. input_state%buffer(word_start:word_start) /= ' ')
+      word_start = word_start - 1
+    end do
+    
+    ! word_start is now at space before word, or 0 if at beginning
+    if (word_start < input_state%cursor_pos) then
+      ! Save killed text
+      input_state%kill_buffer = input_state%buffer(word_start+1:input_state%cursor_pos)
+      input_state%kill_length = input_state%cursor_pos - word_start
+      
+      ! Shift remaining text left
+      do i = word_start + 1, input_state%length - input_state%cursor_pos + word_start
+        if (input_state%cursor_pos + i - word_start <= input_state%length) then
+          input_state%buffer(i:i) = input_state%buffer(input_state%cursor_pos + i - word_start: &
+                                                        input_state%cursor_pos + i - word_start)
+        else
+          input_state%buffer(i:i) = ' '
+        end if
+      end do
+      
+      ! Update length and cursor position
+      input_state%length = input_state%length - (input_state%cursor_pos - word_start)
+      input_state%cursor_pos = word_start
+      input_state%dirty = .true.
+    else
+      input_state%kill_length = 0
+    end if
+  end subroutine
+  
+  subroutine handle_yank(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i, insert_len
+    
+    if (input_state%kill_length == 0) return
+    
+    insert_len = min(input_state%kill_length, MAX_LINE_LEN - input_state%length)
+    if (insert_len == 0) return
+    
+    ! Shift existing text right to make room
+    do i = input_state%length, input_state%cursor_pos + 1, -1
+      if (i + insert_len <= MAX_LINE_LEN) then
+        input_state%buffer(i + insert_len:i + insert_len) = input_state%buffer(i:i)
+      end if
+    end do
+    
+    ! Insert killed text at cursor position
+    do i = 1, insert_len
+      input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = &
+        input_state%kill_buffer(i:i)
+    end do
+    
+    ! Update length and cursor position
+    input_state%length = input_state%length + insert_len
+    input_state%cursor_pos = input_state%cursor_pos + insert_len
+    input_state%dirty = .true.
+  end subroutine
+  
+  subroutine handle_clear_screen(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    ! Clear screen with ANSI escape sequence
+    write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
+    flush(output_unit)
+    
+    ! Force redraw of current line
+    input_state%dirty = .true.
   end subroutine
 
 end module readline

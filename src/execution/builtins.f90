@@ -629,7 +629,19 @@ contains
     write(output_unit, '(a)') '  help          - Show this help message'
     write(output_unit, '(a)') '  exit [code]   - Exit shell'
     write(output_unit, '(a)') ''
-    write(output_unit, '(a)') 'Features: Tab completion, command history, aliases, variables, job control'
+    write(output_unit, '(a)') 'Interactive Editing (available in interactive mode):'
+    write(output_unit, '(a)') '  ↑/↓           - Navigate command history'
+    write(output_unit, '(a)') '  ←/→, Ctrl+B/F - Move cursor left/right'
+    write(output_unit, '(a)') '  Ctrl+A        - Move to beginning of line (Home)'
+    write(output_unit, '(a)') '  Ctrl+E        - Move to end of line (End)'
+    write(output_unit, '(a)') '  Tab           - Smart command/file completion'
+    write(output_unit, '(a)') '  Ctrl+K        - Kill text to end of line'
+    write(output_unit, '(a)') '  Ctrl+U        - Kill entire line'  
+    write(output_unit, '(a)') '  Ctrl+W        - Kill previous word'
+    write(output_unit, '(a)') '  Ctrl+Y        - Yank (paste) killed text'
+    write(output_unit, '(a)') '  Ctrl+L        - Clear screen'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Features: Advanced readline, tab completion, history, aliases, job control'
     
     shell%last_exit_status = 0
   end subroutine
