@@ -39,6 +39,7 @@ contains
                 trim(cmd_name) == 'help' .or. &
                 trim(cmd_name) == 'perf' .or. &
                 trim(cmd_name) == 'memory' .or. &
+                trim(cmd_name) == 'rawtest' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -85,6 +86,8 @@ contains
       call builtin_perf(cmd, shell)
     case('memory')
       call builtin_memory(cmd, shell)
+    case('rawtest')
+      call builtin_rawtest(cmd, shell)
     case('test', '[', '[[')
       call execute_test_command(cmd, shell)
     case default
@@ -622,6 +625,7 @@ contains
     write(output_unit, '(a)') 'Other:'
     write(output_unit, '(a)') '  source file   - Execute script (not yet implemented)'
     write(output_unit, '(a)') '  trap          - Signal handling (basic support)'
+    write(output_unit, '(a)') '  rawtest       - Test raw terminal input (interactive only)'
     write(output_unit, '(a)') '  help          - Show this help message'
     write(output_unit, '(a)') '  exit [code]   - Exit shell'
     write(output_unit, '(a)') ''
@@ -703,6 +707,85 @@ contains
       end if
     end if
     
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_rawtest(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    type(termios_t) :: original_termios
+    character :: ch
+    logical :: success
+    integer :: char_code
+    
+    write(output_unit, '(a)') 'Raw mode test - press keys to see codes, q to quit:'
+    write(output_unit, '(a)') 'Entering raw mode...'
+    
+    ! Enable raw mode
+    success = enable_raw_mode(original_termios)
+    if (.not. success) then
+      write(error_unit, '(a)') 'rawtest: Failed to enable raw mode'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Read characters until 'q' is pressed
+    do
+      success = read_single_char(ch)
+      if (.not. success) exit
+      
+      char_code = iachar(ch)
+      
+      ! Exit on 'q'
+      if (ch == 'q' .or. ch == 'Q') exit
+      
+      ! Handle special characters
+      if (char_code == 27) then
+        ! Escape sequence - try to read more
+        write(output_unit, '(a)', advance='no') 'ESC '
+        success = read_single_char(ch)
+        if (success) then
+          write(output_unit, '(a,i0)', advance='no') '[', iachar(ch)
+          if (ch == '[') then
+            success = read_single_char(ch)
+            if (success) then
+              write(output_unit, '(a,i0,a)', advance='no') '[', iachar(ch), '] = '
+              select case(ch)
+              case('A')
+                write(output_unit, '(a)') 'UP ARROW'
+              case('B')
+                write(output_unit, '(a)') 'DOWN ARROW'
+              case('C')
+                write(output_unit, '(a)') 'RIGHT ARROW'
+              case('D')
+                write(output_unit, '(a)') 'LEFT ARROW'
+              case default
+                write(output_unit, '(a)') 'UNKNOWN ESCAPE'
+              end select
+            end if
+          else
+            write(output_unit, '(a)') '] = ALT+key'
+          end if
+        end if
+      else if (char_code < 32) then
+        ! Control character
+        write(output_unit, '(a,i0,a)') 'CTRL+', char_code, ' (^', char(char_code + 64), ')'
+      else if (char_code == 127) then
+        write(output_unit, '(a)') 'BACKSPACE/DELETE (127)'
+      else
+        ! Regular character
+        write(output_unit, '(a,a,a,i0,a)') 'Regular: ''', ch, ''' (', char_code, ')'
+      end if
+    end do
+    
+    ! Restore terminal
+    success = restore_terminal(original_termios)
+    if (.not. success) then
+      write(error_unit, '(a)') 'rawtest: Warning - failed to restore terminal'
+    end if
+    
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Raw mode test completed.'
     shell%last_exit_status = 0
   end subroutine
 
