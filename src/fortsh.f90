@@ -48,9 +48,9 @@ program fortran_shell
       call notify_job_status(shell)
     end if
 
-    ! Read input with readline (includes prompt only if interactive)
+    ! Read input with enhanced readline (includes prompt only if interactive)
     if (shell%is_interactive) then
-      call readline_simple(trim(shell%username) // '@' // trim(shell%hostname) // ' :: ', input_line, iostat)
+      call readline_enhanced(trim(shell%username) // '@' // trim(shell%hostname) // ' :: ', input_line, iostat)
     else
       read(input_unit, '(a)', iostat=iostat) input_line
     end if
