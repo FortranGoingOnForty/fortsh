@@ -19,6 +19,44 @@ module system_interface
   integer(c_int), parameter :: WNOHANG = 1
   integer(c_int), parameter :: WUNTRACED = 2
 
+  ! Terminal control structures and constants
+  integer(c_int), parameter :: NCCS = 32
+  
+  ! termios structure - simplified version matching C struct termios
+  type, bind(c) :: termios_t
+    integer(c_int) :: c_iflag    ! input flags
+    integer(c_int) :: c_oflag    ! output flags  
+    integer(c_int) :: c_cflag    ! control flags
+    integer(c_int) :: c_lflag    ! local flags
+    character(c_char) :: c_cc(NCCS) ! control characters
+  end type termios_t
+  
+  ! Terminal flags
+  integer(c_int), parameter :: ICANON = int(z'00000002', c_int)  ! canonical input
+  integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
+  integer(c_int), parameter :: ECHOE  = int(z'00000010', c_int)  ! echo erase character
+  integer(c_int), parameter :: ECHOK  = int(z'00000020', c_int)  ! echo kill character
+  integer(c_int), parameter :: ECHONL = int(z'00000040', c_int)  ! echo NL even if ECHO is off
+  integer(c_int), parameter :: IEXTEN = int(z'00008000', c_int)  ! extended input processing
+  integer(c_int), parameter :: ISIG   = int(z'00000001', c_int)  ! enable signals
+  
+  ! Control character indices
+  integer(c_int), parameter :: VMIN  = 6   ! minimum chars for noncanonical read
+  integer(c_int), parameter :: VTIME = 5   ! timeout for noncanonical read
+  
+  ! tcsetattr options
+  integer(c_int), parameter :: TCSANOW   = 0  ! change immediately
+  integer(c_int), parameter :: TCSADRAIN = 1  ! change after output drained
+  integer(c_int), parameter :: TCSAFLUSH = 2  ! change after output drained and input flushed
+
+  ! ANSI escape sequences for cursor control
+  character(len=*), parameter :: ESC_CLEAR_LINE = char(27) // '[K'
+  character(len=*), parameter :: ESC_MOVE_BOL = char(13)  ! Carriage return  
+  character(len=*), parameter :: ESC_CURSOR_LEFT = char(27) // '[D'
+  character(len=*), parameter :: ESC_CURSOR_RIGHT = char(27) // '[C'
+  character(len=*), parameter :: ESC_SAVE_CURSOR = char(27) // '[s'
+  character(len=*), parameter :: ESC_RESTORE_CURSOR = char(27) // '[u'
+
   ! C function interfaces
   interface
     function c_fork() bind(C, name="fork")
@@ -179,6 +217,34 @@ module system_interface
     subroutine c_exit(status) bind(C, name="exit")
       import :: c_int
       integer(c_int), value :: status
+    end subroutine
+    
+    ! Terminal control functions
+    function c_tcgetattr(fd, termios_p) bind(C, name="tcgetattr")
+      import :: c_int, termios_t
+      integer(c_int), value :: fd
+      type(termios_t), intent(out) :: termios_p
+      integer(c_int) :: c_tcgetattr
+    end function
+    
+    function c_tcsetattr(fd, optional_actions, termios_p) bind(C, name="tcsetattr")
+      import :: c_int, termios_t
+      integer(c_int), value :: fd, optional_actions
+      type(termios_t), intent(in) :: termios_p
+      integer(c_int) :: c_tcsetattr
+    end function
+    
+    function c_read(fd, buf, count) bind(C, name="read")
+      import :: c_int, c_ptr, c_size_t
+      integer(c_int), value :: fd
+      type(c_ptr), value :: buf
+      integer(c_size_t), value :: count
+      integer(c_size_t) :: c_read
+    end function
+    
+    subroutine c_cfmakeraw(termios_p) bind(C, name="cfmakeraw")
+      import :: termios_t
+      type(termios_t), intent(inout) :: termios_p
     end subroutine
   end interface
 
@@ -357,6 +423,59 @@ contains
     ! Return output
     allocate(character(len=pos-1) :: output)
     output = temp_output(:pos-1)
+  end function
+
+  ! Terminal control functions
+  function enable_raw_mode(original_termios) result(success)
+    type(termios_t), intent(out) :: original_termios
+    logical :: success
+    type(termios_t) :: raw_termios
+    integer :: ret
+    
+    success = .false.
+    
+    ! Get current terminal settings
+    ret = c_tcgetattr(STDIN_FD, original_termios)
+    if (ret /= 0) return
+    
+    ! Copy to modify for raw mode
+    raw_termios = original_termios
+    
+    ! Disable canonical mode and echo
+    raw_termios%c_lflag = iand(raw_termios%c_lflag, not(ior(ior(ICANON, ECHO), ior(ECHOE, ECHOK))))
+    raw_termios%c_lflag = iand(raw_termios%c_lflag, not(ior(ECHONL, IEXTEN)))
+    
+    ! Set minimum characters and timeout for read
+    raw_termios%c_cc(VMIN + 1) = char(1)  ! Read at least 1 character
+    raw_termios%c_cc(VTIME + 1) = char(0) ! No timeout
+    
+    ! Apply raw mode settings
+    ret = c_tcsetattr(STDIN_FD, TCSANOW, raw_termios)
+    success = (ret == 0)
+  end function
+  
+  function restore_terminal(original_termios) result(success)
+    type(termios_t), intent(in) :: original_termios
+    logical :: success
+    integer :: ret
+    
+    ret = c_tcsetattr(STDIN_FD, TCSANOW, original_termios)
+    success = (ret == 0)
+  end function
+  
+  function read_single_char(ch) result(success)
+    character, intent(out) :: ch
+    logical :: success
+    character(c_char), target :: c_ch
+    integer(c_size_t) :: bytes_read
+    
+    bytes_read = c_read(STDIN_FD, c_loc(c_ch), 1_c_size_t)
+    success = (bytes_read == 1)
+    if (success) then
+      ch = c_ch
+    else
+      ch = char(0)
+    end if
   end function
 
 end module system_interface
