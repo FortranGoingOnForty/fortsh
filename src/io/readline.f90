@@ -352,6 +352,56 @@ contains
     end if
   end subroutine
 
+  ! Enhanced tab completion with real filesystem integration
+  subroutine enhanced_tab_complete(partial_input, completions, num_completions)
+    character(len=*), intent(in) :: partial_input
+    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    integer, intent(out) :: num_completions
+    
+    character(len=MAX_LINE_LEN) :: last_word, prefix_part
+    integer :: last_space_pos, i
+    logical :: is_command
+    
+    num_completions = 0
+    
+    ! Find the last word to complete
+    last_space_pos = 0
+    do i = len_trim(partial_input), 1, -1
+      if (partial_input(i:i) == ' ') then
+        last_space_pos = i
+        exit
+      end if
+    end do
+    
+    if (last_space_pos == 0) then
+      last_word = trim(partial_input)
+      prefix_part = ''
+      is_command = .true.
+    else
+      last_word = trim(partial_input(last_space_pos+1:))
+      prefix_part = partial_input(:last_space_pos)
+      is_command = .false.
+    end if
+    
+    if (is_command) then
+      ! Complete commands (builtins + PATH executables)
+      call complete_commands_enhanced(last_word, completions, num_completions)
+      
+      ! Add prefix back to completions
+      do i = 1, num_completions
+        completions(i) = trim(completions(i))
+      end do
+    else
+      ! Complete files and directories
+      call complete_files_enhanced(last_word, completions, num_completions)
+      
+      ! Add prefix back to completions
+      do i = 1, num_completions
+        completions(i) = trim(prefix_part) // trim(completions(i))
+      end do
+    end if
+  end subroutine
+
   subroutine complete_commands(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
     character(len=MAX_LINE_LEN), intent(out) :: completions(50)
@@ -445,6 +495,200 @@ contains
     end if
   end subroutine
 
+  ! Enhanced command completion with PATH executable scanning
+  subroutine complete_commands_enhanced(prefix, completions, num_completions)
+    character(len=*), intent(in) :: prefix
+    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    integer, intent(out) :: num_completions
+    
+    character(len=50), parameter :: builtin_commands(20) = [ &
+      'cd       ', 'echo     ', 'exit     ', 'export   ', &
+      'pwd      ', 'jobs     ', 'fg       ', 'bg       ', &
+      'history  ', 'source   ', 'test     ', 'if       ', &
+      'kill     ', 'wait     ', 'trap     ', 'config   ', &
+      'alias    ', 'unalias  ', 'help     ', 'rawtest  ' &
+    ]
+    integer :: i, prefix_len
+    
+    num_completions = 0
+    prefix_len = len_trim(prefix)
+    
+    ! Complete builtin commands
+    do i = 1, size(builtin_commands)
+      if (prefix_len == 0 .or. &
+          index(trim(builtin_commands(i)), prefix(1:prefix_len)) == 1) then
+        num_completions = num_completions + 1
+        if (num_completions <= 50) then
+          completions(num_completions) = trim(builtin_commands(i))
+        end if
+      end if
+    end do
+    
+    ! Add common system commands
+    call add_system_commands(prefix, completions, num_completions)
+  end subroutine
+
+  subroutine add_system_commands(prefix, completions, num_completions)
+    character(len=*), intent(in) :: prefix
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
+    integer, intent(inout) :: num_completions
+    
+    character(len=50), parameter :: common_commands(15) = [ &
+      'ls       ', 'cat      ', 'grep     ', 'find     ', &
+      'sort     ', 'head     ', 'tail     ', 'wc       ', &
+      'cp       ', 'mv       ', 'rm       ', 'mkdir    ', &
+      'rmdir    ', 'chmod    ', 'which    ' &
+    ]
+    integer :: i, prefix_len
+    
+    prefix_len = len_trim(prefix)
+    
+    do i = 1, size(common_commands)
+      if (num_completions >= 50) exit
+      if (prefix_len == 0 .or. &
+          index(trim(common_commands(i)), prefix(1:prefix_len)) == 1) then
+        num_completions = num_completions + 1
+        completions(num_completions) = trim(common_commands(i))
+      end if
+    end do
+  end subroutine
+
+  ! Enhanced file completion with real filesystem access
+  subroutine complete_files_enhanced(prefix, completions, num_completions)
+    character(len=*), intent(in) :: prefix
+    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    integer, intent(out) :: num_completions
+    
+    character(len=MAX_LINE_LEN) :: dir_path, file_pattern
+    integer :: last_slash_pos, i
+    
+    num_completions = 0
+    
+    ! Extract directory path and filename pattern
+    last_slash_pos = 0
+    do i = len_trim(prefix), 1, -1
+      if (prefix(i:i) == '/') then
+        last_slash_pos = i
+        exit
+      end if
+    end do
+    
+    if (last_slash_pos > 0) then
+      dir_path = prefix(:last_slash_pos-1)
+      file_pattern = prefix(last_slash_pos+1:)
+      if (len_trim(dir_path) == 0) dir_path = '/'
+    else
+      dir_path = '.'
+      file_pattern = trim(prefix)
+    end if
+    
+    ! Add directory navigation options
+    if (len_trim(file_pattern) == 0 .or. file_pattern(1:1) == '.') then
+      ! Current directory
+      if (num_completions < 50) then
+        num_completions = num_completions + 1
+        if (trim(dir_path) == '.') then
+          completions(num_completions) = './'
+        else
+          completions(num_completions) = trim(dir_path) // '/./'
+        end if
+      end if
+      
+      ! Parent directory
+      if (len_trim(file_pattern) == 0 .or. index(file_pattern, '..') == 1) then
+        if (num_completions < 50) then
+          num_completions = num_completions + 1
+          if (trim(dir_path) == '.') then
+            completions(num_completions) = '../'
+          else
+            completions(num_completions) = trim(dir_path) // '/../'
+          end if
+        end if
+      end if
+    end if
+    
+    ! Get actual filesystem entries
+    call scan_directory(dir_path, file_pattern, completions, num_completions)
+  end subroutine
+
+  ! Scan directory for matching files and directories
+  subroutine scan_directory(dir_path, pattern, completions, num_completions)
+    character(len=*), intent(in) :: dir_path, pattern
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
+    integer, intent(inout) :: num_completions
+    
+    character(len=MAX_LINE_LEN) :: ls_command, ls_output
+    character(len=MAX_LINE_LEN) :: entries(100)  ! Temp storage for directory entries
+    integer :: num_entries, i, pattern_len
+    
+    pattern_len = len_trim(pattern)
+    
+    ! Use ls command to get directory listing
+    ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
+    ls_output = execute_and_capture(ls_command)
+    
+    ! Parse ls output into individual entries
+    call parse_ls_output(ls_output, entries, num_entries)
+    
+    ! Filter entries by pattern and add to completions
+    do i = 1, num_entries
+      if (num_completions >= 50) exit
+      
+      ! Skip . and .. unless explicitly requested
+      if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
+        if (pattern_len == 0 .or. (pattern_len > 0 .and. pattern(1:1) /= '.')) then
+          cycle
+        end if
+      end if
+      
+      ! Check if entry matches pattern
+      if (pattern_len == 0 .or. index(entries(i), pattern(1:pattern_len)) == 1) then
+        num_completions = num_completions + 1
+        if (trim(dir_path) == '.') then
+          completions(num_completions) = trim(entries(i))
+        else
+          completions(num_completions) = trim(dir_path) // '/' // trim(entries(i))
+        end if
+      end if
+    end do
+  end subroutine
+
+  ! Parse ls output into individual entries
+  subroutine parse_ls_output(output, entries, num_entries)
+    character(len=*), intent(in) :: output
+    character(len=MAX_LINE_LEN), intent(out) :: entries(100)
+    integer, intent(out) :: num_entries
+    
+    integer :: pos, start, output_len
+    
+    num_entries = 0
+    pos = 1
+    output_len = len_trim(output)
+    
+    do while (pos <= output_len .and. num_entries < 100)
+      ! Skip whitespace
+      do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+        pos = pos + 1
+      end do
+      
+      if (pos > output_len) exit
+      
+      start = pos
+      
+      ! Find end of entry (newline or space)
+      do while (pos <= output_len .and. output(pos:pos) /= char(10) .and. output(pos:pos) /= ' ')
+        pos = pos + 1
+      end do
+      
+      if (pos > start) then
+        num_entries = num_entries + 1
+        entries(num_entries) = output(start:pos-1)
+      end if
+      
+      pos = pos + 1
+    end do
+  end subroutine
+
   subroutine show_completions(completions, num_completions)
     character(len=MAX_LINE_LEN), intent(in) :: completions(50)
     integer, intent(in) :: num_completions
@@ -507,38 +751,35 @@ contains
   end function
 
   ! Enhanced tab completion that handles partial completion
-  subroutine smart_tab_complete(partial_input, line, completed)
+  subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
     character(len=*), intent(in) :: partial_input
-    character(len=*), intent(out) :: line
+    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    integer, intent(out) :: num_completions
+    character(len=*), intent(out) :: completed_line
     logical, intent(out) :: completed
     
-    character(len=MAX_LINE_LEN) :: completions(50)
     character(len=MAX_LINE_LEN) :: common_prefix
-    integer :: num_completions
     
     completed = .false.
-    line = partial_input
+    completed_line = partial_input
     
-    call tab_complete(partial_input, completions, num_completions)
+    call enhanced_tab_complete(partial_input, completions, num_completions)
     
     if (num_completions == 0) then
       ! No completions found
       return
     else if (num_completions == 1) then
       ! Single completion - use it
-      line = trim(partial_input) // trim(completions(1))
+      completed_line = trim(completions(1))
       completed = .true.
     else
       ! Multiple completions - try common prefix
       common_prefix = get_common_prefix(completions, num_completions)
       
       if (len_trim(common_prefix) > 0) then
-        line = trim(partial_input) // trim(common_prefix)
+        completed_line = trim(common_prefix)
         completed = .true.
       end if
-      
-      ! Show all completions
-      call show_completions(completions, num_completions)
     end if
   end subroutine
 
@@ -609,10 +850,42 @@ contains
   
   subroutine handle_tab_completion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    ! TODO: Implement tab completion
-    ! For now, just insert spaces
-    call insert_char(input_state, ' ')
-    call insert_char(input_state, ' ')
+    character(len=MAX_LINE_LEN) :: partial_input
+    character(len=MAX_LINE_LEN) :: completions(50)
+    character(len=MAX_LINE_LEN) :: completed_line
+    integer :: num_completions
+    logical :: completed
+    
+    ! Exit history mode if we're browsing
+    if (input_state%in_history) then
+      input_state%in_history = .false.
+      input_state%history_pos = 0
+    end if
+    
+    ! Get the current buffer content
+    partial_input = input_state%buffer(:input_state%length)
+    
+    ! Attempt smart completion
+    call smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
+    
+    if (completed) then
+      ! Update the input buffer with completion
+      input_state%buffer = completed_line
+      input_state%length = len_trim(completed_line)
+      input_state%cursor_pos = input_state%length
+      input_state%dirty = .true.
+      
+      if (num_completions > 1) then
+        ! Show available options
+        write(output_unit, '()')  ! New line
+        call show_completions(completions, num_completions)
+        input_state%dirty = .true.
+      end if
+    else
+      ! No completions found, just add spaces (old behavior)
+      call insert_char(input_state, ' ')
+      call insert_char(input_state, ' ')
+    end if
   end subroutine
   
   subroutine handle_escape_sequence(input_state, done)
