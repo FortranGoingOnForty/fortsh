@@ -1,0 +1,524 @@
+! ==============================================================================
+! Module: advanced_test
+! Purpose: Advanced test operations [[ ]] with string/file/numeric tests
+! ==============================================================================
+module advanced_test
+  use shell_types
+  use system_interface
+  use variables
+  use iso_fortran_env, only: output_unit, error_unit
+  implicit none
+
+  ! Test result constants
+  integer, parameter :: TEST_TRUE = 0
+  integer, parameter :: TEST_FALSE = 1
+  integer, parameter :: TEST_ERROR = 2
+
+contains
+
+  ! Main [[ ]] test evaluation
+  function evaluate_test_expression(shell, tokens, num_tokens) result(test_result)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: tokens(:)
+    integer, intent(in) :: num_tokens
+    integer :: test_result
+    
+    character(len=256) :: left_operand, operator, right_operand
+    logical :: result_bool
+    
+    test_result = TEST_FALSE
+    
+    if (num_tokens < 3) then
+      test_result = TEST_ERROR
+      return
+    end if
+    
+    ! Skip [[ and ]] tokens
+    if (num_tokens == 3) then
+      ! Single condition: [[ condition ]]
+      result_bool = evaluate_unary_test(shell, tokens(2))
+    else if (num_tokens == 5) then
+      ! Binary condition: [[ left op right ]]
+      left_operand = tokens(2)
+      operator = tokens(3)
+      right_operand = tokens(4)
+      result_bool = evaluate_binary_test(shell, left_operand, operator, right_operand)
+    else
+      ! Complex expression with logical operators
+      result_bool = evaluate_complex_test(shell, tokens, num_tokens)
+    end if
+    
+    if (result_bool) then
+      test_result = TEST_TRUE
+    else
+      test_result = TEST_FALSE
+    end if
+  end function
+
+  ! Evaluate unary test conditions
+  function evaluate_unary_test(shell, operand) result(result_bool)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: operand
+    logical :: result_bool
+    
+    character(len=256) :: expanded_operand
+    
+    result_bool = .false.
+    
+    ! Expand variables in operand
+    call expand_test_operand(shell, operand, expanded_operand)
+    
+    ! Non-empty string test
+    result_bool = (len_trim(expanded_operand) > 0)
+  end function
+
+  ! Evaluate binary test conditions
+  function evaluate_binary_test(shell, left, operator, right) result(result_bool)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: left, operator, right
+    logical :: result_bool
+    
+    character(len=256) :: expanded_left, expanded_right
+    
+    result_bool = .false.
+    
+    ! Expand variables in operands
+    call expand_test_operand(shell, left, expanded_left)
+    call expand_test_operand(shell, right, expanded_right)
+    
+    select case (trim(operator))
+    ! String comparisons
+    case ('=', '==')
+      result_bool = (trim(expanded_left) == trim(expanded_right))
+    case ('!=')
+      result_bool = (trim(expanded_left) /= trim(expanded_right))
+    case ('<')
+      result_bool = (trim(expanded_left) < trim(expanded_right))
+    case ('>')
+      result_bool = (trim(expanded_left) > trim(expanded_right))
+    case ('=~')
+      result_bool = match_regex(expanded_left, expanded_right)
+    case ('!~')
+      result_bool = .not. match_regex(expanded_left, expanded_right)
+    
+    ! Numeric comparisons
+    case ('-eq')
+      result_bool = numeric_equal(expanded_left, expanded_right)
+    case ('-ne')
+      result_bool = .not. numeric_equal(expanded_left, expanded_right)
+    case ('-lt')
+      result_bool = numeric_less_than(expanded_left, expanded_right)
+    case ('-le')
+      result_bool = numeric_less_equal(expanded_left, expanded_right)
+    case ('-gt')
+      result_bool = numeric_greater_than(expanded_left, expanded_right)
+    case ('-ge')
+      result_bool = numeric_greater_equal(expanded_left, expanded_right)
+    
+    ! File tests
+    case ('-ef')
+      result_bool = files_same_device_inode(expanded_left, expanded_right)
+    case ('-nt')
+      result_bool = file_newer_than(expanded_left, expanded_right)
+    case ('-ot')
+      result_bool = file_older_than(expanded_left, expanded_right)
+    
+    case default
+      result_bool = .false.
+    end select
+  end function
+
+  ! Evaluate complex expressions with && || ! operators
+  function evaluate_complex_test(shell, tokens, num_tokens) result(result_bool)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: tokens(:)
+    integer, intent(in) :: num_tokens
+    logical :: result_bool
+    
+    integer :: i
+    logical :: current_result, next_result
+    character(len=16) :: logical_op
+    
+    result_bool = .false.
+    current_result = .false.
+    logical_op = ''
+    
+    ! Simple left-to-right evaluation
+    i = 2  ! Skip initial [[
+    
+    do while (i < num_tokens)
+      if (tokens(i) == '&&' .or. tokens(i) == '||' .or. tokens(i) == '!') then
+        logical_op = tokens(i)
+        i = i + 1
+      else if (tokens(i) == ']]') then
+        exit
+      else
+        ! Evaluate next test
+        if (i + 2 < num_tokens .and. is_test_operator(tokens(i+1))) then
+          ! Binary test
+          next_result = evaluate_binary_test(shell, tokens(i), tokens(i+1), tokens(i+2))
+          i = i + 3
+        else
+          ! Unary test
+          next_result = evaluate_unary_test(shell, tokens(i))
+          i = i + 1
+        end if
+        
+        ! Apply logical operator
+        select case (trim(logical_op))
+        case ('&&')
+          current_result = current_result .and. next_result
+        case ('||')
+          current_result = current_result .or. next_result
+        case ('!')
+          current_result = .not. next_result
+        case ('')
+          current_result = next_result
+        end select
+        
+        logical_op = ''
+      end if
+    end do
+    
+    result_bool = current_result
+  end function
+
+  ! File test operations
+  function file_test(filename, test_type) result(test_result)
+    character(len=*), intent(in) :: filename, test_type
+    logical :: test_result
+    
+    logical :: exists, is_file, is_dir, is_executable, is_readable, is_writable
+    integer :: status
+    
+    test_result = .false.
+    
+    ! Check file existence and properties
+    inquire(file=trim(filename), exist=exists)
+    
+    if (.not. exists) then
+      test_result = .false.
+      return
+    end if
+    
+    ! Use stat-like functionality through system calls
+    call get_file_info(filename, exists, is_file, is_dir, is_executable, is_readable, is_writable)
+    
+    select case (trim(test_type))
+    case ('-e')  ! exists
+      test_result = exists
+    case ('-f')  ! regular file
+      test_result = is_file
+    case ('-d')  ! directory
+      test_result = is_dir
+    case ('-r')  ! readable
+      test_result = is_readable
+    case ('-w')  ! writable
+      test_result = is_writable
+    case ('-x')  ! executable
+      test_result = is_executable
+    case ('-s')  ! non-empty
+      test_result = (file_size(filename) > 0)
+    case ('-L', '-h')  ! symbolic link
+      test_result = is_symbolic_link(filename)
+    case ('-b')  ! block device
+      test_result = is_block_device(filename)
+    case ('-c')  ! character device
+      test_result = is_char_device(filename)
+    case ('-p')  ! named pipe
+      test_result = is_named_pipe(filename)
+    case ('-S')  ! socket
+      test_result = is_socket(filename)
+    case default
+      test_result = .false.
+    end select
+  end function
+
+  ! String pattern matching (simplified regex)
+  function match_regex(string, pattern) result(matches)
+    character(len=*), intent(in) :: string, pattern
+    logical :: matches
+    
+    ! Simple pattern matching - basic wildcard support
+    if (index(pattern, '*') > 0) then
+      matches = wildcard_match(string, pattern)
+    else
+      matches = (index(string, trim(pattern)) > 0)
+    end if
+  end function
+
+  recursive function wildcard_match(string, pattern) result(matches)
+    character(len=*), intent(in) :: string, pattern
+    logical :: matches
+    
+    integer :: s_pos, p_pos, s_len, p_len
+    
+    matches = .false.
+    s_len = len_trim(string)
+    p_len = len_trim(pattern)
+    s_pos = 1
+    p_pos = 1
+    
+    do while (s_pos <= s_len .and. p_pos <= p_len)
+      if (pattern(p_pos:p_pos) == '*') then
+        ! Skip consecutive *
+        do while (p_pos <= p_len .and. pattern(p_pos:p_pos) == '*')
+          p_pos = p_pos + 1
+        end do
+        
+        if (p_pos > p_len) then
+          matches = .true.
+          return
+        end if
+        
+        ! Try to match remaining pattern
+        do while (s_pos <= s_len)
+          if (wildcard_match(string(s_pos:), pattern(p_pos:))) then
+            matches = .true.
+            return
+          end if
+          s_pos = s_pos + 1
+        end do
+        
+        return
+      else if (pattern(p_pos:p_pos) == '?' .or. pattern(p_pos:p_pos) == string(s_pos:s_pos)) then
+        p_pos = p_pos + 1
+        s_pos = s_pos + 1
+      else
+        return
+      end if
+    end do
+    
+    ! Handle trailing *
+    do while (p_pos <= p_len .and. pattern(p_pos:p_pos) == '*')
+      p_pos = p_pos + 1
+    end do
+    
+    matches = (s_pos > s_len .and. p_pos > p_len)
+  end function
+
+  ! Numeric comparison functions
+  function numeric_equal(left, right) result(equal)
+    character(len=*), intent(in) :: left, right
+    logical :: equal
+    integer :: left_val, right_val, status1, status2
+    
+    read(left, *, iostat=status1) left_val
+    read(right, *, iostat=status2) right_val
+    
+    if (status1 == 0 .and. status2 == 0) then
+      equal = (left_val == right_val)
+    else
+      equal = .false.
+    end if
+  end function
+
+  function numeric_less_than(left, right) result(less)
+    character(len=*), intent(in) :: left, right
+    logical :: less
+    integer :: left_val, right_val, status1, status2
+    
+    read(left, *, iostat=status1) left_val
+    read(right, *, iostat=status2) right_val
+    
+    if (status1 == 0 .and. status2 == 0) then
+      less = (left_val < right_val)
+    else
+      less = .false.
+    end if
+  end function
+
+  function numeric_less_equal(left, right) result(less_eq)
+    character(len=*), intent(in) :: left, right
+    logical :: less_eq
+    integer :: left_val, right_val, status1, status2
+    
+    read(left, *, iostat=status1) left_val
+    read(right, *, iostat=status2) right_val
+    
+    if (status1 == 0 .and. status2 == 0) then
+      less_eq = (left_val <= right_val)
+    else
+      less_eq = .false.
+    end if
+  end function
+
+  function numeric_greater_than(left, right) result(greater)
+    character(len=*), intent(in) :: left, right
+    logical :: greater
+    integer :: left_val, right_val, status1, status2
+    
+    read(left, *, iostat=status1) left_val
+    read(right, *, iostat=status2) right_val
+    
+    if (status1 == 0 .and. status2 == 0) then
+      greater = (left_val > right_val)
+    else
+      greater = .false.
+    end if
+  end function
+
+  function numeric_greater_equal(left, right) result(greater_eq)
+    character(len=*), intent(in) :: left, right
+    logical :: greater_eq
+    integer :: left_val, right_val, status1, status2
+    
+    read(left, *, iostat=status1) left_val
+    read(right, *, iostat=status2) right_val
+    
+    if (status1 == 0 .and. status2 == 0) then
+      greater_eq = (left_val >= right_val)
+    else
+      greater_eq = .false.
+    end if
+  end function
+
+  ! File comparison functions (simplified implementations)
+  function files_same_device_inode(file1, file2) result(same)
+    character(len=*), intent(in) :: file1, file2
+    logical :: same
+    
+    ! Simplified: compare paths
+    same = (trim(file1) == trim(file2))
+  end function
+
+  function file_newer_than(file1, file2) result(newer)
+    character(len=*), intent(in) :: file1, file2
+    logical :: newer
+    
+    ! Placeholder implementation
+    newer = .false.
+  end function
+
+  function file_older_than(file1, file2) result(older)
+    character(len=*), intent(in) :: file1, file2
+    logical :: older
+    
+    ! Placeholder implementation
+    older = .false.
+  end function
+
+  function file_size(filename) result(size)
+    character(len=*), intent(in) :: filename
+    integer :: size
+    
+    integer :: unit, iostat
+    character :: dummy
+    
+    size = 0
+    
+    open(newunit=unit, file=trim(filename), status='old', iostat=iostat)
+    if (iostat == 0) then
+      do
+        read(unit, '(A1)', iostat=iostat) dummy
+        if (iostat /= 0) exit
+        size = size + 1
+      end do
+      close(unit)
+    end if
+  end function
+
+  ! File type checking (simplified implementations)
+  function is_symbolic_link(filename) result(is_link)
+    character(len=*), intent(in) :: filename
+    logical :: is_link
+    
+    is_link = .false.  ! Placeholder
+  end function
+
+  function is_block_device(filename) result(is_block)
+    character(len=*), intent(in) :: filename
+    logical :: is_block
+    
+    is_block = .false.  ! Placeholder
+  end function
+
+  function is_char_device(filename) result(is_char)
+    character(len=*), intent(in) :: filename
+    logical :: is_char
+    
+    is_char = .false.  ! Placeholder
+  end function
+
+  function is_named_pipe(filename) result(is_pipe)
+    character(len=*), intent(in) :: filename
+    logical :: is_pipe
+    
+    is_pipe = .false.  ! Placeholder
+  end function
+
+  function is_socket(filename) result(is_sock)
+    character(len=*), intent(in) :: filename
+    logical :: is_sock
+    
+    is_sock = .false.  ! Placeholder
+  end function
+
+  subroutine get_file_info(filename, exists, is_file, is_dir, is_executable, is_readable, is_writable)
+    character(len=*), intent(in) :: filename
+    logical, intent(out) :: exists, is_file, is_dir, is_executable, is_readable, is_writable
+    
+    character(len=1024) :: test_cmd
+    integer :: status
+    
+    ! Use system test command for file properties
+    inquire(file=trim(filename), exist=exists)
+    
+    if (exists) then
+      ! Test if it's a regular file
+      test_cmd = 'test -f ' // trim(filename)
+      call execute_command_line(test_cmd, exitstat=status)
+      is_file = (status == 0)
+      
+      ! Test if it's a directory
+      test_cmd = 'test -d ' // trim(filename)
+      call execute_command_line(test_cmd, exitstat=status)
+      is_dir = (status == 0)
+      
+      ! Test permissions
+      test_cmd = 'test -r ' // trim(filename)
+      call execute_command_line(test_cmd, exitstat=status)
+      is_readable = (status == 0)
+      
+      test_cmd = 'test -w ' // trim(filename)
+      call execute_command_line(test_cmd, exitstat=status)
+      is_writable = (status == 0)
+      
+      test_cmd = 'test -x ' // trim(filename)
+      call execute_command_line(test_cmd, exitstat=status)
+      is_executable = (status == 0)
+    else
+      is_file = .false.
+      is_dir = .false.
+      is_executable = .false.
+      is_readable = .false.
+      is_writable = .false.
+    end if
+  end subroutine
+
+  ! Helper functions
+  function is_test_operator(op) result(is_op)
+    character(len=*), intent(in) :: op
+    logical :: is_op
+    
+    is_op = (op == '=' .or. op == '==' .or. op == '!=' .or. &
+             op == '<' .or. op == '>' .or. op == '=~' .or. op == '!~' .or. &
+             op == '-eq' .or. op == '-ne' .or. op == '-lt' .or. op == '-le' .or. &
+             op == '-gt' .or. op == '-ge' .or. op == '-ef' .or. op == '-nt' .or. &
+             op == '-ot')
+  end function
+
+  subroutine expand_test_operand(shell, operand, expanded)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: operand
+    character(len=*), intent(out) :: expanded
+    
+    ! Simple variable expansion for test operands
+    if (operand(1:1) == '$') then
+      expanded = get_shell_variable(shell, operand(2:))
+    else
+      expanded = operand
+    end if
+  end subroutine
+
+end module advanced_test

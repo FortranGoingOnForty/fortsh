@@ -36,6 +36,12 @@ module readline
   integer, parameter :: MAX_LINE_LEN = 1024
   
   ! Input state management
+  ! Editing mode constants
+  integer, parameter :: EDITING_MODE_EMACS = 1
+  integer, parameter :: EDITING_MODE_VI = 2
+  integer, parameter :: VI_MODE_INSERT = 1
+  integer, parameter :: VI_MODE_COMMAND = 2
+
   type :: input_state_t
     character(len=MAX_LINE_LEN) :: buffer = ''
     character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
@@ -46,6 +52,13 @@ module readline
     integer :: kill_length = 0  ! Length of text in kill buffer
     logical :: dirty = .false. ! Needs redraw
     logical :: in_history = .false. ! Currently browsing history
+    
+    ! Editing mode support
+    integer :: editing_mode = EDITING_MODE_EMACS
+    integer :: vi_mode = VI_MODE_INSERT
+    character(len=MAX_LINE_LEN) :: vi_command_buffer = ''
+    integer :: vi_command_count = 0
+    logical :: vi_repeat_pending = .false.
   end type input_state_t
 
   type :: history_t
@@ -361,6 +374,397 @@ contains
     command_history%count = 0
     command_history%current = 0
   end subroutine
+
+  ! History expansion functions
+  function expand_history(input_line) result(expanded_line)
+    character(len=*), intent(in) :: input_line
+    character(len=len(input_line)) :: expanded_line
+    
+    character(len=len(input_line)) :: work_line
+    integer :: pos, expansion_start, expansion_end
+    character(len=256) :: expansion, replacement
+    logical :: found_expansion
+    
+    work_line = input_line
+    expanded_line = ''
+    pos = 1
+    
+    do while (pos <= len_trim(work_line))
+      if (work_line(pos:pos) == '!' .and. pos < len_trim(work_line)) then
+        ! Found potential history expansion
+        expansion_start = pos
+        expansion_end = find_history_expansion_end(work_line, pos)
+        
+        if (expansion_end > expansion_start) then
+          expansion = work_line(expansion_start:expansion_end)
+          call process_history_expansion(expansion, replacement, found_expansion)
+          
+          if (found_expansion) then
+            expanded_line = trim(expanded_line) // trim(replacement)
+            pos = expansion_end + 1
+          else
+            expanded_line = trim(expanded_line) // '!'
+            pos = pos + 1
+          end if
+        else
+          expanded_line = trim(expanded_line) // '!'
+          pos = pos + 1
+        end if
+      else
+        expanded_line = trim(expanded_line) // work_line(pos:pos)
+        pos = pos + 1
+      end if
+    end do
+  end function
+
+  function find_history_expansion_end(line, start_pos) result(end_pos)
+    character(len=*), intent(in) :: line
+    integer, intent(in) :: start_pos
+    integer :: end_pos
+    
+    integer :: pos
+    character :: ch
+    
+    pos = start_pos + 1  ! Skip the '!'
+    end_pos = start_pos
+    
+    if (pos > len_trim(line)) return
+    
+    ch = line(pos:pos)
+    
+    if (ch == '!') then
+      ! !! expansion
+      end_pos = pos
+    else if (ch >= '0' .and. ch <= '9') then
+      ! !n expansion (number)
+      do while (pos <= len_trim(line) .and. line(pos:pos) >= '0' .and. line(pos:pos) <= '9')
+        end_pos = pos
+        pos = pos + 1
+      end do
+    else if (ch == '-') then
+      ! !-n expansion (negative number)
+      pos = pos + 1
+      if (pos <= len_trim(line) .and. line(pos:pos) >= '0' .and. line(pos:pos) <= '9') then
+        do while (pos <= len_trim(line) .and. line(pos:pos) >= '0' .and. line(pos:pos) <= '9')
+          end_pos = pos
+          pos = pos + 1
+        end do
+      end if
+    else if ((ch >= 'a' .and. ch <= 'z') .or. (ch >= 'A' .and. ch <= 'Z') .or. ch == '_') then
+      ! !string expansion
+      do while (pos <= len_trim(line) .and. &
+                ((line(pos:pos) >= 'a' .and. line(pos:pos) <= 'z') .or. &
+                 (line(pos:pos) >= 'A' .and. line(pos:pos) <= 'Z') .or. &
+                 (line(pos:pos) >= '0' .and. line(pos:pos) <= '9') .or. &
+                 line(pos:pos) == '_' .or. line(pos:pos) == '-'))
+        end_pos = pos
+        pos = pos + 1
+      end do
+    end if
+  end function
+
+  subroutine process_history_expansion(expansion, replacement, found)
+    character(len=*), intent(in) :: expansion
+    character(len=*), intent(out) :: replacement
+    logical, intent(out) :: found
+    
+    character(len=256) :: search_pattern
+    integer :: history_num, i, search_len
+    
+    replacement = ''
+    found = .false.
+    
+    if (len_trim(expansion) < 2) return
+    
+    select case (expansion(2:2))
+    case ('!')
+      ! !! - last command
+      if (command_history%count > 0) then
+        replacement = command_history%lines(command_history%count)
+        found = .true.
+      end if
+      
+    case ('0':'9')
+      ! !n - command number n
+      read(expansion(2:), *, iostat=i) history_num
+      if (i == 0 .and. history_num >= 1 .and. history_num <= command_history%count) then
+        replacement = command_history%lines(history_num)
+        found = .true.
+      end if
+      
+    case ('-')
+      ! !-n - n commands back
+      if (len_trim(expansion) > 2) then
+        read(expansion(3:), *, iostat=i) history_num
+        if (i == 0 .and. history_num > 0) then
+          history_num = command_history%count - history_num + 1
+          if (history_num >= 1 .and. history_num <= command_history%count) then
+            replacement = command_history%lines(history_num)
+            found = .true.
+          end if
+        end if
+      end if
+      
+    case default
+      ! !string - last command starting with string
+      search_pattern = expansion(2:)
+      search_len = len_trim(search_pattern)
+      
+      if (search_len > 0) then
+        ! Search backwards through history
+        do i = command_history%count, 1, -1
+          if (len_trim(command_history%lines(i)) >= search_len) then
+            if (command_history%lines(i)(1:search_len) == search_pattern) then
+              replacement = command_history%lines(i)
+              found = .true.
+              exit
+            end if
+          end if
+        end do
+      end if
+    end select
+  end subroutine
+
+  function needs_history_expansion(line) result(needs_expansion)
+    character(len=*), intent(in) :: line
+    logical :: needs_expansion
+    
+    integer :: pos
+    
+    needs_expansion = .false.
+    pos = index(line, '!')
+    
+    do while (pos > 0 .and. pos < len_trim(line))
+      ! Check if this ! is the start of a history expansion
+      if (pos == 1 .or. line(pos-1:pos-1) == ' ' .or. line(pos-1:pos-1) == char(9)) then
+        ! Check what follows the !
+        if (line(pos+1:pos+1) == '!' .or. &
+            (line(pos+1:pos+1) >= '0' .and. line(pos+1:pos+1) <= '9') .or. &
+            line(pos+1:pos+1) == '-' .or. &
+            (line(pos+1:pos+1) >= 'a' .and. line(pos+1:pos+1) <= 'z') .or. &
+            (line(pos+1:pos+1) >= 'A' .and. line(pos+1:pos+1) <= 'Z')) then
+          needs_expansion = .true.
+          return
+        end if
+      end if
+      
+      ! Look for next !
+      pos = index(line(pos+1:), '!')
+      if (pos > 0) pos = pos + len_trim(line(1:pos))
+    end do
+  end function
+
+  ! Editing mode control functions
+  subroutine set_editing_mode(input_state, mode)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: mode
+    
+    if (mode == EDITING_MODE_EMACS .or. mode == EDITING_MODE_VI) then
+      input_state%editing_mode = mode
+      if (mode == EDITING_MODE_VI) then
+        input_state%vi_mode = VI_MODE_INSERT
+      end if
+    end if
+  end subroutine
+
+  subroutine handle_vi_mode_switch(input_state, key)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: key
+    
+    if (input_state%editing_mode /= EDITING_MODE_VI) return
+    
+    select case (input_state%vi_mode)
+    case (VI_MODE_INSERT)
+      if (key == KEY_ESC) then
+        input_state%vi_mode = VI_MODE_COMMAND
+        ! Move cursor back one position in command mode
+        if (input_state%cursor_pos > 0) then
+          input_state%cursor_pos = input_state%cursor_pos - 1
+        end if
+        input_state%dirty = .true.
+      end if
+      
+    case (VI_MODE_COMMAND)
+      select case (key)
+      case (ichar('i'))
+        ! Insert mode
+        input_state%vi_mode = VI_MODE_INSERT
+      case (ichar('a'))
+        ! Append mode
+        input_state%vi_mode = VI_MODE_INSERT
+        if (input_state%cursor_pos < input_state%length) then
+          input_state%cursor_pos = input_state%cursor_pos + 1
+        end if
+      case (ichar('I'))
+        ! Insert at beginning
+        input_state%vi_mode = VI_MODE_INSERT
+        input_state%cursor_pos = 0
+      case (ichar('A'))
+        ! Append at end
+        input_state%vi_mode = VI_MODE_INSERT
+        input_state%cursor_pos = input_state%length
+      case (ichar('o'))
+        ! Open new line below (simplified)
+        input_state%vi_mode = VI_MODE_INSERT
+        input_state%cursor_pos = input_state%length
+      case (ichar('O'))
+        ! Open new line above (simplified)
+        input_state%vi_mode = VI_MODE_INSERT
+        input_state%cursor_pos = 0
+      end select
+      input_state%dirty = .true.
+    end select
+  end subroutine
+
+  subroutine handle_vi_command_mode(input_state, key)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: key
+    
+    if (input_state%editing_mode /= EDITING_MODE_VI .or. input_state%vi_mode /= VI_MODE_COMMAND) return
+    
+    select case (key)
+    ! Navigation
+    case (ichar('h'))
+      ! Move left
+      if (input_state%cursor_pos > 0) then
+        input_state%cursor_pos = input_state%cursor_pos - 1
+        input_state%dirty = .true.
+      end if
+    case (ichar('l'))
+      ! Move right
+      if (input_state%cursor_pos < input_state%length - 1) then
+        input_state%cursor_pos = input_state%cursor_pos + 1
+        input_state%dirty = .true.
+      end if
+    case (ichar('j'))
+      ! Move down (history down)
+      call handle_history_down(input_state)
+    case (ichar('k'))
+      ! Move up (history up)
+      call handle_history_up(input_state)
+    case (ichar('0'))
+      ! Beginning of line
+      input_state%cursor_pos = 0
+      input_state%dirty = .true.
+    case (ichar('$'))
+      ! End of line
+      input_state%cursor_pos = input_state%length
+      input_state%dirty = .true.
+    case (ichar('w'))
+      ! Next word
+      call move_to_next_word(input_state)
+    case (ichar('b'))
+      ! Previous word
+      call move_to_previous_word(input_state)
+      
+    ! Deletion
+    case (ichar('x'))
+      ! Delete character at cursor
+      call delete_char_at_cursor(input_state)
+    case (ichar('X'))
+      ! Delete character before cursor
+      if (input_state%cursor_pos > 0) then
+        input_state%cursor_pos = input_state%cursor_pos - 1
+        call delete_char_at_cursor(input_state)
+      end if
+    case (ichar('d'))
+      ! Delete (simplified - would need more complex handling)
+      call handle_vi_delete_command(input_state)
+      
+    ! Undo/Redo (simplified)
+    case (ichar('u'))
+      ! Undo (simplified)
+      input_state%buffer = input_state%original_buffer
+      input_state%length = len_trim(input_state%original_buffer)
+      input_state%cursor_pos = min(input_state%cursor_pos, input_state%length)
+      input_state%dirty = .true.
+    end select
+  end subroutine
+
+  subroutine handle_vi_delete_command(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    
+    ! Simplified delete command - just delete current character
+    call delete_char_at_cursor(input_state)
+  end subroutine
+
+  subroutine move_to_next_word(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: pos
+    
+    pos = input_state%cursor_pos + 1
+    
+    ! Skip current word
+    do while (pos <= input_state%length .and. input_state%buffer(pos:pos) /= ' ')
+      pos = pos + 1
+    end do
+    
+    ! Skip spaces
+    do while (pos <= input_state%length .and. input_state%buffer(pos:pos) == ' ')
+      pos = pos + 1
+    end do
+    
+    input_state%cursor_pos = min(pos - 1, input_state%length)
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine move_to_previous_word(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: pos
+    
+    if (input_state%cursor_pos <= 0) return
+    
+    pos = input_state%cursor_pos - 1
+    
+    ! Skip spaces
+    do while (pos > 0 .and. input_state%buffer(pos:pos) == ' ')
+      pos = pos - 1
+    end do
+    
+    ! Find beginning of word
+    do while (pos > 0 .and. input_state%buffer(pos:pos) /= ' ')
+      pos = pos - 1
+    end do
+    
+    if (input_state%buffer(pos:pos) == ' ') pos = pos + 1
+    
+    input_state%cursor_pos = pos
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine delete_char_at_cursor(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i
+    
+    if (input_state%cursor_pos >= input_state%length) return
+    
+    ! Shift characters left
+    do i = input_state%cursor_pos + 1, input_state%length - 1
+      input_state%buffer(i:i) = input_state%buffer(i+1:i+1)
+    end do
+    
+    input_state%length = input_state%length - 1
+    input_state%buffer(input_state%length+1:input_state%length+1) = ' '
+    input_state%dirty = .true.
+  end subroutine
+
+  function get_editing_mode_name(input_state) result(mode_name)
+    type(input_state_t), intent(in) :: input_state
+    character(len=16) :: mode_name
+    
+    select case (input_state%editing_mode)
+    case (EDITING_MODE_EMACS)
+      mode_name = 'emacs'
+    case (EDITING_MODE_VI)
+      if (input_state%vi_mode == VI_MODE_INSERT) then
+        mode_name = 'vi-insert'
+      else
+        mode_name = 'vi-command'
+      end if
+    case default
+      mode_name = 'unknown'
+    end select
+  end function
 
   ! Basic tab completion - simplified implementation
   subroutine tab_complete(partial_input, completions, num_completions)

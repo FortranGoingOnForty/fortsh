@@ -9,8 +9,12 @@ module builtins
   use readline
   use shell_config
   use aliases
+  use shell_options
+  use command_builtin, only: find_command_in_path
   use performance
   use parser
+  use coprocess
+  use substitution
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -41,6 +45,22 @@ contains
                 trim(cmd_name) == 'perf' .or. &
                 trim(cmd_name) == 'memory' .or. &
                 trim(cmd_name) == 'rawtest' .or. &
+                trim(cmd_name) == 'defun' .or. &
+                trim(cmd_name) == 'set' .or. &
+                trim(cmd_name) == 'shopt' .or. &
+                trim(cmd_name) == 'type' .or. &
+                trim(cmd_name) == 'unset' .or. &
+                trim(cmd_name) == 'readonly' .or. &
+                trim(cmd_name) == 'shift' .or. &
+                trim(cmd_name) == 'break' .or. &
+                trim(cmd_name) == 'continue' .or. &
+                trim(cmd_name) == 'return' .or. &
+                trim(cmd_name) == 'exec' .or. &
+                trim(cmd_name) == 'eval' .or. &
+                trim(cmd_name) == 'hash' .or. &
+                trim(cmd_name) == 'umask' .or. &
+                trim(cmd_name) == 'ulimit' .or. &
+                trim(cmd_name) == 'times' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -89,8 +109,40 @@ contains
       call builtin_memory(cmd, shell)
     case('rawtest')
       call builtin_rawtest(cmd, shell)
+    case('defun')
+      call builtin_defun(cmd, shell)
     case('test', '[', '[[')
       call execute_test_command(cmd, shell)
+    case('set')
+      call builtin_set(cmd, shell)
+    case('shopt')
+      call builtin_shopt(cmd, shell)
+    case('type')
+      call builtin_type(cmd, shell)
+    case('unset')
+      call builtin_unset(cmd, shell)
+    case('readonly')
+      call builtin_readonly(cmd, shell)
+    case('shift')
+      call builtin_shift(cmd, shell)
+    case('break')
+      call builtin_break(cmd, shell)
+    case('continue')
+      call builtin_continue(cmd, shell)
+    case('return')
+      call builtin_return(cmd, shell)
+    case('exec')
+      call builtin_exec(cmd, shell)
+    case('eval')
+      call builtin_eval(cmd, shell)
+    case('hash')
+      call builtin_hash(cmd, shell)
+    case('umask')
+      call builtin_umask(cmd, shell)
+    case('ulimit')
+      call builtin_ulimit(cmd, shell)
+    case('times')
+      call builtin_times(cmd, shell)
     case default
       ! Should not reach here if is_builtin works correctly
       shell%last_exit_status = 1
@@ -823,6 +875,345 @@ contains
     
     write(output_unit, '(a)') ''
     write(output_unit, '(a)') 'Raw mode test completed.'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_defun(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    character(len=1024) :: function_body(1)
+    character(len=256) :: func_name
+    
+    if (cmd%num_tokens < 3) then
+      write(error_unit, '(a)') 'defun: usage: defun function_name "command1; command2"'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    func_name = trim(cmd%tokens(2))
+    function_body(1) = trim(cmd%tokens(3))
+    
+    call add_function(shell, func_name, function_body, 1)
+    write(output_unit, '(a)') 'Function ' // trim(func_name) // ' defined'
+    shell%last_exit_status = 0
+  end subroutine
+
+  ! Coprocess built-in commands
+  subroutine builtin_coproc(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    character(len=256) :: coproc_name
+    character(len=1024) :: command
+    integer :: coproc_id
+    
+    if (cmd%num_tokens < 2) then
+      call list_coprocesses()
+      shell%last_exit_status = 0
+      return
+    end if
+    
+    if (cmd%num_tokens == 2) then
+      ! coproc command
+      command = trim(cmd%tokens(2))
+      coproc_id = start_coprocess(command)
+    else
+      ! coproc name command
+      coproc_name = trim(cmd%tokens(2))
+      command = trim(cmd%tokens(3))
+      coproc_id = start_coprocess(command, coproc_name)
+    end if
+    
+    if (coproc_id > 0) then
+      shell%last_exit_status = 0
+    else
+      shell%last_exit_status = 1
+    end if
+  end subroutine
+
+  subroutine builtin_timeout(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    integer :: timeout_seconds, i
+    character(len=1024) :: command
+    
+    if (cmd%num_tokens < 3) then
+      write(error_unit, '(a)') 'timeout: usage: timeout DURATION COMMAND...'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    read(cmd%tokens(2), *, iostat=i) timeout_seconds
+    if (i /= 0 .or. timeout_seconds <= 0) then
+      write(error_unit, '(a)') 'timeout: invalid duration'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Reconstruct command from remaining tokens
+    command = ''
+    do i = 3, cmd%num_tokens
+      if (i > 3) command = trim(command) // ' '
+      command = trim(command) // trim(cmd%tokens(i))
+    end do
+    
+    ! Execute command with timeout - placeholder
+    shell%last_exit_status = 0
+  end subroutine
+
+  ! =============================================================================
+  ! POSIX Required Built-ins (Phase 10: Critical POSIX Compliance)
+  ! =============================================================================
+
+  subroutine builtin_type(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    character(len=256) :: command_name
+    integer :: i
+    
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'type: usage: type name [name ...]'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    do i = 2, cmd%num_tokens
+      command_name = trim(cmd%tokens(i))
+      
+      if (is_builtin(command_name)) then
+        write(output_unit, '(a)') trim(command_name) // ' is a shell builtin'
+      else if (is_alias(shell, command_name)) then
+        write(output_unit, '(a)') trim(command_name) // ' is aliased to `' // &
+                                 trim(get_alias(shell, command_name)) // "'"
+      else if (is_function(shell, command_name)) then
+        write(output_unit, '(a)') trim(command_name) // ' is a function'
+      else
+        ! Try to find in PATH
+        call find_command_in_path(shell, command_name, .false., .false.)
+        if (shell%last_exit_status == 0) then
+          write(output_unit, '(a)') trim(command_name) // ' is hashed'
+        else
+          write(output_unit, '(a)') trim(command_name) // ': not found'
+          shell%last_exit_status = 1
+        end if
+      end if
+    end do
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_unset(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    logical :: unset_functions = .false.
+    character(len=256) :: var_name
+    integer :: i, j, start_idx
+    
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'unset: usage: unset [-f] name [name ...]'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    start_idx = 2
+    if (trim(cmd%tokens(2)) == '-f') then
+      unset_functions = .true.
+      start_idx = 3
+      if (cmd%num_tokens < 3) then
+        write(error_unit, '(a)') 'unset: usage: unset [-f] name [name ...]'
+        shell%last_exit_status = 1
+        return
+      end if
+    end if
+    
+    do i = start_idx, cmd%num_tokens
+      var_name = trim(cmd%tokens(i))
+      
+      if (unset_functions) then
+        ! Unset function
+        do j = 1, shell%num_functions
+          if (trim(shell%functions(j)%name) == var_name) then
+            shell%functions(j)%name = ''
+            shell%functions(j)%body_lines = 0
+            if (allocated(shell%functions(j)%body)) deallocate(shell%functions(j)%body)
+            exit
+          end if
+        end do
+      else
+        ! Unset variable
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == var_name) then
+            shell%variables(j)%name = ''
+            shell%variables(j)%value = ''
+            shell%variables(j)%is_array = .false.
+            shell%variables(j)%is_assoc_array = .false.
+            shell%variables(j)%array_size = 0
+            shell%variables(j)%assoc_size = 0
+            exit
+          end if
+        end do
+      end if
+    end do
+    
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_readonly(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement proper readonly variable support
+    ! For now, treat as regular variable assignment
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'readonly: usage: readonly name[=value] ...'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    write(output_unit, '(a)') 'readonly: feature not fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_shift(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: shift_count, iostat
+    
+    shift_count = 1  ! Default shift by 1
+    
+    if (cmd%num_tokens > 1) then
+      ! Parse shift count from argument
+      read(cmd%tokens(2), *, iostat=iostat) shift_count
+      if (iostat /= 0) then
+        write(error_unit, '(a)') 'shift: numeric argument required'
+        shell%last_exit_status = 1
+        return
+      end if
+    end if
+    
+    if (shift_count < 0) then
+      write(error_unit, '(a)') 'shift: shift count out of range'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    if (shift_count > shell%num_positional) then
+      write(error_unit, '(a)') 'shift: shift count out of range'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    call shift_positional_params(shell, shift_count)
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_break(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement proper loop breaking
+    ! This requires control flow integration
+    write(output_unit, '(a)') 'break: feature not fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_continue(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement proper loop continuation
+    ! This requires control flow integration
+    write(output_unit, '(a)') 'continue: feature not fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_return(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    integer :: return_code = 0
+    
+    if (cmd%num_tokens > 1) then
+      read(cmd%tokens(2), *, iostat=return_code) return_code
+      if (return_code /= 0) return_code = 0
+    end if
+    
+    ! TODO: Implement proper function return mechanism
+    ! For now, just set exit status
+    shell%last_exit_status = return_code
+  end subroutine
+
+  subroutine builtin_exec(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement process replacement
+    ! This is complex and requires careful implementation
+    write(output_unit, '(a)') 'exec: feature not fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_eval(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    character(len=2048) :: eval_command
+    integer :: i
+    
+    if (cmd%num_tokens < 2) then
+      shell%last_exit_status = 0
+      return
+    end if
+    
+    ! Concatenate all arguments
+    eval_command = trim(cmd%tokens(2))
+    do i = 3, cmd%num_tokens
+      eval_command = trim(eval_command) // ' ' // trim(cmd%tokens(i))
+    end do
+    
+    ! TODO: Implement proper command parsing and execution
+    ! For now, just echo what would be evaluated
+    write(output_unit, '(a)') 'eval would execute: ' // trim(eval_command)
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_hash(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement command hashing
+    write(output_unit, '(a)') 'hash: feature not fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_umask(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement file creation mask
+    write(output_unit, '(a)') 'umask: feature not fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_ulimit(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement resource limits
+    write(output_unit, '(a)') 'ulimit: feature not fully implemented'
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_times(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    ! TODO: Implement process time reporting
+    write(output_unit, '(a)') 'times: feature not fully implemented'
     shell%last_exit_status = 0
   end subroutine
 

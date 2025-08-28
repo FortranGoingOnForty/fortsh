@@ -51,12 +51,63 @@ contains
     
     value = ''
     
+    ! Handle special variables first
+    select case (trim(name))
+      case ('$')
+        write(value, '(i0)') shell%shell_pid
+        return
+      case ('!')
+        write(value, '(i0)') shell%last_bg_pid
+        return
+      case ('?')
+        write(value, '(i0)') shell%last_exit_status
+        return
+      case ('0')
+        value = trim(shell%shell_name)
+        return
+      case ('PPID')
+        write(value, '(i0)') shell%parent_pid
+        return
+      case ('#')
+        ! Number of positional parameters
+        write(value, '(i0)') shell%num_positional
+        return
+      case ('*')
+        ! All positional parameters as single word (IFS separated)
+        call get_all_positional_params(shell, value, .true.)
+        return
+      case ('@')
+        ! All positional parameters as separate words
+        call get_all_positional_params(shell, value, .false.)
+        return
+      case ('IFS')
+        ! Internal field separator
+        value = trim(shell%ifs)
+        return
+    end select
+    
+    ! Handle numeric positional parameters ($1, $2, ..., $n)
+    if (is_numeric(trim(name))) then
+      i = string_to_int(trim(name))
+      if (i >= 1 .and. i <= shell%num_positional) then
+        value = trim(shell%positional_params(i))
+        return
+      else
+        value = ''
+        return
+      end if
+    end if
+    
+    ! Handle regular shell variables
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
         value = shell%variables(i)%value
         return
       end if
     end do
+    
+    ! Handle environment variables if not found in shell variables
+    value = get_environment_var(trim(name))
   end function
 
   function is_assignment(input_line) result(is_assign)
@@ -80,12 +131,77 @@ contains
       var_name = input_line(:eq_pos-1)
       var_value = input_line(eq_pos+1:)
       
-      ! Simple variable expansion during assignment
-      call simple_expand_variables(var_value, expanded_value, shell)
-      call set_shell_variable(shell, trim(var_name), expanded_value)
+      ! Check for array assignment: var=(value1 value2 value3)
+      if (len_trim(var_value) > 2 .and. var_value(1:1) == '(' .and. &
+          var_value(len_trim(var_value):len_trim(var_value)) == ')') then
+        call handle_array_assignment(shell, trim(var_name), var_value)
+      else
+        ! Simple variable expansion during assignment
+        call simple_expand_variables(var_value, expanded_value, shell)
+        call set_shell_variable(shell, trim(var_name), expanded_value)
+      end if
       shell%last_exit_status = 0
     else
       shell%last_exit_status = 1
+    end if
+  end subroutine
+
+  subroutine handle_array_assignment(shell, var_name, array_expr)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: var_name, array_expr
+    character(len=1024) :: values(100)
+    integer :: count, i, start_pos, pos
+    character(len=1024) :: content
+    logical :: in_quotes
+    
+    ! Remove parentheses
+    content = array_expr(2:len_trim(array_expr)-1)
+    
+    count = 0
+    pos = 1
+    start_pos = 1
+    in_quotes = .false.
+    
+    ! Parse space-separated values, respecting quotes
+    do while (pos <= len_trim(content))
+      if (content(pos:pos) == '"' .or. content(pos:pos) == "'") then
+        in_quotes = .not. in_quotes
+      else if (content(pos:pos) == ' ' .and. .not. in_quotes) then
+        if (pos > start_pos) then
+          count = count + 1
+          if (count <= 100) then
+            values(count) = content(start_pos:pos-1)
+            ! Remove quotes if present
+            if (len_trim(values(count)) >= 2) then
+              if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
+                  (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
+                values(count) = values(count)(2:len_trim(values(count))-1)
+              end if
+            end if
+          end if
+        end if
+        start_pos = pos + 1
+      end if
+      pos = pos + 1
+    end do
+    
+    ! Handle last value
+    if (start_pos <= len_trim(content)) then
+      count = count + 1
+      if (count <= 100) then
+        values(count) = content(start_pos:)
+        ! Remove quotes if present
+        if (len_trim(values(count)) >= 2) then
+          if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
+              (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
+            values(count) = values(count)(2:len_trim(values(count))-1)
+          end if
+        end if
+      end if
+    end if
+    
+    if (count > 0) then
+      call set_array_variable(shell, var_name, values, count)
     end if
   end subroutine
 
@@ -94,9 +210,9 @@ contains
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(in) :: shell
     
-    character(len=1024) :: result
-    integer :: i, j, var_start
-    character(len=256) :: var_name
+    character(len=2048) :: result
+    integer :: i, j, var_start, brace_end
+    character(len=256) :: var_name, expansion_result
     character(len=1024) :: var_value
     character(len=:), allocatable :: env_value
     
@@ -107,27 +223,49 @@ contains
     do while (i <= len_trim(input))
       if (input(i:i) == '$' .and. i < len_trim(input)) then
         i = i + 1
-        var_start = i
         
-        ! Extract variable name  
-        do while (i <= len_trim(input))
-          if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
+        ! Handle ${parameter} expansions
+        if (i <= len_trim(input) .and. input(i:i) == '{') then
           i = i + 1
-        end do
-        
-        var_name = input(var_start:i-1)
-        
-        ! Check shell variables first
-        var_value = get_shell_variable(shell, trim(var_name))
-        if (len_trim(var_value) > 0) then
-          result(j:j+len_trim(var_value)-1) = trim(var_value)
-          j = j + len_trim(var_value)
+          brace_end = index(input(i:), '}')
+          if (brace_end > 0) then
+            brace_end = brace_end + i - 1
+            call expand_parameter(input(i:brace_end-1), expansion_result, shell)
+            if (len_trim(expansion_result) > 0) then
+              result(j:j+len_trim(expansion_result)-1) = trim(expansion_result)
+              j = j + len_trim(expansion_result)
+            end if
+            i = brace_end + 1
+          else
+            ! Malformed ${, treat as literal
+            result(j:j) = '$'
+            result(j+1:j+1) = '{'
+            j = j + 2
+          end if
         else
-          ! Fall back to environment variables
-          env_value = get_environment_var(trim(var_name))
-          if (allocated(env_value) .and. len(env_value) > 0) then
-            result(j:j+len(env_value)-1) = env_value
-            j = j + len(env_value)
+          ! Handle simple $variable expansions
+          var_start = i
+          
+          ! Extract variable name  
+          do while (i <= len_trim(input))
+            if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
+            i = i + 1
+          end do
+          
+          var_name = input(var_start:i-1)
+          
+          ! Check shell variables first
+          var_value = get_shell_variable(shell, trim(var_name))
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          else
+            ! Fall back to environment variables
+            env_value = get_environment_var(trim(var_name))
+            if (allocated(env_value) .and. len(env_value) > 0) then
+              result(j:j+len(env_value)-1) = env_value
+              j = j + len(env_value)
+            end if
           end if
         end if
       else
@@ -148,5 +286,689 @@ contains
             (ch >= '0' .and. ch <= '9')
     end function
   end subroutine
+
+  subroutine add_function(shell, name, body_lines, body_count)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: name
+    character(len=*), intent(in) :: body_lines(:)
+    integer, intent(in) :: body_count
+    integer :: i, j
+    
+    ! Find empty slot or replace existing function
+    do i = 1, size(shell%functions)
+      if (trim(shell%functions(i)%name) == trim(name) .or. len_trim(shell%functions(i)%name) == 0) then
+        shell%functions(i)%name = name
+        shell%functions(i)%body_lines = body_count
+        
+        if (allocated(shell%functions(i)%body)) deallocate(shell%functions(i)%body)
+        allocate(shell%functions(i)%body(body_count))
+        
+        do j = 1, body_count
+          shell%functions(i)%body(j) = body_lines(j)
+        end do
+        
+        shell%num_functions = max(shell%num_functions, i)
+        return
+      end if
+    end do
+  end subroutine
+
+  function is_function(shell, name) result(found)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    logical :: found
+    integer :: i
+    
+    found = .false.
+    do i = 1, shell%num_functions
+      if (trim(shell%functions(i)%name) == trim(name)) then
+        found = .true.
+        return
+      end if
+    end do
+  end function
+
+  function get_function_body(shell, name) result(body)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    character(len=1024), allocatable :: body(:)
+    integer :: i
+    
+    do i = 1, shell%num_functions
+      if (trim(shell%functions(i)%name) == trim(name)) then
+        if (allocated(shell%functions(i)%body)) then
+          allocate(body(shell%functions(i)%body_lines))
+          body = shell%functions(i)%body(1:shell%functions(i)%body_lines)
+        end if
+        return
+      end if
+    end do
+  end function
+
+  ! Array variable functions
+  subroutine set_array_variable(shell, name, values, count)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: name
+    character(len=*), intent(in) :: values(:)
+    integer, intent(in) :: count
+    integer :: i, empty_slot
+    
+    empty_slot = -1
+    
+    ! Check if variable already exists
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
+        allocate(shell%variables(i)%array_values(count))
+        shell%variables(i)%array_values(1:count) = values(1:count)
+        shell%variables(i)%array_size = count
+        shell%variables(i)%is_array = .true.
+        return
+      end if
+    end do
+    
+    ! Find empty slot
+    do i = 1, size(shell%variables)
+      if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+        empty_slot = i
+        exit
+      end if
+    end do
+    
+    ! Add new array variable
+    if (empty_slot > 0) then
+      shell%variables(empty_slot)%name = name
+      shell%variables(empty_slot)%is_array = .true.
+      shell%variables(empty_slot)%array_size = count
+      if (allocated(shell%variables(empty_slot)%array_values)) deallocate(shell%variables(empty_slot)%array_values)
+      allocate(shell%variables(empty_slot)%array_values(count))
+      shell%variables(empty_slot)%array_values(1:count) = values(1:count)
+      shell%num_variables = shell%num_variables + 1
+    end if
+  end subroutine
+
+  function get_array_element(shell, name, index) result(value)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    integer, intent(in) :: index
+    character(len=1024) :: value
+    integer :: i
+    
+    value = ''
+    
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
+        if (index >= 1 .and. index <= shell%variables(i)%array_size) then
+          value = shell%variables(i)%array_values(index)
+        end if
+        return
+      end if
+    end do
+  end function
+
+  function get_array_all_elements(shell, name) result(result_str)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    character(len=4096) :: result_str
+    integer :: i, j
+    
+    result_str = ''
+    
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
+        do j = 1, shell%variables(i)%array_size
+          if (j > 1) result_str = trim(result_str) // ' '
+          result_str = trim(result_str) // trim(shell%variables(i)%array_values(j))
+        end do
+        return
+      end if
+    end do
+  end function
+
+  function get_array_size(shell, name) result(size)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    integer :: size
+    integer :: i
+    
+    size = 0
+    
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
+        size = shell%variables(i)%array_size
+        return
+      end if
+    end do
+  end function
+
+  subroutine declare_associative_array(shell, name)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: name
+    
+    integer :: i, empty_slot
+    
+    empty_slot = -1
+    
+    ! Check if variable already exists
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        ! Convert to associative array
+        shell%variables(i)%is_assoc_array = .true.
+        shell%variables(i)%is_array = .false.
+        if (.not. allocated(shell%variables(i)%assoc_entries)) then
+          allocate(shell%variables(i)%assoc_entries(50))  ! Initial size
+        end if
+        shell%variables(i)%assoc_size = 0
+        return
+      end if
+    end do
+    
+    ! Find empty slot  
+    do i = 1, size(shell%variables)
+      if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+        empty_slot = i
+        exit
+      end if
+    end do
+    
+    ! Add new associative array variable
+    if (empty_slot > 0) then
+      shell%variables(empty_slot)%name = name
+      shell%variables(empty_slot)%value = ''
+      shell%variables(empty_slot)%is_assoc_array = .true.
+      shell%variables(empty_slot)%is_array = .false.
+      allocate(shell%variables(empty_slot)%assoc_entries(50))
+      shell%variables(empty_slot)%assoc_size = 0
+      shell%num_variables = shell%num_variables + 1
+    else
+      write(error_unit, '(a)') 'declare: too many variables defined'
+    end if
+  end subroutine
+
+  subroutine set_assoc_array_value(shell, array_name, key, value)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: array_name, key, value
+    
+    integer :: i, j
+    
+    ! Find the associative array variable
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(array_name) .and. &
+          shell%variables(i)%is_assoc_array) then
+        
+        ! Check if key already exists
+        do j = 1, shell%variables(i)%assoc_size
+          if (trim(shell%variables(i)%assoc_entries(j)%key) == trim(key)) then
+            shell%variables(i)%assoc_entries(j)%value = value
+            return
+          end if
+        end do
+        
+        ! Add new key-value pair
+        if (shell%variables(i)%assoc_size < size(shell%variables(i)%assoc_entries)) then
+          shell%variables(i)%assoc_size = shell%variables(i)%assoc_size + 1
+          shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%key = key
+          shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%value = value
+        else
+          write(error_unit, '(a)') 'associative array: too many entries'
+        end if
+        return
+      end if
+    end do
+    
+    write(error_unit, '(a)') 'associative array: ' // trim(array_name) // ' not declared'
+  end subroutine
+
+  function get_assoc_array_value(shell, array_name, key) result(value)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: array_name, key
+    character(len=1024) :: value
+    
+    integer :: i, j
+    
+    value = ''
+    
+    ! Find the associative array variable
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(array_name) .and. &
+          shell%variables(i)%is_assoc_array) then
+        
+        ! Find the key
+        do j = 1, shell%variables(i)%assoc_size
+          if (trim(shell%variables(i)%assoc_entries(j)%key) == trim(key)) then
+            value = shell%variables(i)%assoc_entries(j)%value
+            return
+          end if
+        end do
+        return  ! Key not found, return empty string
+      end if
+    end do
+  end function
+
+  subroutine get_assoc_array_keys(shell, array_name, keys, num_keys)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: array_name
+    character(len=256), intent(out) :: keys(:)
+    integer, intent(out) :: num_keys
+    
+    integer :: i, j
+    
+    num_keys = 0
+    
+    ! Find the associative array variable
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(array_name) .and. &
+          shell%variables(i)%is_assoc_array) then
+        
+        num_keys = min(shell%variables(i)%assoc_size, size(keys))
+        do j = 1, num_keys
+          keys(j) = shell%variables(i)%assoc_entries(j)%key
+        end do
+        return
+      end if
+    end do
+  end subroutine
+
+  function is_associative_array(shell, name) result(is_assoc)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    logical :: is_assoc
+    
+    integer :: i
+    
+    is_assoc = .false.
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        is_assoc = shell%variables(i)%is_assoc_array
+        return
+      end if
+    end do
+  end function
+
+  ! POSIX parameter expansion implementation
+  subroutine expand_parameter(param_expr, result, shell)
+    character(len=*), intent(in) :: param_expr
+    character(len=*), intent(out) :: result
+    type(shell_state_t), intent(in) :: shell
+    
+    character(len=256) :: param_name, default_value, var_value
+    integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
+    integer :: percent_pos, hash_pos, percent2_pos, hash2_pos
+    logical :: has_colon
+    
+    result = ''
+    
+    ! Check for various POSIX parameter expansion forms
+    colon_pos = index(param_expr, ':')
+    has_colon = colon_pos > 0
+    
+    ! ${parameter:-word} or ${parameter-word}
+    if (has_colon) then
+      dash_pos = index(param_expr(colon_pos:), '-')
+      if (dash_pos > 0) then
+        dash_pos = dash_pos + colon_pos - 1
+        param_name = param_expr(:colon_pos-1)
+        default_value = param_expr(dash_pos+1:)
+      end if
+    else
+      dash_pos = index(param_expr, '-')
+      if (dash_pos > 0) then
+        param_name = param_expr(:dash_pos-1)
+        default_value = param_expr(dash_pos+1:)
+      end if
+    end if
+    
+    if (dash_pos > 0) then
+      var_value = get_shell_variable(shell, trim(param_name))
+      if (has_colon) then
+        ! ${parameter:-word} - use default if unset or null
+        if (len_trim(var_value) == 0) then
+          result = trim(default_value)
+        else
+          result = trim(var_value)
+        end if
+      else
+        ! ${parameter-word} - use default if unset only
+        if (len_trim(var_value) == 0 .and. .not. variable_exists(shell, trim(param_name))) then
+          result = trim(default_value)
+        else
+          result = trim(var_value)
+        end if
+      end if
+      return
+    end if
+    
+    ! ${parameter:=word} or ${parameter=word}
+    if (has_colon) then
+      eq_pos = index(param_expr(colon_pos:), '=')
+      if (eq_pos > 0) then
+        eq_pos = eq_pos + colon_pos - 1
+        param_name = param_expr(:colon_pos-1)
+        default_value = param_expr(eq_pos+1:)
+      end if
+    else
+      eq_pos = index(param_expr, '=')
+      if (eq_pos > 0) then
+        param_name = param_expr(:eq_pos-1)
+        default_value = param_expr(eq_pos+1:)
+      end if
+    end if
+    
+    if (eq_pos > 0) then
+      var_value = get_shell_variable(shell, trim(param_name))
+      if (has_colon) then
+        ! ${parameter:=word} - assign default if unset or null
+        if (len_trim(var_value) == 0) then
+          ! TODO: Need to modify shell state to assign variable
+          result = trim(default_value)
+        else
+          result = trim(var_value)
+        end if
+      else
+        ! ${parameter=word} - assign default if unset only
+        if (len_trim(var_value) == 0 .and. .not. variable_exists(shell, trim(param_name))) then
+          ! TODO: Need to modify shell state to assign variable
+          result = trim(default_value)
+        else
+          result = trim(var_value)
+        end if
+      end if
+      return
+    end if
+    
+    ! ${parameter:?word} or ${parameter?word}
+    if (has_colon) then
+      question_pos = index(param_expr(colon_pos:), '?')
+      if (question_pos > 0) then
+        question_pos = question_pos + colon_pos - 1
+        param_name = param_expr(:colon_pos-1)
+        default_value = param_expr(question_pos+1:)
+      end if
+    else
+      question_pos = index(param_expr, '?')
+      if (question_pos > 0) then
+        param_name = param_expr(:question_pos-1)
+        default_value = param_expr(question_pos+1:)
+      end if
+    end if
+    
+    if (question_pos > 0) then
+      var_value = get_shell_variable(shell, trim(param_name))
+      if (has_colon) then
+        ! ${parameter:?word} - error if unset or null
+        if (len_trim(var_value) == 0) then
+          ! TODO: Should write error and exit
+          result = trim(param_name) // ': ' // trim(default_value)
+        else
+          result = trim(var_value)
+        end if
+      else
+        ! ${parameter?word} - error if unset only
+        if (len_trim(var_value) == 0 .and. .not. variable_exists(shell, trim(param_name))) then
+          ! TODO: Should write error and exit
+          result = trim(param_name) // ': ' // trim(default_value)
+        else
+          result = trim(var_value)
+        end if
+      end if
+      return
+    end if
+    
+    ! ${parameter:+word} or ${parameter+word}
+    if (has_colon) then
+      plus_pos = index(param_expr(colon_pos:), '+')
+      if (plus_pos > 0) then
+        plus_pos = plus_pos + colon_pos - 1
+        param_name = param_expr(:colon_pos-1)
+        default_value = param_expr(plus_pos+1:)
+      end if
+    else
+      plus_pos = index(param_expr, '+')
+      if (plus_pos > 0) then
+        param_name = param_expr(:plus_pos-1)
+        default_value = param_expr(plus_pos+1:)
+      end if
+    end if
+    
+    if (plus_pos > 0) then
+      var_value = get_shell_variable(shell, trim(param_name))
+      if (has_colon) then
+        ! ${parameter:+word} - use word if set and not null
+        if (len_trim(var_value) > 0) then
+          result = trim(default_value)
+        else
+          result = ''
+        end if
+      else
+        ! ${parameter+word} - use word if set
+        if (variable_exists(shell, trim(param_name))) then
+          result = trim(default_value)
+        else
+          result = ''
+        end if
+      end if
+      return
+    end if
+    
+    ! ${parameter%word} - remove smallest suffix pattern
+    percent_pos = index(param_expr, '%', back=.true.)
+    if (percent_pos > 0 .and. param_expr(percent_pos-1:percent_pos-1) /= '%') then
+      param_name = param_expr(:percent_pos-1)
+      default_value = param_expr(percent_pos+1:)
+      var_value = get_shell_variable(shell, trim(param_name))
+      call remove_suffix_pattern(trim(var_value), trim(default_value), result, .false.)
+      return
+    end if
+    
+    ! ${parameter%%word} - remove largest suffix pattern
+    percent2_pos = index(param_expr, '%%')
+    if (percent2_pos > 0) then
+      param_name = param_expr(:percent2_pos-1)
+      default_value = param_expr(percent2_pos+2:)
+      var_value = get_shell_variable(shell, trim(param_name))
+      call remove_suffix_pattern(trim(var_value), trim(default_value), result, .true.)
+      return
+    end if
+    
+    ! ${parameter#word} - remove smallest prefix pattern
+    hash_pos = index(param_expr, '#')
+    if (hash_pos > 0 .and. param_expr(hash_pos:hash_pos+1) /= '##') then
+      param_name = param_expr(:hash_pos-1)
+      default_value = param_expr(hash_pos+1:)
+      var_value = get_shell_variable(shell, trim(param_name))
+      call remove_prefix_pattern(trim(var_value), trim(default_value), result, .false.)
+      return
+    end if
+    
+    ! ${parameter##word} - remove largest prefix pattern
+    hash2_pos = index(param_expr, '##')
+    if (hash2_pos > 0) then
+      param_name = param_expr(:hash2_pos-1)
+      default_value = param_expr(hash2_pos+2:)
+      var_value = get_shell_variable(shell, trim(param_name))
+      call remove_prefix_pattern(trim(var_value), trim(default_value), result, .true.)
+      return
+    end if
+    
+    ! Simple ${parameter} expansion
+    result = trim(get_shell_variable(shell, trim(param_expr)))
+  end subroutine
+  
+  function variable_exists(shell, name) result(exists)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    logical :: exists
+    integer :: i
+    
+    exists = .false.
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        exists = .true.
+        return
+      end if
+    end do
+  end function
+  
+  subroutine remove_suffix_pattern(value, pattern, result, largest)
+    character(len=*), intent(in) :: value, pattern
+    character(len=*), intent(out) :: result
+    logical, intent(in) :: largest
+    
+    integer :: i, match_pos
+    
+    result = value
+    match_pos = 0
+    
+    ! Simple pattern matching - exact match only for now
+    ! TODO: Add full glob pattern support
+    if (largest) then
+      ! Find rightmost match
+      do i = len_trim(value), len_trim(pattern), -1
+        if (value(i-len_trim(pattern)+1:i) == pattern) then
+          match_pos = i - len_trim(pattern) + 1
+          exit
+        end if
+      end do
+    else
+      ! Find leftmost match from the right
+      do i = len_trim(value) - len_trim(pattern) + 1, 1, -1
+        if (value(i:i+len_trim(pattern)-1) == pattern) then
+          match_pos = i
+        end if
+      end do
+    end if
+    
+    if (match_pos > 0) then
+      result = value(:match_pos-1)
+    end if
+  end subroutine
+  
+  subroutine remove_prefix_pattern(value, pattern, result, largest)
+    character(len=*), intent(in) :: value, pattern
+    character(len=*), intent(out) :: result
+    logical, intent(in) :: largest
+    
+    integer :: i, match_pos, match_end
+    
+    result = value
+    match_pos = 0
+    match_end = 0
+    
+    ! Simple pattern matching - exact match only for now
+    ! TODO: Add full glob pattern support
+    if (largest) then
+      ! Find rightmost match from the left
+      do i = 1, len_trim(value) - len_trim(pattern) + 1
+        if (value(i:i+len_trim(pattern)-1) == pattern) then
+          match_pos = i
+          match_end = i + len_trim(pattern) - 1
+        end if
+      end do
+    else
+      ! Find leftmost match
+      do i = 1, len_trim(value) - len_trim(pattern) + 1
+        if (value(i:i+len_trim(pattern)-1) == pattern) then
+          match_pos = i
+          match_end = i + len_trim(pattern) - 1
+          exit
+        end if
+      end do
+    end if
+    
+    if (match_pos > 0) then
+      result = value(match_end+1:)
+    end if
+  end subroutine
+  
+  ! Positional parameter support functions
+  subroutine set_positional_params(shell, params, count)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: params(:)
+    integer, intent(in) :: count
+    integer :: i, actual_count
+    
+    actual_count = min(count, size(shell%positional_params))
+    shell%num_positional = actual_count
+    
+    do i = 1, actual_count
+      shell%positional_params(i) = params(i)
+    end do
+    
+    ! Clear any remaining parameters
+    do i = actual_count + 1, size(shell%positional_params)
+      shell%positional_params(i) = ''
+    end do
+  end subroutine
+  
+  subroutine get_all_positional_params(shell, result, as_single_word)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(out) :: result
+    logical, intent(in) :: as_single_word
+    integer :: i
+    character(len=1) :: separator
+    
+    result = ''
+    if (shell%num_positional == 0) return
+    
+    if (as_single_word) then
+      ! Use first character of IFS as separator for $*
+      if (len_trim(shell%ifs) > 0) then
+        separator = shell%ifs(1:1)
+      else
+        separator = ' '
+      end if
+    else
+      ! Use space for $@ (will be properly quoted during expansion)
+      separator = ' '
+    end if
+    
+    do i = 1, shell%num_positional
+      if (i > 1) result = trim(result) // separator
+      result = trim(result) // trim(shell%positional_params(i))
+    end do
+  end subroutine
+  
+  subroutine shift_positional_params(shell, count)
+    type(shell_state_t), intent(inout) :: shell
+    integer, intent(in) :: count
+    integer :: i, shift_count
+    
+    shift_count = min(count, shell%num_positional)
+    
+    ! Shift parameters left
+    do i = 1, shell%num_positional - shift_count
+      shell%positional_params(i) = shell%positional_params(i + shift_count)
+    end do
+    
+    ! Clear the shifted parameters
+    do i = shell%num_positional - shift_count + 1, shell%num_positional
+      shell%positional_params(i) = ''
+    end do
+    
+    shell%num_positional = shell%num_positional - shift_count
+  end subroutine
+  
+  function is_numeric(str) result(is_num)
+    character(len=*), intent(in) :: str
+    logical :: is_num
+    integer :: i
+    
+    is_num = .false.
+    if (len_trim(str) == 0) return
+    
+    do i = 1, len_trim(str)
+      if (str(i:i) < '0' .or. str(i:i) > '9') return
+    end do
+    
+    is_num = .true.
+  end function
+  
+  function string_to_int(str) result(int_val)
+    character(len=*), intent(in) :: str
+    integer :: int_val, iostat
+    
+    read(str, *, iostat=iostat) int_val
+    if (iostat /= 0) int_val = 0  ! Error reading, return 0
+  end function
 
 end module variables

@@ -20,14 +20,24 @@ module control_flow
   integer, parameter :: FLOW_FUNCTION = 9
   integer, parameter :: FLOW_RETURN = 10
   integer, parameter :: FLOW_LOCAL = 11
+  integer, parameter :: BLOCK_CASE = 12
+  integer, parameter :: FLOW_ESAC = 13
+  integer, parameter :: FLOW_IN = 14
 
-  type :: conditional_block_t
-    logical :: condition_result
-    integer :: block_type  ! IF, WHILE, FOR
-    integer :: start_line
-    integer :: current_line
-    character(len=1024) :: condition_cmd
-  end type conditional_block_t
+
+  type :: case_pattern_t
+    character(len=256) :: pattern
+    character(len=2048) :: commands
+    logical :: matched
+  end type case_pattern_t
+
+  type :: case_block_t
+    character(len=256) :: case_variable
+    type(case_pattern_t) :: patterns(50)
+    integer :: num_patterns
+    integer :: current_pattern
+    logical :: found_match
+  end type case_block_t
 
 contains
 
@@ -45,7 +55,10 @@ contains
                trim(word) == 'done' .or. &
                trim(word) == 'function' .or. &
                trim(word) == 'return' .or. &
-               trim(word) == 'local')
+               trim(word) == 'local' .or. &
+               trim(word) == 'case' .or. &
+               trim(word) == 'esac' .or. &
+               trim(word) == 'in')
   end function
 
   function identify_flow_keyword(word) result(flow_type)
@@ -75,6 +88,12 @@ contains
       flow_type = FLOW_RETURN
     case('local')
       flow_type = FLOW_LOCAL
+    case('case')
+      flow_type = BLOCK_CASE
+    case('esac')
+      flow_type = FLOW_ESAC
+    case('in')
+      flow_type = FLOW_IN
     case default
       flow_type = 0
     end select
@@ -603,5 +622,151 @@ contains
       write(error_unit, '(a)') 'Too many variables defined'
     end if
   end subroutine
+
+  subroutine handle_case_statement(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    character(len=256) :: case_variable, expanded_value
+    
+    if (cmd%num_tokens < 4 .or. trim(cmd%tokens(3)) /= 'in') then
+      write(error_unit, '(a)') 'case: syntax error, expected "case variable in"'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    case_variable = trim(cmd%tokens(2))
+    
+    ! Expand the variable to get its value
+    call expand_case_variable(shell, case_variable, expanded_value)
+    
+    ! Initialize case block
+    if (shell%control_depth < MAX_CONTROL_DEPTH) then
+      shell%control_depth = shell%control_depth + 1
+      shell%control_stack(shell%control_depth)%block_type = BLOCK_CASE
+      shell%control_stack(shell%control_depth)%condition_met = .false.
+      shell%control_stack(shell%control_depth)%condition_cmd = expanded_value
+      shell%control_stack(shell%control_depth)%loop_start_line = 0
+    else
+      write(error_unit, '(a)') 'case: control structure too deeply nested'
+      shell%last_exit_status = 1
+    end if
+  end subroutine
+
+  subroutine handle_case_pattern(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    character(len=256) :: pattern, case_value
+    logical :: pattern_matches
+    integer :: i
+    
+    if (shell%control_depth == 0) then
+      write(error_unit, '(a)') 'case pattern outside case statement'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    if (shell%control_stack(shell%control_depth)%block_type /= BLOCK_CASE) then
+      write(error_unit, '(a)') 'case pattern in wrong context'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Get the case value we're matching against
+    case_value = shell%control_stack(shell%control_depth)%condition_cmd
+    
+    ! Check if any pattern matches - patterns end with )
+    pattern_matches = .false.
+    do i = 1, cmd%num_tokens
+      if (index(cmd%tokens(i), ')') > 0) then
+        ! Remove the ) from pattern
+        pattern = cmd%tokens(i)
+        if (len_trim(pattern) > 0 .and. pattern(len_trim(pattern):len_trim(pattern)) == ')') then
+          pattern = pattern(1:len_trim(pattern)-1)
+        end if
+        
+        ! Check for match (simplified pattern matching)
+        if (case_pattern_match(case_value, pattern)) then
+          pattern_matches = .true.
+          exit
+        end if
+      end if
+    end do
+    
+    ! Set condition based on pattern match
+    shell%control_stack(shell%control_depth)%condition_met = pattern_matches
+  end subroutine
+
+  subroutine handle_esac_statement(shell)
+    type(shell_state_t), intent(inout) :: shell
+    
+    if (shell%control_depth == 0) then
+      write(error_unit, '(a)') 'esac without matching case'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    if (shell%control_stack(shell%control_depth)%block_type /= BLOCK_CASE) then
+      write(error_unit, '(a)') 'esac without matching case'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Pop case block from stack
+    shell%control_depth = shell%control_depth - 1
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine expand_case_variable(shell, variable_name, expanded_value)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: variable_name
+    character(len=*), intent(out) :: expanded_value
+    
+    integer :: i
+    
+    expanded_value = ''
+    
+    ! Simple variable expansion
+    if (variable_name(1:1) == '$') then
+      ! Variable reference
+      do i = 1, shell%num_variables
+        if (trim(shell%variables(i)%name) == trim(variable_name(2:))) then
+          expanded_value = trim(shell%variables(i)%value)
+          return
+        end if
+      end do
+    else
+      ! Direct value lookup
+      do i = 1, shell%num_variables
+        if (trim(shell%variables(i)%name) == trim(variable_name)) then
+          expanded_value = trim(shell%variables(i)%value)
+          return
+        end if
+      end do
+    end if
+  end subroutine
+
+  function case_pattern_match(value, pattern) result(matches)
+    character(len=*), intent(in) :: value, pattern
+    logical :: matches
+    
+    ! Simple pattern matching - supports * and exact matches
+    if (trim(pattern) == '*') then
+      matches = .true.
+    else if (index(pattern, '*') > 0) then
+      ! Wildcard pattern matching (simplified)
+      if (pattern(1:1) == '*') then
+        matches = (index(value, trim(pattern(2:))) > 0)
+      else if (pattern(len_trim(pattern):len_trim(pattern)) == '*') then
+        matches = (index(value, trim(pattern(1:len_trim(pattern)-1))) == 1)
+      else
+        matches = (index(value, trim(pattern)) > 0)
+      end if
+    else
+      ! Exact match
+      matches = (trim(value) == trim(pattern))
+    end if
+  end function
 
 end module control_flow

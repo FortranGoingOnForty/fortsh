@@ -11,6 +11,7 @@ module executor
   use control_flow
   use error_handling
   use performance
+  use shell_options
   use iso_fortran_env, only: error_unit, input_unit
   use iso_c_binding
   implicit none
@@ -32,6 +33,7 @@ contains
       select case(pipeline%commands(i)%separator)
       case(SEP_PIPE)
         call execute_pipe_chain(pipeline, i, shell, original_input)
+        call check_errexit(shell, shell%last_exit_status)
         do while (i <= pipeline%num_commands)
           if (pipeline%commands(i)%separator /= SEP_PIPE) exit
           i = i + 1
@@ -39,16 +41,19 @@ contains
         
       case(SEP_SEMICOLON, SEP_NONE)
         call execute_single(pipeline%commands(i), shell, original_input)
+        call check_errexit(shell, shell%last_exit_status)
         i = i + 1
         
       case(SEP_AND)
         call execute_single(pipeline%commands(i), shell, original_input)
         should_continue = (shell%last_exit_status == 0)
+        call check_errexit(shell, shell%last_exit_status)
         i = i + 1
         
       case(SEP_OR)
         call execute_single(pipeline%commands(i), shell, original_input)
         should_continue = (shell%last_exit_status /= 0)
+        call check_errexit(shell, shell%last_exit_status)
         i = i + 1
       end select
     end do
@@ -177,20 +182,63 @@ contains
     
     ! Wait for all children (if foreground)
     if (foreground) then
-      do i = 1, pipe_count + 1
-        ret = c_waitpid(pids(i), c_loc(status), WUNTRACED)
-      end do
+      call wait_for_pipeline(shell, pids, pipe_count + 1)
       
       ! Take back terminal
       if (shell%is_interactive) then
         ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
       end if
-      
-      shell%last_exit_status = WEXITSTATUS(status)
     end if
     
     deallocate(pipefd)
     deallocate(pids)
+  end subroutine
+
+  ! Wait for pipeline processes with POSIX-compliant exit status handling
+  subroutine wait_for_pipeline(shell, pids, num_processes)
+    type(shell_state_t), intent(inout) :: shell
+    integer(c_pid_t), intent(in) :: pids(:)
+    integer, intent(in) :: num_processes
+    
+    integer(c_int), target :: status
+    integer :: i, ret, final_exit_status, first_failure
+    integer, allocatable :: exit_statuses(:)
+    
+    allocate(exit_statuses(num_processes))
+    final_exit_status = 0
+    first_failure = 0
+    
+    ! Wait for all processes and collect their exit statuses
+    do i = 1, num_processes
+      ret = c_waitpid(pids(i), c_loc(status), WUNTRACED)
+      if (ret > 0) then
+        exit_statuses(i) = WEXITSTATUS(status)
+        
+        ! Track first failure for pipefail option
+        if (exit_statuses(i) /= 0 .and. first_failure == 0) then
+          first_failure = exit_statuses(i)
+        end if
+      else
+        exit_statuses(i) = 1  ! Default to failure if wait failed
+        if (first_failure == 0) first_failure = 1
+      end if
+    end do
+    
+    ! Set exit status according to POSIX rules
+    if (shell%option_pipefail) then
+      ! pipefail: return exit status of first failing command, or 0 if all succeed
+      shell%last_exit_status = first_failure
+    else
+      ! Normal: return exit status of last (rightmost) command
+      shell%last_exit_status = exit_statuses(num_processes)
+    end if
+    
+    ! Update $! (last background PID) if this was a background pipeline
+    if (num_processes > 0) then
+      shell%last_bg_pid = pids(num_processes)
+    end if
+    
+    deallocate(exit_statuses)
   end subroutine
 
   subroutine execute_single(cmd, shell, original_input)
@@ -234,8 +282,10 @@ contains
     ! Expand glob patterns
     call expand_command_globs(cmd)
     
-    ! Check if it's a builtin
-    if (is_builtin(cmd%tokens(1))) then
+    ! Check if it's a user-defined function
+    if (is_function(shell, cmd%tokens(1))) then
+      call execute_function(cmd, shell)
+    else if (is_builtin(cmd%tokens(1))) then
       call execute_builtin(cmd, shell)
     else
       call execute_external(cmd, shell, original_input)
@@ -459,6 +509,43 @@ contains
     
     ! Execute the command
     ret = c_execvp(argv(1), c_loc(argv))
+  end subroutine
+
+  subroutine execute_function(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    
+    character(len=1024), allocatable :: function_body(:)
+    integer :: i
+    type(pipeline_t) :: pipeline
+    character(len=:), allocatable :: expanded_line
+    
+    ! Get function body
+    function_body = get_function_body(shell, cmd%tokens(1))
+    
+    if (allocated(function_body)) then
+      ! Execute each line of the function
+      do i = 1, size(function_body)
+        if (len_trim(function_body(i)) > 0) then
+          ! Expand aliases
+          call expand_alias(shell, trim(function_body(i)), expanded_line)
+          
+          ! Parse and execute
+          call parse_pipeline(expanded_line, pipeline)
+          if (pipeline%num_commands > 0) then
+            call execute_pipeline(pipeline, shell, expanded_line)
+          end if
+          
+          ! Clean up
+          if (allocated(pipeline%commands)) then
+            deallocate(pipeline%commands)
+          end if
+          
+          ! Exit early if shell stopped
+          if (.not. shell%running) exit
+        end if
+      end do
+    end if
   end subroutine
 
 end module executor
