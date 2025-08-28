@@ -454,7 +454,7 @@ contains
             j = j + len(var_value)
           end if
         else if (token(i:i) == '{') then
-          ! ${VAR} syntax
+          ! ${VAR} or ${VAR:operation} parameter expansion
           i = i + 1
           var_start = i
           brace_depth = 1
@@ -470,18 +470,11 @@ contains
           
           var_name = token(var_start:i-2)
           
-          ! Check shell variables first
-          var_value = get_shell_variable(shell, trim(var_name))
-          if (len_trim(var_value) > 0) then
-            result(j:j+len_trim(var_value)-1) = trim(var_value)
-            j = j + len_trim(var_value)
-          else
-            ! Fall back to environment variables
-            var_value = get_environment_var(trim(var_name))
-            if (allocated(var_value) .and. len(var_value) > 0) then
-              result(j:j+len(var_value)-1) = var_value
-              j = j + len(var_value)
-            end if
+          ! Process parameter expansion
+          call process_parameter_expansion(var_name, var_value, shell)
+          if (allocated(var_value) .and. len(var_value) > 0) then
+            result(j:j+len(var_value)-1) = var_value
+            j = j + len(var_value)
           end if
         else
           ! Simple $VAR syntax
@@ -640,6 +633,109 @@ contains
     do while (len(output) > 0 .and. output(len(output):len(output)) == char(10))
       output = output(:len(output)-1)
     end do
+  end subroutine
+
+  subroutine process_parameter_expansion(param_expr, result_value, shell)
+    character(len=*), intent(in) :: param_expr
+    character(len=:), allocatable, intent(out) :: result_value
+    type(shell_state_t), intent(in) :: shell
+    
+    character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation
+    integer :: op_pos, op_len
+    character(len=:), allocatable :: current_value
+    character(len=20) :: length_str
+    
+    ! Initialize result
+    result_value = ''
+    
+    ! Check for length expansion ${#var}
+    if (param_expr(1:1) == '#') then
+      var_name = param_expr(2:)
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+      if (allocated(current_value)) then
+        write(length_str, '(i0)') len(current_value)
+        result_value = trim(length_str)
+      else
+        result_value = '0'
+      end if
+      return
+    end if
+    
+    ! Look for parameter expansion operators (:-, :=, :+)
+    op_pos = 0
+    op_len = 0
+    
+    ! Check for :- (default value)
+    op_pos = index(param_expr, ':-')
+    if (op_pos > 0) then
+      op_len = 2
+      operation = ':-'
+    else
+      ! Check for := (assign default)
+      op_pos = index(param_expr, ':=')
+      if (op_pos > 0) then
+        op_len = 2
+        operation = ':='
+      else
+        ! Check for :+ (alternate value)
+        op_pos = index(param_expr, ':+')
+        if (op_pos > 0) then
+          op_len = 2
+          operation = ':+'
+        end if
+      end if
+    end if
+    
+    if (op_pos > 0) then
+      ! Extract variable name and default value
+      var_name = param_expr(:op_pos-1)
+      default_value = param_expr(op_pos+op_len:)
+    else
+      ! Simple ${VAR} expansion
+      var_name = param_expr
+      default_value = ''
+    end if
+    
+    ! Get current variable value
+    current_value = get_shell_variable(shell, trim(var_name))
+    if (len_trim(current_value) == 0) then
+      current_value = get_environment_var(trim(var_name))
+    end if
+    
+    ! Apply parameter expansion logic
+    if (op_pos == 0) then
+      ! Simple expansion ${VAR}
+      if (allocated(current_value)) then
+        result_value = current_value
+      else
+        result_value = ''
+      end if
+    else if (trim(operation) == ':-') then
+      ! Use default value if variable is unset or empty
+      if (allocated(current_value) .and. len(current_value) > 0) then
+        result_value = current_value
+      else
+        result_value = trim(default_value)
+      end if
+    else if (trim(operation) == ':=') then
+      ! Assign default if variable is unset or empty
+      if (allocated(current_value) .and. len(current_value) > 0) then
+        result_value = current_value
+      else
+        result_value = trim(default_value)
+        ! Note: In a full implementation, we'd also set the variable here
+      end if
+    else if (trim(operation) == ':+') then
+      ! Use alternate value if variable is set
+      if (allocated(current_value) .and. len(current_value) > 0) then
+        result_value = trim(default_value)
+      else
+        result_value = ''
+      end if
+    end if
   end subroutine
 
 end module parser
