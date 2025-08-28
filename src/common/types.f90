@@ -135,6 +135,9 @@ module shell_types
     ! Function call stack for local variables
     type(shell_var_t) :: local_vars(MAX_CONTROL_DEPTH, 20)  ! stack of local variable scopes
     integer :: local_var_counts(MAX_CONTROL_DEPTH) = 0
+    ! Script sourcing state
+    character(len=MAX_PATH_LEN) :: source_file = ''
+    logical :: should_source = .false.
   end type shell_state_t
 
 end module shell_types

@@ -10,6 +10,7 @@ module builtins
   use shell_config
   use aliases
   use performance
+  use parser
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -284,9 +285,33 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     
-    ! Simplified version - would need file reading implementation
-    write(error_unit, '(a)') 'source: not yet implemented'
-    shell%last_exit_status = 1
+    character(len=1024) :: filename
+    logical :: file_exists
+    
+    ! Check if filename provided
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'source: usage: source filename [arguments...]'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    filename = trim(cmd%tokens(2))
+    
+    ! Check if file exists and is readable
+    inquire(file=filename, exist=file_exists)
+    if (.not. file_exists) then
+      write(error_unit, '(a)') 'source: ' // trim(filename) // ': No such file or directory'
+      shell%last_exit_status = 1
+      return
+    end if
+    
+    ! Mark the shell to source this file on next main loop iteration
+    ! This avoids circular dependency issues
+    shell%source_file = filename
+    shell%should_source = .true.
+    shell%last_exit_status = 0
+    
+    write(output_unit, '(a)') 'source: ' // trim(filename) // ' queued for execution'
   end subroutine
 
   subroutine builtin_history(cmd, shell)
