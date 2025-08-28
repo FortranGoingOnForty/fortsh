@@ -412,7 +412,10 @@ contains
     j = 1
     
     do while (i <= len_trim(token))
-      if (token(i:i) == '$' .and. i < len_trim(token)) then
+      if (token(i:i) == '~' .and. (i == 1 .or. token(i-1:i-1) == ' ')) then
+        ! Tilde expansion
+        call process_tilde_expansion(token, i, result, j, shell)
+      else if (token(i:i) == '$' .and. i < len_trim(token)) then
         i = i + 1
         
         ! Check for special variables
@@ -735,6 +738,62 @@ contains
       else
         result_value = ''
       end if
+    end if
+  end subroutine
+
+  subroutine process_tilde_expansion(token, pos, result, result_pos, shell)
+    character(len=*), intent(in) :: token
+    integer, intent(inout) :: pos, result_pos
+    character(len=*), intent(inout) :: result
+    type(shell_state_t), intent(in) :: shell
+    
+    character(len=MAX_TOKEN_LEN) :: username, home_path
+    character(len=:), allocatable :: home_dir
+    integer :: start_pos
+    
+    ! Skip the tilde
+    pos = pos + 1
+    
+    if (pos > len_trim(token) .or. token(pos:pos) == '/' .or. token(pos:pos) == ' ') then
+      ! Simple ~ expansion - use HOME environment variable
+      home_dir = get_environment_var('HOME')
+      if (allocated(home_dir) .and. len(home_dir) > 0) then
+        result(result_pos:result_pos+len(home_dir)-1) = home_dir
+        result_pos = result_pos + len(home_dir)
+      else
+        ! Fallback to /home/user if HOME not set
+        home_dir = get_environment_var('USER')
+        if (allocated(home_dir) .and. len(home_dir) > 0) then
+          home_path = '/home/' // home_dir
+          result(result_pos:result_pos+len_trim(home_path)-1) = trim(home_path)
+          result_pos = result_pos + len_trim(home_path)
+        else
+          ! Last resort fallback
+          result(result_pos:result_pos+5) = '/home/'
+          result_pos = result_pos + 6
+        end if
+      end if
+    else
+      ! ~username expansion
+      start_pos = pos
+      do while (pos <= len_trim(token) .and. token(pos:pos) /= '/' .and. token(pos:pos) /= ' ')
+        pos = pos + 1
+      end do
+      
+      if (pos > start_pos) then
+        username = token(start_pos:pos-1)
+      else
+        username = ''
+      end if
+      
+      ! Simple implementation: assume user home is in /home/username
+      ! In a full implementation, you'd use getpwnam() system call
+      home_path = '/home/' // trim(username)
+      result(result_pos:result_pos+len_trim(home_path)-1) = trim(home_path)
+      result_pos = result_pos + len_trim(home_path)
+      
+      ! Don't increment pos here as it's already at the next character
+      pos = pos - 1  ! Adjust because main loop will increment
     end if
   end subroutine
 
