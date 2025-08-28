@@ -37,6 +37,25 @@ module shell_types
   integer, parameter :: BLOCK_FOR = 3
   integer, parameter :: BLOCK_FUNCTION = 4
 
+  ! File descriptor redirection types
+  integer, parameter :: REDIR_IN = 1      ! < file
+  integer, parameter :: REDIR_OUT = 2     ! > file
+  integer, parameter :: REDIR_APPEND = 3  ! >> file
+  integer, parameter :: REDIR_FD_IN = 4   ! n< file
+  integer, parameter :: REDIR_FD_OUT = 5  ! n> file
+  integer, parameter :: REDIR_FD_APPEND = 6  ! n>> file
+  integer, parameter :: REDIR_DUP_IN = 7  ! <&n
+  integer, parameter :: REDIR_DUP_OUT = 8 ! >&n
+  integer, parameter :: REDIR_CLOSE = 9   ! n>&-
+
+  type :: redirection_t
+    integer :: type = 0           ! REDIR_* constant
+    integer :: fd = -1            ! file descriptor number (-1 for default)
+    integer :: target_fd = -1     ! target fd for duplication
+    character(len=:), allocatable :: filename
+    logical :: close_fd = .false. ! for n>&- syntax
+  end type redirection_t
+
   type :: command_t
     character(len=:), allocatable :: tokens(:)
     integer :: num_tokens = 0
@@ -53,6 +72,9 @@ module shell_types
     character(len=:), allocatable :: here_string  ! <<< redirection
     logical :: background = .false.
     integer :: separator = SEP_NONE
+    ! Enhanced POSIX file descriptor redirection
+    type(redirection_t) :: redirections(10)
+    integer :: num_redirections = 0
   end type command_t
 
   type :: pipeline_t
@@ -71,10 +93,22 @@ module shell_types
     logical :: foreground = .true.
   end type job_t
 
+  ! Associative array entry
+  type :: assoc_array_entry_t
+    character(len=256) :: key
+    character(len=1024) :: value
+  end type assoc_array_entry_t
+
   ! Simple shell variable entry
   type :: shell_var_t
     character(len=256) :: name
     character(len=1024) :: value
+    logical :: is_array = .false.
+    logical :: is_assoc_array = .false.
+    character(len=1024), allocatable :: array_values(:)
+    integer :: array_size = 0
+    type(assoc_array_entry_t), allocatable :: assoc_entries(:)
+    integer :: assoc_size = 0
   end type shell_var_t
 
   ! Shell alias entry
@@ -107,6 +141,13 @@ module shell_types
     integer :: param_count = 0
   end type shell_function_t
 
+  ! Shell trap definition
+  type :: shell_trap_t
+    integer :: signal = 0
+    character(len=1024) :: command = ''
+    logical :: active = .false.
+  end type shell_trap_t
+
   type :: shell_state_t
     character(len=256) :: username
     character(len=256) :: hostname
@@ -129,6 +170,9 @@ module shell_types
     ! Shell functions
     type(shell_function_t) :: functions(20)
     integer :: num_functions = 0
+    ! Shell traps
+    type(shell_trap_t) :: traps(20)
+    integer :: num_traps = 0
     ! Control flow state
     type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)
     integer :: control_depth = 0
@@ -138,6 +182,32 @@ module shell_types
     ! Script sourcing state
     character(len=MAX_PATH_LEN) :: source_file = ''
     logical :: should_source = .false.
+    ! Shell options (POSIX compliance)
+    logical :: option_errexit = .false.        ! set -e (exit on error)
+    logical :: option_nounset = .false.        ! set -u (error on undefined variables)
+    logical :: option_pipefail = .false.       ! set -o pipefail
+    logical :: option_verbose = .false.        ! set -v (verbose)
+    logical :: option_xtrace = .false.         ! set -x (trace execution)
+    logical :: option_noclobber = .false.      ! set -C (no clobber)
+    logical :: option_monitor = .false.        ! set -m (job control)
+    logical :: option_allexport = .false.      ! set -a (auto export)
+    ! Bash-style shell options (shopt)
+    logical :: shopt_nullglob = .false.        ! nullglob (empty glob matches)
+    logical :: shopt_failglob = .false.        ! failglob (error on no glob matches) 
+    logical :: shopt_globstar = .false.        ! globstar (** recursive)
+    logical :: shopt_nocaseglob = .false.      ! nocaseglob (case insensitive)
+    logical :: shopt_extglob = .false.         ! extglob (extended patterns)
+    logical :: shopt_dotglob = .false.         ! dotglob (include hidden files)
+    ! Special process variables
+    integer(c_pid_t) :: shell_pid = 0          ! $$ (shell process ID)
+    integer(c_pid_t) :: last_bg_pid = 0        ! $! (last background process)
+    character(len=256) :: shell_name = 'fortsh' ! $0 (shell name)
+    integer(c_pid_t) :: parent_pid = 0         ! $PPID (parent process ID)
+    ! Positional parameters
+    character(len=1024) :: positional_params(50) ! $1, $2, ..., $n
+    integer :: num_positional = 0             ! $# (number of positional parameters)
+    ! Field splitting
+    character(len=256) :: ifs = ' \t\n'       ! $IFS (internal field separator)
   end type shell_state_t
 
 end module shell_types

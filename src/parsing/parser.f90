@@ -6,6 +6,7 @@ module parser
   use shell_types
   use system_interface
   use variables
+  use expansion
   use glob
   use error_handling
   use performance

@@ -11,6 +11,7 @@ program fortran_shell
   use readline
   use shell_config
   use aliases
+  use shell_options
   use performance
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
@@ -226,6 +227,9 @@ contains
     shell%running = .true.
     shell%num_jobs = 0
     shell%next_job_id = 1
+
+    ! Initialize shell options and special variables
+    call initialize_shell_options(shell)
 
     ! Initialize jobs array
     do i = 1, MAX_JOBS

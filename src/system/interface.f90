@@ -246,6 +246,11 @@ module system_interface
       import :: termios_t
       type(termios_t), intent(inout) :: termios_p
     end subroutine
+    
+    function c_getppid() bind(C, name="getppid")
+      import :: c_pid_t
+      integer(c_pid_t) :: c_getppid
+    end function
   end interface
 
   ! Signal handler types
@@ -476,6 +481,18 @@ contains
     else
       ch = char(0)
     end if
+  end function
+
+  ! Get current process ID
+  function get_pid() result(pid)
+    integer(c_pid_t) :: pid
+    pid = c_getpid()
+  end function
+
+  ! Get parent process ID
+  function get_ppid() result(ppid)
+    integer(c_pid_t) :: ppid
+    ppid = c_getppid()
   end function
 
 end module system_interface
