@@ -430,6 +430,29 @@ contains
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
+        else if (token(i:i) == '(') then
+          ! $(command) command substitution
+          i = i + 1
+          var_start = i
+          brace_depth = 1
+          
+          do while (i <= len_trim(token) .and. brace_depth > 0)
+            if (token(i:i) == '(') then
+              brace_depth = brace_depth + 1
+            else if (token(i:i) == ')') then
+              brace_depth = brace_depth - 1
+            end if
+            i = i + 1
+          end do
+          
+          var_name = token(var_start:i-2)  ! This is actually the command
+          
+          ! Execute command substitution
+          call execute_command_substitution(trim(var_name), var_value, shell)
+          if (allocated(var_value) .and. len(var_value) > 0) then
+            result(j:j+len(var_value)-1) = var_value
+            j = j + len(var_value)
+          end if
         else if (token(i:i) == '{') then
           ! ${VAR} syntax
           i = i + 1
@@ -483,6 +506,31 @@ contains
               j = j + len(var_value)
             end if
           end if
+        end if
+      else if (token(i:i) == '`') then
+        ! Backtick command substitution
+        i = i + 1
+        var_start = i
+        
+        ! Find closing backtick
+        do while (i <= len_trim(token) .and. token(i:i) /= '`')
+          i = i + 1
+        end do
+        
+        if (i <= len_trim(token) .and. token(i:i) == '`') then
+          var_name = token(var_start:i-1)  ! This is the command
+          i = i + 1  ! Skip closing backtick
+          
+          ! Execute command substitution
+          call execute_command_substitution(trim(var_name), var_value, shell)
+          if (allocated(var_value) .and. len(var_value) > 0) then
+            result(j:j+len(var_value)-1) = var_value
+            j = j + len(var_value)
+          end if
+        else
+          ! Unmatched backtick, treat as literal
+          result(j:j) = '`'
+          j = j + 1
         end if
       else
         result(j:j) = token(i:i)
@@ -578,6 +626,20 @@ contains
     ! Cleanup
     if (allocated(expanded_tokens)) deallocate(expanded_tokens)
     if (allocated(original_tokens)) deallocate(original_tokens)
+  end subroutine
+
+  subroutine execute_command_substitution(command, output, shell)
+    character(len=*), intent(in) :: command
+    character(len=:), allocatable, intent(out) :: output
+    type(shell_state_t), intent(in) :: shell
+    
+    ! Use the existing execute_and_capture function
+    output = execute_and_capture(command)
+    
+    ! Remove trailing newline for single-line output (bash behavior)
+    do while (len(output) > 0 .and. output(len(output):len(output)) == char(10))
+      output = output(:len(output)-1)
+    end do
   end subroutine
 
 end module parser
