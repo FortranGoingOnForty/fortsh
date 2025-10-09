@@ -146,6 +146,11 @@ module shell_types
     ! Case statement fields
     logical :: case_found_match = .false.  ! whether any case pattern has matched
     logical :: case_in_match = .false.     ! whether we're currently in a matched pattern's commands
+    ! Loop control (break/continue)
+    logical :: break_requested = .false.   ! 'break' was called
+    logical :: continue_requested = .false. ! 'continue' was called
+    integer :: break_level = 0             ! how many levels to break (break n)
+    integer :: continue_level = 0          ! how many levels to continue (continue n)
   end type control_block_t
 
   ! Shell function definition
