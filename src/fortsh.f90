@@ -26,7 +26,7 @@ program fortran_shell
   ! Initialize performance monitoring
   call init_performance_monitoring()
 
-  ! Initialize shell state
+  ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
 
   ! Setup signal handlers if interactive
@@ -114,6 +114,11 @@ program fortran_shell
     end if
   end do
 
+  ! Run logout scripts if this is a login shell
+  if (shell%is_login_shell) then
+    call run_logout_scripts(shell)
+  end if
+
   ! Print performance statistics if monitoring was enabled
   if (perf_monitoring_enabled) then
     call print_performance_stats()
@@ -125,6 +130,27 @@ program fortran_shell
   write(output_unit, '(a)') 'Goodbye!'
 
 contains
+
+  subroutine run_logout_scripts(shell)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=:), allocatable :: home_dir, logout_file
+    logical :: file_exists
+
+    home_dir = get_environment_var('HOME')
+    if (len(home_dir) == 0) return
+
+    ! Execute ~/.fortsh_logout if it exists
+    logout_file = trim(home_dir) // '/.fortsh_logout'
+    inquire(file=logout_file, exist=file_exists)
+
+    if (file_exists) then
+      ! Source the logout file
+      shell%source_file = logout_file
+      shell%should_source = .true.
+      call process_source_file(shell)
+    end if
+  end subroutine
+
 
   subroutine process_source_file(shell)
     type(shell_state_t), intent(inout) :: shell
@@ -191,7 +217,31 @@ contains
     type(shell_state_t), intent(out) :: shell
     character(len=:), allocatable :: temp
     character(kind=c_char), target :: c_hostname(256)
-    integer :: ret, i
+    character(len=256) :: arg
+    integer :: ret, i, num_args
+
+    ! Detect if this is a login shell
+    ! Check if argv[0] starts with '-' or if --login flag is present
+    shell%is_login_shell = .false.
+    num_args = command_argument_count()
+
+    ! Check argv[0] (program name)
+    if (num_args >= 0) then
+      call get_command_argument(0, arg)
+      ! If program name starts with '-', it's a login shell
+      if (len_trim(arg) > 0 .and. arg(1:1) == '-') then
+        shell%is_login_shell = .true.
+      end if
+    end if
+
+    ! Check for --login flag
+    do i = 1, num_args
+      call get_command_argument(i, arg)
+      if (trim(arg) == '--login' .or. trim(arg) == '-l') then
+        shell%is_login_shell = .true.
+        exit
+      end if
+    end do
 
     ! Get username
     temp = get_environment_var('USER')
