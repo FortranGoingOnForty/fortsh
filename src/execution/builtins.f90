@@ -53,6 +53,7 @@ contains
                 trim(cmd_name) == 'readonly' .or. &
                 trim(cmd_name) == 'declare' .or. &
                 trim(cmd_name) == 'printenv' .or. &
+                trim(cmd_name) == 'local' .or. &
                 trim(cmd_name) == 'shift' .or. &
                 trim(cmd_name) == 'break' .or. &
                 trim(cmd_name) == 'continue' .or. &
@@ -129,6 +130,8 @@ contains
       call builtin_declare(cmd, shell)
     case('printenv')
       call builtin_printenv(cmd, shell)
+    case('local')
+      call builtin_local(cmd, shell)
     case('shift')
       call builtin_shift(cmd, shell)
     case('break')
@@ -1025,19 +1028,38 @@ contains
   subroutine builtin_defun(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=1024) :: function_body(1)
     character(len=256) :: func_name
-    
+    integer :: i
+
     if (cmd%num_tokens < 3) then
       write(error_unit, '(a)') 'defun: usage: defun function_name "command1; command2"'
       shell%last_exit_status = 1
       return
     end if
-    
+
     func_name = trim(cmd%tokens(2))
+
+    ! Reconstruct the function body from all remaining tokens
+    ! This handles cases where the parser split the quoted string
     function_body(1) = trim(cmd%tokens(3))
-    
+    do i = 4, cmd%num_tokens
+      function_body(1) = trim(function_body(1)) // ' ' // trim(cmd%tokens(i))
+    end do
+
+    ! Strip quotes from function body
+    if (len_trim(function_body(1)) >= 2) then
+      if (function_body(1)(1:1) == '"' .or. function_body(1)(1:1) == "'") then
+        ! Check if last character is also a quote
+        if (function_body(1)(len_trim(function_body(1)):len_trim(function_body(1))) == '"' .or. &
+            function_body(1)(len_trim(function_body(1)):len_trim(function_body(1))) == "'") then
+          ! Remove first and last character (quotes)
+          function_body(1) = function_body(1)(2:len_trim(function_body(1))-1)
+        end if
+      end if
+    end if
+
     call add_function(shell, func_name, function_body, 1)
     write(output_unit, '(a)') 'Function ' // trim(func_name) // ' defined'
     shell%last_exit_status = 0
@@ -1312,6 +1334,72 @@ contains
     shell%last_exit_status = 0
   end subroutine
 
+  subroutine builtin_local(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, eq_pos, depth, var_index
+    character(len=256) :: var_name, var_value
+
+    ! Check if we're inside a function
+    if (shell%function_depth == 0) then
+      write(error_unit, '(a)') 'local: can only be used in a function'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Check depth is within bounds
+    depth = shell%function_depth
+    if (depth > size(shell%local_var_counts)) then
+      write(error_unit, '(a)') 'local: function nesting too deep'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Process each variable assignment
+    do i = 2, cmd%num_tokens
+      eq_pos = index(cmd%tokens(i), '=')
+
+      if (eq_pos > 0) then
+        ! Variable assignment: local var=value
+        var_name = cmd%tokens(i)(:eq_pos-1)
+        var_value = cmd%tokens(i)(eq_pos+1:)
+
+        ! Find or create local variable slot
+        var_index = shell%local_var_counts(depth) + 1
+        if (var_index > size(shell%local_vars, 2)) then
+          write(error_unit, '(a)') 'local: too many local variables'
+          shell%last_exit_status = 1
+          return
+        end if
+
+        ! Store local variable
+        shell%local_vars(depth, var_index)%name = var_name
+        shell%local_vars(depth, var_index)%value = var_value
+        shell%local_vars(depth, var_index)%readonly = .false.
+        shell%local_vars(depth, var_index)%exported = .false.
+        shell%local_var_counts(depth) = var_index
+      else
+        ! Just declare local: local var (unset or empty)
+        var_name = trim(cmd%tokens(i))
+
+        var_index = shell%local_var_counts(depth) + 1
+        if (var_index > size(shell%local_vars, 2)) then
+          write(error_unit, '(a)') 'local: too many local variables'
+          shell%last_exit_status = 1
+          return
+        end if
+
+        shell%local_vars(depth, var_index)%name = var_name
+        shell%local_vars(depth, var_index)%value = ''
+        shell%local_vars(depth, var_index)%readonly = .false.
+        shell%local_vars(depth, var_index)%exported = .false.
+        shell%local_var_counts(depth) = var_index
+      end if
+    end do
+
+    shell%last_exit_status = 0
+  end subroutine
+
   subroutine builtin_shift(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
@@ -1368,17 +1456,25 @@ contains
   subroutine builtin_return(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    integer :: return_code = 0
-    
+    integer :: return_code, iostat
+
+    ! Default to last command's exit status
+    return_code = shell%last_exit_status
+
+    ! Parse optional return value argument
     if (cmd%num_tokens > 1) then
-      read(cmd%tokens(2), *, iostat=return_code) return_code
-      if (return_code /= 0) return_code = 0
+      read(cmd%tokens(2), *, iostat=iostat) return_code
+      if (iostat /= 0) then
+        write(error_unit, '(a)') 'return: numeric argument required'
+        shell%last_exit_status = 2
+        return
+      end if
     end if
-    
-    ! TODO: Implement proper function return mechanism
-    ! For now, just set exit status
+
+    ! Set the return value and flag to exit function
+    shell%function_return_value = return_code
     shell%last_exit_status = return_code
+    shell%function_return_pending = .true.
   end subroutine
 
   subroutine builtin_exec(cmd, shell)
@@ -1483,6 +1579,7 @@ contains
             print_mode = .true.
           case ('-f')
             print_funcs = .true.
+            print_mode = .true.
           case default
             write(error_unit, '(a)') 'declare: invalid option: ' // trim(cmd%tokens(arg_idx))
             shell%last_exit_status = 1
@@ -1495,6 +1592,24 @@ contains
     end do
 
     if (print_mode) then
+      ! Print functions if -f flag is set
+      if (print_funcs) then
+        do i = 1, shell%num_functions
+          if (len_trim(shell%functions(i)%name) > 0 .and. shell%functions(i)%body_lines > 0) then
+            write(output_unit, '(a)') trim(shell%functions(i)%name) // ' ()'
+            write(output_unit, '(a)') '{'
+            if (allocated(shell%functions(i)%body)) then
+              do j = 1, shell%functions(i)%body_lines
+                write(output_unit, '(a)') '    ' // trim(shell%functions(i)%body(j))
+              end do
+            end if
+            write(output_unit, '(a)') '}'
+          end if
+        end do
+        shell%last_exit_status = 0
+        return
+      end if
+
       ! Print all variables with declare syntax
       do i = 1, shell%num_variables
         if (len_trim(shell%variables(i)%name) > 0) then
