@@ -64,6 +64,7 @@ contains
                 trim(cmd_name) == 'umask' .or. &
                 trim(cmd_name) == 'ulimit' .or. &
                 trim(cmd_name) == 'times' .or. &
+                trim(cmd_name) == 'let' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -152,6 +153,8 @@ contains
       call builtin_ulimit(cmd, shell)
     case('times')
       call builtin_times(cmd, shell)
+    case('let')
+      call builtin_let(cmd, shell)
     case default
       ! Should not reach here if is_builtin works correctly
       shell%last_exit_status = 1
@@ -1547,19 +1550,62 @@ contains
     shell%last_exit_status = 0
   end subroutine
 
+  subroutine builtin_let(cmd, shell)
+    use expansion, only: arithmetic_expansion_shell
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, iostat
+    character(len=1024) :: expr, arith_expr, result_str
+    integer(kind=8) :: result_val
+
+    ! Default to success
+    shell%last_exit_status = 0
+
+    ! Process each argument as an arithmetic expression
+    do i = 2, cmd%num_tokens
+      ! Build arithmetic expression - remove quotes if present
+      expr = trim(cmd%tokens(i))
+      if (len_trim(expr) > 0) then
+        if (expr(1:1) == '"' .and. expr(len_trim(expr):len_trim(expr)) == '"') then
+          expr = expr(2:len_trim(expr)-1)
+        else if (expr(1:1) == "'" .and. expr(len_trim(expr):len_trim(expr)) == "'") then
+          expr = expr(2:len_trim(expr)-1)
+        end if
+      end if
+
+      ! Evaluate as $((expression))
+      arith_expr = '$((' // trim(expr) // '))'
+      result_str = arithmetic_expansion_shell(trim(arith_expr), shell)
+
+      ! Convert to integer to check result
+      read(result_str, *, iostat=iostat) result_val
+      if (iostat /= 0) result_val = 0
+
+      ! Set exit status based on last expression result
+      ! Exit status 0 if non-zero, 1 if zero
+      if (result_val /= 0) then
+        shell%last_exit_status = 0
+      else
+        shell%last_exit_status = 1
+      end if
+    end do
+  end subroutine
+
   subroutine builtin_declare(cmd, shell)
-    use variables, only: set_shell_variable
+    use variables, only: set_shell_variable, declare_associative_array
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: readonly_flag, export_flag, print_mode, print_funcs
-    logical :: found
+    logical :: array_flag, assoc_array_flag, found
 
     readonly_flag = .false.
     export_flag = .false.
     print_mode = .false.
     print_funcs = .false.
+    array_flag = .false.
+    assoc_array_flag = .false.
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all variables
@@ -1580,6 +1626,10 @@ contains
           case ('-f')
             print_funcs = .true.
             print_mode = .true.
+          case ('-a')
+            array_flag = .true.
+          case ('-A')
+            assoc_array_flag = .true.
           case default
             write(error_unit, '(a)') 'declare: invalid option: ' // trim(cmd%tokens(arg_idx))
             shell%last_exit_status = 1
@@ -1674,9 +1724,29 @@ contains
           end if
         end do
       else
-        ! Just VAR - apply attributes to existing variable
+        ! Just VAR - declare variable or apply attributes
         var_name = trim(cmd%tokens(arg_idx))
         found = .false.
+
+        ! Handle array declarations
+        if (assoc_array_flag) then
+          ! declare -A arrayname
+          call declare_associative_array(shell, var_name)
+          arg_idx = arg_idx + 1
+          cycle
+        else if (array_flag) then
+          ! declare -a arrayname
+          ! Create an empty indexed array
+          call set_shell_variable(shell, var_name, '')
+          do j = 1, shell%num_variables
+            if (trim(shell%variables(j)%name) == var_name) then
+              shell%variables(j)%is_array = .true.
+              exit
+            end if
+          end do
+          arg_idx = arg_idx + 1
+          cycle
+        end if
 
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == var_name) then

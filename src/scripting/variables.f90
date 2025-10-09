@@ -237,16 +237,51 @@ contains
   subroutine handle_assignment(shell, input_line)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input_line
-    integer :: eq_pos
-    character(len=256) :: var_name, var_value
+    integer :: eq_pos, bracket_pos, bracket_end, array_index, read_status
+    character(len=256) :: var_name, var_value, index_str
     character(len=:), allocatable :: expanded_value
-    
+
     eq_pos = index(input_line, '=')
     if (eq_pos > 1) then
       var_name = input_line(:eq_pos-1)
       var_value = input_line(eq_pos+1:)
-      
-      ! Check for array assignment: var=(value1 value2 value3)
+
+      ! Check for indexed/associative array assignment: arr[index]=value or map[key]=value
+      bracket_pos = index(var_name, '[')
+      if (bracket_pos > 0) then
+        ! arr[index]=value or map[key]=value
+        bracket_end = index(var_name(bracket_pos:), ']')
+        if (bracket_end > 0) then
+          bracket_end = bracket_pos + bracket_end - 1
+          index_str = var_name(bracket_pos+1:bracket_end-1)
+          var_name = var_name(:bracket_pos-1)
+
+          ! Check if this is an associative array
+          if (is_associative_array(shell, trim(var_name))) then
+            ! Associative array: use key as-is
+            call set_assoc_array_value(shell, trim(var_name), trim(index_str), trim(var_value))
+            shell%last_exit_status = 0
+          else
+            ! Try to parse as numeric index for indexed array
+            read(index_str, *, iostat=read_status) array_index
+            if (read_status == 0) then
+              ! Valid numeric index
+              array_index = array_index + 1  ! Convert to 1-indexed
+              call set_array_element(shell, trim(var_name), array_index, trim(var_value))
+              shell%last_exit_status = 0
+            else
+              ! Non-numeric index for non-associative array - error or treat as associative
+              call set_assoc_array_value(shell, trim(var_name), trim(index_str), trim(var_value))
+              shell%last_exit_status = 0
+            end if
+          end if
+        else
+          shell%last_exit_status = 1
+        end if
+        return
+      end if
+
+      ! Check for array literal assignment: var=(value1 value2 value3)
       if (len_trim(var_value) > 2 .and. var_value(1:1) == '(' .and. &
           var_value(len_trim(var_value):len_trim(var_value)) == ')') then
         call handle_array_assignment(shell, trim(var_name), var_value)
@@ -503,6 +538,72 @@ contains
     end if
   end subroutine
 
+  ! Set a single element in an array at the given index (1-indexed)
+  subroutine set_array_element(shell, name, index, value)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: name
+    integer, intent(in) :: index
+    character(len=*), intent(in) :: value
+    integer :: i, empty_slot, new_size
+    character(len=1024), allocatable :: temp_array(:)
+
+    ! Check if variable already exists
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        ! Variable exists - make sure it's an array
+        if (.not. shell%variables(i)%is_array) then
+          ! Convert to array
+          shell%variables(i)%is_array = .true.
+          if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
+          allocate(shell%variables(i)%array_values(index))
+          shell%variables(i)%array_values(:) = ''
+          shell%variables(i)%array_size = index
+        else if (.not. allocated(shell%variables(i)%array_values)) then
+          ! Array exists but not allocated (from declare -a)
+          allocate(shell%variables(i)%array_values(index))
+          shell%variables(i)%array_values(:) = ''
+          shell%variables(i)%array_size = index
+        else if (index > shell%variables(i)%array_size) then
+          ! Need to expand the array (sparse array support)
+          new_size = index
+          allocate(temp_array(new_size))
+          temp_array(:) = ''
+          if (shell%variables(i)%array_size > 0 .and. allocated(shell%variables(i)%array_values)) then
+            temp_array(1:shell%variables(i)%array_size) = shell%variables(i)%array_values(1:shell%variables(i)%array_size)
+          end if
+          if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
+          allocate(shell%variables(i)%array_values(new_size))
+          shell%variables(i)%array_values = temp_array
+          shell%variables(i)%array_size = new_size
+          deallocate(temp_array)
+        end if
+
+        ! Set the element
+        shell%variables(i)%array_values(index) = value
+        return
+      end if
+    end do
+
+    ! Variable doesn't exist - create new array
+    empty_slot = -1
+    do i = 1, size(shell%variables)
+      if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+        empty_slot = i
+        exit
+      end if
+    end do
+
+    if (empty_slot > 0) then
+      shell%variables(empty_slot)%name = name
+      shell%variables(empty_slot)%is_array = .true.
+      shell%variables(empty_slot)%array_size = index
+      allocate(shell%variables(empty_slot)%array_values(index))
+      shell%variables(empty_slot)%array_values(:) = ''
+      shell%variables(empty_slot)%array_values(index) = value
+      shell%num_variables = shell%num_variables + 1
+    end if
+  end subroutine
+
   function get_array_element(shell, name, index) result(value)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
@@ -526,15 +627,21 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
     character(len=4096) :: result_str
-    integer :: i, j
-    
+    integer :: i, j, pos
+
     result_str = ''
-    
+    pos = 1
+
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
         do j = 1, shell%variables(i)%array_size
-          if (j > 1) result_str = trim(result_str) // ' '
-          result_str = trim(result_str) // trim(shell%variables(i)%array_values(j))
+          if (j > 1) then
+            result_str(pos:pos) = ' '
+            pos = pos + 1
+          end if
+          result_str(pos:pos+len_trim(shell%variables(i)%array_values(j))-1) = &
+            trim(shell%variables(i)%array_values(j))
+          pos = pos + len_trim(shell%variables(i)%array_values(j))
         end do
         return
       end if
