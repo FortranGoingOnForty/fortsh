@@ -105,6 +105,8 @@ module shell_types
     character(len=1024) :: value
     logical :: is_array = .false.
     logical :: is_assoc_array = .false.
+    logical :: readonly = .false.      ! Variable is read-only
+    logical :: exported = .false.      ! Variable is exported to environment
     character(len=1024), allocatable :: array_values(:)
     integer :: array_size = 0
     type(assoc_array_entry_t), allocatable :: assoc_entries(:)
@@ -203,6 +205,13 @@ module shell_types
     integer(c_pid_t) :: last_bg_pid = 0        ! $! (last background process)
     character(len=256) :: shell_name = 'fortsh' ! $0 (shell name)
     integer(c_pid_t) :: parent_pid = 0         ! $PPID (parent process ID)
+    character(len=1024) :: last_arg = ''       ! $_ (last argument of previous command)
+    integer :: uid = 0                         ! $UID (user ID)
+    integer :: euid = 0                        ! $EUID (effective user ID)
+    integer :: shell_start_time = 0            ! For $SECONDS
+    integer :: current_line_number = 0         ! $LINENO (current line in script)
+    character(len=MAX_PATH_LEN) :: oldpwd = '' ! $OLDPWD (previous working directory)
+    logical :: is_login_shell = .false.        ! Started as login shell
     ! Positional parameters
     character(len=1024) :: positional_params(50) ! $1, $2, ..., $n
     integer :: num_positional = 0             ! $# (number of positional parameters)

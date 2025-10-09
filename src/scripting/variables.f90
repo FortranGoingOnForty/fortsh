@@ -14,14 +14,26 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: name, value
     integer :: i, empty_slot
-    
-    
+
+
     empty_slot = -1
-    
+
     ! Check if variable already exists
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
+        ! Check if variable is readonly
+        if (shell%variables(i)%readonly) then
+          write(error_unit, '(a)') trim(name) // ': readonly variable'
+          shell%last_exit_status = 1
+          return
+        end if
         shell%variables(i)%value = value
+        ! If exported, update environment
+        if (shell%variables(i)%exported) then
+          if (.not. set_environment_var(trim(name), trim(value))) then
+            write(error_unit, '(a)') 'warning: failed to update environment variable'
+          end if
+        end if
         return
       end if
     end do
@@ -65,8 +77,39 @@ contains
       case ('0')
         value = trim(shell%shell_name)
         return
+      case ('_')
+        ! Last argument of previous command
+        value = trim(shell%last_arg)
+        return
+      case ('-')
+        ! Current shell options as flags
+        value = get_shell_option_flags(shell)
+        return
       case ('PPID')
         write(value, '(i0)') shell%parent_pid
+        return
+      case ('UID')
+        write(value, '(i0)') shell%uid
+        return
+      case ('EUID')
+        write(value, '(i0)') shell%euid
+        return
+      case ('PWD')
+        value = trim(shell%cwd)
+        return
+      case ('OLDPWD')
+        value = trim(shell%oldpwd)
+        return
+      case ('RANDOM')
+        ! Generate random number 0-32767
+        call get_random_number(value)
+        return
+      case ('SECONDS')
+        ! Seconds since shell start
+        call get_seconds_since_start(shell, value)
+        return
+      case ('LINENO')
+        write(value, '(i0)') shell%current_line_number
         return
       case ('#')
         ! Number of positional parameters
@@ -966,9 +1009,81 @@ contains
   function string_to_int(str) result(int_val)
     character(len=*), intent(in) :: str
     integer :: int_val, iostat
-    
+
     read(str, *, iostat=iostat) int_val
     if (iostat /= 0) int_val = 0  ! Error reading, return 0
   end function
+
+  ! Helper functions for special variables
+  function get_shell_option_flags(shell) result(flags)
+    type(shell_state_t), intent(in) :: shell
+    character(len=256) :: flags
+    integer :: pos
+
+    flags = ''
+    pos = 1
+
+    ! Build option flags string from shell options
+    if (shell%option_allexport) then
+      flags(pos:pos) = 'a'
+      pos = pos + 1
+    end if
+    if (shell%option_errexit) then
+      flags(pos:pos) = 'e'
+      pos = pos + 1
+    end if
+    if (shell%option_monitor) then
+      flags(pos:pos) = 'm'
+      pos = pos + 1
+    end if
+    if (shell%option_nounset) then
+      flags(pos:pos) = 'u'
+      pos = pos + 1
+    end if
+    if (shell%option_verbose) then
+      flags(pos:pos) = 'v'
+      pos = pos + 1
+    end if
+    if (shell%option_xtrace) then
+      flags(pos:pos) = 'x'
+      pos = pos + 1
+    end if
+    if (shell%option_noclobber) then
+      flags(pos:pos) = 'C'
+      pos = pos + 1
+    end if
+    if (shell%is_interactive) then
+      flags(pos:pos) = 'i'
+      pos = pos + 1
+    end if
+  end function
+
+  subroutine get_random_number(value)
+    character(len=*), intent(out) :: value
+    real :: rand_val
+    integer :: rand_int
+
+    call random_number(rand_val)
+    rand_int = int(rand_val * 32768.0)
+    write(value, '(i0)') rand_int
+  end subroutine
+
+  subroutine get_seconds_since_start(shell, value)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(out) :: value
+    integer :: current_time, elapsed
+
+    ! Get current time
+    call system_clock(current_time)
+
+    ! Calculate elapsed seconds
+    if (shell%shell_start_time > 0) then
+      elapsed = (current_time - shell%shell_start_time) / 1000  ! Assuming milliseconds
+    else
+      elapsed = 0
+    end if
+
+    write(value, '(i0)') elapsed
+  end subroutine
 
 end module variables
