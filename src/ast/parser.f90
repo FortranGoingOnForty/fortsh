@@ -59,12 +59,13 @@ contains
   function parser_parse_script(self) result(node)
     class(parser_t), intent(inout) :: self
     type(script_node_t) :: node
+    type(node_list_t) :: stmt_list
+    class(ast_node_t), allocatable :: stmt
     type(token_t) :: tok
 
     node%node_type = NODE_SCRIPT
 
-    ! For now, just parse statements without pre-counting
-    ! This is simpler and avoids polymorphic assignment issues
+    ! Use linked list to collect statements
     do while (self%current <= self%token_count)
       tok = self%current_token()
       if (tok%type == TOKEN_EOF) exit
@@ -75,13 +76,18 @@ contains
         cycle
       end if
 
-      ! Parse statement - for now just skip it
-      ! TODO: Implement proper statement collection
-      block
-        class(ast_node_t), allocatable :: stmt
-        stmt = self%parse_command_list()
-      end block
+      ! Parse and collect statement
+      stmt = self%parse_command_list()
+      call stmt_list%append(stmt)
     end do
+
+    ! Convert list to array
+    if (stmt_list%count > 0) then
+      call stmt_list%to_array(node%statements)
+    end if
+
+    ! Clean up list
+    call stmt_list%clear()
   end function parser_parse_script
 
   ! Parse command list (commands separated by ; or newline)
@@ -412,40 +418,60 @@ contains
   subroutine parse_command_words(parser, cmd_node)
     type(parser_t), intent(inout) :: parser
     type(command_node_t), intent(inout) :: cmd_node
+    type(node_list_t) :: word_list
+    class(ast_node_t), allocatable :: word
     type(token_t) :: tok
 
-    ! For now, just skip words without collecting them
-    ! TODO: Implement proper word collection
+    ! Use linked list to collect words
     do while (parser%current <= parser%token_count)
       tok = parser%current_token()
       select case(tok%type)
       case(TOKEN_WORD, TOKEN_STRING, TOKEN_VARIABLE)
-        call parser%advance()
+        word = parser%parse_word()
+        call word_list%append(word)
       case default
         exit
       end select
     end do
+
+    ! Convert list to array
+    if (word_list%count > 0) then
+      call word_list%to_array(cmd_node%words)
+    end if
+
+    ! Clean up list
+    call word_list%clear()
   end subroutine parse_command_words
 
   ! Helper: Parse word list for 'for' loops
   subroutine parse_word_list(parser, word_list)
     type(parser_t), intent(inout) :: parser
     class(ast_node_t), allocatable, intent(out) :: word_list(:)
+    type(node_list_t) :: words
+    class(ast_node_t), allocatable :: word
     type(token_t) :: tok
 
-    ! For now, just skip words without collecting them
-    ! TODO: Implement proper word list collection
+    ! Use linked list to collect words
     do while (parser%current <= parser%token_count)
       tok = parser%current_token()
       select case(tok%type)
       case(TOKEN_WORD, TOKEN_STRING, TOKEN_VARIABLE)
-        call parser%advance()
+        word = parser%parse_word()
+        call words%append(word)
       case(TOKEN_NEWLINE, TOKEN_SEMICOLON, TOKEN_DO)
         exit
       case default
         exit
       end select
     end do
+
+    ! Convert list to array
+    if (words%count > 0) then
+      call words%to_array(word_list)
+    end if
+
+    ! Clean up list
+    call words%clear()
   end subroutine parse_word_list
 
   ! Helper: Parse loop body
@@ -461,12 +487,13 @@ contains
     type(parser_t), intent(inout) :: parser
     class(ast_node_t), allocatable, intent(out) :: commands(:)
     integer, intent(in) :: terminators(:)
+    type(node_list_t) :: cmd_list
+    class(ast_node_t), allocatable :: cmd
     integer :: i
     type(token_t) :: tok
     logical :: is_terminator
 
-    ! For now, just skip commands until terminator
-    ! TODO: Implement proper command sequence collection
+    ! Use linked list to collect commands
     do while (parser%current <= parser%token_count)
       tok = parser%current_token()
 
@@ -486,12 +513,18 @@ contains
         cycle
       end if
 
-      ! Skip this command
-      block
-        class(ast_node_t), allocatable :: cmd
-        cmd = parser%parse_command_list()
-      end block
+      ! Parse and collect command
+      cmd = parser%parse_command_list()
+      call cmd_list%append(cmd)
     end do
+
+    ! Convert list to array
+    if (cmd_list%count > 0) then
+      call cmd_list%to_array(commands)
+    end if
+
+    ! Clean up list
+    call cmd_list%clear()
   end subroutine parse_command_sequence
 
 
