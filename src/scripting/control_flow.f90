@@ -625,6 +625,9 @@ contains
       if (allocated(shell%control_stack(shell%control_depth)%for_values)) then
         deallocate(shell%control_stack(shell%control_depth)%for_values)
       end if
+      ! Clear loop body to prevent replay in subsequent loops
+      shell%control_stack(shell%control_depth)%loop_body_count = 0
+      shell%control_stack(shell%control_depth)%capturing_loop_body = .false.
       shell%control_depth = shell%control_depth - 1
     end if
   end subroutine
