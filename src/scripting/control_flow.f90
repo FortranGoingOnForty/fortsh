@@ -147,9 +147,33 @@ contains
       call process_for_statement(cmd, shell, should_execute)
     case('function')
       call process_function_statement(cmd, shell, should_execute)
+    case('case')
+      call handle_case_statement(cmd, shell)
+      should_execute = .false.  ! Don't execute 'case' as a command
+    case('esac')
+      call handle_esac_statement(shell)
+      should_execute = .false.  ! Don't execute 'esac' as a command
     case default
-      ! Check if we should execute this command based on control flow state
-      should_execute = should_execute_command(shell)
+      ! Check if line contains a case pattern (ends with ')' and we're in a case block)
+      if (shell%control_depth > 0 .and. shell%control_stack(shell%control_depth)%block_type == BLOCK_CASE) then
+        ! Check if this looks like a case pattern or ;;
+        if (trim(cmd%tokens(1)) == ';;') then
+          ! End of pattern commands - stop executing this case branch
+          shell%control_stack(shell%control_depth)%case_in_match = .false.
+          shell%control_stack(shell%control_depth)%condition_met = .false.
+          should_execute = .false.  ! Don't execute ';;'
+        else if (index(cmd%tokens(cmd%num_tokens), ')') > 0) then
+          ! This is a pattern line
+          call handle_case_pattern(cmd, shell)
+          should_execute = .false.
+        else
+          ! Regular command inside case - only execute if we're in a matched pattern
+          should_execute = shell%control_stack(shell%control_depth)%case_in_match
+        end if
+      else
+        ! Check if we should execute this command based on control flow state
+        should_execute = should_execute_command(shell)
+      end if
     end select
   end subroutine
   
@@ -588,13 +612,19 @@ contains
     type(shell_state_t), intent(inout) :: shell
     
     character(len=256) :: case_variable, expanded_value
-    
-    if (cmd%num_tokens < 4 .or. trim(cmd%tokens(3)) /= 'in') then
+
+    if (cmd%num_tokens < 3) then
       write(error_unit, '(a)') 'case: syntax error, expected "case variable in"'
       shell%last_exit_status = 1
       return
     end if
-    
+
+    if (trim(cmd%tokens(3)) /= 'in' .and. cmd%num_tokens >= 3) then
+      write(error_unit, '(a)') 'case: syntax error, expected "in" keyword'
+      shell%last_exit_status = 1
+      return
+    end if
+
     case_variable = trim(cmd%tokens(2))
     
     ! Expand the variable to get its value
@@ -607,6 +637,8 @@ contains
       shell%control_stack(shell%control_depth)%condition_met = .false.
       shell%control_stack(shell%control_depth)%condition_cmd = expanded_value
       shell%control_stack(shell%control_depth)%loop_start_line = 0
+      shell%control_stack(shell%control_depth)%case_found_match = .false.
+      shell%control_stack(shell%control_depth)%case_in_match = .false.
     else
       write(error_unit, '(a)') 'case: control structure too deeply nested'
       shell%last_exit_status = 1
@@ -633,9 +665,16 @@ contains
       return
     end if
     
+    ! If we've already found a match, skip all subsequent patterns
+    if (shell%control_stack(shell%control_depth)%case_found_match) then
+      shell%control_stack(shell%control_depth)%condition_met = .false.
+      shell%control_stack(shell%control_depth)%case_in_match = .false.
+      return
+    end if
+
     ! Get the case value we're matching against
     case_value = shell%control_stack(shell%control_depth)%condition_cmd
-    
+
     ! Check if any pattern matches - patterns end with )
     pattern_matches = .false.
     do i = 1, cmd%num_tokens
@@ -645,7 +684,7 @@ contains
         if (len_trim(pattern) > 0 .and. pattern(len_trim(pattern):len_trim(pattern)) == ')') then
           pattern = pattern(1:len_trim(pattern)-1)
         end if
-        
+
         ! Check for match (simplified pattern matching)
         if (case_pattern_match(case_value, pattern)) then
           pattern_matches = .true.
@@ -653,9 +692,13 @@ contains
         end if
       end if
     end do
-    
+
     ! Set condition based on pattern match
     shell%control_stack(shell%control_depth)%condition_met = pattern_matches
+    shell%control_stack(shell%control_depth)%case_in_match = pattern_matches
+    if (pattern_matches) then
+      shell%control_stack(shell%control_depth)%case_found_match = .true.
+    end if
   end subroutine
 
   subroutine handle_esac_statement(shell)
@@ -682,11 +725,11 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: variable_name
     character(len=*), intent(out) :: expanded_value
-    
+
     integer :: i
-    
+
     expanded_value = ''
-    
+
     ! Simple variable expansion
     if (variable_name(1:1) == '$') then
       ! Variable reference
@@ -696,14 +739,11 @@ contains
           return
         end if
       end do
+      ! Variable not found - leave empty
+      expanded_value = ''
     else
-      ! Direct value lookup
-      do i = 1, shell%num_variables
-        if (trim(shell%variables(i)%name) == trim(variable_name)) then
-          expanded_value = trim(shell%variables(i)%value)
-          return
-        end if
-      end do
+      ! Not a variable reference - use the literal value
+      expanded_value = trim(variable_name)
     end if
   end subroutine
 
