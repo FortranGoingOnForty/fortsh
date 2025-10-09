@@ -23,7 +23,7 @@ contains
   function is_builtin(cmd_name) result(is_built)
     character(len=*), intent(in) :: cmd_name
     logical :: is_built
-    
+
     is_built = (trim(cmd_name) == 'exit' .or. &
                 trim(cmd_name) == 'cd' .or. &
                 trim(cmd_name) == 'pwd' .or. &
@@ -51,6 +51,8 @@ contains
                 trim(cmd_name) == 'type' .or. &
                 trim(cmd_name) == 'unset' .or. &
                 trim(cmd_name) == 'readonly' .or. &
+                trim(cmd_name) == 'declare' .or. &
+                trim(cmd_name) == 'printenv' .or. &
                 trim(cmd_name) == 'shift' .or. &
                 trim(cmd_name) == 'break' .or. &
                 trim(cmd_name) == 'continue' .or. &
@@ -123,6 +125,10 @@ contains
       call builtin_unset(cmd, shell)
     case('readonly')
       call builtin_readonly(cmd, shell)
+    case('declare')
+      call builtin_declare(cmd, shell)
+    case('printenv')
+      call builtin_printenv(cmd, shell)
     case('shift')
       call builtin_shift(cmd, shell)
     case('break')
@@ -189,32 +195,95 @@ contains
   end subroutine
 
   subroutine builtin_export(cmd, shell)
+    use variables, only: set_shell_variable, get_shell_variable
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: eq_pos
+    integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
-    
+    logical :: print_mode, found
+
+    print_mode = .false.
+
     if (cmd%num_tokens < 2) then
-      write(error_unit, '(a)') 'export: usage: export VAR=value'
-      shell%last_exit_status = 1
+      ! No arguments: print all exported variables
+      print_mode = .true.
+    end if
+
+    if (print_mode) then
+      ! Print all exported variables
+      do i = 1, shell%num_variables
+        if (shell%variables(i)%exported .and. len_trim(shell%variables(i)%name) > 0) then
+          write(output_unit, '(a)') 'export ' // trim(shell%variables(i)%name) // '=' // &
+                                   trim(shell%variables(i)%value)
+        end if
+      end do
+      shell%last_exit_status = 0
       return
     end if
-    
-    eq_pos = index(cmd%tokens(2), '=')
-    if (eq_pos > 0) then
-      var_name = cmd%tokens(2)(:eq_pos-1)
-      var_value = cmd%tokens(2)(eq_pos+1:)
-      
-      if (set_environment_var(trim(var_name), trim(var_value))) then
-        shell%last_exit_status = 0
+
+    ! Process each argument
+    do arg_idx = 2, cmd%num_tokens
+      eq_pos = index(cmd%tokens(arg_idx), '=')
+
+      if (eq_pos > 0) then
+        ! VAR=value form - set and export
+        var_name = cmd%tokens(arg_idx)(:eq_pos-1)
+        var_value = cmd%tokens(arg_idx)(eq_pos+1:)
+
+        ! Set as shell variable first
+        call set_shell_variable(shell, trim(var_name), trim(var_value))
+
+        ! Mark as exported
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == trim(var_name)) then
+            shell%variables(j)%exported = .true.
+            ! Also set in environment
+            if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+              write(error_unit, '(a)') 'export: failed to set environment variable'
+              shell%last_exit_status = 1
+              return
+            end if
+            exit
+          end if
+        end do
       else
-        write(error_unit, '(a)') 'export: failed to set variable'
-        shell%last_exit_status = 1
+        ! Just VAR - mark existing variable as exported
+        var_name = trim(cmd%tokens(arg_idx))
+        found = .false.
+
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == var_name) then
+            shell%variables(j)%exported = .true.
+            found = .true.
+            ! Export current value to environment
+            if (.not. set_environment_var(var_name, trim(shell%variables(j)%value))) then
+              write(error_unit, '(a)') 'export: failed to set environment variable'
+              shell%last_exit_status = 1
+              return
+            end if
+            exit
+          end if
+        end do
+
+        if (.not. found) then
+          ! Variable doesn't exist, create it with empty value and export
+          call set_shell_variable(shell, var_name, '')
+          do j = 1, shell%num_variables
+            if (trim(shell%variables(j)%name) == var_name) then
+              shell%variables(j)%exported = .true.
+              if (.not. set_environment_var(var_name, '')) then
+                write(error_unit, '(a)') 'export: failed to set environment variable'
+                shell%last_exit_status = 1
+                return
+              end if
+              exit
+            end if
+          end do
+        end if
       end if
-    else
-      write(error_unit, '(a)') 'export: usage: export VAR=value'
-      shell%last_exit_status = 1
-    end if
+    end do
+
+    shell%last_exit_status = 0
   end subroutine
 
   subroutine builtin_echo(cmd, shell)
@@ -1047,10 +1116,22 @@ contains
         ! Unset variable
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == var_name) then
+            ! Check if variable is readonly
+            if (shell%variables(j)%readonly) then
+              write(error_unit, '(a)') 'unset: ' // trim(var_name) // ': cannot unset readonly variable'
+              shell%last_exit_status = 1
+              return
+            end if
+            ! Unset from environment if exported
+            if (shell%variables(j)%exported) then
+              call unset_environment_var(var_name)
+            end if
             shell%variables(j)%name = ''
             shell%variables(j)%value = ''
             shell%variables(j)%is_array = .false.
             shell%variables(j)%is_assoc_array = .false.
+            shell%variables(j)%readonly = .false.
+            shell%variables(j)%exported = .false.
             shell%variables(j)%array_size = 0
             shell%variables(j)%assoc_size = 0
             exit
@@ -1063,18 +1144,96 @@ contains
   end subroutine
 
   subroutine builtin_readonly(cmd, shell)
+    use variables, only: set_shell_variable
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! TODO: Implement proper readonly variable support
-    ! For now, treat as regular variable assignment
+    integer :: eq_pos, i, j, arg_idx
+    character(len=MAX_TOKEN_LEN) :: var_name, var_value
+    logical :: print_mode, found
+
+    print_mode = .false.
+
     if (cmd%num_tokens < 2) then
-      write(error_unit, '(a)') 'readonly: usage: readonly name[=value] ...'
-      shell%last_exit_status = 1
+      ! No arguments: print all readonly variables
+      print_mode = .true.
+    end if
+
+    if (print_mode) then
+      ! Print all readonly variables
+      do i = 1, shell%num_variables
+        if (shell%variables(i)%readonly .and. len_trim(shell%variables(i)%name) > 0) then
+          write(output_unit, '(a)') 'readonly ' // trim(shell%variables(i)%name) // '=' // &
+                                   trim(shell%variables(i)%value)
+        end if
+      end do
+      shell%last_exit_status = 0
       return
     end if
-    
-    write(output_unit, '(a)') 'readonly: feature not fully implemented'
+
+    ! Process each argument
+    do arg_idx = 2, cmd%num_tokens
+      eq_pos = index(cmd%tokens(arg_idx), '=')
+
+      if (eq_pos > 0) then
+        ! VAR=value form - set and mark readonly
+        var_name = cmd%tokens(arg_idx)(:eq_pos-1)
+        var_value = cmd%tokens(arg_idx)(eq_pos+1:)
+
+        ! Check if variable already exists and is readonly
+        found = .false.
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == trim(var_name)) then
+            if (shell%variables(j)%readonly) then
+              write(error_unit, '(a)') trim(var_name) // ': readonly variable'
+              shell%last_exit_status = 1
+              return
+            end if
+            found = .true.
+            exit
+          end if
+        end do
+
+        ! Set the variable
+        call set_shell_variable(shell, trim(var_name), trim(var_value))
+
+        ! Mark as readonly
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == trim(var_name)) then
+            shell%variables(j)%readonly = .true.
+            exit
+          end if
+        end do
+      else
+        ! Just VAR - mark existing variable as readonly
+        var_name = trim(cmd%tokens(arg_idx))
+        found = .false.
+
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == var_name) then
+            if (shell%variables(j)%readonly) then
+              write(error_unit, '(a)') trim(var_name) // ': readonly variable'
+              shell%last_exit_status = 1
+              return
+            end if
+            shell%variables(j)%readonly = .true.
+            found = .true.
+            exit
+          end if
+        end do
+
+        if (.not. found) then
+          ! Variable doesn't exist, create it with empty value and mark readonly
+          call set_shell_variable(shell, var_name, '')
+          do j = 1, shell%num_variables
+            if (trim(shell%variables(j)%name) == var_name) then
+              shell%variables(j)%readonly = .true.
+              exit
+            end if
+          end do
+        end if
+      end if
+    end do
+
     shell%last_exit_status = 0
   end subroutine
 
@@ -1211,10 +1370,194 @@ contains
   subroutine builtin_times(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     ! TODO: Implement process time reporting
     write(output_unit, '(a)') 'times: feature not fully implemented'
     shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_declare(cmd, shell)
+    use variables, only: set_shell_variable
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: eq_pos, i, j, arg_idx
+    character(len=MAX_TOKEN_LEN) :: var_name, var_value
+    logical :: readonly_flag, export_flag, print_mode, print_funcs
+    logical :: found
+
+    readonly_flag = .false.
+    export_flag = .false.
+    print_mode = .false.
+    print_funcs = .false.
+
+    if (cmd%num_tokens < 2) then
+      ! No arguments: print all variables
+      print_mode = .true.
+    end if
+
+    ! Parse options
+    arg_idx = 2
+    do while (arg_idx <= cmd%num_tokens)
+      if (cmd%tokens(arg_idx)(1:1) == '-') then
+        select case (trim(cmd%tokens(arg_idx)))
+          case ('-r')
+            readonly_flag = .true.
+          case ('-x')
+            export_flag = .true.
+          case ('-p')
+            print_mode = .true.
+          case ('-f')
+            print_funcs = .true.
+          case default
+            write(error_unit, '(a)') 'declare: invalid option: ' // trim(cmd%tokens(arg_idx))
+            shell%last_exit_status = 1
+            return
+        end select
+        arg_idx = arg_idx + 1
+      else
+        exit
+      end if
+    end do
+
+    if (print_mode) then
+      ! Print all variables with declare syntax
+      do i = 1, shell%num_variables
+        if (len_trim(shell%variables(i)%name) > 0) then
+          if (shell%variables(i)%readonly .and. shell%variables(i)%exported) then
+            write(output_unit, '(a)') 'declare -rx ' // trim(shell%variables(i)%name) // '=' // &
+                                     trim(shell%variables(i)%value)
+          else if (shell%variables(i)%readonly) then
+            write(output_unit, '(a)') 'declare -r ' // trim(shell%variables(i)%name) // '=' // &
+                                     trim(shell%variables(i)%value)
+          else if (shell%variables(i)%exported) then
+            write(output_unit, '(a)') 'declare -x ' // trim(shell%variables(i)%name) // '=' // &
+                                     trim(shell%variables(i)%value)
+          else
+            write(output_unit, '(a)') 'declare -- ' // trim(shell%variables(i)%name) // '=' // &
+                                     trim(shell%variables(i)%value)
+          end if
+        end if
+      end do
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! Process variable assignments
+    do while (arg_idx <= cmd%num_tokens)
+      eq_pos = index(cmd%tokens(arg_idx), '=')
+
+      if (eq_pos > 0) then
+        ! VAR=value form
+        var_name = cmd%tokens(arg_idx)(:eq_pos-1)
+        var_value = cmd%tokens(arg_idx)(eq_pos+1:)
+
+        ! Check if variable already exists and is readonly
+        found = .false.
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == trim(var_name)) then
+            if (shell%variables(j)%readonly .and. .not. readonly_flag) then
+              write(error_unit, '(a)') trim(var_name) // ': readonly variable'
+              shell%last_exit_status = 1
+              return
+            end if
+            found = .true.
+            exit
+          end if
+        end do
+
+        ! Set the variable
+        call set_shell_variable(shell, trim(var_name), trim(var_value))
+
+        ! Apply attributes
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == trim(var_name)) then
+            if (readonly_flag) shell%variables(j)%readonly = .true.
+            if (export_flag) then
+              shell%variables(j)%exported = .true.
+              if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+                write(error_unit, '(a)') 'declare: failed to export variable'
+                shell%last_exit_status = 1
+                return
+              end if
+            end if
+            exit
+          end if
+        end do
+      else
+        ! Just VAR - apply attributes to existing variable
+        var_name = trim(cmd%tokens(arg_idx))
+        found = .false.
+
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == var_name) then
+            if (readonly_flag) shell%variables(j)%readonly = .true.
+            if (export_flag) then
+              shell%variables(j)%exported = .true.
+              if (.not. set_environment_var(var_name, trim(shell%variables(j)%value))) then
+                write(error_unit, '(a)') 'declare: failed to export variable'
+                shell%last_exit_status = 1
+                return
+              end if
+            end if
+            found = .true.
+            exit
+          end if
+        end do
+
+        if (.not. found) then
+          ! Variable doesn't exist, create it with empty value
+          call set_shell_variable(shell, var_name, '')
+          do j = 1, shell%num_variables
+            if (trim(shell%variables(j)%name) == var_name) then
+              if (readonly_flag) shell%variables(j)%readonly = .true.
+              if (export_flag) then
+                shell%variables(j)%exported = .true.
+                if (.not. set_environment_var(var_name, '')) then
+                  write(error_unit, '(a)') 'declare: failed to export variable'
+                  shell%last_exit_status = 1
+                  return
+                end if
+              end if
+              exit
+            end if
+          end do
+        end if
+      end if
+
+      arg_idx = arg_idx + 1
+    end do
+
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_printenv(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i
+    character(len=:), allocatable :: env_value
+
+    if (cmd%num_tokens < 2) then
+      ! No arguments: print all environment variables
+      do i = 1, shell%num_variables
+        if (shell%variables(i)%exported .and. len_trim(shell%variables(i)%name) > 0) then
+          write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
+                                   trim(shell%variables(i)%value)
+        end if
+      end do
+      shell%last_exit_status = 0
+    else
+      ! Print specific environment variable(s)
+      do i = 2, cmd%num_tokens
+        env_value = get_environment_var(trim(cmd%tokens(i)))
+        if (allocated(env_value) .and. len(env_value) > 0) then
+          write(output_unit, '(a)') env_value
+        else
+          ! Variable not found - bash printenv doesn't error, just prints nothing
+          continue
+        end if
+      end do
+      shell%last_exit_status = 0
+    end if
   end subroutine
 
 end module builtins

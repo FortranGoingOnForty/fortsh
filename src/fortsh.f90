@@ -231,6 +231,14 @@ contains
     ! Initialize shell options and special variables
     call initialize_shell_options(shell)
 
+    ! Initialize special shell variables
+    shell%uid = get_uid()
+    shell%euid = get_euid()
+    call system_clock(shell%shell_start_time)
+    shell%oldpwd = ''
+    shell%last_arg = ''
+    shell%current_line_number = 0
+
     ! Initialize jobs array
     do i = 1, MAX_JOBS
       shell%jobs(i)%job_id = 0

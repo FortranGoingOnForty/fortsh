@@ -97,6 +97,12 @@ module system_interface
       integer(c_int), value :: overwrite
       integer(c_int) :: c_setenv
     end function
+
+    function c_unsetenv(name) bind(C, name="unsetenv")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: name
+      integer(c_int) :: c_unsetenv
+    end function
     
     function c_chdir(path) bind(C, name="chdir")
       import :: c_ptr, c_int
@@ -251,6 +257,16 @@ module system_interface
       import :: c_pid_t
       integer(c_pid_t) :: c_getppid
     end function
+
+    function c_getuid() bind(C, name="getuid")
+      import :: c_int
+      integer(c_int) :: c_getuid
+    end function
+
+    function c_geteuid() bind(C, name="geteuid")
+      import :: c_int
+      integer(c_int) :: c_geteuid
+    end function
   end interface
 
   ! Signal handler types
@@ -302,12 +318,22 @@ contains
     logical :: success
     integer :: ret
     character(len=256), target :: c_var_name, c_var_value
-    
+
     c_var_name = trim(var_name)//c_null_char
     c_var_value = trim(var_value)//c_null_char
     ret = c_setenv(c_loc(c_var_name), c_loc(c_var_value), 1_c_int)
     success = (ret == 0)
   end function
+
+  subroutine unset_environment_var(var_name)
+    character(len=*), intent(in) :: var_name
+    integer :: ret
+    character(len=256), target :: c_var_name
+
+    c_var_name = trim(var_name)//c_null_char
+    ret = c_unsetenv(c_loc(c_var_name))
+    ! Ignore return value - unsetenv doesn't typically fail
+  end subroutine
 
   function change_directory(path) result(success)
     character(len=*), intent(in) :: path
@@ -493,6 +519,16 @@ contains
   function get_ppid() result(ppid)
     integer(c_pid_t) :: ppid
     ppid = c_getppid()
+  end function
+
+  function get_uid() result(uid)
+    integer :: uid
+    uid = int(c_getuid())
+  end function
+
+  function get_euid() result(euid)
+    integer :: euid
+    euid = int(c_geteuid())
   end function
 
 end module system_interface
