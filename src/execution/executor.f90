@@ -847,6 +847,25 @@ contains
       shell%control_stack(shell%control_depth)%capturing_loop_body = .false.
 
       do i = 1, shell%control_stack(shell%control_depth)%loop_body_count
+        ! Check if break was requested
+        if (shell%control_stack(shell%control_depth)%break_requested) then
+          ! Clear the break flag
+          shell%control_stack(shell%control_depth)%break_requested = .false.
+          shell%control_stack(shell%control_depth)%break_level = 0
+          ! Exit the loop immediately
+          shell%control_stack(shell%control_depth)%loop_body_count = 0  ! Signal loop end
+          exit
+        end if
+
+        ! Check if continue was requested
+        if (shell%control_stack(shell%control_depth)%continue_requested) then
+          ! Clear the continue flag
+          shell%control_stack(shell%control_depth)%continue_requested = .false.
+          shell%control_stack(shell%control_depth)%continue_level = 0
+          ! Skip the rest of the iteration
+          exit
+        end if
+
         call parse_pipeline(shell%control_stack(shell%control_depth)%loop_body(i), pipeline)
         if (pipeline%num_commands > 0) then
           call execute_pipeline(pipeline, shell, shell%control_stack(shell%control_depth)%loop_body(i))
@@ -855,6 +874,12 @@ contains
 
       ! Re-enable capturing for next iteration
       shell%control_stack(shell%control_depth)%capturing_loop_body = .true.
+
+      ! Check if loop_body_count is 0 (break was called)
+      if (shell%control_stack(shell%control_depth)%loop_body_count == 0) then
+        ! Break was called, exit the loop
+        exit
+      end if
 
       ! Simulate 'done' to check loop condition and update state
       call parse_pipeline(done_str, done_pipeline)

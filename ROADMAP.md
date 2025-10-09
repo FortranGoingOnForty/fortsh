@@ -118,18 +118,26 @@
 - Variables from different loops no longer interfere with each other
 - Both basic for loops and arithmetic for loops execute correctly
 - Sequential loops maintain proper variable scope
+- Arithmetic for loops support both `for((` and `for ((` syntax (POSIX-compliant)
 
 **Known Limitations:**
-- Nested loops do not execute correctly (inner loops execute after outer loop completes)
-- Requires `for((` syntax without space between 'for' and '(('
-- Loop variables persist after loop execution
+- Nested loops do not execute correctly (inner loops execute after outer loop completes) - architectural limitation requiring significant refactoring
+- Loop variables persist after loop execution (POSIX-compliant behavior)
 
 ### 📋 Phase 15: Advanced Loop Features
-**Status:** Planned
-- Nested loop support
-- Loop labels for break/continue
-- Select loops
-- Proper loop variable scoping
+**Status:** Partially Complete
+
+**Implemented:**
+- Break and continue builtins (code complete but non-functional due to architectural limitations)
+
+**Known Limitations:**
+- Break/continue don't work correctly because loop body capture only captures the first command
+- Nested loops remain architecturally limited
+- These issues stem from the single-pass, line-by-line execution model
+
+**Not Implemented:**
+- Select loops (would require interactive menu system)
+- Loop labels for break/continue (blocked by basic break/continue not working)
 
 ### 📋 Phase 16: Debugging & Tracing
 **Status:** Planned

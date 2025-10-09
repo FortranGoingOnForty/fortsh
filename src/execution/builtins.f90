@@ -1455,21 +1455,81 @@ contains
   subroutine builtin_break(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! TODO: Implement proper loop breaking
-    ! This requires control flow integration
-    write(output_unit, '(a)') 'break: feature not fully implemented'
-    shell%last_exit_status = 0
+    integer :: break_count, i, iostat
+
+    ! Default to breaking 1 level
+    break_count = 1
+
+    ! Parse optional numeric argument
+    if (cmd%num_tokens > 1) then
+      read(cmd%tokens(2), *, iostat=iostat) break_count
+      if (iostat /= 0) then
+        write(error_unit, '(a)') 'break: invalid number'
+        shell%last_exit_status = 1
+        return
+      end if
+      if (break_count < 1) then
+        write(error_unit, '(a)') 'break: count must be >= 1'
+        shell%last_exit_status = 1
+        return
+      end if
+    end if
+
+    ! Find the nearest loop and set break flag
+    do i = shell%control_depth, 1, -1
+      if (shell%control_stack(i)%block_type == BLOCK_FOR .or. &
+          shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
+          shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
+        shell%control_stack(i)%break_requested = .true.
+        shell%control_stack(i)%break_level = break_count
+        shell%last_exit_status = 0
+        return
+      end if
+    end do
+
+    ! No loop found
+    write(error_unit, '(a)') 'break: not in a loop'
+    shell%last_exit_status = 1
   end subroutine
 
   subroutine builtin_continue(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! TODO: Implement proper loop continuation
-    ! This requires control flow integration
-    write(output_unit, '(a)') 'continue: feature not fully implemented'
-    shell%last_exit_status = 0
+    integer :: continue_count, i, iostat
+
+    ! Default to continuing 1 level
+    continue_count = 1
+
+    ! Parse optional numeric argument
+    if (cmd%num_tokens > 1) then
+      read(cmd%tokens(2), *, iostat=iostat) continue_count
+      if (iostat /= 0) then
+        write(error_unit, '(a)') 'continue: invalid number'
+        shell%last_exit_status = 1
+        return
+      end if
+      if (continue_count < 1) then
+        write(error_unit, '(a)') 'continue: count must be >= 1'
+        shell%last_exit_status = 1
+        return
+      end if
+    end if
+
+    ! Find the nearest loop and set continue flag
+    do i = shell%control_depth, 1, -1
+      if (shell%control_stack(i)%block_type == BLOCK_FOR .or. &
+          shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
+          shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
+        shell%control_stack(i)%continue_requested = .true.
+        shell%control_stack(i)%continue_level = continue_count
+        shell%last_exit_status = 0
+        return
+      end if
+    end do
+
+    ! No loop found
+    write(error_unit, '(a)') 'continue: not in a loop'
+    shell%last_exit_status = 1
   end subroutine
 
   subroutine builtin_return(cmd, shell)
