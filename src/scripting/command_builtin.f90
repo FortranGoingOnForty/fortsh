@@ -5,6 +5,7 @@
 module command_builtin
   use shell_types
   use variables
+  use system_interface, only: F_OK, X_OK
   use iso_fortran_env, only: output_unit, error_unit
   use iso_c_binding, only: c_int, c_char, c_null_char
   implicit none
@@ -17,9 +18,6 @@ module command_builtin
       integer(c_int) :: status
     end function
   end interface
-
-  integer, parameter :: F_OK = 0  ! File exists
-  integer, parameter :: X_OK = 1  ! Execute permission
 
 contains
 
