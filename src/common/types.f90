@@ -137,6 +137,7 @@ module shell_types
     character(len=1024), allocatable :: loop_body(:)  ! commands in loop body
     integer :: loop_body_count = 0   ! number of commands in loop body
     logical :: capturing_loop_body = .false.  ! currently capturing commands
+    integer :: capture_nesting_depth = 0  ! track nested loops during capture
     ! Arithmetic for loop fields (for (( init; cond; incr )) )
     character(len=256) :: arith_init = ''      ! initialization expression
     character(len=256) :: arith_condition = '' ! condition expression

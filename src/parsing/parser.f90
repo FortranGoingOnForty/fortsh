@@ -280,6 +280,13 @@ contains
       return
     end if
 
+    ! Also handle 'for ((' with space (standard bash syntax)
+    if (len_trim(working_input) >= 6 .and. working_input(1:6) == 'for ((') then
+      ! This is an arithmetic for loop with space - tokenize directly without processing redirects
+      call tokenize_with_substitution(trim(working_input), cmd%tokens, cmd%num_tokens)
+      return
+    end if
+
     ! Check for here-string (<<<) - must come before here document
     pos = index(working_input, '<<<')
     if (pos > 0) then
@@ -437,6 +444,7 @@ contains
     integer :: arith_depth, array_depth
 
     working_copy = adjustl(input)
+    write(error_unit, '(a,a,a)') 'DEBUG tokenize: input=[', trim(input), ']'
     if (len_trim(working_copy) == 0) then
       num_tokens = 0
       return

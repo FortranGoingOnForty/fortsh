@@ -129,9 +129,21 @@ contains
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
 
 
+    write(error_unit, '(a,a,a,i0)') 'DEBUG control_flow: token(1)=[', trim(cmd%tokens(1)), &
+      '], depth=', shell%control_depth
+
     ! Check for arithmetic for loop without space: for((  ...
     if (len_trim(cmd%tokens(1)) >= 5) then
       if (cmd%tokens(1)(1:5) == 'for((') then
+        call process_for_arith_statement(cmd, shell)
+        should_execute = .false.  ! Don't execute the for command itself
+        return
+      end if
+    end if
+
+    ! Check for arithmetic for loop with space: for (( ...
+    if (cmd%num_tokens >= 2 .and. trim(cmd%tokens(1)) == 'for') then
+      if (len_trim(cmd%tokens(2)) >= 2 .and. cmd%tokens(2)(1:2) == '((') then
         call process_for_arith_statement(cmd, shell)
         should_execute = .false.  ! Don't execute the for command itself
         return
@@ -508,6 +520,7 @@ contains
 
     shell%control_stack(shell%control_depth)%loop_body_count = 0
     shell%control_stack(shell%control_depth)%capturing_loop_body = .true.
+    shell%control_stack(shell%control_depth)%capture_nesting_depth = 0
   end subroutine
 
   subroutine process_done_statement(shell, should_execute)
@@ -980,6 +993,9 @@ contains
     if (shell%control_stack(shell%control_depth)%loop_body_count <= 100) then
       shell%control_stack(shell%control_depth)%loop_body(&
         shell%control_stack(shell%control_depth)%loop_body_count) = command_line
+      write(error_unit, '(a,i0,a,i0,a,a)') 'DEBUG capture: depth=', shell%control_depth, &
+        ', cmd #', shell%control_stack(shell%control_depth)%loop_body_count, &
+        ': [', trim(command_line), ']'
     end if
   end subroutine
 
