@@ -879,8 +879,10 @@ contains
 
     character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation, index_str
     character(len=1024) :: assoc_value, keys(100)
+    character(len=256) :: offset_str, length_str_temp
     integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
     integer :: num_keys, key_idx
+    integer :: colon_pos, offset, str_length, second_colon, iostat_val
     character(len=:), allocatable :: current_value
     character(len=20) :: length_str
     logical :: is_array_access, get_keys, get_all, is_length
@@ -1003,7 +1005,7 @@ contains
         current_value = get_environment_var(trim(var_name))
       end if
       if (allocated(current_value)) then
-        write(length_str, '(i0)') len(current_value)
+        write(length_str, '(i0)') len_trim(current_value)
         result_value = trim(length_str)
       else
         result_value = '0'
@@ -1011,10 +1013,63 @@ contains
       return
     end if
     
+    ! Check for substring extraction ${var:offset:length}
+    colon_pos = index(param_expr, ':')
+    if (colon_pos > 1) then
+      ! Check if this is substring (: followed by digit or -)
+      if (colon_pos < len_trim(param_expr)) then
+        if (param_expr(colon_pos+1:colon_pos+1) >= '0' .and. param_expr(colon_pos+1:colon_pos+1) <= '9' &
+            .or. param_expr(colon_pos+1:colon_pos+1) == '-' .or. param_expr(colon_pos+1:colon_pos+1) == ' ') then
+          ! This is substring extraction
+          var_name = param_expr(:colon_pos-1)
+          current_value = get_shell_variable(shell, trim(var_name))
+          if (len_trim(current_value) == 0) then
+            current_value = get_environment_var(trim(var_name))
+          end if
+
+          ! Parse offset
+          second_colon = index(param_expr(colon_pos+1:), ':')
+          if (second_colon > 0) then
+            second_colon = colon_pos + second_colon
+            offset_str = param_expr(colon_pos+1:second_colon-1)
+            length_str_temp = param_expr(second_colon+1:)
+          else
+            offset_str = param_expr(colon_pos+1:)
+            length_str_temp = ''
+          end if
+
+          ! Convert offset to integer
+          read(offset_str, *, iostat=iostat_val) offset
+          if (iostat_val == 0) then
+            ! Fortran uses 1-based indexing, bash uses 0-based
+            offset = offset + 1
+            if (offset < 1) offset = 1
+
+            if (len_trim(length_str_temp) > 0) then
+              read(length_str_temp, *, iostat=iostat_val) str_length
+              if (iostat_val /= 0) str_length = len_trim(current_value)
+            else
+              str_length = len_trim(current_value) - offset + 1
+            end if
+
+            if (offset <= len_trim(current_value)) then
+              if (offset + str_length - 1 > len_trim(current_value)) then
+                str_length = len_trim(current_value) - offset + 1
+              end if
+              result_value = current_value(offset:offset+str_length-1)
+            else
+              result_value = ''
+            end if
+            return
+          end if
+        end if
+      end if
+    end if
+
     ! Look for parameter expansion operators (:-, :=, :+)
     op_pos = 0
     op_len = 0
-    
+
     ! Check for :- (default value)
     op_pos = index(param_expr, ':-')
     if (op_pos > 0) then
