@@ -23,7 +23,7 @@ contains
     integer :: pos, start, cmd_count
     integer :: i, comment_pos
     type(command_t), allocatable :: temp_commands(:)
-    logical :: background, in_quotes
+    logical :: background, in_quotes, in_param_expansion
     character(len=1) :: quote_char
 
     integer(int64) :: parse_start_time
@@ -43,21 +43,29 @@ contains
     allocate(temp_commands(MAX_PIPELINE))
     call track_allocation(MAX_PIPELINE * 1024, 'temp_commands')
 
-    ! Strip comments (# to end of line, but not inside quotes)
+    ! Strip comments (# to end of line, but not inside quotes or ${})
     working_input = input
     in_quotes = .false.
     quote_char = ' '
+    in_param_expansion = .false.
     do i = 1, len_trim(working_input)
       if (in_quotes) then
         if (working_input(i:i) == quote_char) then
           in_quotes = .false.
         end if
       else
+        ! Track ${...} parameter expansion
+        if (i > 1 .and. working_input(i-1:i) == '${') then
+          in_param_expansion = .true.
+        else if (in_param_expansion .and. working_input(i:i) == '}') then
+          in_param_expansion = .false.
+        end if
+
         if (working_input(i:i) == '"' .or. working_input(i:i) == "'") then
           in_quotes = .true.
           quote_char = working_input(i:i)
-        else if (working_input(i:i) == '#') then
-          ! Only treat # as comment if not part of $# and not in middle of word
+        else if (working_input(i:i) == '#' .and. .not. in_param_expansion) then
+          ! Only treat # as comment if not part of $# or ${...}
           if (i > 1 .and. working_input(i-1:i-1) == '$') then
             ! This is $#, not a comment
             cycle
@@ -870,6 +878,174 @@ contains
     end do
   end subroutine
 
+  ! Simple pattern matching for shell expansions (supports * wildcard)
+  function shell_pattern_match(text, pattern) result(matches)
+    character(len=*), intent(in) :: text, pattern
+    logical :: matches
+    integer :: t_pos, p_pos, star_pos, match_pos
+
+    matches = .false.
+    t_pos = 1
+    p_pos = 1
+    star_pos = 0
+    match_pos = 0
+
+    do while (t_pos <= len_trim(text))
+      if (p_pos <= len_trim(pattern) .and. &
+          (pattern(p_pos:p_pos) == text(t_pos:t_pos) .or. pattern(p_pos:p_pos) == '?')) then
+        t_pos = t_pos + 1
+        p_pos = p_pos + 1
+      else if (p_pos <= len_trim(pattern) .and. pattern(p_pos:p_pos) == '*') then
+        star_pos = p_pos
+        match_pos = t_pos
+        p_pos = p_pos + 1
+      else if (star_pos > 0) then
+        p_pos = star_pos + 1
+        match_pos = match_pos + 1
+        t_pos = match_pos
+      else
+        return
+      end if
+    end do
+
+    do while (p_pos <= len_trim(pattern) .and. pattern(p_pos:p_pos) == '*')
+      p_pos = p_pos + 1
+    end do
+
+    matches = (p_pos > len_trim(pattern))
+  end function
+
+  ! Remove shortest match from beginning
+  function remove_prefix_shortest(text, pattern) result(output)
+    character(len=*), intent(in) :: text, pattern
+    character(len=:), allocatable :: output
+    integer :: i
+
+    ! Try matching from shortest to longest
+    do i = 1, len_trim(text)
+      if (shell_pattern_match(text(1:i), trim(pattern))) then
+        output = text(i+1:)
+        return
+      end if
+    end do
+    output = text
+  end function
+
+  ! Remove longest match from beginning
+  function remove_prefix_longest(text, pattern) result(output)
+    character(len=*), intent(in) :: text, pattern
+    character(len=:), allocatable :: output
+    integer :: i
+
+    ! Try matching from longest to shortest
+    do i = len_trim(text), 1, -1
+      if (shell_pattern_match(text(1:i), trim(pattern))) then
+        output = text(i+1:)
+        return
+      end if
+    end do
+    output = text
+  end function
+
+  ! Remove shortest match from end
+  function remove_suffix_shortest(text, pattern) result(output)
+    character(len=*), intent(in) :: text, pattern
+    character(len=:), allocatable :: output
+    integer :: i, text_len
+
+    text_len = len_trim(text)
+    ! Try matching from shortest to longest
+    do i = text_len, 1, -1
+      if (shell_pattern_match(text(i:text_len), trim(pattern))) then
+        output = text(1:i-1)
+        return
+      end if
+    end do
+    output = text
+  end function
+
+  ! Remove longest match from end
+  function remove_suffix_longest(text, pattern) result(output)
+    character(len=*), intent(in) :: text, pattern
+    character(len=:), allocatable :: output
+    integer :: i, text_len
+
+    text_len = len_trim(text)
+    ! Try matching from longest to shortest
+    do i = 1, text_len
+      if (shell_pattern_match(text(i:text_len), trim(pattern))) then
+        output = text(1:i-1)
+        return
+      end if
+    end do
+    output = text
+  end function
+
+  ! Replace first occurrence of pattern
+  function replace_first(text, pattern, replacement) result(output)
+    character(len=*), intent(in) :: text, pattern, replacement
+    character(len=:), allocatable :: output
+    integer :: pos
+
+    ! Simple literal search for now (not pattern matching)
+    pos = index(text, trim(pattern))
+    if (pos > 0) then
+      output = text(:pos-1) // trim(replacement) // text(pos+len_trim(pattern):)
+    else
+      output = text
+    end if
+  end function
+
+  ! Replace all occurrences of pattern
+  function replace_all(text, pattern, replacement) result(output)
+    character(len=*), intent(in) :: text, pattern, replacement
+    character(len=:), allocatable :: output
+    character(len=:), allocatable :: temp
+    integer :: pos
+
+    output = text
+    do
+      pos = index(output, trim(pattern))
+      if (pos == 0) exit
+      temp = output(:pos-1) // trim(replacement) // output(pos+len_trim(pattern):)
+      output = temp
+    end do
+  end function
+
+  ! Convert to uppercase
+  function to_uppercase(text) result(output)
+    character(len=*), intent(in) :: text
+    character(len=:), allocatable :: output
+    integer :: i, char_code
+
+    allocate(character(len=len_trim(text)) :: output)
+    do i = 1, len_trim(text)
+      char_code = iachar(text(i:i))
+      if (char_code >= iachar('a') .and. char_code <= iachar('z')) then
+        output(i:i) = achar(char_code - 32)
+      else
+        output(i:i) = text(i:i)
+      end if
+    end do
+  end function
+
+  ! Convert to lowercase
+  function to_lowercase(text) result(output)
+    character(len=*), intent(in) :: text
+    character(len=:), allocatable :: output
+    integer :: i, char_code
+
+    allocate(character(len=len_trim(text)) :: output)
+    do i = 1, len_trim(text)
+      char_code = iachar(text(i:i))
+      if (char_code >= iachar('A') .and. char_code <= iachar('Z')) then
+        output(i:i) = achar(char_code + 32)
+      else
+        output(i:i) = text(i:i)
+      end if
+    end do
+  end function
+
   subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys
@@ -882,7 +1058,7 @@ contains
     character(len=256) :: offset_str, length_str_temp
     integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
     integer :: num_keys, key_idx
-    integer :: colon_pos, offset, str_length, second_colon, iostat_val
+    integer :: colon_pos, offset, str_length, second_colon, iostat_val, char_code
     character(len=:), allocatable :: current_value
     character(len=20) :: length_str
     logical :: is_array_access, get_keys, get_all, is_length
@@ -1064,6 +1240,210 @@ contains
           end if
         end if
       end if
+    end if
+
+    ! Check for pattern removal and replacement operations
+    ! Must check before default value operators since # and % have special meaning
+
+    ! Pattern removal from beginning: ${var#pattern} or ${var##pattern}
+    if (index(param_expr, '##') > 0) then
+      op_pos = index(param_expr, '##')
+      var_name = param_expr(:op_pos-1)
+      operation = param_expr(op_pos:op_pos+1)
+      default_value = param_expr(op_pos+2:)
+
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value)) then
+        result_value = remove_prefix_longest(current_value, trim(default_value))
+      else
+        result_value = ''
+      end if
+      return
+    else if (index(param_expr, '#') > 0) then
+      op_pos = index(param_expr, '#')
+      ! Make sure it's not the # for length (which would be at position 1)
+      if (op_pos > 1) then
+        var_name = param_expr(:op_pos-1)
+        operation = param_expr(op_pos:op_pos)
+        default_value = param_expr(op_pos+1:)
+
+        current_value = get_shell_variable(shell, trim(var_name))
+        if (len_trim(current_value) == 0) then
+          current_value = get_environment_var(trim(var_name))
+        end if
+
+        if (allocated(current_value)) then
+          result_value = remove_prefix_shortest(current_value, trim(default_value))
+        else
+          result_value = ''
+        end if
+        return
+      end if
+    end if
+
+    ! Pattern removal from end: ${var%pattern} or ${var%%pattern}
+    if (index(param_expr, '%%') > 0) then
+      op_pos = index(param_expr, '%%')
+      var_name = param_expr(:op_pos-1)
+      operation = param_expr(op_pos:op_pos+1)
+      default_value = param_expr(op_pos+2:)
+
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value)) then
+        result_value = remove_suffix_longest(current_value, trim(default_value))
+      else
+        result_value = ''
+      end if
+      return
+    else if (index(param_expr, '%') > 0) then
+      op_pos = index(param_expr, '%')
+      var_name = param_expr(:op_pos-1)
+      operation = param_expr(op_pos:op_pos)
+      default_value = param_expr(op_pos+1:)
+
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value)) then
+        result_value = remove_suffix_shortest(current_value, trim(default_value))
+      else
+        result_value = ''
+      end if
+      return
+    end if
+
+    ! Pattern replacement: ${var/pattern/replacement} or ${var//pattern/replacement}
+    if (index(param_expr, '//') > 0) then
+      op_pos = index(param_expr, '//')
+      var_name = param_expr(:op_pos-1)
+      ! Find the replacement (after the second /)
+      if (index(param_expr(op_pos+2:), '/') > 0) then
+        colon_pos = index(param_expr(op_pos+2:), '/')
+        default_value = param_expr(op_pos+2:op_pos+1+colon_pos-1)  ! pattern
+        operation = param_expr(op_pos+2+colon_pos:)  ! replacement
+      else
+        default_value = param_expr(op_pos+2:)  ! pattern
+        operation = ''  ! replacement (empty = delete)
+      end if
+
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value)) then
+        result_value = replace_all(current_value, trim(default_value), trim(operation))
+      else
+        result_value = ''
+      end if
+      return
+    else if (index(param_expr, '/') > 0) then
+      op_pos = index(param_expr, '/')
+      var_name = param_expr(:op_pos-1)
+      ! Find the replacement (after the second /)
+      if (index(param_expr(op_pos+1:), '/') > 0) then
+        colon_pos = index(param_expr(op_pos+1:), '/')
+        default_value = param_expr(op_pos+1:op_pos+colon_pos-1)  ! pattern
+        operation = param_expr(op_pos+1+colon_pos:)  ! replacement
+      else
+        default_value = param_expr(op_pos+1:)  ! pattern
+        operation = ''  ! replacement (empty = delete)
+      end if
+
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value)) then
+        result_value = replace_first(current_value, trim(default_value), trim(operation))
+      else
+        result_value = ''
+      end if
+      return
+    end if
+
+    ! Case modification
+    if (index(param_expr, '^^') > 0) then
+      ! All uppercase
+      op_pos = index(param_expr, '^^')
+      var_name = param_expr(:op_pos-1)
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value)) then
+        result_value = to_uppercase(current_value)
+      else
+        result_value = ''
+      end if
+      return
+    else if (index(param_expr, '^') > 0) then
+      ! First char uppercase
+      op_pos = index(param_expr, '^')
+      var_name = param_expr(:op_pos-1)
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value) .and. len_trim(current_value) > 0) then
+        char_code = iachar(current_value(1:1))
+        if (char_code >= iachar('a') .and. char_code <= iachar('z')) then
+          result_value = achar(char_code - 32) // current_value(2:)
+        else
+          result_value = current_value
+        end if
+      else
+        result_value = ''
+      end if
+      return
+    else if (index(param_expr, ',,') > 0) then
+      ! All lowercase
+      op_pos = index(param_expr, ',,')
+      var_name = param_expr(:op_pos-1)
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value)) then
+        result_value = to_lowercase(current_value)
+      else
+        result_value = ''
+      end if
+      return
+    else if (index(param_expr, ',') > 0) then
+      ! First char lowercase
+      op_pos = index(param_expr, ',')
+      var_name = param_expr(:op_pos-1)
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) == 0) then
+        current_value = get_environment_var(trim(var_name))
+      end if
+
+      if (allocated(current_value) .and. len_trim(current_value) > 0) then
+        char_code = iachar(current_value(1:1))
+        if (char_code >= iachar('A') .and. char_code <= iachar('Z')) then
+          result_value = achar(char_code + 32) // current_value(2:)
+        else
+          result_value = current_value
+        end if
+      else
+        result_value = ''
+      end if
+      return
     end if
 
     ! Look for parameter expansion operators (:-, :=, :+)
