@@ -244,6 +244,11 @@ module ast_types
     type(node_list_element_t), pointer :: next => null()
   end type node_list_element_t
 
+  ! Wrapper type for holding node pointers
+  type :: node_ptr_t
+    class(ast_node_t), pointer :: ptr => null()
+  end type node_ptr_t
+
   ! Node list for collecting AST nodes
   type :: node_list_t
     type(node_list_element_t), pointer :: head => null()
@@ -319,5 +324,86 @@ contains
     case default;     token_type = TOKEN_WORD
     end select
   end function keyword_token_type
+
+  ! ===========================================================================
+  ! Linked list methods for node collection
+  ! ===========================================================================
+
+  ! Append a node to the list
+  subroutine node_list_append(self, node)
+    class(node_list_t), intent(inout) :: self
+    class(ast_node_t), intent(in) :: node
+    type(node_list_element_t), pointer :: new_element
+
+    allocate(new_element)
+    allocate(new_element%node, source=node)
+    new_element%next => null()
+
+    if (.not. associated(self%head)) then
+      self%head => new_element
+      self%tail => new_element
+    else
+      self%tail%next => new_element
+      self%tail => new_element
+    end if
+
+    self%count = self%count + 1
+  end subroutine node_list_append
+
+  ! Convert list to array - basic working version
+  subroutine node_list_to_array(self, array)
+    class(node_list_t), intent(in) :: self
+    class(ast_node_t), allocatable, intent(out) :: array(:)
+    type(node_list_element_t), pointer :: current
+    integer :: i
+
+    if (self%count > 0) then
+      ! Simple allocation - all elements as base type for now
+      allocate(array(self%count))
+
+      ! Copy basic node data
+      current => self%head
+      do i = 1, self%count
+        if (.not. associated(current)) exit
+
+        ! Copy base fields
+        array(i)%node_type = current%node%node_type
+        array(i)%line_number = current%node%line_number
+        array(i)%column = current%node%column
+
+        ! Store type-specific data in derived fields when possible
+        select type(node => current%node)
+        type is (word_node_t)
+          ! For words, we'd need the derived type allocated
+          ! For now, just preserve the node type
+        type is (for_node_t)
+          ! For loops, we'd need derived type
+          ! For now, just preserve the node type
+        end select
+
+        current => current%next
+      end do
+    end if
+  end subroutine node_list_to_array
+
+
+
+  ! Clear the list
+  subroutine node_list_clear(self)
+    class(node_list_t), intent(inout) :: self
+    type(node_list_element_t), pointer :: current, next
+
+    current => self%head
+    do while (associated(current))
+      next => current%next
+      if (allocated(current%node)) deallocate(current%node)
+      deallocate(current)
+      current => next
+    end do
+
+    self%head => null()
+    self%tail => null()
+    self%count = 0
+  end subroutine node_list_clear
 
 end module ast_types
