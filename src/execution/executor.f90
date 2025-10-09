@@ -276,11 +276,15 @@ contains
       call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content)
     end if
     
-    ! Expand variables in all tokens
-    call expand_tokens(cmd, shell)
-    
-    ! Expand glob patterns
-    call expand_command_globs(cmd)
+    ! Expand variables in all tokens (except for defun, which needs raw body)
+    if (trim(cmd%tokens(1)) /= 'defun') then
+      call expand_tokens(cmd, shell)
+    end if
+
+    ! Expand glob patterns (except for defun)
+    if (trim(cmd%tokens(1)) /= 'defun') then
+      call expand_command_globs(cmd)
+    end if
     
     ! Check if it's a user-defined function
     if (is_function(shell, cmd%tokens(1))) then
@@ -514,38 +518,82 @@ contains
   subroutine execute_function(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=1024), allocatable :: function_body(:)
-    integer :: i
+    character(len=1024) :: saved_positional_params(50)
+    integer :: saved_num_positional
+    integer :: i, saved_exit_status
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line
-    
+    logical :: function_returned
+
+    ! Save current positional parameters (caller's $1, $2, etc.)
+    saved_positional_params = shell%positional_params
+    saved_num_positional = shell%num_positional
+
+    ! Enter function scope
+    shell%function_depth = shell%function_depth + 1
+
+    ! Initialize local variable count for this function scope
+    if (shell%function_depth <= size(shell%local_var_counts)) then
+      shell%local_var_counts(shell%function_depth) = 0
+    end if
+
+    ! Set positional parameters from function arguments
+    ! cmd%tokens(1) is function name, cmd%tokens(2:) are arguments
+    shell%num_positional = cmd%num_tokens - 1
+    do i = 1, shell%num_positional
+      shell%positional_params(i) = cmd%tokens(i + 1)
+    end do
+
     ! Get function body
     function_body = get_function_body(shell, cmd%tokens(1))
-    
+
+    function_returned = .false.
+
     if (allocated(function_body)) then
       ! Execute each line of the function
       do i = 1, size(function_body)
         if (len_trim(function_body(i)) > 0) then
           ! Expand aliases
           call expand_alias(shell, trim(function_body(i)), expanded_line)
-          
+
           ! Parse and execute
           call parse_pipeline(expanded_line, pipeline)
           if (pipeline%num_commands > 0) then
             call execute_pipeline(pipeline, shell, expanded_line)
           end if
-          
+
           ! Clean up
           if (allocated(pipeline%commands)) then
             deallocate(pipeline%commands)
           end if
-          
+
+          ! Check if function returned early (via return builtin)
+          ! We'll use a special flag in shell state for this
+          if (shell%function_return_pending) then
+            shell%function_return_pending = .false.
+            function_returned = .true.
+            exit
+          end if
+
           ! Exit early if shell stopped
           if (.not. shell%running) exit
         end if
       end do
     end if
+
+    ! Clean up local variables for this function scope
+    if (shell%function_depth > 0 .and. shell%function_depth <= size(shell%local_var_counts)) then
+      shell%local_var_counts(shell%function_depth) = 0
+    end if
+
+    ! Exit function scope
+    shell%function_depth = shell%function_depth - 1
+
+    ! Restore caller's positional parameters
+    shell%positional_params = saved_positional_params
+    shell%num_positional = saved_num_positional
   end subroutine
 
 end module executor

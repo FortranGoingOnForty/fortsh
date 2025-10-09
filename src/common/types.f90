@@ -228,6 +228,10 @@ module shell_types
     integer :: histsize = 1000                ! $HISTSIZE (max commands in memory)
     integer :: histfilesize = 2000            ! $HISTFILESIZE (max lines in file)
     character(len=256) :: histcontrol = ''    ! $HISTCONTROL (ignorespace:ignoredups:erasedups)
+    ! Function execution control
+    logical :: function_return_pending = .false.  ! Set by 'return' builtin to exit function
+    integer :: function_return_value = 0      ! Return value from 'return' builtin
+    integer :: function_depth = 0             ! Current function call depth (for local vars)
   end type shell_state_t
 
 end module shell_types

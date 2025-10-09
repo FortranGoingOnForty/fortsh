@@ -323,6 +323,12 @@ contains
     do i = 1, MAX_JOBS
       shell%jobs(i)%job_id = 0
     end do
+
+    ! Initialize functions array
+    do i = 1, size(shell%functions)
+      shell%functions(i)%name = ''
+      shell%functions(i)%body_lines = 0
+    end do
     
     ! Check for performance monitoring environment variable
     temp = get_environment_var('FORTSH_PERF')

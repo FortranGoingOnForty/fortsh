@@ -5,7 +5,6 @@
 module variables
   use shell_types
   use system_interface
-  use readline, only: set_histcontrol
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -49,8 +48,7 @@ contains
         return
       case ('HISTCONTROL')
         shell%histcontrol = value
-        ! Update readline's histcontrol setting
-        call set_histcontrol(value)
+        ! Note: histcontrol is also updated in fortsh.f90 via set_histcontrol()
         return
     end select
 
@@ -95,11 +93,25 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
     character(len=1024) :: value
-    integer :: i
-    
+    integer :: i, depth
+
     value = ''
-    
-    ! Handle special variables first
+
+    ! First check local variables (innermost scope first)
+    if (shell%function_depth > 0) then
+      do depth = shell%function_depth, 1, -1
+        if (depth <= size(shell%local_var_counts)) then
+          do i = 1, shell%local_var_counts(depth)
+            if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+              value = shell%local_vars(depth, i)%value
+              return
+            end if
+          end do
+        end if
+      end do
+    end if
+
+    ! Handle special variables
     select case (trim(name))
       case ('$')
         write(value, '(i0)') shell%shell_pid
@@ -409,7 +421,8 @@ contains
         do j = 1, body_count
           shell%functions(i)%body(j) = body_lines(j)
         end do
-        
+
+        ! Update function count to include this function
         shell%num_functions = max(shell%num_functions, i)
         return
       end if
