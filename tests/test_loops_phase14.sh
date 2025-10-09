@@ -21,6 +21,14 @@ for((i=0;i<5;i++))
 do
   echo "  Count: $i"
 done
+
+echo
+echo "Test 2b: Arithmetic for loop (with space)"
+echo "------------------------------------------"
+for ((i=0; i<5; i++))
+do
+  echo "  Count: $i"
+done
 echo ""
 
 echo "Test 3: Arithmetic for loop with increment"
@@ -64,8 +72,7 @@ echo "========================================="
 echo "Known Limitations:"
 echo "========================================="
 echo "1. Nested loops do not work correctly"
-echo "2. Requires for(( syntax without space"
-echo "3. Loop variables persist after loop ends"
+echo "2. Loop variables persist after loop ends (POSIX correct)"
 echo ""
 
 echo "========================================="

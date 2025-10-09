@@ -257,11 +257,36 @@ contains
     ! Capture command if we're inside a loop body (before executing control flow)
     if (shell%control_depth > 0) then
       if (shell%control_stack(shell%control_depth)%capturing_loop_body) then
-        ! Don't capture 'done' keyword - that marks the end of the loop body
         if (allocated(cmd%tokens) .and. cmd%num_tokens > 0) then
-          if (trim(cmd%tokens(1)) /= 'done') then
+          ! Track nested depth for proper 'done' matching
+          if (trim(cmd%tokens(1)) == 'for' .or. trim(cmd%tokens(1)) == 'while' .or. &
+              (len_trim(cmd%tokens(1)) >= 5 .and. cmd%tokens(1)(1:5) == 'for((')) then
+            ! Starting a nested loop - increment nesting depth
+            shell%control_stack(shell%control_depth)%capture_nesting_depth = &
+              shell%control_stack(shell%control_depth)%capture_nesting_depth + 1
             call capture_loop_command(shell, original_input)
-            ! Don't execute the command now - it will be executed during replay
+            return
+          else if (trim(cmd%tokens(1)) == 'do') then
+            ! 'do' for nested loop - just capture it
+            if (shell%control_stack(shell%control_depth)%capture_nesting_depth > 0) then
+              call capture_loop_command(shell, original_input)
+              return
+            end if
+            ! If nesting depth is 0, this 'do' is an error - let it be processed
+          else if (trim(cmd%tokens(1)) == 'done') then
+            ! Check nesting depth
+            if (shell%control_stack(shell%control_depth)%capture_nesting_depth > 0) then
+              ! This 'done' ends a nested loop
+              shell%control_stack(shell%control_depth)%capture_nesting_depth = &
+                shell%control_stack(shell%control_depth)%capture_nesting_depth - 1
+              call capture_loop_command(shell, original_input)
+              return
+            else
+              ! This 'done' ends the current capturing loop - process normally
+            end if
+          else
+            ! Everything else gets captured
+            call capture_loop_command(shell, original_input)
             return
           end if
         end if
