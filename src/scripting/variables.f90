@@ -18,6 +18,25 @@ contains
 
     empty_slot = -1
 
+    ! Handle special built-in variables
+    select case (trim(name))
+      case ('PS1')
+        shell%ps1 = value
+        return
+      case ('PS2')
+        shell%ps2 = value
+        return
+      case ('PS3')
+        shell%ps3 = value
+        return
+      case ('PS4')
+        shell%ps4 = value
+        return
+      case ('IFS')
+        shell%ifs = value
+        return
+    end select
+
     ! Check if variable already exists
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
@@ -126,6 +145,18 @@ contains
       case ('IFS')
         ! Internal field separator
         value = trim(shell%ifs)
+        return
+      case ('PS1')
+        value = trim(shell%ps1)
+        return
+      case ('PS2')
+        value = trim(shell%ps2)
+        return
+      case ('PS3')
+        value = trim(shell%ps3)
+        return
+      case ('PS4')
+        value = trim(shell%ps4)
         return
     end select
     

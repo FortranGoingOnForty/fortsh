@@ -29,6 +29,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/scripting/directory_builtin.o \
           $(BUILDDIR)/scripting/command_builtin.o \
           $(BUILDDIR)/scripting/variables.o \
+          $(BUILDDIR)/scripting/prompt_formatting.o \
           $(BUILDDIR)/scripting/expansion.o \
           $(BUILDDIR)/scripting/substitution.o \
           $(BUILDDIR)/scripting/config.o \
@@ -118,6 +119,9 @@ $(BUILDDIR)/scripting/command_builtin.o: src/scripting/command_builtin.f90 $(BUI
 $(BUILDDIR)/scripting/variables.o: src/scripting/variables.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
+$(BUILDDIR)/scripting/prompt_formatting.o: src/scripting/prompt_formatting.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
 $(BUILDDIR)/scripting/expansion.o: src/scripting/expansion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
@@ -145,7 +149,7 @@ $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDD
 $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o | $(BUILDDIR)
+$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 # Clean targets

@@ -13,13 +13,14 @@ program fortran_shell
   use aliases
   use shell_options
   use performance
+  use prompt_formatting
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
   type(shell_state_t) :: shell
   type(pipeline_t) :: pipeline
   character(len=1024) :: input_line
-  character(len=:), allocatable :: expanded_line
+  character(len=:), allocatable :: expanded_line, prompt_str
   integer :: iostat, i
 
   ! Initialize performance monitoring
@@ -57,7 +58,9 @@ program fortran_shell
 
     ! Read input with enhanced readline (includes prompt only if interactive)
     if (shell%is_interactive) then
-      call readline_enhanced(trim(shell%username) // '@' // trim(shell%hostname) // ' :: ', input_line, iostat)
+      ! Expand prompt with escape sequences
+      prompt_str = expand_prompt(shell%ps1, shell)
+      call readline_enhanced(prompt_str, input_line, iostat)
     else
       read(input_unit, '(a)', iostat=iostat) input_line
       ! Add to history in non-interactive mode too
@@ -84,6 +87,9 @@ program fortran_shell
     ! Execute pipeline
     if (pipeline%num_commands > 0) then
       call execute_pipeline(pipeline, shell, expanded_line)
+      ! Increment command number and history number for next prompt
+      shell%command_number = shell%command_number + 1
+      call increment_prompt_history()
     end if
 
     ! Clean up pipeline

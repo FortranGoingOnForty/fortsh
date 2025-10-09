@@ -212,6 +212,12 @@ module shell_types
     integer :: current_line_number = 0         ! $LINENO (current line in script)
     character(len=MAX_PATH_LEN) :: oldpwd = '' ! $OLDPWD (previous working directory)
     logical :: is_login_shell = .false.        ! Started as login shell
+    ! Prompt strings
+    character(len=1024) :: ps1 = '\u@\h :: \w\$ ' ! Primary prompt (fortsh style!)
+    character(len=256) :: ps2 = '> '              ! Continuation prompt
+    character(len=256) :: ps3 = '#? '             ! Select prompt
+    character(len=256) :: ps4 = '+ '              ! Trace prompt (set -x)
+    integer :: command_number = 0              ! For \# in prompts
     ! Positional parameters
     character(len=1024) :: positional_params(50) ! $1, $2, ..., $n
     integer :: num_positional = 0             ! $# (number of positional parameters)
