@@ -411,9 +411,10 @@ contains
   subroutine builtin_source(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=1024) :: filename
     logical :: file_exists
+    integer :: i
     
     ! Check if filename provided
     if (cmd%num_tokens < 2) then
@@ -432,12 +433,27 @@ contains
       return
     end if
     
+    ! Set positional parameters from remaining arguments
+    ! Save $0 (script name)
+    shell%shell_name = trim(filename)
+
+    ! Set $1, $2, ... from arguments
+    shell%num_positional = 0
+    if (cmd%num_tokens > 2) then
+      do i = 3, cmd%num_tokens
+        shell%num_positional = shell%num_positional + 1
+        if (shell%num_positional <= size(shell%positional_params)) then
+          shell%positional_params(shell%num_positional) = trim(cmd%tokens(i))
+        end if
+      end do
+    end if
+
     ! Mark the shell to source this file on next main loop iteration
     ! This avoids circular dependency issues
     shell%source_file = filename
     shell%should_source = .true.
     shell%last_exit_status = 0
-    
+
     write(output_unit, '(a)') 'source: ' // trim(filename) // ' queued for execution'
   end subroutine
 
