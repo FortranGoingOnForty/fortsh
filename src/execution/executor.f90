@@ -7,7 +7,7 @@ module executor
   use builtins
   use parser
   use job_control
-  use variables
+  use variables, only: var_set_shell_variable => set_shell_variable, set_array_variable, set_array_element
   use control_flow
   use error_handling
   use performance
@@ -286,8 +286,16 @@ contains
       call expand_command_globs(cmd)
     end if
     
+    ! Check for variable assignment: var=value or arr=(...)
+    if (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1) then
+      call execute_assignment(cmd, shell)
+    ! Check for ((expression)) arithmetic evaluation command
+    else if (len_trim(cmd%tokens(1)) >= 4 .and. &
+        cmd%tokens(1)(1:2) == '((' .and. &
+        cmd%tokens(1)(len_trim(cmd%tokens(1))-1:len_trim(cmd%tokens(1))) == '))') then
+      call execute_arithmetic_command(cmd, shell)
     ! Check if it's a user-defined function
-    if (is_function(shell, cmd%tokens(1))) then
+    else if (is_function(shell, cmd%tokens(1))) then
       call execute_function(cmd, shell)
     else if (is_builtin(cmd%tokens(1))) then
       call execute_builtin(cmd, shell)
@@ -299,9 +307,169 @@ contains
     call end_timer('execute_single', exec_start_time, total_exec_time)
   end subroutine
 
+  ! Execute ((expression)) arithmetic evaluation command
+  ! Sets exit status to 0 if expression is non-zero, 1 if zero
+  subroutine execute_arithmetic_command(cmd, shell)
+    use expansion, only: arithmetic_expansion_shell
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    character(len=1024) :: expr, result_str
+    character(len=:), allocatable :: arith_expr
+    integer(kind=8) :: result_val
+    integer :: iostat
+
+    ! Build full expression from all tokens
+    expr = trim(cmd%tokens(1))
+
+    ! Convert ((expr)) to $((expr)) for arithmetic_expansion_shell
+    arith_expr = '$' // trim(expr)
+
+    ! Evaluate arithmetic expression
+    result_str = arithmetic_expansion_shell(trim(arith_expr), shell)
+
+    ! Convert result to integer
+    read(result_str, *, iostat=iostat) result_val
+    if (iostat /= 0) result_val = 0
+
+    ! Set exit status: 0 if non-zero, 1 if zero
+    if (result_val /= 0) then
+      shell%last_exit_status = 0
+    else
+      shell%last_exit_status = 1
+    end if
+  end subroutine
+
+  ! Execute variable assignment: var=value, arr=(a b c), or arr[0]=value
+  subroutine execute_assignment(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    character(len=MAX_TOKEN_LEN) :: var_name, var_value, token
+    character(len=MAX_TOKEN_LEN) :: array_elements(100)
+    character(len=100) :: index_str
+    integer :: eq_pos, paren_start, paren_end, num_elements, bracket_pos
+    integer :: bracket_end, array_index, read_status
+    logical :: is_indexed_assignment
+
+    token = trim(cmd%tokens(1))
+    eq_pos = index(token, '=')
+    if (eq_pos == 0) return
+
+    ! Check for array index assignment: arr[index]=value
+    bracket_pos = index(token, '[')
+    is_indexed_assignment = (bracket_pos > 0 .and. bracket_pos < eq_pos)
+
+    if (is_indexed_assignment) then
+      ! arr[index]=value
+      var_name = token(:bracket_pos-1)
+      bracket_end = index(token(bracket_pos:), ']')
+      if (bracket_end > 0) then
+        bracket_end = bracket_pos + bracket_end - 1
+        index_str = token(bracket_pos+1:bracket_end-1)
+        var_value = token(eq_pos+1:)
+
+        ! Parse the index (bash uses 0-indexed, convert to 1-indexed)
+        read(index_str, *, iostat=read_status) array_index
+        if (read_status == 0) then
+          array_index = array_index + 1  ! Convert to 1-indexed
+          call set_array_element(shell, trim(var_name), array_index, trim(var_value))
+          shell%last_exit_status = 0
+        else
+          write(error_unit, '(a)') 'Error: invalid array index'
+          shell%last_exit_status = 1
+        end if
+      else
+        write(error_unit, '(a)') 'Error: unclosed bracket in array assignment'
+        shell%last_exit_status = 1
+      end if
+      return
+    end if
+
+    ! Get variable name (before =)
+    var_name = token(:eq_pos-1)
+
+    ! Check if it's an array literal: arr=(...)
+    paren_start = eq_pos + 1
+    if (paren_start <= len_trim(token) .and. token(paren_start:paren_start) == '(') then
+      ! Array literal
+      paren_end = index(token(paren_start+1:), ')')
+      if (paren_end > 0) then
+        paren_end = paren_start + paren_end
+        ! Extract elements between parentheses
+        var_value = token(paren_start+1:paren_end-1)
+
+        ! Split by spaces to get array elements
+        num_elements = 0
+        call split_array_elements(var_value, array_elements, num_elements)
+
+        ! Set as array variable
+        call set_array_variable(shell, trim(var_name), array_elements, num_elements)
+        shell%last_exit_status = 0
+      else
+        write(error_unit, '(a)') 'Error: unclosed array literal'
+        shell%last_exit_status = 1
+      end if
+    else
+      ! Simple assignment: var=value
+      var_value = token(eq_pos+1:)
+      call var_set_shell_variable(shell, trim(var_name), trim(var_value))
+      shell%last_exit_status = 0
+    end if
+  end subroutine
+
+  ! Split array elements by spaces (respecting quotes)
+  subroutine split_array_elements(input, elements, count)
+    character(len=*), intent(in) :: input
+    character(len=MAX_TOKEN_LEN), intent(out) :: elements(:)
+    integer, intent(out) :: count
+    integer :: i, start, len_input
+    logical :: in_quotes
+    character :: quote_char
+
+    count = 0
+    i = 1
+    len_input = len_trim(input)
+
+    do while (i <= len_input)
+      ! Skip leading spaces
+      do while (i <= len_input .and. input(i:i) == ' ')
+        i = i + 1
+      end do
+      if (i > len_input) exit
+
+      ! Start of element
+      count = count + 1
+      if (count > size(elements)) exit
+      start = i
+      in_quotes = .false.
+      quote_char = ' '
+
+      ! Find end of element
+      do while (i <= len_input)
+        if (.not. in_quotes .and. (input(i:i) == '"' .or. input(i:i) == "'")) then
+          in_quotes = .true.
+          quote_char = input(i:i)
+        else if (in_quotes .and. input(i:i) == quote_char) then
+          in_quotes = .false.
+        else if (.not. in_quotes .and. input(i:i) == ' ') then
+          exit
+        end if
+        i = i + 1
+      end do
+
+      ! Extract element (and remove quotes if present)
+      elements(count) = input(start:i-1)
+      if (len_trim(elements(count)) >= 2) then
+        if ((elements(count)(1:1) == '"' .and. elements(count)(len_trim(elements(count)):len_trim(elements(count))) == '"') .or. &
+            (elements(count)(1:1) == "'" .and. elements(count)(len_trim(elements(count)):len_trim(elements(count))) == "'")) then
+          elements(count) = elements(count)(2:len_trim(elements(count))-1)
+        end if
+      end if
+    end do
+  end subroutine
+
   subroutine expand_tokens(cmd, shell)
     type(command_t), intent(inout) :: cmd
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     integer :: i
     character(len=:), allocatable :: expanded
     

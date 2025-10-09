@@ -223,7 +223,14 @@ contains
     character(len=MAX_TOKEN_LEN) :: temp_str
     
     working_input = adjustl(input)
-    
+
+    ! Skip redirection processing for arithmetic commands ((expression))
+    if (len_trim(working_input) >= 2 .and. working_input(1:2) == '((') then
+      ! This is an arithmetic command - tokenize directly without processing redirects
+      call tokenize_with_substitution(trim(working_input), cmd%tokens, cmd%num_tokens)
+      return
+    end if
+
     ! Check for here-string (<<<) - must come before here document
     pos = index(working_input, '<<<')
     if (pos > 0) then
@@ -372,18 +379,21 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable, intent(out) :: tokens(:)
     integer, intent(out) :: num_tokens
-    
+
     character(len=len(input)) :: working_copy
     integer :: pos, start, token_count, i, token_len
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
-    
+    logical :: in_quotes, in_arith, in_array_literal
+    character :: quote_char
+    integer :: arith_depth, array_depth
+
     working_copy = adjustl(input)
     if (len_trim(working_copy) == 0) then
       num_tokens = 0
       return
     end if
-    
-    ! Count tokens first
+
+    ! Count tokens first - must track quotes, $((  )), and array literals
     token_count = 0
     pos = 1
     do while (pos <= len_trim(working_copy))
@@ -392,23 +402,82 @@ contains
         pos = pos + 1
       end do
       if (pos > len_trim(working_copy)) exit
-      
+
       ! Found start of token
       token_count = token_count + 1
-      
-      ! Skip to end of token
-      do while (pos <= len_trim(working_copy) .and. working_copy(pos:pos) /= ' ')
+      in_quotes = .false.
+      in_arith = .false.
+      arith_depth = 0
+      quote_char = ' '
+      in_array_literal = .false.
+      array_depth = 0
+
+      ! Skip to end of token (respecting quotes and arithmetic)
+      do while (pos <= len_trim(working_copy))
+        ! Check for quotes
+        if (.not. in_arith) then
+          if (.not. in_quotes .and. (working_copy(pos:pos) == '"' .or. working_copy(pos:pos) == "'")) then
+            in_quotes = .true.
+            quote_char = working_copy(pos:pos)
+          else if (in_quotes .and. working_copy(pos:pos) == quote_char) then
+            in_quotes = .false.
+          end if
+        end if
+
+        ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
+        if (.not. in_quotes) then
+          if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
+            in_arith = .true.
+            arith_depth = 2
+            pos = pos + 2  ! Skip the $(
+          else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
+                   working_copy(pos:pos+1) == '((') then
+            ! (( at start of token - arithmetic command
+            in_arith = .true.
+            arith_depth = 2
+            pos = pos + 1  ! Skip the first (
+          else if (in_arith) then
+            if (working_copy(pos:pos) == '(') then
+              arith_depth = arith_depth + 1
+            else if (working_copy(pos:pos) == ')') then
+              arith_depth = arith_depth - 1
+              if (arith_depth == 0) in_arith = .false.
+            end if
+          end if
+        end if
+
+        ! Check for array literal: var=(...)
+        if (.not. in_quotes .and. .not. in_arith) then
+          if (pos > 1 .and. pos <= len_trim(working_copy) - 1 .and. &
+              working_copy(pos-1:pos) == '=(') then
+            ! Start of array literal
+            in_array_literal = .true.
+            array_depth = 1
+          else if (in_array_literal) then
+            if (working_copy(pos:pos) == '(') then
+              array_depth = array_depth + 1
+            else if (working_copy(pos:pos) == ')') then
+              array_depth = array_depth - 1
+              if (array_depth == 0) in_array_literal = .false.
+            end if
+          end if
+        end if
+
+        ! Check for token boundary (space outside quotes/arithmetic/array)
+        if (.not. in_quotes .and. .not. in_arith .and. .not. in_array_literal .and. &
+            working_copy(pos:pos) == ' ') exit
+
         pos = pos + 1
       end do
     end do
-    
+
     num_tokens = token_count
     if (num_tokens == 0) return
-    
+
     ! Allocate temporary storage
     allocate(temp_tokens(num_tokens))
-    
-    ! Extract tokens into temporary array
+
+    ! Extract tokens into temporary array (same logic as counting)
     pos = 1
     token_count = 0
     do while (pos <= len_trim(working_copy) .and. token_count < num_tokens)
@@ -417,33 +486,92 @@ contains
         pos = pos + 1
       end do
       if (pos > len_trim(working_copy)) exit
-      
+
       start = pos
-      
-      ! Find end of token
-      do while (pos <= len_trim(working_copy) .and. working_copy(pos:pos) /= ' ')
+      in_quotes = .false.
+      in_arith = .false.
+      arith_depth = 0
+      quote_char = ' '
+      in_array_literal = .false.
+      array_depth = 0
+
+      ! Find end of token (respecting quotes, arithmetic, and array literals)
+      do while (pos <= len_trim(working_copy))
+        ! Check for quotes
+        if (.not. in_arith) then
+          if (.not. in_quotes .and. (working_copy(pos:pos) == '"' .or. working_copy(pos:pos) == "'")) then
+            in_quotes = .true.
+            quote_char = working_copy(pos:pos)
+          else if (in_quotes .and. working_copy(pos:pos) == quote_char) then
+            in_quotes = .false.
+          end if
+        end if
+
+        ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
+        if (.not. in_quotes) then
+          if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
+            in_arith = .true.
+            arith_depth = 2
+            pos = pos + 2  ! Skip the $(
+          else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
+                   working_copy(pos:pos+1) == '((') then
+            ! (( at start of token - arithmetic command
+            in_arith = .true.
+            arith_depth = 2
+            pos = pos + 1  ! Skip the first (
+          else if (in_arith) then
+            if (working_copy(pos:pos) == '(') then
+              arith_depth = arith_depth + 1
+            else if (working_copy(pos:pos) == ')') then
+              arith_depth = arith_depth - 1
+              if (arith_depth == 0) in_arith = .false.
+            end if
+          end if
+        end if
+
+        ! Check for array literal: var=(...)
+        if (.not. in_quotes .and. .not. in_arith) then
+          if (pos > 1 .and. pos <= len_trim(working_copy) - 1 .and. &
+              working_copy(pos-1:pos) == '=(') then
+            ! Start of array literal
+            in_array_literal = .true.
+            array_depth = 1
+          else if (in_array_literal) then
+            if (working_copy(pos:pos) == '(') then
+              array_depth = array_depth + 1
+            else if (working_copy(pos:pos) == ')') then
+              array_depth = array_depth - 1
+              if (array_depth == 0) in_array_literal = .false.
+            end if
+          end if
+        end if
+
+        ! Check for token boundary (space outside quotes/arithmetic/array)
+        if (.not. in_quotes .and. .not. in_arith .and. .not. in_array_literal .and. &
+            working_copy(pos:pos) == ' ') exit
+
         pos = pos + 1
       end do
-      
+
       ! Store token
       token_count = token_count + 1
       temp_tokens(token_count) = working_copy(start:pos-1)
     end do
-    
+
     ! Now allocate the final deferred-length character array
     ! We'll use MAX_TOKEN_LEN as a uniform length for now
     allocate(character(len=MAX_TOKEN_LEN) :: tokens(num_tokens))
     do i = 1, num_tokens
       tokens(i) = temp_tokens(i)
     end do
-    
+
     deallocate(temp_tokens)
   end subroutine
 
   subroutine expand_variables(token, expanded, shell)
     character(len=*), intent(in) :: token
     character(len=:), allocatable, intent(out) :: expanded
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     
     character(len=MAX_TOKEN_LEN) :: result
     integer :: i, j, var_start, brace_depth
@@ -511,27 +639,54 @@ contains
           end if
           i = i + 1
         else if (token(i:i) == '(') then
-          ! $(command) command substitution
-          i = i + 1
-          var_start = i
-          brace_depth = 1
-          
-          do while (i <= len_trim(token) .and. brace_depth > 0)
-            if (token(i:i) == '(') then
-              brace_depth = brace_depth + 1
-            else if (token(i:i) == ')') then
-              brace_depth = brace_depth - 1
+          ! Check if it's $(( arithmetic expansion or $( command substitution
+          if (i+1 <= len_trim(token) .and. token(i+1:i+1) == '(') then
+            ! $((arithmetic)) expansion
+            var_start = i - 1  ! Include the $ character
+            i = i + 2  ! Skip both opening parens
+            brace_depth = 2
+
+            do while (i <= len_trim(token) .and. brace_depth > 0)
+              if (token(i:i) == '(') then
+                brace_depth = brace_depth + 1
+              else if (token(i:i) == ')') then
+                brace_depth = brace_depth - 1
+              end if
+              i = i + 1
+            end do
+
+            ! Extract full $((expr)) including delimiters
+            var_name = token(var_start:i-1)
+
+            ! Evaluate arithmetic expansion with shell context
+            var_value = arithmetic_expansion_shell(trim(var_name), shell)
+            if (len_trim(var_value) > 0) then
+              result(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
             end if
+          else
+            ! $(command) command substitution
             i = i + 1
-          end do
-          
-          var_name = token(var_start:i-2)  ! This is actually the command
-          
-          ! Execute command substitution
-          call execute_command_substitution(trim(var_name), var_value, shell)
-          if (allocated(var_value) .and. len(var_value) > 0) then
-            result(j:j+len(var_value)-1) = var_value
-            j = j + len(var_value)
+            var_start = i
+            brace_depth = 1
+
+            do while (i <= len_trim(token) .and. brace_depth > 0)
+              if (token(i:i) == '(') then
+                brace_depth = brace_depth + 1
+              else if (token(i:i) == ')') then
+                brace_depth = brace_depth - 1
+              end if
+              i = i + 1
+            end do
+
+            var_name = token(var_start:i-2)  ! This is actually the command
+
+            ! Execute command substitution
+            call execute_command_substitution(trim(var_name), var_value, shell)
+            if (allocated(var_value) .and. len(var_value) > 0) then
+              result(j:j+len(var_value)-1) = var_value
+              j = j + len(var_value)
+            end if
           end if
         else if (token(i:i) == '{') then
           ! ${VAR} or ${VAR:operation} parameter expansion
@@ -716,21 +871,133 @@ contains
   end subroutine
 
   subroutine process_parameter_expansion(param_expr, result_value, shell)
+    use variables, only: get_array_element, get_array_all_elements, get_array_size, &
+                         is_associative_array, get_assoc_array_value, get_assoc_array_keys
     character(len=*), intent(in) :: param_expr
     character(len=:), allocatable, intent(out) :: result_value
-    type(shell_state_t), intent(in) :: shell
-    
-    character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation
-    integer :: op_pos, op_len
+    type(shell_state_t), intent(inout) :: shell
+
+    character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation, index_str
+    character(len=1024) :: assoc_value, keys(100)
+    integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
+    integer :: num_keys, key_idx
     character(len=:), allocatable :: current_value
     character(len=20) :: length_str
-    
+    logical :: is_array_access, get_keys, get_all, is_length
+
     ! Initialize result
     result_value = ''
-    
-    ! Check for length expansion ${#var}
-    if (param_expr(1:1) == '#') then
+
+    ! Check for keys expansion ${!arr[@]}
+    get_keys = .false.
+    is_length = .false.
+    var_name = param_expr
+
+    if (param_expr(1:1) == '!') then
+      get_keys = .true.
       var_name = param_expr(2:)
+    else if (param_expr(1:1) == '#') then
+      is_length = .true.
+      var_name = param_expr(2:)
+    end if
+
+    ! Check for array syntax: var[index] or var[@] or var[*]
+    bracket_pos = index(var_name, '[')
+    is_array_access = (bracket_pos > 0)
+
+    if (is_array_access) then
+      bracket_end = index(var_name(bracket_pos:), ']')
+      if (bracket_end > 0) then
+        bracket_end = bracket_pos + bracket_end - 1
+        index_str = var_name(bracket_pos+1:bracket_end-1)
+        var_name = var_name(:bracket_pos-1)
+
+        ! Check for special indices
+        if (trim(index_str) == '@' .or. trim(index_str) == '*') then
+          get_all = .true.
+
+          if (is_length) then
+            ! ${#arr[@]} - return array length
+            array_sz = get_array_size(shell, trim(var_name))
+            write(length_str, '(i0)') array_sz
+            result_value = trim(length_str)
+            return
+          else if (get_keys) then
+            ! ${!arr[@]} - return indices (for indexed) or keys (for associative)
+            if (is_associative_array(shell, trim(var_name))) then
+              ! Return keys for associative array
+              call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
+              if (num_keys == 0) then
+                result_value = ''
+              else
+                result_value = ''
+                do key_idx = 1, num_keys
+                  if (key_idx > 1) result_value = result_value // ' '
+                  result_value = result_value // trim(keys(key_idx))
+                end do
+              end if
+              return
+            else
+              ! Return indices for indexed array
+              array_sz = get_array_size(shell, trim(var_name))
+              if (array_sz == 0) then
+                result_value = ''
+                return
+              end if
+              ! Build indices with proper spacing
+              do array_index = 1, array_sz
+                if (array_index > 1) result_value = result_value // ' '
+                write(length_str, '(i0)') array_index - 1  ! 0-indexed
+                result_value = result_value // trim(length_str)
+              end do
+              return
+            end if
+          else
+            ! ${arr[@]} or ${map[@]} - return all elements/values
+            if (is_associative_array(shell, trim(var_name))) then
+              ! Return all values for associative array
+              call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
+              result_value = ''
+              do key_idx = 1, num_keys
+                if (key_idx > 1) result_value = result_value // ' '
+                assoc_value = get_assoc_array_value(shell, trim(var_name), trim(keys(key_idx)))
+                result_value = result_value // trim(assoc_value)
+              end do
+              return
+            else
+              ! Return all elements for indexed array
+              result_value = trim(get_array_all_elements(shell, trim(var_name)))
+              return
+            end if
+          end if
+        else
+          ! Check if this is an associative array
+          if (is_associative_array(shell, trim(var_name))) then
+            ! Associative array access: ${map[key]}
+            assoc_value = get_assoc_array_value(shell, trim(var_name), trim(index_str))
+            result_value = trim(assoc_value)
+            return
+          else
+            ! Try numeric index: ${arr[0]}
+            read(index_str, *, iostat=op_pos) array_index
+            if (op_pos == 0) then
+              ! Convert from 0-indexed to 1-indexed
+              array_index = array_index + 1
+              result_value = trim(get_array_element(shell, trim(var_name), array_index))
+              return
+            else
+              ! Non-numeric index for non-associative - might be string key, treat as assoc
+              assoc_value = get_assoc_array_value(shell, trim(var_name), trim(index_str))
+              result_value = trim(assoc_value)
+              return
+            end if
+          end if
+        end if
+      end if
+    end if
+
+    ! Not array access - fall back to original length logic
+    if (is_length) then
       current_value = get_shell_variable(shell, trim(var_name))
       if (len_trim(current_value) == 0) then
         current_value = get_environment_var(trim(var_name))
