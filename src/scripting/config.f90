@@ -26,6 +26,11 @@ contains
   subroutine load_config_file(shell)
     type(shell_state_t), intent(inout) :: shell
 
+    ! Check if this is first run and prompt for config creation
+    if (shell%is_interactive) then
+      call check_first_run_and_prompt(shell)
+    end if
+
     if (shell%is_login_shell) then
       ! Login shell: load profile files
       call load_login_configs(shell)
@@ -35,6 +40,59 @@ contains
     else
       ! Non-interactive shell: check ENV variable
       call load_noninteractive_configs(shell)
+    end if
+  end subroutine
+
+  ! Check if this is first run (no config files) and prompt user
+  subroutine check_first_run_and_prompt(shell)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=:), allocatable :: home_dir
+    logical :: fortshrc_exists, fortsh_profile_exists
+    character(len=10) :: response
+
+    ! Get home directory
+    home_dir = get_environment_var('HOME')
+    if (len(home_dir) == 0) return
+
+    ! Check if config files exist
+    inquire(file=trim(home_dir)//'/.fortshrc', exist=fortshrc_exists)
+    inquire(file=trim(home_dir)//'/.fortsh_profile', exist=fortsh_profile_exists)
+
+    ! If at least one exists, assume not first run
+    if (fortshrc_exists .or. fortsh_profile_exists) return
+
+    ! First run detected - prompt user
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') '==================================================================='
+    write(output_unit, '(a)') 'Welcome to Fortran Shell (fortsh)!'
+    write(output_unit, '(a)') 'It looks like this is your first time running fortsh.'
+    write(output_unit, '(a)') ''
+    write(output_unit, '(a)') 'Would you like to create default configuration files?'
+    write(output_unit, '(a)') '  - ~/.fortshrc       (interactive shell config)'
+    write(output_unit, '(a)') '  - ~/.fortsh_profile (login shell config)'
+    write(output_unit, '(a)') '  - ~/.fortsh_logout  (logout script)'
+    write(output_unit, '(a)') '==================================================================='
+    write(output_unit, '(a)', advance='no') 'Create default configs? [Y/n]: '
+
+    ! Read user response
+    read(*, '(a)') response
+
+    ! Check response (default to yes)
+    if (len_trim(response) == 0 .or. &
+        response(1:1) == 'Y' .or. response(1:1) == 'y') then
+      write(output_unit, '(a)') ''
+      write(output_unit, '(a)') 'Creating default configuration files...'
+      call create_default_config()
+      write(output_unit, '(a)') ''
+      write(output_unit, '(a)') 'Configuration files created successfully!'
+      write(output_unit, '(a)') 'You can customize them by editing the files in your home directory.'
+      write(output_unit, '(a)') 'Type "config show" to view the current configuration.'
+      write(output_unit, '(a)') ''
+    else
+      write(output_unit, '(a)') ''
+      write(output_unit, '(a)') 'Skipping config creation.'
+      write(output_unit, '(a)') 'You can create them later by running: config create'
+      write(output_unit, '(a)') ''
     end if
   end subroutine
 
