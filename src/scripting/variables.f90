@@ -225,6 +225,61 @@ contains
     value = get_environment_var(trim(name))
   end function
 
+  function is_shell_variable_set(shell, name) result(is_set)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    logical :: is_set
+    integer :: i, depth
+
+    is_set = .false.
+
+    ! First check local variables (innermost scope first)
+    if (shell%function_depth > 0) then
+      do depth = shell%function_depth, 1, -1
+        if (depth <= size(shell%local_var_counts)) then
+          do i = 1, shell%local_var_counts(depth)
+            if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+              is_set = .true.
+              return
+            end if
+          end do
+        end if
+      end do
+    end if
+
+    ! Check special variables (most are always set)
+    select case (trim(name))
+      case ('$', '!', '?', '0', '_', '-', 'PPID', 'UID', 'EUID', &
+            'PWD', 'OLDPWD', 'RANDOM', 'SECONDS', 'LINENO', '#', '*', '@', &
+            'IFS', 'PS1', 'PS2', 'PS3', 'PS4', 'HISTFILE', 'HISTSIZE', &
+            'HISTFILESIZE', 'HISTCONTROL')
+        is_set = .true.
+        return
+    end select
+
+    ! Handle numeric positional parameters ($1, $2, ..., $n)
+    if (is_numeric(trim(name))) then
+      i = string_to_int(trim(name))
+      if (i >= 1 .and. i <= shell%num_positional) then
+        is_set = .true.
+        return
+      end if
+    end if
+
+    ! Check regular shell variables
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        is_set = .true.
+        return
+      end if
+    end do
+
+    ! Check environment variables
+    if (len_trim(get_environment_var(trim(name))) > 0) then
+      is_set = .true.
+    end if
+  end function
+
   function is_assignment(input_line) result(is_assign)
     character(len=*), intent(in) :: input_line
     logical :: is_assign
