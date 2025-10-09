@@ -843,11 +843,9 @@ contains
     else
       ! Complete files and directories
       call complete_files_enhanced(last_word, completions, num_completions)
-      
-      ! Add prefix back to completions
-      do i = 1, num_completions
-        completions(i) = trim(prefix_part) // trim(completions(i))
-      end do
+
+      ! Don't add prefix to completions - they are for display only
+      ! The prefix will be added when constructing the completed line
     end if
   end subroutine
 
@@ -1206,27 +1204,51 @@ contains
     integer, intent(out) :: num_completions
     character(len=*), intent(out) :: completed_line
     logical, intent(out) :: completed
-    
-    character(len=MAX_LINE_LEN) :: common_prefix
-    
+
+    character(len=MAX_LINE_LEN) :: common_prefix, prefix_part
+    integer :: last_space_pos, i
+
     completed = .false.
     completed_line = partial_input
-    
+
+    ! Find the prefix (command and any earlier arguments)
+    last_space_pos = 0
+    do i = len_trim(partial_input), 1, -1
+      if (partial_input(i:i) == ' ') then
+        last_space_pos = i
+        exit
+      end if
+    end do
+
+    if (last_space_pos > 0) then
+      prefix_part = partial_input(:last_space_pos)
+    else
+      prefix_part = ''
+    end if
+
     call enhanced_tab_complete(partial_input, completions, num_completions)
-    
+
     if (num_completions == 0) then
       ! No completions found
       return
     else if (num_completions == 1) then
-      ! Single completion - use it
-      completed_line = trim(completions(1))
+      ! Single completion - add prefix back (preserve spacing)
+      if (last_space_pos > 0) then
+        completed_line = prefix_part(:last_space_pos) // trim(completions(1))
+      else
+        completed_line = trim(completions(1))
+      end if
       completed = .true.
     else
       ! Multiple completions - try common prefix
       common_prefix = get_common_prefix(completions, num_completions)
-      
+
       if (len_trim(common_prefix) > 0) then
-        completed_line = trim(common_prefix)
+        if (last_space_pos > 0) then
+          completed_line = prefix_part(:last_space_pos) // trim(common_prefix)
+        else
+          completed_line = trim(common_prefix)
+        end if
         completed = .true.
       end if
     end if
