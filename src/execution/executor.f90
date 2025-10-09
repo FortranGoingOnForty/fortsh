@@ -252,13 +252,7 @@ contains
     call start_timer('execute_single', exec_start_time)
     
     if (cmd%num_tokens == 0) return
-    
-    ! Check for variable assignment first (before expansion)
-    if (cmd%num_tokens == 1 .and. is_assignment(cmd%tokens(1))) then
-      call handle_assignment(shell, cmd%tokens(1))
-      return
-    end if
-    
+
     ! Check for control flow keywords and apply control flow state
     if (allocated(cmd%tokens) .and. cmd%num_tokens > 0) then
       if (is_control_flow_keyword(cmd%tokens(1))) then
@@ -270,15 +264,22 @@ contains
         if (.not. should_execute) return
       end if
     end if
-    
+
     ! Handle here document input
     if (allocated(cmd%heredoc_delimiter)) then
       call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content)
     end if
-    
+
     ! Expand variables in all tokens (except for defun, which needs raw body)
+    ! Do this BEFORE checking for assignment so ${var##pattern} gets expanded
     if (trim(cmd%tokens(1)) /= 'defun') then
       call expand_tokens(cmd, shell)
+    end if
+
+    ! Check for variable assignment (after expansion so ${...} is processed)
+    if (cmd%num_tokens == 1 .and. is_assignment(cmd%tokens(1))) then
+      call handle_assignment(shell, cmd%tokens(1))
+      return
     end if
 
     ! Expand glob patterns (except for defun)
@@ -346,6 +347,7 @@ contains
     character(len=MAX_TOKEN_LEN) :: var_name, var_value, token
     character(len=MAX_TOKEN_LEN) :: array_elements(100)
     character(len=100) :: index_str
+    character(len=:), allocatable :: expanded_value
     integer :: eq_pos, paren_start, paren_end, num_elements, bracket_pos
     integer :: bracket_end, array_index, read_status
     logical :: is_indexed_assignment
@@ -411,7 +413,18 @@ contains
     else
       ! Simple assignment: var=value
       var_value = token(eq_pos+1:)
-      call var_set_shell_variable(shell, trim(var_name), trim(var_value))
+
+      ! Expand variables in the value (including parameter expansions like ${var##pattern})
+      if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
+        call expand_variables(var_value, expanded_value, shell)
+        if (allocated(expanded_value)) then
+          call var_set_shell_variable(shell, trim(var_name), trim(expanded_value))
+        else
+          call var_set_shell_variable(shell, trim(var_name), '')
+        end if
+      else
+        call var_set_shell_variable(shell, trim(var_name), trim(var_value))
+      end if
       shell%last_exit_status = 0
     end if
   end subroutine
