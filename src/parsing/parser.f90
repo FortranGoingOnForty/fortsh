@@ -18,30 +18,56 @@ contains
   subroutine parse_pipeline(input, pipeline)
     character(len=*), intent(in) :: input
     type(pipeline_t), intent(out) :: pipeline
-    
+
     character(len=len(input)) :: working_input
     integer :: pos, start, cmd_count
-    integer :: i
+    integer :: i, comment_pos
     type(command_t), allocatable :: temp_commands(:)
-    logical :: background
-    
+    logical :: background, in_quotes
+    character(len=1) :: quote_char
+
     integer(int64) :: parse_start_time
-    
+
     ! Start performance timing
     call start_timer('parse_pipeline', parse_start_time)
-    
+
     ! Validate input
     if (.not. validate_command(input)) then
       call parser_error(101, 'Invalid command input', 'parse_pipeline')
       pipeline%num_commands = 0
       return
     end if
-    
+
     call debug_log('Parsing pipeline: ' // trim(input), 'parse_pipeline')
-    
+
     allocate(temp_commands(MAX_PIPELINE))
     call track_allocation(MAX_PIPELINE * 1024, 'temp_commands')
+
+    ! Strip comments (# to end of line, but not inside quotes)
     working_input = input
+    in_quotes = .false.
+    quote_char = ' '
+    do i = 1, len_trim(working_input)
+      if (in_quotes) then
+        if (working_input(i:i) == quote_char) then
+          in_quotes = .false.
+        end if
+      else
+        if (working_input(i:i) == '"' .or. working_input(i:i) == "'") then
+          in_quotes = .true.
+          quote_char = working_input(i:i)
+        else if (working_input(i:i) == '#') then
+          ! Only treat # as comment if not part of $# and not in middle of word
+          if (i > 1 .and. working_input(i-1:i-1) == '$') then
+            ! This is $#, not a comment
+            cycle
+          end if
+          ! Found comment, truncate here
+          working_input = working_input(:i-1)
+          exit
+        end if
+      end if
+    end do
     cmd_count = 0
     start = 1
     background = .false.
@@ -54,50 +80,67 @@ contains
       end if
     end if
     
-    ! Parse commands and separators
+    ! Parse commands and separators (track quotes to avoid splitting inside them)
     i = 1
+    in_quotes = .false.
+    quote_char = ' '
     do while (i <= len_trim(working_input))
-      ! Check for operators
-      if (i <= len_trim(working_input) - 1) then
-        if (working_input(i:i+1) == '&&') then
+      ! Track quote state
+      if (.not. in_quotes) then
+        if (working_input(i:i) == '"' .or. working_input(i:i) == "'") then
+          in_quotes = .true.
+          quote_char = working_input(i:i)
+        end if
+      else
+        if (working_input(i:i) == quote_char) then
+          in_quotes = .false.
+        end if
+      end if
+
+      ! Only check for operators outside quotes
+      if (.not. in_quotes) then
+        ! Check for operators
+        if (i <= len_trim(working_input) - 1) then
+          if (working_input(i:i+1) == '&&') then
+            cmd_count = cmd_count + 1
+            if (cmd_count <= MAX_PIPELINE) then
+              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+              temp_commands(cmd_count)%separator = SEP_AND
+            end if
+            start = i + 2
+            i = i + 2
+            cycle
+          else if (working_input(i:i+1) == '||') then
+            cmd_count = cmd_count + 1
+            if (cmd_count <= MAX_PIPELINE) then
+              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+              temp_commands(cmd_count)%separator = SEP_OR
+            end if
+            start = i + 2
+            i = i + 2
+            cycle
+          end if
+        end if
+
+        if (working_input(i:i) == '|' .and. &
+            (i == 1 .or. working_input(i-1:i-1) /= '|') .and. &
+            (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '|')) then
           cmd_count = cmd_count + 1
           if (cmd_count <= MAX_PIPELINE) then
             call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-            temp_commands(cmd_count)%separator = SEP_AND
+            temp_commands(cmd_count)%separator = SEP_PIPE
           end if
-          start = i + 2
-          i = i + 2
-          cycle
-        else if (working_input(i:i+1) == '||') then
+          start = i + 1
+        else if (working_input(i:i) == ';') then
           cmd_count = cmd_count + 1
           if (cmd_count <= MAX_PIPELINE) then
             call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-            temp_commands(cmd_count)%separator = SEP_OR
+            temp_commands(cmd_count)%separator = SEP_SEMICOLON
           end if
-          start = i + 2
-          i = i + 2
-          cycle
+          start = i + 1
         end if
       end if
-      
-      if (working_input(i:i) == '|' .and. &
-          (i == 1 .or. working_input(i-1:i-1) /= '|') .and. &
-          (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '|')) then
-        cmd_count = cmd_count + 1
-        if (cmd_count <= MAX_PIPELINE) then
-          call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-          temp_commands(cmd_count)%separator = SEP_PIPE
-        end if
-        start = i + 1
-      else if (working_input(i:i) == ';') then
-        cmd_count = cmd_count + 1
-        if (cmd_count <= MAX_PIPELINE) then
-          call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-          temp_commands(cmd_count)%separator = SEP_SEMICOLON
-        end if
-        start = i + 1
-      end if
-      
+
       i = i + 1
     end do
     
@@ -433,6 +476,39 @@ contains
           write(pid_str, '(i0)') shell%last_pid
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
+          i = i + 1
+        else if (token(i:i) == '@') then
+          ! $@ - all positional parameters
+          var_value = get_shell_variable(shell, '@')
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          end if
+          i = i + 1
+        else if (token(i:i) == '#') then
+          ! $# - number of positional parameters
+          var_value = get_shell_variable(shell, '#')
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          end if
+          i = i + 1
+        else if (token(i:i) == '*') then
+          ! $* - all positional parameters as single word
+          var_value = get_shell_variable(shell, '*')
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          end if
+          i = i + 1
+        else if (token(i:i) >= '0' .and. token(i:i) <= '9') then
+          ! $0, $1, $2, ... - positional parameters
+          var_name = token(i:i)
+          var_value = get_shell_variable(shell, trim(var_name))
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          end if
           i = i + 1
         else if (token(i:i) == '(') then
           ! $(command) command substitution

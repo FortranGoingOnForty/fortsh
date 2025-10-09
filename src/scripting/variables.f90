@@ -1020,12 +1020,12 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(out) :: result
     logical, intent(in) :: as_single_word
-    integer :: i
+    integer :: i, pos
     character(len=1) :: separator
-    
+
     result = ''
     if (shell%num_positional == 0) return
-    
+
     if (as_single_word) then
       ! Use first character of IFS as separator for $*
       if (len_trim(shell%ifs) > 0) then
@@ -1037,10 +1037,15 @@ contains
       ! Use space for $@ (will be properly quoted during expansion)
       separator = ' '
     end if
-    
+
+    pos = 1
     do i = 1, shell%num_positional
-      if (i > 1) result = trim(result) // separator
-      result = trim(result) // trim(shell%positional_params(i))
+      if (i > 1) then
+        result(pos:pos) = separator
+        pos = pos + 1
+      end if
+      result(pos:pos+len_trim(shell%positional_params(i))-1) = trim(shell%positional_params(i))
+      pos = pos + len_trim(shell%positional_params(i))
     end do
   end subroutine
   

@@ -147,10 +147,6 @@ contains
       call process_for_statement(cmd, shell, should_execute)
     case('function')
       call process_function_statement(cmd, shell, should_execute)
-    case('return')
-      call process_return_statement(cmd, shell, should_execute)
-    case('local')
-      call process_local_statement(cmd, shell, should_execute)
     case default
       ! Check if we should execute this command based on control flow state
       should_execute = should_execute_command(shell)
@@ -557,43 +553,7 @@ contains
     write(output_unit, '(a,a)') 'Would define function: ', trim(cmd%tokens(2))
   end subroutine
 
-  subroutine process_return_statement(cmd, shell, should_execute)
-    type(command_t), intent(in) :: cmd
-    type(shell_state_t), intent(inout) :: shell
-    logical, intent(out) :: should_execute
-    
-    integer :: exit_code
-    
-    should_execute = .false.
-    
-    ! Parse return code if provided
-    if (cmd%num_tokens >= 2) then
-      read(cmd%tokens(2), *, iostat=exit_code) exit_code
-      if (exit_code /= 0) exit_code = 0  ! Default to 0 on parse error
-    else
-      exit_code = shell%last_exit_status  ! Use last exit status
-    end if
-    
-    shell%last_exit_status = exit_code
-    write(output_unit, '(a)') 'return statements not fully implemented yet'
-  end subroutine
-
-  subroutine process_local_statement(cmd, shell, should_execute)
-    type(command_t), intent(in) :: cmd
-    type(shell_state_t), intent(inout) :: shell
-    logical, intent(out) :: should_execute
-    
-    should_execute = .false.
-    
-    if (cmd%num_tokens < 2) then
-      write(error_unit, '(a)') 'local: missing variable assignment'
-      shell%last_exit_status = 1
-      return
-    end if
-    
-    write(output_unit, '(a)') 'local variables not fully implemented yet'
-    write(output_unit, '(a,a)') 'Would create local variable: ', trim(cmd%tokens(2))
-  end subroutine
+  ! Note: return and local are now implemented as builtins in builtins.f90
 
   subroutine set_shell_variable(shell, name, value)
     type(shell_state_t), intent(inout) :: shell
