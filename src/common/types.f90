@@ -132,6 +132,9 @@ module shell_types
     integer :: for_count = 0         ! total count of for loop values
     character(len=256) :: condition_cmd = ''  ! while condition command
     integer :: loop_start_line = 0   ! for loop replay
+    ! Case statement fields
+    logical :: case_found_match = .false.  ! whether any case pattern has matched
+    logical :: case_in_match = .false.     ! whether we're currently in a matched pattern's commands
   end type control_block_t
 
   ! Shell function definition
