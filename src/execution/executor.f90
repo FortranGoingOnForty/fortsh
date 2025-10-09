@@ -242,16 +242,31 @@ contains
   end subroutine
 
   subroutine execute_single(cmd, shell, original_input)
+    use control_flow, only: capture_loop_command, is_control_flow_keyword
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
     logical :: should_execute
     integer(int64) :: exec_start_time
-    
+
     ! Start performance timing
     call start_timer('execute_single', exec_start_time)
-    
+
     if (cmd%num_tokens == 0) return
+
+    ! Capture command if we're inside a loop body (before executing control flow)
+    if (shell%control_depth > 0) then
+      if (shell%control_stack(shell%control_depth)%capturing_loop_body) then
+        ! Don't capture 'done' keyword - that marks the end of the loop body
+        if (allocated(cmd%tokens) .and. cmd%num_tokens > 0) then
+          if (trim(cmd%tokens(1)) /= 'done') then
+            call capture_loop_command(shell, original_input)
+            ! Don't execute the command now - it will be executed during replay
+            return
+          end if
+        end if
+      end if
+    end if
 
     ! Check for control flow keywords and apply control flow state
     if (allocated(cmd%tokens) .and. cmd%num_tokens > 0) then
@@ -775,6 +790,64 @@ contains
     ! Restore caller's positional parameters
     shell%positional_params = saved_positional_params
     shell%num_positional = saved_num_positional
+  end subroutine
+
+  ! Replay loop body if needed
+  subroutine replay_loop_if_needed(shell)
+    use parser, only: parse_pipeline
+    use control_flow, only: process_control_flow
+    type(shell_state_t), intent(inout) :: shell
+    type(pipeline_t) :: pipeline, done_pipeline
+    type(command_t) :: done_cmd
+    integer :: i, iteration_count
+    logical :: should_execute
+    character(len=4) :: done_str
+
+    ! Check if we should replay
+    if (shell%control_depth == 0) return
+    if (shell%control_stack(shell%control_depth)%loop_body_count == 0) return
+
+    iteration_count = 0
+    done_str = 'done'
+
+    ! Keep replaying until loop condition is false
+    do while (shell%control_depth > 0 .and. shell%control_stack(shell%control_depth)%loop_body_count > 0)
+      iteration_count = iteration_count + 1
+      if (iteration_count > 1000) then
+        write(error_unit, '(a)') 'Loop limit reached (1000 iterations)'
+        exit
+      end if
+
+      ! Temporarily stop capturing to avoid re-capturing during replay
+      shell%control_stack(shell%control_depth)%capturing_loop_body = .false.
+
+      do i = 1, shell%control_stack(shell%control_depth)%loop_body_count
+        call parse_pipeline(shell%control_stack(shell%control_depth)%loop_body(i), pipeline)
+        if (pipeline%num_commands > 0) then
+          call execute_pipeline(pipeline, shell, shell%control_stack(shell%control_depth)%loop_body(i))
+        end if
+      end do
+
+      ! Re-enable capturing for next iteration
+      shell%control_stack(shell%control_depth)%capturing_loop_body = .true.
+
+      ! Simulate 'done' to check loop condition and update state
+      call parse_pipeline(done_str, done_pipeline)
+      if (done_pipeline%num_commands > 0) then
+        done_cmd = done_pipeline%commands(1)
+        call process_control_flow(done_cmd, shell, should_execute)
+        ! If control_depth decreased to 0, loop ended
+        if (shell%control_depth == 0) then
+          exit
+        end if
+        ! Also exit if loop_body_count became 0 (shouldn't happen but safety check)
+        if (shell%control_stack(shell%control_depth)%loop_body_count == 0) then
+          exit
+        end if
+      else
+        exit  ! Couldn't parse done, exit
+      end if
+    end do
   end subroutine
 
 end module executor

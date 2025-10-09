@@ -23,8 +23,9 @@ contains
     integer :: pos, start, cmd_count
     integer :: i, comment_pos
     type(command_t), allocatable :: temp_commands(:)
-    logical :: background, in_quotes, in_param_expansion
+    logical :: background, in_quotes, in_param_expansion, in_for_arith
     character(len=1) :: quote_char
+    integer :: paren_depth
 
     integer(int64) :: parse_start_time
 
@@ -92,6 +93,8 @@ contains
     i = 1
     in_quotes = .false.
     quote_char = ' '
+    in_for_arith = .false.
+    paren_depth = 0
     do while (i <= len_trim(working_input))
       ! Track quote state
       if (.not. in_quotes) then
@@ -107,6 +110,32 @@ contains
 
       ! Only check for operators outside quotes
       if (.not. in_quotes) then
+        ! Detect for (( at the beginning of command
+        if (.not. in_for_arith .and. i <= len_trim(working_input)-1) then
+          if (working_input(i:i+1) == '((') then
+            ! Check if 'for' appears before this
+            if (start <= i-1) then
+              if (index(working_input(start:i-1), 'for') > 0) then
+                in_for_arith = .true.
+                paren_depth = 0  ! Will be counted as we process
+              end if
+            end if
+          end if
+        end if
+
+        ! Track parentheses depth inside for (( ... ))
+        if (in_for_arith) then
+          if (working_input(i:i) == '(') then
+            paren_depth = paren_depth + 1
+          else if (working_input(i:i) == ')') then
+            paren_depth = paren_depth - 1
+            ! Exit for (( when we've closed all parens
+            if (paren_depth == 0) then
+              in_for_arith = .false.
+            end if
+          end if
+        end if
+
         ! Check for operators
         if (i <= len_trim(working_input) - 1) then
           if (working_input(i:i+1) == '&&') then
@@ -140,12 +169,16 @@ contains
           end if
           start = i + 1
         else if (working_input(i:i) == ';') then
-          cmd_count = cmd_count + 1
-          if (cmd_count <= MAX_PIPELINE) then
-            call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-            temp_commands(cmd_count)%separator = SEP_SEMICOLON
+          if (in_for_arith) then
+          else
+            ! Only split on semicolon if not inside for (( ... ))
+            cmd_count = cmd_count + 1
+            if (cmd_count <= MAX_PIPELINE) then
+              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+              temp_commands(cmd_count)%separator = SEP_SEMICOLON
+            end if
+            start = i + 1
           end if
-          start = i + 1
         end if
       end if
 
@@ -225,16 +258,24 @@ contains
   subroutine parse_single_command(input, cmd)
     character(len=*), intent(in) :: input
     type(command_t), intent(out) :: cmd
-    
+
     character(len=len(input)) :: working_input
     integer :: pos, end_pos
     character(len=MAX_TOKEN_LEN) :: temp_str
-    
+
+
     working_input = adjustl(input)
 
-    ! Skip redirection processing for arithmetic commands ((expression))
+    ! Skip redirection processing for arithmetic commands ((expression)) and for (( loops
     if (len_trim(working_input) >= 2 .and. working_input(1:2) == '((') then
       ! This is an arithmetic command - tokenize directly without processing redirects
+      call tokenize_with_substitution(trim(working_input), cmd%tokens, cmd%num_tokens)
+      return
+    end if
+
+    ! Also skip redirection processing for arithmetic for loops for((...))
+    if (len_trim(working_input) >= 5 .and. working_input(1:5) == 'for((') then
+      ! This is an arithmetic for loop - tokenize directly without processing redirects
       call tokenize_with_substitution(trim(working_input), cmd%tokens, cmd%num_tokens)
       return
     end if
@@ -434,22 +475,36 @@ contains
 
         ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
         if (.not. in_quotes) then
-          if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
-            in_arith = .true.
-            arith_depth = 2
-            pos = pos + 2  ! Skip the $(
-          else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
-                   working_copy(pos:pos+1) == '((') then
-            ! (( at start of token - arithmetic command
-            in_arith = .true.
-            arith_depth = 2
-            pos = pos + 1  ! Skip the first (
-          else if (in_arith) then
+          ! First, check for special patterns that start arithmetic mode
+          if (.not. in_arith) then
+            if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
+              in_arith = .true.
+              arith_depth = 2
+              pos = pos + 2  ! Skip the $(
+            else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
+                     working_copy(pos:pos+1) == '((') then
+              ! (( at start of token - arithmetic command
+              in_arith = .true.
+              arith_depth = 2
+              pos = pos + 1  ! Skip the first (
+            else if (pos == start+3 .and. start <= len_trim(working_copy) - 4 .and. &
+                     working_copy(start:start+2) == 'for' .and. &
+                     working_copy(pos:pos+1) == '((') then
+              ! for(( - arithmetic for loop
+              in_arith = .true.
+              arith_depth = 0  ! Will be counted below
+            end if
+          end if
+
+          ! Then, track parentheses depth if in arithmetic mode
+          if (in_arith) then
             if (working_copy(pos:pos) == '(') then
               arith_depth = arith_depth + 1
             else if (working_copy(pos:pos) == ')') then
               arith_depth = arith_depth - 1
-              if (arith_depth == 0) in_arith = .false.
+              if (arith_depth == 0) then
+                in_arith = .false.
+              end if
             end if
           end if
         end if
@@ -517,22 +572,36 @@ contains
 
         ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
         if (.not. in_quotes) then
-          if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
-            in_arith = .true.
-            arith_depth = 2
-            pos = pos + 2  ! Skip the $(
-          else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
-                   working_copy(pos:pos+1) == '((') then
-            ! (( at start of token - arithmetic command
-            in_arith = .true.
-            arith_depth = 2
-            pos = pos + 1  ! Skip the first (
-          else if (in_arith) then
+          ! First, check for special patterns that start arithmetic mode
+          if (.not. in_arith) then
+            if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
+              in_arith = .true.
+              arith_depth = 2
+              pos = pos + 2  ! Skip the $(
+            else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
+                     working_copy(pos:pos+1) == '((') then
+              ! (( at start of token - arithmetic command
+              in_arith = .true.
+              arith_depth = 2
+              pos = pos + 1  ! Skip the first (
+            else if (pos == start+3 .and. start <= len_trim(working_copy) - 4 .and. &
+                     working_copy(start:start+2) == 'for' .and. &
+                     working_copy(pos:pos+1) == '((') then
+              ! for(( - arithmetic for loop
+              in_arith = .true.
+              arith_depth = 0  ! Will be counted below
+            end if
+          end if
+
+          ! Then, track parentheses depth if in arithmetic mode
+          if (in_arith) then
             if (working_copy(pos:pos) == '(') then
               arith_depth = arith_depth + 1
             else if (working_copy(pos:pos) == ')') then
               arith_depth = arith_depth - 1
-              if (arith_depth == 0) in_arith = .false.
+              if (arith_depth == 0) then
+                in_arith = .false.
+              end if
             end if
           end if
         end if

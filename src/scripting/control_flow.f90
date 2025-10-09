@@ -123,11 +123,21 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
-    
+
     should_execute = .true.  ! Default: execute normally
-    
+
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
-    
+
+
+    ! Check for arithmetic for loop without space: for((  ...
+    if (len_trim(cmd%tokens(1)) >= 5) then
+      if (cmd%tokens(1)(1:5) == 'for((') then
+        call process_for_arith_statement(cmd, shell)
+        should_execute = .false.  ! Don't execute the for command itself
+        return
+      end if
+    end if
+
     select case(trim(cmd%tokens(1)))
     case('if')
       call process_if_statement(cmd, shell, should_execute)
@@ -252,12 +262,20 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
-    
+
     character(len=256) :: var_name, list_part
     integer :: in_pos, i, j, word_start, word_end
-    
+
     should_execute = .false.  ! Don't execute the for command itself
-    
+
+    ! Check if this is arithmetic for loop: for ((init; cond; incr))
+    if (cmd%num_tokens >= 2) then
+      if (index(cmd%tokens(2), '((') == 1) then
+        call process_for_arith_statement(cmd, shell)
+        return
+      end if
+    end if
+
     ! Parse: for var in word1 word2 word3
     if (cmd%num_tokens < 4 .or. trim(cmd%tokens(3)) /= 'in') then
       write(error_unit, '(a)') 'for: syntax error, expected "for var in list"'
@@ -286,7 +304,7 @@ contains
       
       ! Parse space-separated values
       call parse_for_values(shell%control_stack(shell%control_depth), list_part)
-      
+
       ! Set up for first iteration
       shell%control_stack(shell%control_depth)%for_index = 1
       if (shell%control_stack(shell%control_depth)%for_count > 0 .and. &
@@ -297,6 +315,123 @@ contains
           trim(shell%control_stack(shell%control_depth)%for_values(1)))
       else
         shell%control_stack(shell%control_depth)%should_execute = .false.
+      end if
+    else
+      write(error_unit, '(a)') 'Error: Control flow nesting too deep'
+    end if
+  end subroutine
+
+  ! Process arithmetic for loop: for ((init; condition; increment))
+  subroutine process_for_arith_statement(cmd, shell)
+    use expansion, only: arithmetic_expansion_shell
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+
+    character(len=512) :: full_expr, init_expr, cond_expr, incr_expr
+    integer :: i, start_pos, end_pos, semi1, semi2, paren_depth
+    character(len=:), allocatable :: result_value
+
+    ! Reconstruct the full (( ... )) expression from tokens
+    ! Check if token(1) contains the entire for((expression))
+    if (cmd%num_tokens >= 1 .and. len_trim(cmd%tokens(1)) >= 5) then
+      if (cmd%tokens(1)(1:5) == 'for((') then
+        ! Entire for(( expression is in token(1), strip the "for" prefix
+        full_expr = cmd%tokens(1)(4:)  ! Start from position 4 to skip "for"
+      else
+        ! Tokens are separated: token(1)='for', token(2)='((...)'
+        full_expr = ''
+        do i = 2, cmd%num_tokens
+          if (len_trim(full_expr) > 0) then
+            full_expr = trim(full_expr) // ' ' // trim(cmd%tokens(i))
+          else
+            full_expr = trim(cmd%tokens(i))
+          end if
+        end do
+      end if
+    else
+      ! Tokens are separated or insufficient tokens
+      full_expr = ''
+      do i = 2, cmd%num_tokens
+        if (len_trim(full_expr) > 0) then
+          full_expr = trim(full_expr) // ' ' // trim(cmd%tokens(i))
+        else
+          full_expr = trim(cmd%tokens(i))
+        end if
+      end do
+    end if
+
+
+    ! Find the (( and )) boundaries
+    start_pos = index(full_expr, '((')
+    if (start_pos == 0) then
+      write(error_unit, '(a)') 'for: syntax error in arithmetic for loop'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Find matching ))
+    paren_depth = 0
+    end_pos = 0
+    i = start_pos
+    do while (i < len_trim(full_expr))
+      if (i+1 <= len_trim(full_expr) .and. full_expr(i:i+1) == '((') then
+        paren_depth = paren_depth + 1
+        i = i + 2
+      else if (i+1 <= len_trim(full_expr) .and. full_expr(i:i+1) == '))') then
+        paren_depth = paren_depth - 1
+        if (paren_depth == 0) then
+          end_pos = i
+          exit
+        end if
+        i = i + 2
+      else
+        i = i + 1
+      end if
+    end do
+
+    if (end_pos == 0) then
+      write(error_unit, '(a)') 'for: syntax error, unclosed (('
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Extract content between (( and ))
+    full_expr = full_expr(start_pos+2:end_pos-1)
+
+    ! Split by semicolons to get init, condition, increment
+    semi1 = index(full_expr, ';')
+    if (semi1 > 0) then
+      init_expr = full_expr(:semi1-1)
+      semi2 = index(full_expr(semi1+1:), ';')
+      if (semi2 > 0) then
+        semi2 = semi1 + semi2
+        cond_expr = full_expr(semi1+1:semi2-1)
+        incr_expr = full_expr(semi2+1:)
+      else
+        ! Only one semicolon: init; condition (no increment)
+        cond_expr = full_expr(semi1+1:)
+        incr_expr = ''
+      end if
+    else
+      ! No semicolons: treat entire expression as condition
+      init_expr = ''
+      cond_expr = full_expr
+      incr_expr = ''
+    end if
+
+    ! Push arithmetic for block onto control stack
+    if (shell%control_depth < MAX_CONTROL_DEPTH) then
+      shell%control_depth = shell%control_depth + 1
+      shell%control_stack(shell%control_depth)%block_type = BLOCK_FOR_ARITH
+      shell%control_stack(shell%control_depth)%arith_init = trim(init_expr)
+      shell%control_stack(shell%control_depth)%arith_condition = trim(cond_expr)
+      shell%control_stack(shell%control_depth)%arith_increment = trim(incr_expr)
+      shell%control_stack(shell%control_depth)%arith_first_iteration = .true.
+      shell%control_stack(shell%control_depth)%should_execute = .true.
+
+      ! Execute initialization
+      if (len_trim(init_expr) > 0) then
+        result_value = arithmetic_expansion_shell('$((' // trim(init_expr) // '))', shell)
       end if
     else
       write(error_unit, '(a)') 'Error: Control flow nesting too deep'
@@ -357,37 +492,56 @@ contains
   subroutine process_do_statement(shell, should_execute)
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
-    
+
     should_execute = .false.  ! Don't execute the "do" keyword itself
-    
+
     if (shell%control_depth == 0) then
       write(error_unit, '(a)') 'do: no matching while/for'
       shell%last_exit_status = 1
       return
     end if
-    
-    ! "do" marks the start of the loop body - no state change needed
+
+    ! "do" marks the start of the loop body - start capturing commands
+    if (.not. allocated(shell%control_stack(shell%control_depth)%loop_body)) then
+      allocate(shell%control_stack(shell%control_depth)%loop_body(100))
+    end if
+
+    shell%control_stack(shell%control_depth)%loop_body_count = 0
+    shell%control_stack(shell%control_depth)%capturing_loop_body = .true.
   end subroutine
 
   subroutine process_done_statement(shell, should_execute)
+    use expansion, only: arithmetic_expansion_shell
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
-    
+
+    character(len=:), allocatable :: cond_result
+    integer :: cond_value
+
     should_execute = .false.  ! Don't execute the "done" keyword itself
-    
-    if (shell%control_depth == 0 .or. &
-        (shell%control_stack(shell%control_depth)%block_type /= BLOCK_WHILE .and. &
-         shell%control_stack(shell%control_depth)%block_type /= BLOCK_FOR)) then
+
+    if (shell%control_depth == 0) then
+      ! Silently return if called when no loop is active (can happen during cleanup)
+      shell%last_exit_status = 0
+      return
+    end if
+
+    if (shell%control_stack(shell%control_depth)%block_type /= BLOCK_WHILE .and. &
+        shell%control_stack(shell%control_depth)%block_type /= BLOCK_FOR .and. &
+        shell%control_stack(shell%control_depth)%block_type /= BLOCK_FOR_ARITH) then
       write(error_unit, '(a)') 'done: no matching while/for'
       shell%last_exit_status = 1
       return
     end if
     
+    ! Stop capturing loop body
+    shell%control_stack(shell%control_depth)%capturing_loop_body = .false.
+
     ! Handle for loop iteration
     if (shell%control_stack(shell%control_depth)%block_type == BLOCK_FOR) then
       shell%control_stack(shell%control_depth)%for_index = &
         shell%control_stack(shell%control_depth)%for_index + 1
-      
+
       if (shell%control_stack(shell%control_depth)%for_index <= &
           shell%control_stack(shell%control_depth)%for_count .and. &
           allocated(shell%control_stack(shell%control_depth)%for_values)) then
@@ -396,18 +550,53 @@ contains
           trim(shell%control_stack(shell%control_depth)%loop_variable), &
           trim(shell%control_stack(shell%control_depth)%for_values(&
             shell%control_stack(shell%control_depth)%for_index)))
-        
-        ! Don't pop the stack - continue the loop
-        ! In a real shell, we'd jump back to after the 'do'
-        write(output_unit, '(a)') '# For loop iteration (limited shell - would loop back)'
+
+        ! Mark that we need to replay - executor will handle it
+        ! Don't pop the stack, just return - executor will see loop needs replay
         return
       end if
+
+
+    else if (shell%control_stack(shell%control_depth)%block_type == BLOCK_FOR_ARITH) then
+      ! Arithmetic for loop: execute increment, then check condition
+      ! Execute increment expression
+      if (len_trim(shell%control_stack(shell%control_depth)%arith_increment) > 0) then
+        cond_result = arithmetic_expansion_shell( &
+          '$((' // trim(shell%control_stack(shell%control_depth)%arith_increment) // '))', shell)
+      end if
+
+      ! Evaluate condition
+      if (len_trim(shell%control_stack(shell%control_depth)%arith_condition) > 0) then
+        cond_result = arithmetic_expansion_shell( &
+          '$((' // trim(shell%control_stack(shell%control_depth)%arith_condition) // '))', shell)
+
+        ! Check if condition is true (non-zero)
+        if (allocated(cond_result)) then
+          read(cond_result, *, iostat=cond_value) cond_value
+          if (cond_value == 0) cond_value = 0
+        else
+          cond_value = 0
+        end if
+
+        if (cond_value /= 0) then
+          ! Condition is true - continue loop, executor will replay
+          return
+        end if
+      else
+        ! No condition means infinite loop - but we'll exit for now
+        ! In a real implementation would loop back
+      end if
+
     else if (shell%control_stack(shell%control_depth)%block_type == BLOCK_WHILE) then
-      ! For while loops, re-evaluate condition
-      ! In a real implementation, this would jump back to the while statement
-      write(output_unit, '(a)') '# While loop done (limited shell - would jump back to condition)'
+      ! For while loops, re-evaluate condition and replay if true
+      ! The condition is stored in condition_cmd and was already evaluated
+      ! We need to check the last exit status or re-evaluate
+      if (shell%last_exit_status == 0) then
+        ! Condition was true, executor will replay the loop body
+        return
+      end if
     end if
-    
+
     ! Pop the loop block from the stack
     call pop_control_block(shell)
   end subroutine
@@ -430,8 +619,12 @@ contains
 
   subroutine pop_control_block(shell)
     type(shell_state_t), intent(inout) :: shell
-    
+
     if (shell%control_depth > 0) then
+      ! Deallocate for_values if allocated
+      if (allocated(shell%control_stack(shell%control_depth)%for_values)) then
+        deallocate(shell%control_stack(shell%control_depth)%for_values)
+      end if
       shell%control_depth = shell%control_depth - 1
     end if
   end subroutine
@@ -767,6 +960,36 @@ contains
       ! Exact match
       matches = (trim(value) == trim(pattern))
     end if
+  end function
+
+  ! Capture a command into the loop body buffer
+  subroutine capture_loop_command(shell, command_line)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: command_line
+
+    if (shell%control_depth == 0) return
+    if (.not. shell%control_stack(shell%control_depth)%capturing_loop_body) return
+
+    ! Add command to buffer
+    shell%control_stack(shell%control_depth)%loop_body_count = &
+      shell%control_stack(shell%control_depth)%loop_body_count + 1
+
+    if (shell%control_stack(shell%control_depth)%loop_body_count <= 100) then
+      shell%control_stack(shell%control_depth)%loop_body(&
+        shell%control_stack(shell%control_depth)%loop_body_count) = command_line
+    end if
+  end subroutine
+
+  ! Check if loop body replay is needed
+  function should_replay_loop(shell) result(should_replay)
+    type(shell_state_t), intent(in) :: shell
+    logical :: should_replay
+
+    should_replay = .false.
+    if (shell%control_depth == 0) return
+    if (shell%control_stack(shell%control_depth)%loop_body_count == 0) return
+
+    should_replay = .true.
   end function
 
 end module control_flow
