@@ -95,6 +95,10 @@ program fortran_shell
     ! Execute pipeline
     if (pipeline%num_commands > 0) then
       call execute_pipeline(pipeline, shell, expanded_line)
+
+      ! Check if we need to replay loop body
+      call replay_loop_if_needed(shell)
+
       ! Increment command number and history number for next prompt
       shell%command_number = shell%command_number + 1
       call increment_prompt_history()
@@ -111,13 +115,7 @@ program fortran_shell
         if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
         if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
       end do
-      
-      ! Clean up control stack allocatable fields
-      do i = 1, shell%control_depth
-        if (allocated(shell%control_stack(i)%for_values)) then
-          deallocate(shell%control_stack(i)%for_values)
-        end if
-      end do
+
       deallocate(pipeline%commands)
     end if
   end do
@@ -202,6 +200,9 @@ contains
 
       if (pipeline%num_commands > 0) then
         call execute_pipeline(pipeline, shell, expanded_line)
+
+        ! Check if we need to replay loop body
+        call replay_loop_if_needed(shell)
 
         ! Clean up pipeline
         if (allocated(pipeline%commands)) then

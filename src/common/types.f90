@@ -36,6 +36,7 @@ module shell_types
   integer, parameter :: BLOCK_WHILE = 2
   integer, parameter :: BLOCK_FOR = 3
   integer, parameter :: BLOCK_FUNCTION = 4
+  integer, parameter :: BLOCK_FOR_ARITH = 5
 
   ! File descriptor redirection types
   integer, parameter :: REDIR_IN = 1      ! < file
@@ -121,7 +122,7 @@ module shell_types
 
   ! Control flow block state
   type :: control_block_t
-    integer :: block_type = 0        ! BLOCK_IF, BLOCK_WHILE, BLOCK_FOR, BLOCK_FUNCTION
+    integer :: block_type = 0        ! BLOCK_IF, BLOCK_WHILE, BLOCK_FOR, BLOCK_FUNCTION, BLOCK_FOR_ARITH
     logical :: condition_met = .false.
     logical :: in_else_branch = .false.
     logical :: should_execute = .true.
@@ -132,6 +133,15 @@ module shell_types
     integer :: for_count = 0         ! total count of for loop values
     character(len=256) :: condition_cmd = ''  ! while condition command
     integer :: loop_start_line = 0   ! for loop replay
+    ! Loop body buffering for proper iteration
+    character(len=1024), allocatable :: loop_body(:)  ! commands in loop body
+    integer :: loop_body_count = 0   ! number of commands in loop body
+    logical :: capturing_loop_body = .false.  ! currently capturing commands
+    ! Arithmetic for loop fields (for (( init; cond; incr )) )
+    character(len=256) :: arith_init = ''      ! initialization expression
+    character(len=256) :: arith_condition = '' ! condition expression
+    character(len=256) :: arith_increment = '' ! increment expression
+    logical :: arith_first_iteration = .true.  ! track if init has been executed
     ! Case statement fields
     logical :: case_found_match = .false.  ! whether any case pattern has matched
     logical :: case_in_match = .false.     ! whether we're currently in a matched pattern's commands
