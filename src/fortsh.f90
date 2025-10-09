@@ -32,14 +32,22 @@ program fortran_shell
   ! Setup signal handlers if interactive
   if (shell%is_interactive) then
     call setup_signal_handlers()
-    
+
     ! Welcome message for interactive mode
     write(output_unit, '(a)') 'Welcome to Fortran Shell (fortsh)!'
     write(output_unit, '(a)') 'Type "help" for available commands or "exit" to quit.'
     write(output_unit, '(a)') ''
-    
+
     ! Load configuration file
     call load_config_file(shell)
+
+    ! Set HISTCONTROL for history management
+    call set_histcontrol(shell%histcontrol)
+
+    ! Load command history from file
+    if (len_trim(shell%histfile) > 0) then
+      call load_history_from_file(trim(shell%histfile), shell%histsize)
+    end if
   end if
 
   ! Main REPL loop
@@ -113,6 +121,11 @@ program fortran_shell
       deallocate(pipeline%commands)
     end if
   end do
+
+  ! Save command history to file (if histfile is set)
+  if (len_trim(shell%histfile) > 0 .and. get_history_count() > 0) then
+    call save_history_to_file(trim(shell%histfile), shell%histfilesize)
+  end if
 
   ! Run logout scripts if this is a login shell
   if (shell%is_login_shell) then
@@ -283,6 +296,17 @@ contains
     shell%running = .true.
     shell%num_jobs = 0
     shell%next_job_id = 1
+
+    ! Initialize history control variables
+    temp = get_environment_var('HOME')
+    if (len(temp) > 0) then
+      shell%histfile = trim(temp) // '/.fortsh_history'
+    else
+      shell%histfile = ''
+    end if
+    shell%histsize = 1000
+    shell%histfilesize = 2000
+    shell%histcontrol = 'ignoredups'  ! Default: ignore duplicate consecutive commands
 
     ! Initialize shell options and special variables
     call initialize_shell_options(shell)

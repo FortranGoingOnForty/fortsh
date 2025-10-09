@@ -5,6 +5,7 @@
 module variables
   use shell_types
   use system_interface
+  use readline, only: set_histcontrol
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -13,7 +14,7 @@ contains
   subroutine set_shell_variable(shell, name, value)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: name, value
-    integer :: i, empty_slot
+    integer :: i, empty_slot, iostat
 
 
     empty_slot = -1
@@ -34,6 +35,22 @@ contains
         return
       case ('IFS')
         shell%ifs = value
+        return
+      case ('HISTFILE')
+        shell%histfile = value
+        return
+      case ('HISTSIZE')
+        read(value, *, iostat=iostat) shell%histsize
+        if (iostat /= 0) shell%histsize = 1000
+        return
+      case ('HISTFILESIZE')
+        read(value, *, iostat=iostat) shell%histfilesize
+        if (iostat /= 0) shell%histfilesize = 2000
+        return
+      case ('HISTCONTROL')
+        shell%histcontrol = value
+        ! Update readline's histcontrol setting
+        call set_histcontrol(value)
         return
     end select
 
@@ -157,6 +174,18 @@ contains
         return
       case ('PS4')
         value = trim(shell%ps4)
+        return
+      case ('HISTFILE')
+        value = trim(shell%histfile)
+        return
+      case ('HISTSIZE')
+        write(value, '(i0)') shell%histsize
+        return
+      case ('HISTFILESIZE')
+        write(value, '(i0)') shell%histfilesize
+        return
+      case ('HISTCONTROL')
+        value = trim(shell%histcontrol)
         return
     end select
     

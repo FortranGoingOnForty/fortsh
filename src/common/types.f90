@@ -223,6 +223,11 @@ module shell_types
     integer :: num_positional = 0             ! $# (number of positional parameters)
     ! Field splitting
     character(len=256) :: ifs = ' \t\n'       ! $IFS (internal field separator)
+    ! History control
+    character(len=MAX_PATH_LEN) :: histfile = ''  ! $HISTFILE (history file path)
+    integer :: histsize = 1000                ! $HISTSIZE (max commands in memory)
+    integer :: histfilesize = 2000            ! $HISTFILESIZE (max lines in file)
+    character(len=256) :: histcontrol = ''    ! $HISTCONTROL (ignorespace:ignoredups:erasedups)
   end type shell_state_t
 
 end module shell_types
