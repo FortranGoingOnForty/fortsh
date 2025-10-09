@@ -69,7 +69,16 @@ module readline
 
   type(history_t), save :: command_history
 
+  ! Module-level HISTCONTROL setting (set by shell)
+  character(len=256), save :: current_histcontrol = ''
+
 contains
+
+  ! Set the HISTCONTROL setting for history management
+  subroutine set_histcontrol(histcontrol)
+    character(len=*), intent(in) :: histcontrol
+    current_histcontrol = histcontrol
+  end subroutine
 
   ! Enhanced readline with character-by-character input processing
   subroutine readline_enhanced(prompt, line, iostat)
@@ -306,18 +315,51 @@ contains
 
   subroutine add_to_history(line)
     character(len=*), intent(in) :: line
+    ! Call enhanced version with current histcontrol setting
+    call add_to_history_with_control(line, current_histcontrol)
+  end subroutine
+
+  ! Add command to history with HISTCONTROL support
+  subroutine add_to_history_with_control(line, histcontrol)
+    character(len=*), intent(in) :: line
+    character(len=*), intent(in) :: histcontrol
     integer :: i
-    
-    ! Debug: Show what we're trying to add
-    ! write(error_unit, '(a,a)') 'DEBUG: Adding to history: "', trim(line) // '"'
-    
-    ! Don't add duplicate consecutive commands
-    if (command_history%count > 0) then
+    logical :: ignorespace, ignoredups, ignoreboth, erasedups
+
+    ! Parse HISTCONTROL settings
+    ignorespace = index(histcontrol, 'ignorespace') > 0
+    ignoredups = index(histcontrol, 'ignoredups') > 0
+    ignoreboth = index(histcontrol, 'ignoreboth') > 0
+    erasedups = index(histcontrol, 'erasedups') > 0
+
+    ! Apply ignoreboth
+    if (ignoreboth) then
+      ignorespace = .true.
+      ignoredups = .true.
+    end if
+
+    ! Check ignorespace: don't add if line starts with space
+    if (ignorespace .and. len_trim(line) > 0) then
+      if (line(1:1) == ' ') return
+    end if
+
+    ! Check ignoredups: don't add if duplicate of last command
+    if (ignoredups .and. command_history%count > 0) then
       if (trim(command_history%lines(command_history%count)) == trim(line)) then
         return
       end if
     end if
-    
+
+    ! Check erasedups: remove all previous instances of this command
+    if (erasedups) then
+      do i = 1, command_history%count
+        if (trim(command_history%lines(i)) == trim(line)) then
+          call delete_history_entry(i)
+          exit  ! Only one match possible after this
+        end if
+      end do
+    end if
+
     ! Shift history if at max capacity
     if (command_history%count >= MAX_HISTORY) then
       do i = 1, MAX_HISTORY - 1
@@ -325,16 +367,34 @@ contains
       end do
       command_history%count = MAX_HISTORY - 1
     end if
-    
+
     ! Add new command
     command_history%count = command_history%count + 1
     command_history%lines(command_history%count) = line
-    
+
     ! Reset current position
     command_history%current = command_history%count + 1
-    
-    ! Debug: Show history count
-    ! write(error_unit, '(a,i0)') 'DEBUG: History count now: ', command_history%count
+  end subroutine
+
+  ! Delete a history entry by index
+  subroutine delete_history_entry(index)
+    integer, intent(in) :: index
+    integer :: i
+
+    if (index < 1 .or. index > command_history%count) return
+
+    ! Shift remaining entries down
+    do i = index, command_history%count - 1
+      command_history%lines(i) = command_history%lines(i + 1)
+    end do
+
+    ! Decrement count
+    command_history%count = command_history%count - 1
+
+    ! Adjust current position if needed
+    if (command_history%current > command_history%count + 1) then
+      command_history%current = command_history%count + 1
+    end if
   end subroutine
 
   subroutine get_history_line(index, line, found)
@@ -373,6 +433,107 @@ contains
   subroutine clear_history()
     command_history%count = 0
     command_history%current = 0
+  end subroutine
+
+  ! Save history to file
+  subroutine save_history_to_file(filepath, max_lines)
+    character(len=*), intent(in) :: filepath
+    integer, intent(in) :: max_lines
+    integer :: unit, iostat, i, start_index
+
+    ! Don't save if no history
+    if (command_history%count == 0) return
+
+    ! Calculate starting index based on max_lines
+    if (max_lines > 0 .and. command_history%count > max_lines) then
+      start_index = command_history%count - max_lines + 1
+    else
+      start_index = 1
+    end if
+
+    ! Open file for writing (truncate existing)
+    open(newunit=unit, file=trim(filepath), status='replace', action='write', iostat=iostat)
+    if (iostat /= 0) then
+      write(error_unit, '(a)') 'fortsh: warning: could not save history to ' // trim(filepath)
+      return
+    end if
+
+    ! Write history lines
+    do i = start_index, command_history%count
+      write(unit, '(a)', iostat=iostat) trim(command_history%lines(i))
+      if (iostat /= 0) exit
+    end do
+
+    close(unit)
+  end subroutine
+
+  ! Load history from file
+  subroutine load_history_from_file(filepath, max_lines)
+    character(len=*), intent(in) :: filepath
+    integer, intent(in) :: max_lines
+    integer :: unit, iostat
+    character(len=MAX_LINE_LEN) :: line
+    logical :: file_exists
+
+    ! Check if file exists
+    inquire(file=filepath, exist=file_exists)
+    if (.not. file_exists) return
+
+    ! Open file for reading
+    open(newunit=unit, file=trim(filepath), status='old', action='read', iostat=iostat)
+    if (iostat /= 0) return
+
+    ! Clear existing history
+    command_history%count = 0
+    command_history%current = 0
+
+    ! Read lines
+    do
+      read(unit, '(a)', iostat=iostat) line
+      if (iostat /= 0) exit  ! EOF or error
+
+      ! Skip empty lines
+      if (len_trim(line) == 0) cycle
+
+      ! Add to history (respecting max_lines)
+      if (max_lines > 0 .and. command_history%count >= max_lines) then
+        ! Shift history to make room
+        command_history%lines(1:MAX_HISTORY-1) = command_history%lines(2:MAX_HISTORY)
+        command_history%count = command_history%count - 1
+      end if
+
+      ! Add to history without duplicate check (loading from file)
+      command_history%count = command_history%count + 1
+      command_history%lines(command_history%count) = line
+    end do
+
+    close(unit)
+    command_history%current = command_history%count + 1
+  end subroutine
+
+  ! Append new history entries to file (for concurrent shells)
+  subroutine append_history_to_file(filepath, start_index)
+    character(len=*), intent(in) :: filepath
+    integer, intent(in) :: start_index
+    integer :: unit, iostat, i
+
+    if (start_index > command_history%count) return
+
+    ! Open file for appending
+    open(newunit=unit, file=trim(filepath), status='old', position='append', action='write', iostat=iostat)
+    if (iostat /= 0) then
+      ! File doesn't exist, create it
+      open(newunit=unit, file=trim(filepath), status='new', action='write', iostat=iostat)
+      if (iostat /= 0) return
+    end if
+
+    ! Append new entries
+    do i = start_index, command_history%count
+      write(unit, '(a)', iostat=iostat) trim(command_history%lines(i))
+      if (iostat /= 0) exit
+    end do
+
+    close(unit)
   end subroutine
 
   ! History expansion functions

@@ -438,24 +438,99 @@ contains
   subroutine builtin_history(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+    integer :: i, n, offset, iostat, history_start_index
+    character(len=256) :: arg
+
     ! Handle history command options
     if (cmd%num_tokens > 1) then
-      select case(trim(cmd%tokens(2)))
+      arg = trim(cmd%tokens(2))
+
+      select case(arg)
       case('-c', '--clear')
+        ! Clear history
         call clear_history()
         write(output_unit, '(a)') 'Command history cleared.'
+        shell%last_exit_status = 0
+        return
+
+      case('-d')
+        ! Delete history entry at offset
+        if (cmd%num_tokens < 3) then
+          write(error_unit, '(a)') 'history: -d requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+
+        read(cmd%tokens(3), *, iostat=iostat) offset
+        if (iostat /= 0 .or. offset < 1) then
+          write(error_unit, '(a)') 'history: -d: invalid offset'
+          shell%last_exit_status = 1
+          return
+        end if
+
+        call delete_history_entry(offset)
+        shell%last_exit_status = 0
+        return
+
+      case('-a')
+        ! Append new history lines to history file
+        if (len_trim(shell%histfile) == 0) then
+          write(error_unit, '(a)') 'history: HISTFILE not set'
+          shell%last_exit_status = 1
+          return
+        end if
+
+        ! We'll append all history for simplicity (could track last saved index)
+        call save_history_to_file(trim(shell%histfile), shell%histfilesize)
+        shell%last_exit_status = 0
+        return
+
+      case('-r')
+        ! Read history file and append to current history
+        if (len_trim(shell%histfile) == 0) then
+          write(error_unit, '(a)') 'history: HISTFILE not set'
+          shell%last_exit_status = 1
+          return
+        end if
+
+        call load_history_from_file(trim(shell%histfile), shell%histsize)
+        shell%last_exit_status = 0
+        return
+
+      case('-w')
+        ! Write current history to history file
+        if (len_trim(shell%histfile) == 0) then
+          write(error_unit, '(a)') 'history: HISTFILE not set'
+          shell%last_exit_status = 1
+          return
+        end if
+
+        call save_history_to_file(trim(shell%histfile), shell%histfilesize)
+        shell%last_exit_status = 0
+        return
+
       case default
-        write(error_unit, '(a)') 'history: unknown option'
-        shell%last_exit_status = 1
+        ! Try to parse as number (show last n commands)
+        read(arg, *, iostat=iostat) n
+        if (iostat /= 0) then
+          write(error_unit, '(a)') 'history: unknown option: ' // trim(arg)
+          shell%last_exit_status = 1
+          return
+        end if
+
+        ! Show last n commands
+        history_start_index = max(1, get_history_count() - n + 1)
+        do i = history_start_index, get_history_count()
+          write(output_unit, '(i4,2x,a)') i, trim(command_history%lines(i))
+        end do
+        shell%last_exit_status = 0
         return
       end select
     else
       ! Show all history
       call show_history()
+      shell%last_exit_status = 0
     end if
-    
-    shell%last_exit_status = 0
   end subroutine
 
   subroutine builtin_kill(cmd, shell)
