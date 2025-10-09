@@ -15,18 +15,26 @@ module shell_types
 
   ! Main shell state
   type :: shell_state_t
-    ! Environment variables
-    type(shell_var_t), allocatable :: vars(:)
-    integer :: var_count = 0
-
-    ! Exit code of last command
-    integer :: last_exit_code = 0
+    ! User and host information
+    character(256) :: username = ''
+    character(256) :: hostname = ''
 
     ! Current working directory
     character(256) :: cwd = ''
 
+    ! Shell state
+    logical :: is_interactive = .false.
+    logical :: running = .true.
+    integer :: last_exit_status = 0
+
+    ! Variables
+    type(shell_var_t), dimension(1000) :: variables
+    integer :: num_variables = 0
+
+    ! Control flow depth
+    integer :: control_depth = 0
+
     ! Shell options
-    logical :: interactive = .false.
     logical :: echo_commands = .false.
   end type shell_state_t
 
