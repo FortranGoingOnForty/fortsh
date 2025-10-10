@@ -48,6 +48,7 @@ module ast_types_enhanced
   integer, parameter :: TOKEN_COMMAND_SUBST_START = 38
   integer, parameter :: TOKEN_ARITH_START = 39
   integer, parameter :: TOKEN_ARITH_END = 40
+  integer, parameter :: TOKEN_REDIRECT_HERE_STRING = 41
 
   ! AST Node types
   integer, parameter :: NODE_SCRIPT = 100
@@ -126,6 +127,22 @@ module ast_types_enhanced
     procedure :: clone => pipeline_node_clone
   end type pipeline_node_t
 
+  ! And-list node - executes second command only if first succeeds (&&)
+  type, extends(ast_node_t) :: and_list_node_t
+    type(ast_node_ptr_t) :: left
+    type(ast_node_ptr_t) :: right
+  contains
+    procedure :: clone => and_list_node_clone
+  end type and_list_node_t
+
+  ! Or-list node - executes second command only if first fails (||)
+  type, extends(ast_node_t) :: or_list_node_t
+    type(ast_node_ptr_t) :: left
+    type(ast_node_ptr_t) :: right
+  contains
+    procedure :: clone => or_list_node_clone
+  end type or_list_node_t
+
   ! Word node
   type, extends(ast_node_t) :: word_node_t
     character(:), allocatable :: text
@@ -145,9 +162,12 @@ module ast_types_enhanced
 
   ! Redirection node
   type, extends(ast_node_t) :: redirection_node_t
-    integer :: redirect_type = 0  ! 1=input(<), 2=output(>), 3=append(>>)
+    integer :: redirect_type = 0  ! 1=input(<), 2=output(>), 3=append(>>), 4=heredoc(<<), 5=herestring(<<<)
     integer :: fd = -1  ! File descriptor (-1 means default: 0 for <, 1 for >, >>)
     class(ast_node_t), allocatable :: target  ! Target file (word_node_t)
+    character(:), allocatable :: heredoc_delimiter  ! Delimiter for here documents
+    character(:), allocatable :: heredoc_content  ! Content for here documents
+    logical :: heredoc_strip_tabs = .false.  ! True for <<- (strip leading tabs)
   contains
     procedure :: clone => redirection_node_clone
   end type redirection_node_t
@@ -362,6 +382,48 @@ contains
     clone => typed_clone
   end function pipeline_node_clone
 
+  function and_list_node_clone(self) result(clone)
+    class(and_list_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(and_list_node_t), pointer :: typed_clone
+
+    allocate(and_list_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+
+    if (associated(self%left%ptr)) then
+      typed_clone%left%ptr => self%left%ptr%clone()
+    end if
+
+    if (associated(self%right%ptr)) then
+      typed_clone%right%ptr => self%right%ptr%clone()
+    end if
+
+    clone => typed_clone
+  end function and_list_node_clone
+
+  function or_list_node_clone(self) result(clone)
+    class(or_list_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(or_list_node_t), pointer :: typed_clone
+
+    allocate(or_list_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+
+    if (associated(self%left%ptr)) then
+      typed_clone%left%ptr => self%left%ptr%clone()
+    end if
+
+    if (associated(self%right%ptr)) then
+      typed_clone%right%ptr => self%right%ptr%clone()
+    end if
+
+    clone => typed_clone
+  end function or_list_node_clone
+
   function word_node_clone(self) result(clone)
     class(word_node_t), intent(in) :: self
     class(ast_node_t), pointer :: clone
@@ -407,6 +469,13 @@ contains
     if (allocated(self%target)) then
       allocate(typed_clone%target, source=self%target)
     end if
+    if (allocated(self%heredoc_delimiter)) then
+      typed_clone%heredoc_delimiter = self%heredoc_delimiter
+    end if
+    if (allocated(self%heredoc_content)) then
+      typed_clone%heredoc_content = self%heredoc_content
+    end if
+    typed_clone%heredoc_strip_tabs = self%heredoc_strip_tabs
     clone => typed_clone
   end function redirection_node_clone
 
