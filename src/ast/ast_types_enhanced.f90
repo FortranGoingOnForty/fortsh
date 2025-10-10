@@ -229,6 +229,15 @@ module ast_types_enhanced
     procedure :: clone => continue_node_clone
   end type continue_node_t
 
+  ! Function definition node
+  type, extends(ast_node_t) :: function_node_t
+    character(:), allocatable :: name
+    type(ast_node_ptr_t), allocatable :: body(:)
+    integer :: num_body = 0
+  contains
+    procedure :: clone => function_node_clone
+  end type function_node_t
+
   ! Linked list for building collections (same as before)
   type :: node_list_element_t
     class(ast_node_t), allocatable :: node
@@ -557,7 +566,7 @@ contains
 
         ! Copy patterns
         if (allocated(self%items(i)%patterns)) then
-          allocate(typed_clone%items(i)%patterns(self%items(i)%num_patterns))
+          allocate(character(len=256) :: typed_clone%items(i)%patterns(self%items(i)%num_patterns))
           do j = 1, self%items(i)%num_patterns
             typed_clone%items(i)%patterns(j) = self%items(i)%patterns(j)
           end do
@@ -605,6 +614,34 @@ contains
 
     clone => typed_clone
   end function continue_node_clone
+
+  function function_node_clone(self) result(clone)
+    class(function_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(function_node_t), pointer :: typed_clone
+    integer :: i
+
+    allocate(function_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    typed_clone%num_body = self%num_body
+
+    if (allocated(self%name)) then
+      typed_clone%name = self%name
+    end if
+
+    if (allocated(self%body)) then
+      allocate(typed_clone%body(self%num_body))
+      do i = 1, self%num_body
+        if (associated(self%body(i)%ptr)) then
+          typed_clone%body(i)%ptr => self%body(i)%ptr%clone()
+        end if
+      end do
+    end if
+
+    clone => typed_clone
+  end function function_node_clone
 
   ! Linked list methods
   subroutine node_list_append(self, node)

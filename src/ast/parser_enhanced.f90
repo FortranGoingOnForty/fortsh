@@ -24,6 +24,8 @@ module parser_enhanced
     procedure :: parse_for_loop => parser_parse_for_loop
     procedure :: parse_if_statement => parser_parse_if_statement
     procedure :: parse_while_loop => parser_parse_while_loop
+    procedure :: parse_case_statement => parser_parse_case_statement
+    procedure :: parse_function_definition => parser_parse_function_definition
     procedure :: parse_word => parser_parse_word
     procedure :: parse_variable => parser_parse_variable
     procedure :: parse_redirection => parser_parse_redirection
@@ -185,6 +187,14 @@ contains
 
     case(TOKEN_WHILE)
       node => self%parse_while_loop()
+      return
+
+    case(TOKEN_CASE)
+      node => self%parse_case_statement()
+      return
+
+    case(TOKEN_FUNCTION)
+      node => self%parse_function_definition()
       return
 
     case(TOKEN_BREAK)
@@ -540,6 +550,286 @@ contains
 
     node => while_node
   end function parser_parse_while_loop
+
+  function parser_parse_case_statement(self) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    class(ast_node_t), pointer :: node
+    type(case_node_t), pointer :: case_node
+    type(token_t) :: tok
+    type(node_list_t) :: cmd_list
+    class(ast_node_t), pointer :: stmt
+    character(:), allocatable :: pattern
+    integer :: item_count, pattern_count, i
+
+    allocate(case_node)
+    case_node%node_type = NODE_CASE
+
+    ! Expect 'case'
+    call self%expect(TOKEN_CASE)
+
+    ! Parse the expression to match
+    tok = self%current_token()
+    if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_VARIABLE) then
+      case_node%expr%ptr => self%parse_word()
+    else
+      ! Error: expected word after case
+      node => case_node
+      return
+    end if
+
+    ! Expect 'in'
+    call self%expect(TOKEN_IN)
+
+    ! Skip newline after 'in' if present
+    tok = self%current_token()
+    if (tok%type == TOKEN_NEWLINE) then
+      call self%advance()
+    end if
+
+    ! Parse case items
+    item_count = 0
+    allocate(case_node%items(10))  ! Start with space for 10 items
+
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_ESAC) exit
+
+      ! Skip newlines between items
+      if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+        cycle
+      end if
+
+      ! Parse pattern(s)
+      item_count = item_count + 1
+      if (item_count > size(case_node%items)) then
+        ! Need to resize array - simplified for now
+        exit
+      end if
+
+      ! Initialize this item
+      pattern_count = 0
+      allocate(character(len=256) :: case_node%items(item_count)%patterns(5))  ! Space for 5 patterns
+
+      ! Collect patterns (separated by |)
+      do while (self%current <= self%token_count)
+        tok = self%current_token()
+        if (tok%type /= TOKEN_WORD .and. tok%type /= TOKEN_STRING) exit
+
+        pattern_count = pattern_count + 1
+        if (pattern_count <= 5) then
+          case_node%items(item_count)%patterns(pattern_count) = tok%value
+        end if
+        call self%advance()
+
+        ! Check for | (alternate pattern)
+        tok = self%current_token()
+        if (tok%type == TOKEN_PIPE) then
+          call self%advance()
+        else if (tok%type == TOKEN_RPAREN) then
+          call self%advance()
+          exit
+        else
+          ! Expect ) after pattern
+          exit
+        end if
+      end do
+      case_node%items(item_count)%num_patterns = pattern_count
+
+      ! Skip newline after )
+      tok = self%current_token()
+      if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+      end if
+
+      ! Parse commands for this pattern
+      cmd_list%count = 0
+      do while (self%current <= self%token_count)
+        tok = self%current_token()
+
+        ! Check for end of this case item (;;)
+        if (tok%type == TOKEN_SEMICOLON) then
+          call self%advance()
+          tok = self%current_token()
+          if (tok%type == TOKEN_SEMICOLON) then
+            call self%advance()
+            exit
+          end if
+          ! Single semicolon - continue within same item
+        end if
+
+        ! Check for esac or next pattern
+        if (tok%type == TOKEN_ESAC) exit
+        if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_STRING) then
+          ! Peek ahead to see if it's a pattern (has ))
+          if (self%current + 1 <= self%token_count) then
+            if (self%tokens(self%current + 1)%type == TOKEN_RPAREN) then
+              exit  ! Start of next pattern
+            end if
+          end if
+        end if
+
+        if (tok%type == TOKEN_NEWLINE) then
+          call self%advance()
+          cycle
+        end if
+
+        stmt => self%parse_command_list()
+        if (associated(stmt)) then
+          call cmd_list%append(stmt)
+          deallocate(stmt)
+        end if
+      end do
+
+      ! Store commands for this item
+      if (cmd_list%count > 0) then
+        call cmd_list%to_ptr_array(case_node%items(item_count)%commands)
+        case_node%items(item_count)%num_commands = cmd_list%count
+      end if
+      call cmd_list%clear()
+    end do
+
+    case_node%num_items = item_count
+
+    ! Expect 'esac'
+    call self%expect(TOKEN_ESAC)
+
+    node => case_node
+  end function parser_parse_case_statement
+
+  function parser_parse_function_definition(self) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    class(ast_node_t), pointer :: node
+    type(function_node_t), pointer :: func_node
+    type(token_t) :: tok
+    type(node_list_t) :: body_list
+    class(ast_node_t), pointer :: stmt
+
+    allocate(func_node)
+    func_node%node_type = NODE_FUNCTION
+
+    ! Two forms:
+    ! 1) function name { ... }
+    ! 2) name() { ... }
+
+    tok = self%current_token()
+    if (tok%type == TOKEN_FUNCTION) then
+      ! Form 1: function name { ... }
+      call self%advance()  ! Skip 'function'
+
+      ! Get function name
+      tok = self%current_token()
+      if (tok%type == TOKEN_WORD) then
+        func_node%name = tok%value
+        call self%advance()
+      else
+        ! Error: expected function name
+        node => func_node
+        return
+      end if
+
+      ! Expect { or allow () then {
+      tok = self%current_token()
+      if (tok%type == TOKEN_LPAREN) then
+        call self%advance()
+        tok = self%current_token()
+        if (tok%type == TOKEN_RPAREN) then
+          call self%advance()
+        end if
+      end if
+
+      ! Expect {
+      tok = self%current_token()
+      if (tok%type == TOKEN_LBRACE) then
+        call self%advance()
+      else if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+        tok = self%current_token()
+        if (tok%type == TOKEN_LBRACE) then
+          call self%advance()
+        end if
+      end if
+    else if (tok%type == TOKEN_WORD) then
+      ! Form 2: name() { ... } - check ahead for ()
+      func_node%name = tok%value
+      call self%advance()
+
+      ! Expect ()
+      tok = self%current_token()
+      if (tok%type == TOKEN_LPAREN) then
+        call self%advance()
+        tok = self%current_token()
+        if (tok%type == TOKEN_RPAREN) then
+          call self%advance()
+        else
+          ! Not a function definition
+          deallocate(func_node)
+          node => null()
+          return
+        end if
+      else
+        ! Not a function definition
+        deallocate(func_node)
+        node => null()
+        return
+      end if
+
+      ! Skip optional newline
+      tok = self%current_token()
+      if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+      end if
+
+      ! Expect {
+      tok = self%current_token()
+      if (tok%type == TOKEN_LBRACE) then
+        call self%advance()
+      else
+        ! Not a function definition
+        deallocate(func_node)
+        node => null()
+        return
+      end if
+    else
+      ! Not a function definition
+      deallocate(func_node)
+      node => null()
+      return
+    end if
+
+    ! Parse function body until }
+    body_list%count = 0
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+
+      if (tok%type == TOKEN_RBRACE) then
+        call self%advance()
+        exit
+      end if
+
+      if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+        cycle
+      end if
+
+      if (tok%type == TOKEN_EOF) exit
+
+      stmt => self%parse_command_list()
+      if (associated(stmt)) then
+        call body_list%append(stmt)
+        deallocate(stmt)
+      end if
+    end do
+
+    ! Store body
+    if (body_list%count > 0) then
+      call body_list%to_ptr_array(func_node%body)
+      func_node%num_body = body_list%count
+    end if
+    call body_list%clear()
+
+    node => func_node
+  end function parser_parse_function_definition
 
   function parser_parse_word(self) result(node)
     class(parser_enhanced_t), intent(inout) :: self
