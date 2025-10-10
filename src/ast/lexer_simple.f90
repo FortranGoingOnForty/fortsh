@@ -11,7 +11,8 @@ module lexer_simple
                                 TOKEN_IF, TOKEN_THEN, TOKEN_ELSE, TOKEN_ELIF, &
                                 TOKEN_FI, TOKEN_FOR, TOKEN_IN, TOKEN_DO, TOKEN_DONE, &
                                 TOKEN_WHILE, TOKEN_BREAK, TOKEN_CONTINUE, &
-                                TOKEN_COMMAND_SUBST_START, TOKEN_LPAREN, TOKEN_RPAREN, &
+                                TOKEN_COMMAND_SUBST_START, TOKEN_ARITH_START, TOKEN_ARITH_END, &
+                                TOKEN_LPAREN, TOKEN_RPAREN, &
                                 is_keyword, keyword_token_type
   implicit none
 
@@ -114,13 +115,25 @@ contains
       end if
 
       if (ch == ')') then
-        self%token_count = self%token_count + 1
-        self%tokens(self%token_count)%type = TOKEN_RPAREN
-        self%tokens(self%token_count)%value = ')'
-        self%tokens(self%token_count)%line_number = self%line_number
-        self%tokens(self%token_count)%column = self%column
-        self%position = self%position + 1
-        self%column = self%column + 1
+        ! Check for )) for arithmetic expansion
+        if (self%position < self%length .and. &
+            self%input(self%position+1:self%position+1) == ')') then
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_ARITH_END
+          self%tokens(self%token_count)%value = '))'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 2
+          self%column = self%column + 2
+        else
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_RPAREN
+          self%tokens(self%token_count)%value = ')'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 1
+          self%column = self%column + 1
+        end if
         cycle
       end if
 
@@ -159,20 +172,32 @@ contains
         cycle
       end if
 
-      ! Handle variable or command substitution
+      ! Handle variable, command substitution, or arithmetic expansion
       if (ch == '$') then
-        ! Check for command substitution $(...)
+        ! Check for arithmetic expansion $((...)) or command substitution $(...)
         if (self%position < self%length .and. &
             self%input(self%position+1:self%position+1) == '(') then
-          ! Command substitution - for now just tokenize $( as a special token
-          ! The parser will handle finding the matching )
-          self%token_count = self%token_count + 1
-          self%tokens(self%token_count)%type = TOKEN_COMMAND_SUBST_START
-          self%tokens(self%token_count)%value = '$('
-          self%tokens(self%token_count)%line_number = self%line_number
-          self%tokens(self%token_count)%column = self%column
-          self%position = self%position + 2
-          self%column = self%column + 2
+          ! Check if it's arithmetic expansion $((
+          if (self%position + 1 < self%length .and. &
+              self%input(self%position+2:self%position+2) == '(') then
+            ! Arithmetic expansion
+            self%token_count = self%token_count + 1
+            self%tokens(self%token_count)%type = TOKEN_ARITH_START
+            self%tokens(self%token_count)%value = '$(('
+            self%tokens(self%token_count)%line_number = self%line_number
+            self%tokens(self%token_count)%column = self%column
+            self%position = self%position + 3
+            self%column = self%column + 3
+          else
+            ! Command substitution
+            self%token_count = self%token_count + 1
+            self%tokens(self%token_count)%type = TOKEN_COMMAND_SUBST_START
+            self%tokens(self%token_count)%value = '$('
+            self%tokens(self%token_count)%line_number = self%line_number
+            self%tokens(self%token_count)%column = self%column
+            self%position = self%position + 2
+            self%column = self%column + 2
+          end if
         else
           ! Regular variable
           self%position = self%position + 1

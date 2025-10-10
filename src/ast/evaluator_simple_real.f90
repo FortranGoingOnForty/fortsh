@@ -130,6 +130,7 @@ module evaluator_simple_real
     procedure :: eval_word => evaluator_eval_word
     procedure :: eval_variable => evaluator_eval_variable
     procedure :: eval_command_subst => evaluator_eval_command_subst
+    procedure :: eval_arithmetic => evaluator_eval_arithmetic
     procedure :: has_glob_pattern => evaluator_has_glob_pattern
     procedure :: expand_glob => evaluator_expand_glob
     procedure :: destroy => evaluator_destroy
@@ -1037,6 +1038,7 @@ contains
     character(:), allocatable :: result
     type(variable_node_t), pointer :: var_ptr
     type(command_subst_node_t), pointer :: subst_ptr
+    type(arithmetic_node_t), pointer :: arith_ptr
     character(4096) :: output_buffer
     integer :: exit_code
 
@@ -1051,6 +1053,10 @@ contains
     type is (command_subst_node_t)
       subst_ptr => node
       result = self%eval_command_subst(subst_ptr)
+
+    type is (arithmetic_node_t)
+      arith_ptr => node
+      result = self%eval_arithmetic(arith_ptr)
 
     class default
       result = ''
@@ -1169,6 +1175,116 @@ contains
     end function getpid
 
   end function evaluator_eval_command_subst
+
+  ! Eval arithmetic expression - evaluate arithmetic and return result as string
+  function evaluator_eval_arithmetic(self, node) result(result)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(arithmetic_node_t), pointer, intent(in) :: node
+    character(:), allocatable :: result
+    character(4096) :: expr, expanded_expr
+    character(256) :: var_name, var_value
+    integer :: i, j, k, value, total
+    character(256) :: temp_file
+    integer :: unit_num, ios
+    character(4096) :: line
+    character(:), allocatable :: output
+    integer(c_int) :: status
+    character(kind=c_char, len=256) :: c_cmd
+
+    ! First, expand variables in the expression
+    expanded_expr = ''
+    i = 1
+    do while (i <= len_trim(node%expression))
+      if (node%expression(i:i) == '$') then
+        ! Found a variable, extract its name
+        j = i + 1
+        ! Check if it's ${var} format
+        if (j <= len_trim(node%expression) .and. node%expression(j:j) == '{') then
+          j = j + 1
+          k = j
+          do while (k <= len_trim(node%expression) .and. node%expression(k:k) /= '}')
+            k = k + 1
+          end do
+          var_name = node%expression(j:k-1)
+          var_value = self%context%get_var(trim(var_name))
+          ! If variable is empty, use 0
+          if (len_trim(var_value) == 0) var_value = '0'
+          expanded_expr = trim(expanded_expr) // trim(var_value)
+          i = k + 1
+        else
+          ! Simple $var format
+          k = j
+          do while (k <= len_trim(node%expression))
+            if (.not. (node%expression(k:k) >= 'a' .and. node%expression(k:k) <= 'z' .or. &
+                       node%expression(k:k) >= 'A' .and. node%expression(k:k) <= 'Z' .or. &
+                       node%expression(k:k) >= '0' .and. node%expression(k:k) <= '9' .or. &
+                       node%expression(k:k) == '_')) exit
+            k = k + 1
+          end do
+          var_name = node%expression(j:k-1)
+          if (len_trim(var_name) > 0) then
+            var_value = self%context%get_var(trim(var_name))
+            if (len_trim(var_value) == 0) var_value = '0'
+            expanded_expr = trim(expanded_expr) // trim(var_value)
+          else
+            expanded_expr = trim(expanded_expr) // '$'
+          end if
+          i = k
+        end if
+      else
+        expanded_expr = trim(expanded_expr) // node%expression(i:i)
+        i = i + 1
+      end if
+    end do
+
+    ! Now evaluate the arithmetic expression
+    ! Try using expr, bash arithmetic, or awk
+    write(temp_file, '(a,i0,a)') '/tmp/fortsh_arith_', getpid(), '.tmp'
+
+    ! Try using bash arithmetic expansion first
+    c_cmd = 'echo $((' // trim(expanded_expr) // ')) > ' // trim(temp_file) // ' 2>/dev/null' // c_null_char
+    status = c_system(c_cmd)
+
+    ! Read the result
+    output = ''
+    open(newunit=unit_num, file=temp_file, status='old', &
+         action='read', iostat=ios)
+    if (ios == 0) then
+      read(unit_num, '(a)', iostat=ios) line
+      if (ios == 0) then
+        output = trim(line)
+      end if
+      close(unit_num)
+    end if
+
+    ! Clean up temp file
+    c_cmd = 'rm -f ' // trim(temp_file) // c_null_char
+    status = c_system(c_cmd)
+
+    ! If bc failed or returned empty, try simple evaluation
+    if (len_trim(output) == 0) then
+      ! Very simple fallback - just try to parse as integer
+      read(expanded_expr, *, iostat=ios) value
+      if (ios == 0) then
+        write(line, '(i0)') value
+        output = trim(line)
+      else
+        output = '0'
+      end if
+    end if
+
+    result = trim(output)
+
+  contains
+    function getpid() result(pid)
+      integer :: pid
+      real :: rnum
+      call random_seed()
+      call random_number(rnum)
+      pid = int(rnum * 99999) + 10000
+    end function getpid
+
+  end function evaluator_eval_arithmetic
 
   ! Check if string contains glob patterns
   function evaluator_has_glob_pattern(self, str) result(has_pattern)
