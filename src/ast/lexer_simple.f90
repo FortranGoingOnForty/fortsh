@@ -12,7 +12,7 @@ module lexer_simple
                                 TOKEN_FI, TOKEN_FOR, TOKEN_IN, TOKEN_DO, TOKEN_DONE, &
                                 TOKEN_WHILE, TOKEN_BREAK, TOKEN_CONTINUE, &
                                 TOKEN_COMMAND_SUBST_START, TOKEN_ARITH_START, TOKEN_ARITH_END, &
-                                TOKEN_LPAREN, TOKEN_RPAREN, &
+                                TOKEN_LPAREN, TOKEN_RPAREN, TOKEN_LBRACE, TOKEN_RBRACE, &
                                 is_keyword, keyword_token_type
   implicit none
 
@@ -137,6 +137,29 @@ contains
         cycle
       end if
 
+      ! Handle braces (for function definitions and command grouping)
+      if (ch == '{') then
+        self%token_count = self%token_count + 1
+        self%tokens(self%token_count)%type = TOKEN_LBRACE
+        self%tokens(self%token_count)%value = '{'
+        self%tokens(self%token_count)%line_number = self%line_number
+        self%tokens(self%token_count)%column = self%column
+        self%position = self%position + 1
+        self%column = self%column + 1
+        cycle
+      end if
+
+      if (ch == '}') then
+        self%token_count = self%token_count + 1
+        self%tokens(self%token_count)%type = TOKEN_RBRACE
+        self%tokens(self%token_count)%value = '}'
+        self%tokens(self%token_count)%line_number = self%line_number
+        self%tokens(self%token_count)%column = self%column
+        self%position = self%position + 1
+        self%column = self%column + 1
+        cycle
+      end if
+
       ! Handle redirection operators
       if (ch == '<') then
         self%token_count = self%token_count + 1
@@ -202,6 +225,25 @@ contains
           ! Regular variable
           self%position = self%position + 1
           self%column = self%column + 1
+
+          ! Check for special single-character variables
+          if (self%position <= self%length) then
+            ch = self%input(self%position:self%position)
+            if (ch == '#' .or. ch == '?' .or. ch == '$' .or. ch == '!' .or. &
+                ch == '@' .or. ch == '*' .or. (ch >= '0' .and. ch <= '9')) then
+              ! Special variable - single character
+              self%token_count = self%token_count + 1
+              self%tokens(self%token_count)%type = TOKEN_VARIABLE
+              self%tokens(self%token_count)%value = ch
+              self%tokens(self%token_count)%line_number = self%line_number
+              self%tokens(self%token_count)%column = self%column - 1
+              self%position = self%position + 1
+              self%column = self%column + 1
+              cycle
+            end if
+          end if
+
+          ! Regular variable name
           word = ''
           word_len = 0
           do while (self%position <= self%length)

@@ -125,6 +125,9 @@ module evaluator_simple_real
     procedure :: eval_for_loop => evaluator_eval_for_loop
     procedure :: eval_while_loop => evaluator_eval_while_loop
     procedure :: eval_if_statement => evaluator_eval_if_statement
+    procedure :: eval_case_statement => evaluator_eval_case_statement
+    procedure :: eval_function_definition => evaluator_eval_function_definition
+    procedure :: eval_function_call => evaluator_eval_function_call
     procedure :: eval_break => evaluator_eval_break
     procedure :: eval_continue => evaluator_eval_continue
     procedure :: eval_word => evaluator_eval_word
@@ -273,6 +276,8 @@ contains
     type(for_node_t), pointer :: for_ptr
     type(while_node_t), pointer :: while_ptr
     type(if_node_t), pointer :: if_ptr
+    type(case_node_t), pointer :: case_ptr
+    type(function_node_t), pointer :: func_ptr
     type(break_node_t), pointer :: break_ptr
     type(continue_node_t), pointer :: continue_ptr
 
@@ -300,6 +305,14 @@ contains
     type is (if_node_t)
       if_ptr => node
       exit_code = self%eval_if_statement(if_ptr)
+
+    type is (case_node_t)
+      case_ptr => node
+      exit_code = self%eval_case_statement(case_ptr)
+
+    type is (function_node_t)
+      func_ptr => node
+      exit_code = self%eval_function_definition(func_ptr)
 
     type is (break_node_t)
       break_ptr => node
@@ -334,6 +347,10 @@ contains
     logical :: has_redirections
     character(256) :: redir_file
     type(redirection_node_t), pointer :: redir
+
+    ! Function call handling variables
+    logical :: call_as_function
+    character(256), allocatable :: func_args(:)
 
     exit_code = 0
 
@@ -668,19 +685,36 @@ contains
       ! Show type of command
       if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
         expanded_word = self%eval_word(node%words(2)%ptr)
+
+        ! Check if it's a builtin
         select case(trim(expanded_word))
         case('echo', 'pwd', 'cd', 'exit', 'export', 'set', 'declare', 'true', 'false', &
              'test', '[', 'unset', 'read', 'source', '.', 'alias', 'type')
           write(output_unit, '(2a)') trim(expanded_word), ' is a shell builtin'
         case default
-          ! Check if it's an external command
-          c_cmd = 'which ' // trim(expanded_word) // ' 2>/dev/null' // c_null_char
-          status = c_system(c_cmd)
-          if (status == 0) then
-            write(output_unit, '(3a)') trim(expanded_word), ' is ', trim(expanded_word)
+          ! Not a builtin, check if it's a shell function
+          call_as_function = .false.
+          if (associated(self%context%shell)) then
+            do i = 1, self%context%shell%num_functions
+              if (trim(self%context%shell%functions(i)%name) == trim(expanded_word)) then
+                call_as_function = .true.
+                exit
+              end if
+            end do
+          end if
+
+          if (call_as_function) then
+            write(output_unit, '(2a)') trim(expanded_word), ' is a function'
           else
-            write(output_unit, '(3a)') 'bash: type: ', trim(expanded_word), ': not found'
-            exit_code = 1
+            ! Check if it's an external command
+            c_cmd = 'which ' // trim(expanded_word) // ' 2>/dev/null' // c_null_char
+            status = c_system(c_cmd)
+            if (status == 0) then
+              write(output_unit, '(3a)') trim(expanded_word), ' is ', trim(expanded_word)
+            else
+              write(output_unit, '(3a)') 'bash: type: ', trim(expanded_word), ': not found'
+              exit_code = 1
+            end if
           end if
         end select
       else
@@ -688,24 +722,50 @@ contains
       end if
 
     case default
-      ! External command - build full command line
-      cmd_str = trim(first_word)
-      do i = 2, node%num_words
-        if (associated(node%words(i)%ptr)) then
-          expanded_word = self%eval_word(node%words(i)%ptr)
-          cmd_str = trim(cmd_str) // ' ' // trim(expanded_word)
-        end if
-      end do
+      ! Check if it's a shell function first
+      call_as_function = .false.
+      if (associated(self%context%shell)) then
+        do i = 1, self%context%shell%num_functions
+          if (trim(self%context%shell%functions(i)%name) == trim(first_word)) then
+            call_as_function = .true.
+            exit
+          end if
+        end do
+      end if
 
-      ! Execute via system()
-      c_cmd = trim(cmd_str) // c_null_char
-      status = c_system(c_cmd)
-
-      ! Extract exit code
-      if (status < 0) then
-        exit_code = 127
+      if (call_as_function) then
+        ! Call shell function
+        ! Build argument array
+        allocate(func_args(node%num_words - 1))
+        do i = 2, node%num_words
+          if (associated(node%words(i)%ptr)) then
+            func_args(i-1) = self%eval_word(node%words(i)%ptr)
+          else
+            func_args(i-1) = ''
+          end if
+        end do
+        exit_code = self%eval_function_call(trim(first_word), func_args)
+        deallocate(func_args)
       else
-        exit_code = status / 256
+        ! External command - build full command line
+        cmd_str = trim(first_word)
+        do i = 2, node%num_words
+          if (associated(node%words(i)%ptr)) then
+            expanded_word = self%eval_word(node%words(i)%ptr)
+            cmd_str = trim(cmd_str) // ' ' // trim(expanded_word)
+          end if
+        end do
+
+        ! Execute via system()
+        c_cmd = trim(cmd_str) // c_null_char
+        status = c_system(c_cmd)
+
+        ! Extract exit code
+        if (status < 0) then
+          exit_code = 127
+        else
+          exit_code = status / 256
+        end if
       end if
     end select
 
@@ -1009,6 +1069,215 @@ contains
     end if
   end function evaluator_eval_if_statement
 
+  ! Eval case statement
+  function evaluator_eval_case_statement(self, node) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(case_node_t), pointer, intent(in) :: node
+    integer :: exit_code
+    character(:), allocatable :: expr_value
+    integer :: i, j, k
+    logical :: matched
+
+    exit_code = 0
+
+    ! Evaluate the expression
+    if (associated(node%expr%ptr)) then
+      expr_value = self%eval_word(node%expr%ptr)
+    else
+      expr_value = ''
+    end if
+
+    ! Try to match against each case item
+    matched = .false.
+    do i = 1, node%num_items
+      if (matched) exit
+
+      ! Check each pattern for this item
+      do j = 1, node%items(i)%num_patterns
+        if (allocated(node%items(i)%patterns)) then
+          ! Simple pattern matching - support *, ?, and literal matches
+          if (pattern_matches(trim(expr_value), trim(node%items(i)%patterns(j)))) then
+            matched = .true.
+
+            ! Execute commands for this case
+            do k = 1, node%items(i)%num_commands
+              if (associated(node%items(i)%commands(k)%ptr)) then
+                exit_code = self%eval_node(node%items(i)%commands(k)%ptr)
+
+                ! Check for break in case statement
+                if (self%context%break_requested) then
+                  self%context%break_requested = .false.
+                  self%context%break_levels = 0
+                  return
+                end if
+
+                if (self%context%return_requested) return
+              end if
+            end do
+            exit  ! Exit pattern loop
+          end if
+        end if
+      end do
+    end do
+
+  contains
+    ! Simple pattern matching function
+    logical function pattern_matches(str, pattern)
+      character(*), intent(in) :: str, pattern
+      integer :: i, j, pi, si
+
+      ! Handle special patterns
+      if (pattern == '*') then
+        pattern_matches = .true.
+        return
+      end if
+
+      ! Simple literal match for now (can be extended for glob patterns)
+      pattern_matches = (str == pattern)
+
+      ! Basic wildcard support
+      if (index(pattern, '*') > 0 .or. index(pattern, '?') > 0) then
+        pattern_matches = glob_match(str, pattern)
+      end if
+    end function pattern_matches
+
+    ! Basic glob pattern matching
+    logical function glob_match(str, pattern)
+      character(*), intent(in) :: str, pattern
+      integer :: si, pi, star_pos
+
+      si = 1
+      pi = 1
+      star_pos = 0
+
+      do while (si <= len_trim(str) .and. pi <= len_trim(pattern))
+        if (pattern(pi:pi) == '*') then
+          ! Found *, remember position and advance pattern
+          star_pos = pi
+          pi = pi + 1
+          if (pi > len_trim(pattern)) then
+            glob_match = .true.
+            return
+          end if
+        else if (pattern(pi:pi) == '?' .or. pattern(pi:pi) == str(si:si)) then
+          ! Character match or ?
+          si = si + 1
+          pi = pi + 1
+        else if (star_pos > 0) then
+          ! Mismatch but we have a *, backtrack
+          pi = star_pos + 1
+          si = si + 1
+        else
+          ! No match
+          glob_match = .false.
+          return
+        end if
+      end do
+
+      ! Check if we consumed all of pattern (except trailing *)
+      do while (pi <= len_trim(pattern) .and. pattern(pi:pi) == '*')
+        pi = pi + 1
+      end do
+
+      glob_match = (pi > len_trim(pattern))
+    end function glob_match
+
+  end function evaluator_eval_case_statement
+
+  ! Eval function definition - store function for later calls
+  function evaluator_eval_function_definition(self, node) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(function_node_t), pointer, intent(in) :: node
+    integer :: exit_code
+    integer :: i
+
+    exit_code = 0
+
+    ! Store the function definition in the shell
+    if (associated(self%context%shell)) then
+      ! Find if function already exists
+      do i = 1, self%context%shell%num_functions
+        if (self%context%shell%functions(i)%name == node%name) then
+          ! Replace existing function
+          self%context%shell%functions(i)%body%ptr => node
+          return
+        end if
+      end do
+
+      ! Add new function
+      if (self%context%shell%num_functions < size(self%context%shell%functions)) then
+        self%context%shell%num_functions = self%context%shell%num_functions + 1
+        i = self%context%shell%num_functions
+        self%context%shell%functions(i)%name = node%name
+        self%context%shell%functions(i)%body%ptr => node
+      end if
+    end if
+  end function evaluator_eval_function_definition
+
+  ! Eval function call - execute a stored function
+  function evaluator_eval_function_call(self, func_name, args) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    character(*), intent(in) :: func_name
+    character(*), dimension(:), intent(in), optional :: args
+    integer :: exit_code
+    integer :: i, j
+    type(function_node_t), pointer :: func_def
+    character(256), dimension(100) :: saved_params
+    integer :: saved_num_params
+    character(256) :: saved_script_name
+
+    exit_code = 127  ! Command not found
+
+    ! Look for function definition
+    if (associated(self%context%shell)) then
+      do i = 1, self%context%shell%num_functions
+        if (trim(self%context%shell%functions(i)%name) == trim(func_name)) then
+          ! Found function - execute it
+          select type(fnode => self%context%shell%functions(i)%body%ptr)
+          type is (function_node_t)
+            func_def => fnode
+
+            ! Save current positional parameters and $0
+            saved_params = self%context%shell%positional_params
+            saved_num_params = self%context%shell%num_positional
+            saved_script_name = self%context%shell%script_name
+
+            ! Set new positional parameters from arguments
+            self%context%shell%script_name = func_name
+            if (present(args)) then
+              self%context%shell%num_positional = min(size(args), 100)
+              do j = 1, self%context%shell%num_positional
+                self%context%shell%positional_params(j) = args(j)
+              end do
+            else
+              self%context%shell%num_positional = 0
+            end if
+
+            ! Execute function body
+            exit_code = 0
+            do j = 1, func_def%num_body
+              if (associated(func_def%body(j)%ptr)) then
+                exit_code = self%eval_node(func_def%body(j)%ptr)
+
+                ! Check for return statement
+                if (self%context%return_requested) then
+                  self%context%return_requested = .false.
+                  exit
+                end if
+              end if
+            end do
+
+            ! Restore original positional parameters and $0
+            self%context%shell%positional_params = saved_params
+            self%context%shell%num_positional = saved_num_params
+            self%context%shell%script_name = saved_script_name
+          end select
+          return
+        end if
+      end do
+    end if
+  end function evaluator_eval_function_call
+
   ! Eval break
   function evaluator_eval_break(self, node) result(exit_code)
     class(evaluator_simple_real_t), intent(inout) :: self
@@ -1069,10 +1338,12 @@ contains
     type(variable_node_t), pointer, intent(in) :: node
     character(:), allocatable :: result
     character(16) :: tmp
+    integer :: param_num, i, ios
 
     ! Handle special variables
     select case(trim(node%name))
     case('?')
+      ! Last exit status
       if (associated(self%context%shell)) then
         write(tmp, '(i0)') self%context%shell%last_exit_status
         result = trim(tmp)
@@ -1081,14 +1352,73 @@ contains
       end if
 
     case('#')
-      result = '0'
+      ! Number of positional parameters
+      if (associated(self%context%shell)) then
+        write(tmp, '(i0)') self%context%shell%num_positional
+        result = trim(tmp)
+      else
+        result = '0'
+      end if
+
+    case('@')
+      ! All positional parameters as separate words
+      result = ''
+      if (associated(self%context%shell)) then
+        do i = 1, self%context%shell%num_positional
+          if (i > 1) result = trim(result) // ' '
+          result = trim(result) // trim(self%context%shell%positional_params(i))
+        end do
+      end if
+
+    case('*')
+      ! All positional parameters as a single word
+      result = ''
+      if (associated(self%context%shell)) then
+        do i = 1, self%context%shell%num_positional
+          if (i > 1) result = trim(result) // ' '
+          result = trim(result) // trim(self%context%shell%positional_params(i))
+        end do
+      end if
+
+    case('0')
+      ! Script/command name
+      if (associated(self%context%shell)) then
+        result = trim(self%context%shell%script_name)
+      else
+        result = 'fortsh'
+      end if
 
     case('$')
+      ! Process ID (simplified)
       call get_environment_variable('PPID', result)
       if (.not. allocated(result)) result = '0'
 
+    case('!')
+      ! PID of last background command (not implemented)
+      result = '0'
+
+    case('-')
+      ! Current shell options (simplified)
+      result = ''
+
     case default
-      result = self%context%get_var(trim(node%name))
+      ! Check if it's a numeric positional parameter
+      read(node%name, *, iostat=ios) param_num
+      if (ios == 0 .and. param_num > 0) then
+        ! It's a positional parameter like $1, $2, etc.
+        if (associated(self%context%shell)) then
+          if (param_num <= self%context%shell%num_positional) then
+            result = trim(self%context%shell%positional_params(param_num))
+          else
+            result = ''
+          end if
+        else
+          result = ''
+        end if
+      else
+        ! Regular variable
+        result = self%context%get_var(trim(node%name))
+      end if
     end select
   end function evaluator_eval_variable
 

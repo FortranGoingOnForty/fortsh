@@ -13,6 +13,17 @@ module shell_types
     logical :: is_readonly = .false.
   end type shell_var_t
 
+  ! Forward declaration for AST node
+  type :: ast_node_ptr_t
+    class(*), pointer :: ptr => null()
+  end type ast_node_ptr_t
+
+  ! Shell function type
+  type :: shell_function_t
+    character(:), allocatable :: name
+    type(ast_node_ptr_t) :: body  ! Points to function_node_t
+  end type shell_function_t
+
   ! Main shell state
   type :: shell_state_t
     ! User and host information
@@ -30,6 +41,17 @@ module shell_types
     ! Variables
     type(shell_var_t), dimension(1000) :: variables
     integer :: num_variables = 0
+
+    ! Positional parameters ($1, $2, etc.)
+    character(256), dimension(100) :: positional_params
+    integer :: num_positional = 0
+
+    ! Script/function name ($0)
+    character(256) :: script_name = ''
+
+    ! Functions
+    type(shell_function_t), dimension(100) :: functions
+    integer :: num_functions = 0
 
     ! Control flow depth
     integer :: control_depth = 0
