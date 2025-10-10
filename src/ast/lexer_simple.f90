@@ -244,7 +244,8 @@ contains
                    (ch >= 'A' .and. ch <= 'Z') .or. &
                    (ch >= '0' .and. ch <= '9') .or. &
                    ch == '_' .or. ch == '-' .or. ch == '.' .or. &
-                   ch == '*' .or. ch == '?' .or. ch == '[' .or. ch == ']'
+                   ch == '*' .or. ch == '?' .or. ch == '[' .or. ch == ']' .or. &
+                   ch == '/' .or. ch == '=' .or. ch == '~' .or. ch == '+'
   end function is_word_char
 
   subroutine lexer_destroy(self)
