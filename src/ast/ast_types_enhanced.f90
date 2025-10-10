@@ -46,6 +46,8 @@ module ast_types_enhanced
   integer, parameter :: TOKEN_CONTINUE = 36
   integer, parameter :: TOKEN_RETURN = 37
   integer, parameter :: TOKEN_COMMAND_SUBST_START = 38
+  integer, parameter :: TOKEN_ARITH_START = 39
+  integer, parameter :: TOKEN_ARITH_END = 40
 
   ! AST Node types
   integer, parameter :: NODE_SCRIPT = 100
@@ -158,6 +160,13 @@ module ast_types_enhanced
     procedure :: clone => command_subst_node_clone
   end type command_subst_node_t
 
+  ! Arithmetic expansion node - for $((...))
+  type, extends(ast_node_t) :: arithmetic_node_t
+    character(:), allocatable :: expression  ! The arithmetic expression
+  contains
+    procedure :: clone => arithmetic_node_clone
+  end type arithmetic_node_t
+
   ! For loop node
   type, extends(ast_node_t) :: for_node_t
     character(:), allocatable :: variable
@@ -188,6 +197,23 @@ module ast_types_enhanced
   contains
     procedure :: clone => if_node_clone
   end type if_node_t
+
+  ! Case item - represents one case pattern and its commands
+  type :: case_item_t
+    character(:), allocatable, dimension(:) :: patterns
+    integer :: num_patterns = 0
+    type(ast_node_ptr_t), allocatable :: commands(:)
+    integer :: num_commands = 0
+  end type case_item_t
+
+  ! Case statement node
+  type, extends(ast_node_t) :: case_node_t
+    type(ast_node_ptr_t) :: expr  ! Expression to match
+    type(case_item_t), allocatable :: items(:)
+    integer :: num_items = 0
+  contains
+    procedure :: clone => case_node_clone
+  end type case_node_t
 
   ! Break statement node
   type, extends(ast_node_t) :: break_node_t
@@ -391,6 +417,21 @@ contains
     clone => typed_clone
   end function command_subst_node_clone
 
+  function arithmetic_node_clone(self) result(clone)
+    class(arithmetic_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(arithmetic_node_t), pointer :: typed_clone
+
+    allocate(arithmetic_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    if (allocated(self%expression)) then
+      typed_clone%expression = self%expression
+    end if
+    clone => typed_clone
+  end function arithmetic_node_clone
+
   function for_node_clone(self) result(clone)
     class(for_node_t), intent(in) :: self
     class(ast_node_t), pointer :: clone
@@ -491,6 +532,51 @@ contains
 
     clone => typed_clone
   end function if_node_clone
+
+  function case_node_clone(self) result(clone)
+    class(case_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(case_node_t), pointer :: typed_clone
+    integer :: i, j
+
+    allocate(case_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    typed_clone%num_items = self%num_items
+
+    if (associated(self%expr%ptr)) then
+      typed_clone%expr%ptr => self%expr%ptr%clone()
+    end if
+
+    if (allocated(self%items)) then
+      allocate(typed_clone%items(self%num_items))
+      do i = 1, self%num_items
+        typed_clone%items(i)%num_patterns = self%items(i)%num_patterns
+        typed_clone%items(i)%num_commands = self%items(i)%num_commands
+
+        ! Copy patterns
+        if (allocated(self%items(i)%patterns)) then
+          allocate(typed_clone%items(i)%patterns(self%items(i)%num_patterns))
+          do j = 1, self%items(i)%num_patterns
+            typed_clone%items(i)%patterns(j) = self%items(i)%patterns(j)
+          end do
+        end if
+
+        ! Copy commands
+        if (allocated(self%items(i)%commands)) then
+          allocate(typed_clone%items(i)%commands(self%items(i)%num_commands))
+          do j = 1, self%items(i)%num_commands
+            if (associated(self%items(i)%commands(j)%ptr)) then
+              typed_clone%items(i)%commands(j)%ptr => self%items(i)%commands(j)%ptr%clone()
+            end if
+          end do
+        end if
+      end do
+    end if
+
+    clone => typed_clone
+  end function case_node_clone
 
   function break_node_clone(self) result(clone)
     class(break_node_t), intent(in) :: self

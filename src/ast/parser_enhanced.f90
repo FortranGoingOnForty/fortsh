@@ -28,6 +28,7 @@ module parser_enhanced
     procedure :: parse_variable => parser_parse_variable
     procedure :: parse_redirection => parser_parse_redirection
     procedure :: parse_command_subst => parser_parse_command_subst
+    procedure :: parse_arithmetic => parser_parse_arithmetic
     procedure :: destroy => parser_destroy
   end type parser_enhanced_t
 
@@ -250,6 +251,11 @@ contains
         call word_list%append(word)
         deallocate(word)
 
+      case(TOKEN_ARITH_START)
+        word => self%parse_arithmetic()
+        call word_list%append(word)
+        deallocate(word)
+
       case(TOKEN_REDIRECT_IN, TOKEN_REDIRECT_OUT, TOKEN_REDIRECT_APPEND)
         redir => self%parse_redirection(token%type)
         call redir_list%append(redir)
@@ -316,6 +322,10 @@ contains
         deallocate(word)
       case(TOKEN_COMMAND_SUBST_START)
         word => self%parse_command_subst()
+        call word_list%append(word)
+        deallocate(word)
+      case(TOKEN_ARITH_START)
+        word => self%parse_arithmetic()
         call word_list%append(word)
         deallocate(word)
       case(TOKEN_NEWLINE, TOKEN_SEMICOLON, TOKEN_DO)
@@ -668,6 +678,38 @@ contains
 
     node => subst_node
   end function parser_parse_command_subst
+
+  function parser_parse_arithmetic(self) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    class(ast_node_t), pointer :: node
+    type(arithmetic_node_t), pointer :: arith_node
+    type(token_t) :: tok
+    integer :: start_pos
+    character(:), allocatable :: expr
+
+    allocate(arith_node)
+    arith_node%node_type = NODE_ARITHMETIC
+
+    ! Skip the $(( token
+    call self%advance()
+
+    ! Collect everything until ))
+    expr = ''
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_ARITH_END) then
+        call self%advance()  ! Skip the ))
+        exit
+      end if
+      ! Build the expression from tokens
+      if (len(expr) > 0) expr = expr // ' '
+      expr = expr // tok%value
+      call self%advance()
+    end do
+
+    arith_node%expression = expr
+    node => arith_node
+  end function parser_parse_arithmetic
 
   function parser_current_token(self) result(token)
     class(parser_enhanced_t), intent(in) :: self
