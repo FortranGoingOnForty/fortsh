@@ -79,6 +79,14 @@ module evaluator_simple_real
       integer(c_int), value :: newfd
       integer(c_int) :: c_dup2
     end function c_dup2
+
+    function c_write(fd, buf, count) bind(C, name="write")
+      use iso_c_binding
+      integer(c_int), value :: fd
+      character(kind=c_char), dimension(*), intent(in) :: buf
+      integer(c_size_t), value :: count
+      integer(c_size_t) :: c_write
+    end function c_write
   end interface
 
   ! Glob flags (Linux values)
@@ -122,6 +130,8 @@ module evaluator_simple_real
     procedure :: eval_node => evaluator_eval_node
     procedure :: eval_command => evaluator_eval_command
     procedure :: eval_pipeline => evaluator_eval_pipeline
+    procedure :: eval_and_list => evaluator_eval_and_list
+    procedure :: eval_or_list => evaluator_eval_or_list
     procedure :: eval_for_loop => evaluator_eval_for_loop
     procedure :: eval_while_loop => evaluator_eval_while_loop
     procedure :: eval_if_statement => evaluator_eval_if_statement
@@ -273,6 +283,8 @@ contains
     integer :: exit_code
     type(command_node_t), pointer :: cmd_ptr
     type(pipeline_node_t), pointer :: pipe_ptr
+    type(and_list_node_t), pointer :: and_ptr
+    type(or_list_node_t), pointer :: or_ptr
     type(for_node_t), pointer :: for_ptr
     type(while_node_t), pointer :: while_ptr
     type(if_node_t), pointer :: if_ptr
@@ -293,6 +305,14 @@ contains
     type is (pipeline_node_t)
       pipe_ptr => node
       exit_code = self%eval_pipeline(pipe_ptr)
+
+    type is (and_list_node_t)
+      and_ptr => node
+      exit_code = self%eval_and_list(and_ptr)
+
+    type is (or_list_node_t)
+      or_ptr => node
+      exit_code = self%eval_or_list(or_ptr)
 
     type is (for_node_t)
       for_ptr => node
@@ -344,9 +364,12 @@ contains
     ! Redirection handling variables
     integer(c_int) :: saved_stdin, saved_stdout, saved_stderr
     integer(c_int) :: new_fd, flags, ret
+    integer(c_size_t) :: bytes_written
     logical :: has_redirections
     character(256) :: redir_file
+    character(16) :: pid_str
     type(redirection_node_t), pointer :: redir
+    real :: rnum
 
     ! Function call handling variables
     logical :: call_as_function
@@ -370,39 +393,71 @@ contains
         if (associated(node%redirections(j)%ptr)) then
           select type(r => node%redirections(j)%ptr)
           type is (redirection_node_t)
-            ! Get the target filename
-            if (allocated(r%target)) then
-              select type(t => r%target)
-              type is (word_node_t)
-                redir_file = trim(t%text) // c_null_char
-
-                ! Open file based on redirection type
-                select case(r%redirect_type)
-                case(1)  ! Input redirection (<)
-                  new_fd = c_open(redir_file, O_RDONLY, 0_c_int)
-                  if (new_fd >= 0) then
-                    ret = c_dup2(new_fd, 0_c_int)
-                    ret = c_close(new_fd)
+            select case(r%redirect_type)
+            case(4, 5)  ! Here document (<<) or here string (<<<)
+              ! Create temporary file for here document/string content
+              call random_number(rnum)
+              write(pid_str, '(i0)') int(rnum * 99999) + 10000
+              redir_file = '/tmp/fortsh_heredoc_' // trim(pid_str) // c_null_char
+              flags = ior(O_WRONLY, ior(O_CREAT, O_TRUNC))
+              new_fd = c_open(redir_file, flags, int(o'644', c_int))
+              if (new_fd >= 0) then
+                ! Write content to temp file
+                if (allocated(r%heredoc_content)) then
+                  ! For here strings, add a newline at the end
+                  if (r%redirect_type == 5) then
+                    bytes_written = c_write(new_fd, trim(r%heredoc_content) // char(10) // c_null_char, &
+                                           int(len_trim(r%heredoc_content) + 1, c_size_t))
+                  else
+                    bytes_written = c_write(new_fd, trim(r%heredoc_content) // c_null_char, &
+                                           int(len_trim(r%heredoc_content), c_size_t))
                   end if
+                end if
+                ret = c_close(new_fd)
 
-                case(2)  ! Output redirection (>)
-                  flags = ior(O_WRONLY, ior(O_CREAT, O_TRUNC))
-                  new_fd = c_open(redir_file, flags, int(o'644', c_int))
-                  if (new_fd >= 0) then
-                    ret = c_dup2(new_fd, 1_c_int)
-                    ret = c_close(new_fd)
-                  end if
+                ! Reopen for reading and redirect to stdin
+                new_fd = c_open(redir_file, O_RDONLY, 0_c_int)
+                if (new_fd >= 0) then
+                  ret = c_dup2(new_fd, 0_c_int)
+                  ret = c_close(new_fd)
+                end if
+              end if
 
-                case(3)  ! Append redirection (>>)
-                  flags = ior(O_WRONLY, ior(O_CREAT, O_APPEND))
-                  new_fd = c_open(redir_file, flags, int(o'644', c_int))
-                  if (new_fd >= 0) then
-                    ret = c_dup2(new_fd, 1_c_int)
-                    ret = c_close(new_fd)
-                  end if
+            case default
+              ! Get the target filename for regular redirections
+              if (allocated(r%target)) then
+                select type(t => r%target)
+                type is (word_node_t)
+                  redir_file = trim(t%text) // c_null_char
+
+                  ! Open file based on redirection type
+                  select case(r%redirect_type)
+                  case(1)  ! Input redirection (<)
+                    new_fd = c_open(redir_file, O_RDONLY, 0_c_int)
+                    if (new_fd >= 0) then
+                      ret = c_dup2(new_fd, 0_c_int)
+                      ret = c_close(new_fd)
+                    end if
+
+                  case(2)  ! Output redirection (>)
+                    flags = ior(O_WRONLY, ior(O_CREAT, O_TRUNC))
+                    new_fd = c_open(redir_file, flags, int(o'644', c_int))
+                    if (new_fd >= 0) then
+                      ret = c_dup2(new_fd, 1_c_int)
+                      ret = c_close(new_fd)
+                    end if
+
+                  case(3)  ! Append redirection (>>)
+                    flags = ior(O_WRONLY, ior(O_CREAT, O_APPEND))
+                    new_fd = c_open(redir_file, flags, int(o'644', c_int))
+                    if (new_fd >= 0) then
+                      ret = c_dup2(new_fd, 1_c_int)
+                      ret = c_close(new_fd)
+                    end if
+                  end select
                 end select
-              end select
-            end if
+              end if
+            end select
           end select
         end if
       end do
@@ -855,6 +910,54 @@ contains
       self%context%shell%last_exit_status = exit_code
     end if
   end function evaluator_eval_pipeline
+
+  ! Eval logical AND (&&) - execute right only if left succeeds
+  function evaluator_eval_and_list(self, node) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(and_list_node_t), pointer, intent(in) :: node
+    integer :: exit_code
+
+    exit_code = 0
+
+    ! Execute left side
+    if (associated(node%left%ptr)) then
+      exit_code = self%eval_node(node%left%ptr)
+    end if
+
+    ! Only execute right side if left succeeded (exit_code == 0)
+    if (exit_code == 0 .and. associated(node%right%ptr)) then
+      exit_code = self%eval_node(node%right%ptr)
+    end if
+
+    ! Update shell exit status
+    if (associated(self%context%shell)) then
+      self%context%shell%last_exit_status = exit_code
+    end if
+  end function evaluator_eval_and_list
+
+  ! Eval logical OR (||) - execute right only if left fails
+  function evaluator_eval_or_list(self, node) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(or_list_node_t), pointer, intent(in) :: node
+    integer :: exit_code
+
+    exit_code = 0
+
+    ! Execute left side
+    if (associated(node%left%ptr)) then
+      exit_code = self%eval_node(node%left%ptr)
+    end if
+
+    ! Only execute right side if left failed (exit_code /= 0)
+    if (exit_code /= 0 .and. associated(node%right%ptr)) then
+      exit_code = self%eval_node(node%right%ptr)
+    end if
+
+    ! Update shell exit status
+    if (associated(self%context%shell)) then
+      self%context%shell%last_exit_status = exit_code
+    end if
+  end function evaluator_eval_or_list
 
   ! Eval for loop
   function evaluator_eval_for_loop(self, node) result(exit_code)

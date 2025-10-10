@@ -96,9 +96,45 @@ contains
   function parser_parse_command_list(self) result(node)
     class(parser_enhanced_t), intent(inout) :: self
     class(ast_node_t), pointer :: node
+    type(and_list_node_t), pointer :: and_node
+    type(or_list_node_t), pointer :: or_node
+    class(ast_node_t), pointer :: right
     type(token_t) :: tok
 
+    ! Parse first pipeline
     node => self%parse_pipeline()
+
+    ! Check for logical operators (&& or ||)
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+
+      if (tok%type == TOKEN_AND) then
+        ! && operator - execute right only if left succeeds
+        call self%advance()  ! skip &&
+        right => self%parse_pipeline()
+
+        allocate(and_node)
+        and_node%node_type = NODE_AND_LIST
+        and_node%left%ptr => node
+        and_node%right%ptr => right
+        node => and_node
+
+      else if (tok%type == TOKEN_OR) then
+        ! || operator - execute right only if left fails
+        call self%advance()  ! skip ||
+        right => self%parse_pipeline()
+
+        allocate(or_node)
+        or_node%node_type = NODE_OR_LIST
+        or_node%left%ptr => node
+        or_node%right%ptr => right
+        node => or_node
+
+      else
+        ! No more logical operators
+        exit
+      end if
+    end do
 
     ! Check for semicolon or newline
     if (self%current <= self%token_count) then
@@ -266,7 +302,8 @@ contains
         call word_list%append(word)
         deallocate(word)
 
-      case(TOKEN_REDIRECT_IN, TOKEN_REDIRECT_OUT, TOKEN_REDIRECT_APPEND)
+      case(TOKEN_REDIRECT_IN, TOKEN_REDIRECT_OUT, TOKEN_REDIRECT_APPEND, &
+           TOKEN_REDIRECT_HERE, TOKEN_REDIRECT_HERE_STRING)
         redir => self%parse_redirection(token%type)
         call redir_list%append(redir)
         deallocate(redir)
@@ -883,21 +920,47 @@ contains
     case(TOKEN_REDIRECT_APPEND)
       redir_node%redirect_type = 3  ! append
       redir_node%fd = 1  ! stdout
+    case(TOKEN_REDIRECT_HERE)
+      redir_node%redirect_type = 4  ! heredoc
+      redir_node%fd = 0  ! stdin
+    case(TOKEN_REDIRECT_HERE_STRING)
+      redir_node%redirect_type = 5  ! here string
+      redir_node%fd = 0  ! stdin
     end select
 
     ! Skip the redirection operator
     call self%advance()
 
-    ! Parse the target file
-    tok = self%current_token()
-    if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_STRING) then
-      allocate(word_node_t :: redir_node%target)
-      select type(target => redir_node%target)
-      type is (word_node_t)
-        target%node_type = NODE_WORD
-        target%text = tok%value
-      end select
-      call self%advance()
+    ! Handle here documents and here strings
+    if (redir_type == TOKEN_REDIRECT_HERE) then
+      ! Parse heredoc delimiter
+      tok = self%current_token()
+      if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_STRING) then
+        redir_node%heredoc_delimiter = tok%value
+        call self%advance()
+        ! Note: heredoc content will be collected later by the parser
+        ! For now, we just store the delimiter
+      end if
+    else if (redir_type == TOKEN_REDIRECT_HERE_STRING) then
+      ! Parse here string content (just the next word/string)
+      tok = self%current_token()
+      if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_STRING .or. tok%type == TOKEN_VARIABLE) then
+        ! Store the content directly
+        redir_node%heredoc_content = tok%value
+        call self%advance()
+      end if
+    else
+      ! Parse the target file for regular redirections
+      tok = self%current_token()
+      if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_STRING) then
+        allocate(word_node_t :: redir_node%target)
+        select type(target => redir_node%target)
+        type is (word_node_t)
+          target%node_type = NODE_WORD
+          target%text = tok%value
+        end select
+        call self%advance()
+      end if
     end if
 
     node => redir_node

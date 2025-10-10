@@ -8,6 +8,7 @@ module lexer_simple
                                 TOKEN_PIPE, TOKEN_AND, TOKEN_OR, TOKEN_BACKGROUND, &
                                 TOKEN_REDIRECT_IN, TOKEN_REDIRECT_OUT, &
                                 TOKEN_REDIRECT_APPEND, TOKEN_REDIRECT_HERE, &
+                                TOKEN_REDIRECT_HERE_STRING, &
                                 TOKEN_IF, TOKEN_THEN, TOKEN_ELSE, TOKEN_ELIF, &
                                 TOKEN_FI, TOKEN_FOR, TOKEN_IN, TOKEN_DO, TOKEN_DONE, &
                                 TOKEN_WHILE, TOKEN_BREAK, TOKEN_CONTINUE, &
@@ -90,15 +91,53 @@ contains
         cycle
       end if
 
-      ! Handle pipe
+      ! Handle pipe and OR operator
       if (ch == '|') then
-        self%token_count = self%token_count + 1
-        self%tokens(self%token_count)%type = TOKEN_PIPE
-        self%tokens(self%token_count)%value = '|'
-        self%tokens(self%token_count)%line_number = self%line_number
-        self%tokens(self%token_count)%column = self%column
-        self%position = self%position + 1
-        self%column = self%column + 1
+        ! Check for OR operator (||)
+        if (self%position < self%length .and. &
+            self%input(self%position+1:self%position+1) == '|') then
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_OR
+          self%tokens(self%token_count)%value = '||'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 2
+          self%column = self%column + 2
+        else
+          ! Regular pipe
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_PIPE
+          self%tokens(self%token_count)%value = '|'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 1
+          self%column = self%column + 1
+        end if
+        cycle
+      end if
+
+      ! Handle ampersand and AND operator
+      if (ch == '&') then
+        ! Check for AND operator (&&)
+        if (self%position < self%length .and. &
+            self%input(self%position+1:self%position+1) == '&') then
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_AND
+          self%tokens(self%token_count)%value = '&&'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 2
+          self%column = self%column + 2
+        else
+          ! Background operator
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_BACKGROUND
+          self%tokens(self%token_count)%value = '&'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 1
+          self%column = self%column + 1
+        end if
         cycle
       end if
 
@@ -162,13 +201,39 @@ contains
 
       ! Handle redirection operators
       if (ch == '<') then
-        self%token_count = self%token_count + 1
-        self%tokens(self%token_count)%type = TOKEN_REDIRECT_IN
-        self%tokens(self%token_count)%value = '<'
-        self%tokens(self%token_count)%line_number = self%line_number
-        self%tokens(self%token_count)%column = self%column
-        self%position = self%position + 1
-        self%column = self%column + 1
+        ! Check for here document (<<) or here string (<<<)
+        if (self%position < self%length .and. &
+            self%input(self%position+1:self%position+1) == '<') then
+          ! Check for here string (<<<)
+          if (self%position + 1 < self%length .and. &
+              self%input(self%position+2:self%position+2) == '<') then
+            self%token_count = self%token_count + 1
+            self%tokens(self%token_count)%type = TOKEN_REDIRECT_HERE_STRING
+            self%tokens(self%token_count)%value = '<<<'
+            self%tokens(self%token_count)%line_number = self%line_number
+            self%tokens(self%token_count)%column = self%column
+            self%position = self%position + 3
+            self%column = self%column + 3
+          else
+            ! Here document (<<)
+            self%token_count = self%token_count + 1
+            self%tokens(self%token_count)%type = TOKEN_REDIRECT_HERE
+            self%tokens(self%token_count)%value = '<<'
+            self%tokens(self%token_count)%line_number = self%line_number
+            self%tokens(self%token_count)%column = self%column
+            self%position = self%position + 2
+            self%column = self%column + 2
+          end if
+        else
+          ! Regular input redirection (<)
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_REDIRECT_IN
+          self%tokens(self%token_count)%value = '<'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 1
+          self%column = self%column + 1
+        end if
         cycle
       end if
 
