@@ -26,6 +26,8 @@ module parser_enhanced
     procedure :: parse_while_loop => parser_parse_while_loop
     procedure :: parse_case_statement => parser_parse_case_statement
     procedure :: parse_function_definition => parser_parse_function_definition
+    procedure :: parse_subshell => parser_parse_subshell
+    procedure :: parse_group => parser_parse_group
     procedure :: parse_word => parser_parse_word
     procedure :: parse_variable => parser_parse_variable
     procedure :: parse_redirection => parser_parse_redirection
@@ -269,6 +271,16 @@ contains
           end if
         end if
       end select
+      return
+
+    case(TOKEN_LPAREN)
+      ! Subshell - ( commands )
+      node => self%parse_subshell()
+      return
+
+    case(TOKEN_LBRACE)
+      ! Command group - { commands; }
+      node => self%parse_group()
       return
     end select
 
@@ -867,6 +879,108 @@ contains
 
     node => func_node
   end function parser_parse_function_definition
+
+  function parser_parse_subshell(self) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    class(ast_node_t), pointer :: node
+    type(subshell_node_t), pointer :: subshell_node
+    type(token_t) :: tok
+    type(node_list_t) :: body_list
+    class(ast_node_t), pointer :: stmt
+
+    allocate(subshell_node)
+    subshell_node%node_type = NODE_SUBSHELL
+
+    ! Expect (
+    call self%expect(TOKEN_LPAREN)
+
+    ! Skip newline after (
+    tok = self%current_token()
+    if (tok%type == TOKEN_NEWLINE) then
+      call self%advance()
+    end if
+
+    ! Parse commands until )
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_RPAREN) exit
+      if (tok%type == TOKEN_EOF) exit
+
+      if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+        cycle
+      end if
+
+      stmt => self%parse_command_list()
+      if (associated(stmt)) then
+        call body_list%append(stmt)
+        deallocate(stmt)
+      end if
+    end do
+
+    ! Store body
+    if (body_list%count > 0) then
+      call body_list%to_ptr_array(subshell_node%body)
+      subshell_node%num_body = body_list%count
+    end if
+    call body_list%clear()
+
+    ! Expect )
+    call self%expect(TOKEN_RPAREN)
+
+    node => subshell_node
+  end function parser_parse_subshell
+
+  function parser_parse_group(self) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    class(ast_node_t), pointer :: node
+    type(group_node_t), pointer :: group_node
+    type(token_t) :: tok
+    type(node_list_t) :: body_list
+    class(ast_node_t), pointer :: stmt
+
+    allocate(group_node)
+    group_node%node_type = NODE_GROUP
+
+    ! Expect {
+    call self%expect(TOKEN_LBRACE)
+
+    ! Skip newline after {
+    tok = self%current_token()
+    if (tok%type == TOKEN_NEWLINE) then
+      call self%advance()
+    end if
+
+    ! Parse commands until }
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_RBRACE) exit
+      if (tok%type == TOKEN_EOF) exit
+
+      if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+        cycle
+      end if
+
+      stmt => self%parse_command_list()
+      if (associated(stmt)) then
+        call body_list%append(stmt)
+        deallocate(stmt)
+      end if
+    end do
+
+    ! Store body
+    if (body_list%count > 0) then
+      call body_list%to_ptr_array(group_node%body)
+      group_node%num_body = body_list%count
+    end if
+    call body_list%clear()
+
+    ! Expect }
+    call self%expect(TOKEN_RBRACE)
+
+    node => group_node
+  end function parser_parse_group
 
   function parser_parse_word(self) result(node)
     class(parser_enhanced_t), intent(inout) :: self

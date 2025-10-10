@@ -158,6 +158,8 @@ module evaluator_simple_real
     procedure :: eval_case_statement => evaluator_eval_case_statement
     procedure :: eval_function_definition => evaluator_eval_function_definition
     procedure :: eval_function_call => evaluator_eval_function_call
+    procedure :: eval_subshell => evaluator_eval_subshell
+    procedure :: eval_group => evaluator_eval_group
     procedure :: eval_break => evaluator_eval_break
     procedure :: eval_continue => evaluator_eval_continue
     procedure :: eval_word => evaluator_eval_word
@@ -312,6 +314,8 @@ contains
     type(function_node_t), pointer :: func_ptr
     type(break_node_t), pointer :: break_ptr
     type(continue_node_t), pointer :: continue_ptr
+    type(subshell_node_t), pointer :: subshell_ptr
+    type(group_node_t), pointer :: group_ptr
 
     exit_code = 0
     if (.not. associated(node)) return
@@ -361,6 +365,14 @@ contains
     type is (continue_node_t)
       continue_ptr => node
       exit_code = self%eval_continue(continue_ptr)
+
+    type is (subshell_node_t)
+      subshell_ptr => node
+      exit_code = self%eval_subshell(subshell_ptr)
+
+    type is (group_node_t)
+      group_ptr => node
+      exit_code = self%eval_group(group_ptr)
 
     class default
       exit_code = 127
@@ -1375,6 +1387,80 @@ contains
       end do
     end if
   end function evaluator_eval_function_call
+
+  ! Eval subshell - execute commands in subshell environment
+  ! Note: Full POSIX compliance would require fork(), but for now we execute in current context
+  function evaluator_eval_subshell(self, node) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(subshell_node_t), pointer, intent(in) :: node
+    integer :: exit_code
+    integer :: i
+
+    exit_code = 0
+
+    ! Execute body statements
+    if (allocated(node%body)) then
+      do i = 1, node%num_body
+        if (associated(node%body(i)%ptr)) then
+          exit_code = self%eval_node(node%body(i)%ptr)
+
+          ! Check for return (exits subshell)
+          if (self%context%return_requested) then
+            exit_code = self%context%return_value
+            self%context%return_requested = .false.
+            exit
+          end if
+
+          ! Check for break/continue (should not escape subshell)
+          if (self%context%break_requested .or. self%context%continue_requested) then
+            ! In a true subshell, break/continue would be contained
+            ! For now, we'll let them propagate
+            exit
+          end if
+        end if
+      end do
+    end if
+
+    ! Update shell exit status
+    if (associated(self%context%shell)) then
+      self%context%shell%last_exit_status = exit_code
+    end if
+  end function evaluator_eval_subshell
+
+  ! Eval group - execute commands in current shell environment
+  function evaluator_eval_group(self, node) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(group_node_t), pointer, intent(in) :: node
+    integer :: exit_code
+    integer :: i
+
+    exit_code = 0
+
+    ! Execute body statements in current shell context
+    if (allocated(node%body)) then
+      do i = 1, node%num_body
+        if (associated(node%body(i)%ptr)) then
+          exit_code = self%eval_node(node%body(i)%ptr)
+
+          ! Check for return
+          if (self%context%return_requested) then
+            exit_code = self%context%return_value
+            exit
+          end if
+
+          ! Check for break/continue
+          if (self%context%break_requested .or. self%context%continue_requested) then
+            exit
+          end if
+        end if
+      end do
+    end if
+
+    ! Update shell exit status
+    if (associated(self%context%shell)) then
+      self%context%shell%last_exit_status = exit_code
+    end if
+  end function evaluator_eval_group
 
   ! Eval break
   function evaluator_eval_break(self, node) result(exit_code)
