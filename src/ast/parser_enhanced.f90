@@ -314,6 +314,10 @@ contains
         word => self%parse_variable()
         call word_list%append(word)
         deallocate(word)
+      case(TOKEN_COMMAND_SUBST_START)
+        word => self%parse_command_subst()
+        call word_list%append(word)
+        deallocate(word)
       case(TOKEN_NEWLINE, TOKEN_SEMICOLON, TOKEN_DO)
         exit
       case default
@@ -385,8 +389,8 @@ contains
     ! Expect 'if'
     call self%expect(TOKEN_IF)
 
-    ! Parse condition
-    if_node%condition%ptr => self%parse_command()
+    ! Parse condition (can be a pipeline)
+    if_node%condition%ptr => self%parse_command_list()
 
     ! Skip separator
     tok = self%current_token()
@@ -480,8 +484,8 @@ contains
     ! Expect 'while'
     call self%expect(TOKEN_WHILE)
 
-    ! Parse condition
-    while_node%condition%ptr => self%parse_command()
+    ! Parse condition (can be a pipeline)
+    while_node%condition%ptr => self%parse_command_list()
 
     ! Skip separator
     tok = self%current_token()

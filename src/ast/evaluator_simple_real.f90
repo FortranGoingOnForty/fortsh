@@ -496,6 +496,43 @@ contains
       end if
       exit_code = 0
 
+    case('set')
+      ! Set or show shell variables
+      if (node%num_words == 1) then
+        ! Show all variables
+        if (associated(self%context%shell)) then
+          do i = 1, self%context%shell%num_variables
+            write(output_unit, '(3a)') trim(self%context%shell%variables(i)%name), &
+                                       '=', trim(self%context%shell%variables(i)%value)
+          end do
+        end if
+      else if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        ! Look for = in the word
+        i = index(expanded_word, '=')
+        if (i > 1) then
+          ! VAR=value format - set variable
+          call self%context%set_var(expanded_word(1:i-1), expanded_word(i+1:))
+        end if
+      end if
+      exit_code = 0
+
+    case('declare')
+      ! Declare variable (similar to set for now)
+      if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        ! Look for = in the word
+        i = index(expanded_word, '=')
+        if (i > 1) then
+          ! VAR=value format
+          call self%context%set_var(expanded_word(1:i-1), expanded_word(i+1:))
+        else
+          ! Just declare with empty value
+          call self%context%set_var(trim(expanded_word), '')
+        end if
+      end if
+      exit_code = 0
+
     case('true')
       exit_code = 0
 
@@ -539,6 +576,112 @@ contains
             exit_code = 1
           end select
         end if
+      else
+        exit_code = 1
+      end if
+
+    case('unset')
+      ! Unset variable
+      if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        ! Remove from context variables
+        if (associated(self%context%shell)) then
+          do i = 1, self%context%shell%num_variables
+            if (trim(self%context%shell%variables(i)%name) == trim(expanded_word)) then
+              ! Shift remaining variables up
+              do j = i, self%context%shell%num_variables - 1
+                self%context%shell%variables(j) = self%context%shell%variables(j+1)
+              end do
+              self%context%shell%num_variables = self%context%shell%num_variables - 1
+              exit
+            end if
+          end do
+        end if
+      end if
+      exit_code = 0
+
+    case('read')
+      ! Read input into variable
+      if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        ! Read a line from stdin
+        read(input_unit, '(a)', iostat=status) word_value
+        if (status == 0) then
+          call self%context%set_var(trim(expanded_word), trim(word_value))
+          exit_code = 0
+        else
+          exit_code = 1
+        end if
+      else
+        exit_code = 1
+      end if
+
+    case('source', '.')
+      ! Source/execute commands from file
+      if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        block
+          logical :: file_exists
+          character(4096) :: line
+          integer :: unit_num, io_stat
+
+          inquire(file=trim(expanded_word), exist=file_exists)
+          if (file_exists) then
+            open(newunit=unit_num, file=trim(expanded_word), status='old', &
+                 action='read', iostat=io_stat)
+            if (io_stat == 0) then
+              do
+                read(unit_num, '(a)', iostat=io_stat) line
+                if (io_stat /= 0) exit
+                ! Execute each line as a command
+                ! Note: This is simplified - should use full parsing
+                c_cmd = trim(line) // c_null_char
+                status = c_system(c_cmd)
+              end do
+              close(unit_num)
+              exit_code = 0
+            else
+              exit_code = 1
+            end if
+          else
+            write(error_unit, *) 'source: cannot read: ', trim(expanded_word)
+            exit_code = 1
+          end if
+        end block
+      else
+        exit_code = 1
+      end if
+
+    case('alias')
+      ! Alias command (simplified - just show message for now)
+      if (node%num_words >= 2) then
+        ! Would need to implement alias storage in shell context
+        write(output_unit, *) 'alias: not fully implemented yet'
+      else
+        ! Show all aliases (none for now)
+        write(output_unit, *) 'No aliases defined'
+      end if
+      exit_code = 0
+
+    case('type')
+      ! Show type of command
+      if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        select case(trim(expanded_word))
+        case('echo', 'pwd', 'cd', 'exit', 'export', 'set', 'declare', 'true', 'false', &
+             'test', '[', 'unset', 'read', 'source', '.', 'alias', 'type')
+          write(output_unit, '(2a)') trim(expanded_word), ' is a shell builtin'
+        case default
+          ! Check if it's an external command
+          c_cmd = 'which ' // trim(expanded_word) // ' 2>/dev/null' // c_null_char
+          status = c_system(c_cmd)
+          if (status == 0) then
+            write(output_unit, '(3a)') trim(expanded_word), ' is ', trim(expanded_word)
+          else
+            write(output_unit, '(3a)') 'bash: type: ', trim(expanded_word), ': not found'
+            exit_code = 1
+          end if
+        end select
       else
         exit_code = 1
       end if
@@ -1018,9 +1161,11 @@ contains
   contains
     function getpid() result(pid)
       integer :: pid
-      call get_environment_variable('PPID', value=temp_file)
-      read(temp_file, *, iostat=ios) pid
-      if (ios /= 0) pid = 12345  ! fallback
+      ! Simple pseudo-random number based on time
+      real :: rnum
+      call random_seed()
+      call random_number(rnum)
+      pid = int(rnum * 99999) + 10000
     end function getpid
 
   end function evaluator_eval_command_subst
