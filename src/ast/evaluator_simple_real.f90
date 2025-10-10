@@ -87,6 +87,20 @@ module evaluator_simple_real
       integer(c_size_t), value :: count
       integer(c_size_t) :: c_write
     end function c_write
+
+    function c_access(pathname, mode) bind(C, name="access")
+      use iso_c_binding
+      character(kind=c_char), dimension(*), intent(in) :: pathname
+      integer(c_int), value :: mode
+      integer(c_int) :: c_access
+    end function c_access
+
+    function c_stat(pathname, statbuf) bind(C, name="stat")
+      use iso_c_binding
+      character(kind=c_char), dimension(*), intent(in) :: pathname
+      type(c_ptr), value :: statbuf
+      integer(c_int) :: c_stat
+    end function c_stat
   end interface
 
   ! Glob flags (Linux values)
@@ -102,6 +116,12 @@ module evaluator_simple_real
   integer(c_int), parameter :: O_CREAT = 64
   integer(c_int), parameter :: O_TRUNC = 512
   integer(c_int), parameter :: O_APPEND = 1024
+
+  ! File access mode constants (Linux values)
+  integer(c_int), parameter :: F_OK = 0  ! File exists
+  integer(c_int), parameter :: R_OK = 4  ! File is readable
+  integer(c_int), parameter :: W_OK = 2  ! File is writable
+  integer(c_int), parameter :: X_OK = 1  ! File is executable
 
   ! Execution context
   type :: execution_context_t
@@ -613,45 +633,8 @@ contains
       exit_code = 1
 
     case('test', '[')
-      ! Basic test command
-      if (node%num_words >= 3) then
-        if (associated(node%words(2)%ptr)) then
-          expanded_word = self%eval_word(node%words(2)%ptr)
-          select case(trim(expanded_word))
-          case('-f')
-            ! Test file exists
-            if (node%num_words >= 3 .and. associated(node%words(3)%ptr)) then
-              expanded_word = self%eval_word(node%words(3)%ptr)
-              block
-                logical :: file_exists
-                inquire(file=trim(expanded_word), exist=file_exists)
-                if (file_exists) then
-                  exit_code = 0
-                else
-                  exit_code = 1
-                end if
-              end block
-            end if
-          case('-d')
-            ! Test directory (simplified)
-            exit_code = 1
-          case('-z')
-            ! Test empty string
-            if (node%num_words >= 3 .and. associated(node%words(3)%ptr)) then
-              expanded_word = self%eval_word(node%words(3)%ptr)
-              if (len_trim(expanded_word) == 0) then
-                exit_code = 0
-              else
-                exit_code = 1
-              end if
-            end if
-          case default
-            exit_code = 1
-          end select
-        end if
-      else
-        exit_code = 1
-      end if
+      ! Comprehensive POSIX test command
+      exit_code = call_test_builtin(self, node)
 
     case('unset')
       ! Unset variable
@@ -1796,5 +1779,219 @@ contains
 
     call self%context%destroy()
   end subroutine evaluator_destroy
+
+  ! Helper function for test builtin
+  function call_test_builtin(self, node) result(exit_code)
+    class(evaluator_simple_real_t), intent(inout) :: self
+    type(command_node_t), pointer, intent(in) :: node
+    integer :: exit_code
+    character(:), allocatable :: arg1, arg2, arg3
+    character(kind=c_char, len=256) :: c_path
+    integer(c_int) :: access_result, chdir_result
+    integer :: val1, val2, ios, file_size
+    logical :: file_exists
+    character(kind=c_char, len=256) :: old_cwd
+    type(c_ptr) :: getcwd_result
+
+    exit_code = 0
+
+    ! Handle empty test (test with no args returns false)
+    if (node%num_words == 1) then
+      exit_code = 1
+      return
+    end if
+
+    ! Single argument: test if non-empty string
+    if (node%num_words == 2) then
+      if (associated(node%words(2)%ptr)) then
+        arg1 = self%eval_word(node%words(2)%ptr)
+        if (len_trim(arg1) > 0) then
+          exit_code = 0
+        else
+          exit_code = 1
+        end if
+      else
+        exit_code = 1
+      end if
+      return
+    end if
+
+    ! Two arguments: unary operator
+    if (node%num_words == 3) then
+      if (associated(node%words(2)%ptr)) arg1 = self%eval_word(node%words(2)%ptr)
+      if (associated(node%words(3)%ptr)) arg2 = self%eval_word(node%words(3)%ptr)
+
+      select case(trim(arg1))
+      ! String tests
+      case('-z')
+        ! True if string is empty
+        exit_code = merge(0, 1, len_trim(arg2) == 0)
+
+      case('-n')
+        ! True if string is not empty
+        exit_code = merge(0, 1, len_trim(arg2) > 0)
+
+      ! File tests
+      case('-e')
+        ! True if file exists
+        c_path = trim(arg2) // c_null_char
+        access_result = c_access(c_path, F_OK)
+        exit_code = merge(0, 1, access_result == 0)
+
+      case('-f')
+        ! True if file exists and is regular file
+        inquire(file=trim(arg2), exist=file_exists)
+        exit_code = merge(0, 1, file_exists)
+
+      case('-d')
+        ! True if file exists and is directory
+        ! Try to access as directory by checking if we can chdir to it
+        old_cwd = ''
+        getcwd_result = c_getcwd(old_cwd, 256_c_size_t)
+        c_path = trim(arg2) // c_null_char
+        chdir_result = c_chdir(c_path)
+        if (chdir_result == 0) then
+          exit_code = 0
+          ! Restore directory
+          chdir_result = c_chdir(old_cwd)
+        else
+          exit_code = 1
+        end if
+
+      case('-r')
+        ! True if file exists and is readable
+        c_path = trim(arg2) // c_null_char
+        access_result = c_access(c_path, R_OK)
+        exit_code = merge(0, 1, access_result == 0)
+
+      case('-w')
+        ! True if file exists and is writable
+        c_path = trim(arg2) // c_null_char
+        access_result = c_access(c_path, W_OK)
+        exit_code = merge(0, 1, access_result == 0)
+
+      case('-x')
+        ! True if file exists and is executable
+        c_path = trim(arg2) // c_null_char
+        access_result = c_access(c_path, X_OK)
+        exit_code = merge(0, 1, access_result == 0)
+
+      case('-s')
+        ! True if file exists and has size > 0
+        inquire(file=trim(arg2), exist=file_exists, size=file_size)
+        exit_code = merge(0, 1, file_exists .and. file_size > 0)
+
+      case('!')
+        ! Negation - run test on arg2 and invert result
+        exit_code = merge(1, 0, len_trim(arg2) > 0)
+
+      case default
+        exit_code = 2  ! Syntax error
+      end select
+      return
+    end if
+
+    ! Three arguments: binary operator
+    if (node%num_words == 4) then
+      if (associated(node%words(2)%ptr)) arg1 = self%eval_word(node%words(2)%ptr)
+      if (associated(node%words(3)%ptr)) arg2 = self%eval_word(node%words(3)%ptr)
+      if (associated(node%words(4)%ptr)) arg3 = self%eval_word(node%words(4)%ptr)
+
+      select case(trim(arg2))
+      ! String comparisons
+      case('=', '==')
+        exit_code = merge(0, 1, trim(arg1) == trim(arg3))
+
+      case('!=')
+        exit_code = merge(0, 1, trim(arg1) /= trim(arg3))
+
+      ! Integer comparisons
+      case('-eq')
+        read(arg1, *, iostat=ios) val1
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        read(arg3, *, iostat=ios) val2
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        exit_code = merge(0, 1, val1 == val2)
+
+      case('-ne')
+        read(arg1, *, iostat=ios) val1
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        read(arg3, *, iostat=ios) val2
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        exit_code = merge(0, 1, val1 /= val2)
+
+      case('-lt')
+        read(arg1, *, iostat=ios) val1
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        read(arg3, *, iostat=ios) val2
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        exit_code = merge(0, 1, val1 < val2)
+
+      case('-le')
+        read(arg1, *, iostat=ios) val1
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        read(arg3, *, iostat=ios) val2
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        exit_code = merge(0, 1, val1 <= val2)
+
+      case('-gt')
+        read(arg1, *, iostat=ios) val1
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        read(arg3, *, iostat=ios) val2
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        exit_code = merge(0, 1, val1 > val2)
+
+      case('-ge')
+        read(arg1, *, iostat=ios) val1
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        read(arg3, *, iostat=ios) val2
+        if (ios /= 0) then
+          exit_code = 2
+          return
+        end if
+        exit_code = merge(0, 1, val1 >= val2)
+
+      case default
+        exit_code = 2  ! Syntax error
+      end select
+      return
+    end if
+
+    ! Four or more arguments: complex expressions (not fully supported yet)
+    exit_code = 2
+  end function call_test_builtin
 
 end module evaluator_simple_real
