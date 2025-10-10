@@ -260,6 +260,31 @@ contains
         cycle
       end if
 
+      ! Handle exclamation mark (negation or inequality)
+      if (ch == '!') then
+        ! Check for != operator
+        if (self%position < self%length .and. &
+            self%input(self%position+1:self%position+1) == '=') then
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_WORD
+          self%tokens(self%token_count)%value = '!='
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 2
+          self%column = self%column + 2
+        else
+          ! Standalone ! (negation)
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_WORD
+          self%tokens(self%token_count)%value = '!'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 1
+          self%column = self%column + 1
+        end if
+        cycle
+      end if
+
       ! Handle variable, command substitution, or arithmetic expansion
       if (ch == '$') then
         ! Check for arithmetic expansion $((...)) or command substitution $(...)

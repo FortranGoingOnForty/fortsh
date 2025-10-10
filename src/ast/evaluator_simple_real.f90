@@ -575,6 +575,18 @@ contains
         exit_code = 0
       end if
 
+    case('return')
+      ! Return from function with optional exit code
+      if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        read(expanded_word, *, iostat=status) exit_code
+        if (status /= 0) exit_code = 0
+      else
+        exit_code = 0
+      end if
+      self%context%return_requested = .true.
+      self%context%return_value = exit_code
+
     case('export')
       ! Export variable
       if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
@@ -726,7 +738,7 @@ contains
 
         ! Check if it's a builtin
         select case(trim(expanded_word))
-        case('echo', 'pwd', 'cd', 'exit', 'export', 'set', 'declare', 'true', 'false', &
+        case('echo', 'pwd', 'cd', 'exit', 'return', 'export', 'set', 'declare', 'true', 'false', &
              'test', '[', 'unset', 'read', 'source', '.', 'alias', 'type')
           write(output_unit, '(2a)') trim(expanded_word), ' is a shell builtin'
         case default
