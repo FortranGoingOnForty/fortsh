@@ -65,6 +65,7 @@ module ast_types_enhanced
   integer, parameter :: NODE_CASE = 111
   integer, parameter :: NODE_FUNCTION = 112
   integer, parameter :: NODE_SUBSHELL = 113
+  integer, parameter :: NODE_GROUP = 123
   integer, parameter :: NODE_BREAK = 114
   integer, parameter :: NODE_CONTINUE = 115
   integer, parameter :: NODE_RETURN = 116
@@ -257,6 +258,22 @@ module ast_types_enhanced
   contains
     procedure :: clone => function_node_clone
   end type function_node_t
+
+  ! Subshell node - executes commands in a separate subshell ()
+  type, extends(ast_node_t) :: subshell_node_t
+    type(ast_node_ptr_t), allocatable :: body(:)
+    integer :: num_body = 0
+  contains
+    procedure :: clone => subshell_node_clone
+  end type subshell_node_t
+
+  ! Group node - executes commands in current shell { }
+  type, extends(ast_node_t) :: group_node_t
+    type(ast_node_ptr_t), allocatable :: body(:)
+    integer :: num_body = 0
+  contains
+    procedure :: clone => group_node_clone
+  end type group_node_t
 
   ! Linked list for building collections (same as before)
   type :: node_list_element_t
@@ -711,6 +728,54 @@ contains
 
     clone => typed_clone
   end function function_node_clone
+
+  function subshell_node_clone(self) result(clone)
+    class(subshell_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(subshell_node_t), pointer :: typed_clone
+    integer :: i
+
+    allocate(subshell_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    typed_clone%num_body = self%num_body
+
+    if (allocated(self%body)) then
+      allocate(typed_clone%body(self%num_body))
+      do i = 1, self%num_body
+        if (associated(self%body(i)%ptr)) then
+          typed_clone%body(i)%ptr => self%body(i)%ptr%clone()
+        end if
+      end do
+    end if
+
+    clone => typed_clone
+  end function subshell_node_clone
+
+  function group_node_clone(self) result(clone)
+    class(group_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(group_node_t), pointer :: typed_clone
+    integer :: i
+
+    allocate(group_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    typed_clone%num_body = self%num_body
+
+    if (allocated(self%body)) then
+      allocate(typed_clone%body(self%num_body))
+      do i = 1, self%num_body
+        if (associated(self%body(i)%ptr)) then
+          typed_clone%body(i)%ptr => self%body(i)%ptr%clone()
+        end if
+      end do
+    end if
+
+    clone => typed_clone
+  end function group_node_clone
 
   ! Linked list methods
   subroutine node_list_append(self, node)
