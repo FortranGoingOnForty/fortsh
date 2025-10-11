@@ -5,12 +5,21 @@
 module shell_types
   implicit none
 
-  ! Shell variable type
+  ! Array element type (for sparse array support)
+  type :: array_element_t
+    integer :: index = 0
+    character(:), allocatable :: value
+  end type array_element_t
+
+  ! Shell variable type (supports both scalars and arrays)
   type :: shell_var_t
     character(:), allocatable :: name
-    character(:), allocatable :: value
+    character(:), allocatable :: value  ! For scalar variables
     logical :: is_export = .false.
     logical :: is_readonly = .false.
+    logical :: is_array = .false.
+    type(array_element_t), allocatable :: elements(:)  ! For array variables
+    integer :: num_elements = 0
   end type shell_var_t
 
   ! Forward declaration for AST node

@@ -22,6 +22,7 @@ module parser_enhanced
     procedure :: parse_pipeline => parser_parse_pipeline
     procedure :: parse_command => parser_parse_command
     procedure :: parse_for_loop => parser_parse_for_loop
+    procedure :: parse_for_arith_loop => parser_parse_for_arith_loop
     procedure :: parse_if_statement => parser_parse_if_statement
     procedure :: parse_while_loop => parser_parse_while_loop
     procedure :: parse_case_statement => parser_parse_case_statement
@@ -33,6 +34,8 @@ module parser_enhanced
     procedure :: parse_redirection => parser_parse_redirection
     procedure :: parse_command_subst => parser_parse_command_subst
     procedure :: parse_arithmetic => parser_parse_arithmetic
+    procedure :: parse_cond_expr => parser_parse_cond_expr
+    procedure :: parse_proc_subst => parser_parse_proc_subst
     procedure :: destroy => parser_destroy
   end type parser_enhanced_t
 
@@ -152,6 +155,7 @@ contains
     class(parser_enhanced_t), intent(inout) :: self
     class(ast_node_t), pointer :: node
     type(pipeline_node_t), pointer :: pipe_node
+    type(command_node_t), pointer :: cmd_ptr
     type(node_list_t) :: cmd_list
     class(ast_node_t), pointer :: cmd
     type(token_t) :: tok
@@ -191,9 +195,25 @@ contains
         end if
 
         call cmd_list%clear()
+
+        ! Check for background operator after pipeline
+        tok = self%current_token()
+        if (tok%type == TOKEN_BACKGROUND) then
+          pipe_node%background = .true.
+          call self%advance()
+        end if
+
         node => pipe_node
       else
         ! Single command, not a pipeline
+        ! Check for background operator after single command
+        if (tok%type == TOKEN_BACKGROUND) then
+          select type(cmd)
+          type is (command_node_t)
+            cmd%background = .true.
+          end select
+          call self%advance()
+        end if
         node => cmd
       end if
     else
@@ -216,6 +236,19 @@ contains
     ! Check for control structures
     select case(token%type)
     case(TOKEN_FOR)
+      ! Check if it's arithmetic for loop: for ((
+      if (self%current + 1 <= self%token_count) then
+        if (self%tokens(self%current + 1)%type == TOKEN_LPAREN) then
+          if (self%current + 2 <= self%token_count) then
+            if (self%tokens(self%current + 2)%type == TOKEN_LPAREN) then
+              ! Arithmetic for loop
+              node => self%parse_for_arith_loop()
+              return
+            end if
+          end if
+        end if
+      end if
+      ! Regular for loop
       node => self%parse_for_loop()
       return
 
@@ -282,6 +315,11 @@ contains
       ! Command group - { commands; }
       node => self%parse_group()
       return
+
+    case(TOKEN_LBRACKET_DOUBLE)
+      ! Conditional expression - [[ expression ]]
+      node => self%parse_cond_expr()
+      return
     end select
 
     ! Parse simple command
@@ -311,6 +349,11 @@ contains
 
       case(TOKEN_ARITH_START)
         word => self%parse_arithmetic()
+        call word_list%append(word)
+        deallocate(word)
+
+      case(TOKEN_PROC_SUBST_IN, TOKEN_PROC_SUBST_OUT)
+        word => self%parse_proc_subst(token%type)
         call word_list%append(word)
         deallocate(word)
 
@@ -443,6 +486,126 @@ contains
 
     node => for_node
   end function parser_parse_for_loop
+
+  function parser_parse_for_arith_loop(self) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    class(ast_node_t), pointer :: node
+    type(for_arith_node_t), pointer :: for_arith_node
+    type(token_t) :: tok
+    type(node_list_t) :: body_list
+    class(ast_node_t), pointer :: stmt
+    character(512) :: expr_buffer
+    integer :: paren_depth
+
+    allocate(for_arith_node)
+    for_arith_node%node_type = NODE_FOR_ARITH
+
+    ! Expect 'for'
+    call self%expect(TOKEN_FOR)
+
+    ! Expect '(('
+    call self%expect(TOKEN_LPAREN)
+    call self%expect(TOKEN_LPAREN)
+
+    ! Parse init expression (until ;)
+    expr_buffer = ''
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_SEMICOLON) then
+        call self%advance()
+        exit
+      end if
+      if (tok%type == TOKEN_RPAREN) exit
+      if (len_trim(expr_buffer) > 0) then
+        expr_buffer = trim(expr_buffer) // ' ' // trim(tok%value)
+      else
+        expr_buffer = trim(tok%value)
+      end if
+      call self%advance()
+    end do
+    for_arith_node%init_expr = trim(expr_buffer)
+
+    ! Parse condition expression (until ;)
+    expr_buffer = ''
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_SEMICOLON) then
+        call self%advance()
+        exit
+      end if
+      if (tok%type == TOKEN_RPAREN) exit
+      if (len_trim(expr_buffer) > 0) then
+        expr_buffer = trim(expr_buffer) // ' ' // trim(tok%value)
+      else
+        expr_buffer = trim(tok%value)
+      end if
+      call self%advance()
+    end do
+    for_arith_node%cond_expr = trim(expr_buffer)
+
+    ! Parse increment expression (until ))
+    expr_buffer = ''
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_ARITH_END) then
+        ! Found ))
+        exit
+      end if
+      if (len_trim(expr_buffer) > 0) then
+        expr_buffer = trim(expr_buffer) // ' ' // trim(tok%value)
+      else
+        expr_buffer = trim(tok%value)
+      end if
+      call self%advance()
+    end do
+    for_arith_node%incr_expr = trim(expr_buffer)
+
+    ! Expect ')) as TOKEN_ARITH_END
+    call self%expect(TOKEN_ARITH_END)
+
+    ! Skip separator
+    tok = self%current_token()
+    if (tok%type == TOKEN_NEWLINE .or. &
+        tok%type == TOKEN_SEMICOLON) then
+      call self%advance()
+    end if
+
+    ! Expect 'do'
+    call self%expect(TOKEN_DO)
+
+    ! Skip newline after do
+    tok = self%current_token()
+    if (tok%type == TOKEN_NEWLINE) then
+      call self%advance()
+    end if
+
+    ! Parse loop body
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_DONE) exit
+      if (tok%type == TOKEN_NEWLINE) then
+        call self%advance()
+        cycle
+      end if
+
+      stmt => self%parse_command_list()
+      if (associated(stmt)) then
+        call body_list%append(stmt)
+        deallocate(stmt)
+      end if
+    end do
+
+    if (body_list%count > 0) then
+      call body_list%to_ptr_array(for_arith_node%body)
+      for_arith_node%num_body = body_list%count
+    end if
+    call body_list%clear()
+
+    ! Expect 'done'
+    call self%expect(TOKEN_DONE)
+
+    node => for_arith_node
+  end function parser_parse_for_arith_loop
 
   function parser_parse_if_statement(self) result(node)
     class(parser_enhanced_t), intent(inout) :: self
@@ -1003,14 +1166,148 @@ contains
     class(ast_node_t), pointer :: node
     type(variable_node_t), pointer :: var_node
     type(token_t) :: tok
+    character(:), allocatable :: full_value
+    integer :: i
 
     allocate(var_node)
     var_node%node_type = NODE_VARIABLE
     tok = self%current_token()
-    var_node%name = tok%value
-    call self%advance()
+    full_value = tok%value
 
+    ! Parse the variable expansion: "var:-default", "var#pattern", "array[index]", etc.
+    call parse_var_expansion(full_value, var_node%name, var_node%modifier_type, var_node%modifier, &
+                              var_node%index_expr, var_node%is_array_ref)
+
+    call self%advance()
     node => var_node
+
+  contains
+    subroutine parse_var_expansion(text, var_name, mod_type, mod_value, index_expr, is_array_ref)
+      character(*), intent(in) :: text
+      character(:), allocatable, intent(out) :: var_name, mod_value, index_expr
+      integer, intent(out) :: mod_type
+      logical, intent(out) :: is_array_ref
+      integer :: i, colon_pos, bracket_pos, bracket_end
+      character(:), allocatable :: base_text
+
+      mod_type = MOD_NONE
+      is_array_ref = .false.
+
+      ! Check for array indexing: var[index] or var[@] or var[*]
+      bracket_pos = index(text, '[')
+      if (bracket_pos > 0) then
+        ! Find the matching ]
+        bracket_end = index(text, ']')
+        if (bracket_end > bracket_pos) then
+          ! Extract array index
+          is_array_ref = .true.
+          index_expr = text(bracket_pos+1:bracket_end-1)
+          ! Continue processing the base name (without [index]) for modifiers
+          base_text = text(1:bracket_pos-1) // text(bracket_end+1:)
+        else
+          ! No closing bracket - treat as regular variable
+          base_text = text
+        end if
+      else
+        base_text = text
+      end if
+
+      ! Check for string length ${#var} or ${#array[@]}
+      if (len_trim(base_text) > 0 .and. base_text(1:1) == '#') then
+        mod_type = MOD_STRING_LENGTH
+        var_name = trim(base_text(2:))
+        mod_value = ''
+        return
+      end if
+
+      ! Look for modifier operators in base_text
+      do i = 1, len_trim(base_text)
+        ! Check for :- (use default)
+        if (i < len_trim(base_text) .and. base_text(i:i+1) == ':-') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+2:))
+          mod_type = MOD_USE_DEFAULT
+          return
+        end if
+
+        ! Check for := (assign default)
+        if (i < len_trim(base_text) .and. base_text(i:i+1) == ':=') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+2:))
+          mod_type = MOD_ASSIGN_DEFAULT
+          return
+        end if
+
+        ! Check for :? (error if unset)
+        if (i < len_trim(base_text) .and. base_text(i:i+1) == ':?') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+2:))
+          mod_type = MOD_ERROR_IF_UNSET
+          return
+        end if
+
+        ! Check for :+ (use alternate)
+        if (i < len_trim(base_text) .and. base_text(i:i+1) == ':+') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+2:))
+          mod_type = MOD_USE_ALTERNATE
+          return
+        end if
+
+        ! Check for ## (remove longest prefix)
+        if (i < len_trim(base_text) .and. base_text(i:i+1) == '##') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+2:))
+          mod_type = MOD_REMOVE_PREFIX_MAX
+          return
+        end if
+
+        ! Check for # (remove shortest prefix)
+        if (base_text(i:i) == '#') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+1:))
+          mod_type = MOD_REMOVE_PREFIX_MIN
+          return
+        end if
+
+        ! Check for %% (remove longest suffix)
+        if (i < len_trim(base_text) .and. base_text(i:i+1) == '%%') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+2:))
+          mod_type = MOD_REMOVE_SUFFIX_MAX
+          return
+        end if
+
+        ! Check for % (remove shortest suffix)
+        if (base_text(i:i) == '%') then
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+1:))
+          mod_type = MOD_REMOVE_SUFFIX_MIN
+          return
+        end if
+
+        ! Check for : (substring)
+        if (base_text(i:i) == ':' .and. i > 1) then
+          ! Make sure it's not :-, :=, :?, :+
+          if (i < len_trim(base_text)) then
+            if (base_text(i+1:i+1) == '-' .or. base_text(i+1:i+1) == '=' .or. &
+                base_text(i+1:i+1) == '?' .or. base_text(i+1:i+1) == '+') then
+              cycle  ! Skip, it's handled above
+            end if
+          end if
+          var_name = trim(base_text(1:i-1))
+          mod_value = trim(base_text(i+1:))
+          mod_type = MOD_SUBSTRING
+          return
+        end if
+      end do
+
+      ! No modifier found - just the variable name
+      var_name = trim(base_text)
+      mod_value = ''
+      mod_type = MOD_NONE
+    end subroutine parse_var_expansion
+
   end function parser_parse_variable
 
   function parser_parse_redirection(self, redir_type) result(node)
@@ -1177,6 +1474,109 @@ contains
     arith_node%expression = expr
     node => arith_node
   end function parser_parse_arithmetic
+
+  function parser_parse_cond_expr(self) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    class(ast_node_t), pointer :: node
+    type(cond_expr_node_t), pointer :: cond_node
+    type(token_t) :: tok
+    character(:), allocatable :: expr
+
+    allocate(cond_node)
+    cond_node%node_type = NODE_COND_EXPR
+
+    ! Expect [[
+    call self%expect(TOKEN_LBRACKET_DOUBLE)
+
+    ! Collect everything until ]]
+    expr = ''
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_RBRACKET_DOUBLE) then
+        call self%advance()  ! Skip the ]]
+        exit
+      end if
+      if (tok%type == TOKEN_EOF) then
+        ! Error: unclosed conditional expression
+        write(error_unit, '(a)') 'Parse error: unclosed [[ expression'
+        exit
+      end if
+      ! Build the expression from tokens
+      if (len(expr) > 0) expr = expr // ' '
+      expr = expr // tok%value
+      call self%advance()
+    end do
+
+    cond_node%expression = trim(expr)
+    node => cond_node
+  end function parser_parse_cond_expr
+
+  function parser_parse_proc_subst(self, subst_type) result(node)
+    class(parser_enhanced_t), intent(inout) :: self
+    integer, intent(in) :: subst_type
+    class(ast_node_t), pointer :: node
+    type(proc_subst_node_t), pointer :: proc_node
+    type(token_t) :: tok
+    integer :: paren_depth, i
+    integer :: start_pos, end_pos
+    character(:), allocatable :: subcommand
+
+    allocate(proc_node)
+    proc_node%node_type = NODE_PROC_SUBST
+
+    ! Set input/output flag
+    proc_node%is_input = (subst_type == TOKEN_PROC_SUBST_IN)
+
+    ! Skip the <( or >( token
+    call self%advance()
+
+    ! Find the matching )
+    paren_depth = 1
+    start_pos = self%current
+
+    do while (self%current <= self%token_count)
+      tok = self%current_token()
+      if (tok%type == TOKEN_LPAREN) then
+        paren_depth = paren_depth + 1
+      else if (tok%type == TOKEN_RPAREN) then
+        paren_depth = paren_depth - 1
+        if (paren_depth == 0) then
+          end_pos = self%current - 1
+          call self%advance()  ! Skip the closing )
+          exit
+        end if
+      else if (tok%type == TOKEN_EOF) then
+        ! Error: unclosed process substitution
+        exit
+      end if
+      call self%advance()
+    end do
+
+    ! Parse the command inside
+    ! For now, create a simple command node with the content
+    allocate(command_node_t :: proc_node%command%ptr)
+    select type(cmd => proc_node%command%ptr)
+    type is (command_node_t)
+      cmd%node_type = NODE_COMMAND
+      ! Store the tokens as a single word for now (simple implementation)
+      if (start_pos <= end_pos) then
+        allocate(cmd%words(1))
+        allocate(word_node_t :: cmd%words(1)%ptr)
+        select type(w => cmd%words(1)%ptr)
+        type is (word_node_t)
+          w%node_type = NODE_WORD
+          ! Concatenate all tokens
+          w%text = self%tokens(start_pos)%value
+          do i = start_pos + 1, end_pos
+            w%text = trim(w%text) // ' ' // trim(self%tokens(i)%value)
+          end do
+        end select
+        cmd%num_words = 1
+      end if
+    end select
+
+    node => proc_node
+  end function parser_parse_proc_subst
 
   function parser_current_token(self) result(token)
     class(parser_enhanced_t), intent(in) :: self
