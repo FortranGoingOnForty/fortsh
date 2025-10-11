@@ -4275,11 +4275,12 @@ contains
   !   {1..5} → 1 2 3 4 5
   !   {a..e} → a b c d e
   !   {1..10..2} → 1 3 5 7 9
-  !   prefix{a,b}suffix → prefixa prefixb suffix (NOT IMPLEMENTED YET - returns as-is for complex cases)
+  !   prefix{a,b}suffix → prefixa prefixasuffix prefixbsuffix (ENHANCED: now supports prefix/suffix!)
+  !   {A,B{1,2},C} → A B{1,2} C (ENHANCED: respects nested braces!)
   function expand_braces(word) result(expanded)
     character(*), intent(in) :: word
     character(:), allocatable :: expanded
-    integer :: brace_start, brace_end, comma_pos, dot_pos
+    integer :: brace_start, brace_end, comma_pos, dot_pos, depth, pos
     character(:), allocatable :: prefix, brace_content, suffix, item
     character(1024) :: result_buf
     integer :: i, start_val, end_val, step_val, current_val
@@ -4296,20 +4297,37 @@ contains
     brace_start = index(word, '{')
     if (brace_start == 0) return
 
-    ! Find matching closing brace
-    brace_end = index(word(brace_start:), '}')
-    if (brace_end == 0) return
-    brace_end = brace_start + brace_end - 1
+    ! Find MATCHING closing brace by counting depth (supports nested braces)
+    depth = 0
+    brace_end = 0
+    do pos = brace_start, len_trim(word)
+      if (word(pos:pos) == '{') then
+        depth = depth + 1
+      else if (word(pos:pos) == '}') then
+        depth = depth - 1
+        if (depth == 0) then
+          brace_end = pos
+          exit
+        end if
+      end if
+    end do
 
-    ! For now, only handle simple cases where entire word is {pattern}
-    ! Complex cases like prefix{a,b}suffix will be handled in future iteration
-    if (brace_start > 1 .or. brace_end < len_trim(word)) then
-      ! Has prefix or suffix - skip for now
-      return
+    if (brace_end == 0) return
+
+    ! Extract prefix, brace content, and suffix
+    if (brace_start > 1) then
+      prefix = word(1:brace_start-1)
+    else
+      prefix = ''
     end if
 
-    ! Extract brace content
     brace_content = word(brace_start+1:brace_end-1)
+
+    if (brace_end < len_trim(word)) then
+      suffix = word(brace_end+1:)
+    else
+      suffix = ''
+    end if
     if (len_trim(brace_content) == 0) return
 
     ! Check if it's a range expansion (contains ..)
@@ -4366,9 +4384,9 @@ contains
           do while (current_val <= end_val)
             write(num_str, '(i0)') current_val
             if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // trim(num_str)
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else
-              result_buf = trim(num_str)
+              result_buf = trim(prefix) // trim(num_str) // trim(suffix)
             end if
             current_val = current_val + step_val
           end do
@@ -4378,9 +4396,9 @@ contains
           do while (current_val >= end_val)
             write(num_str, '(i0)') current_val
             if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // trim(num_str)
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else
-              result_buf = trim(num_str)
+              result_buf = trim(prefix) // trim(num_str) // trim(suffix)
             end if
             current_val = current_val - step_val
           end do
@@ -4393,9 +4411,9 @@ contains
           current_char = start_char
           do while (current_char <= end_char)
             if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // char(current_char)
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // char(current_char) // trim(suffix)
             else
-              result_buf = char(current_char)
+              result_buf = trim(prefix) // char(current_char) // trim(suffix)
             end if
             current_char = current_char + step_val
           end do
@@ -4404,9 +4422,9 @@ contains
           current_char = start_char
           do while (current_char >= end_char)
             if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // char(current_char)
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // char(current_char) // trim(suffix)
             else
-              result_buf = char(current_char)
+              result_buf = trim(prefix) // char(current_char) // trim(suffix)
             end if
             current_char = current_char - step_val
           end do
@@ -4415,16 +4433,21 @@ contains
         return
       end if
     else
-      ! List expansion: {a,b,c}
+      ! List expansion: {a,b,c} - respect nested braces when finding commas
       last_pos = 1
+      depth = 0
       do i = 1, len_trim(brace_content)
-        if (brace_content(i:i) == ',') then
-          ! Found a comma - extract item
+        if (brace_content(i:i) == '{') then
+          depth = depth + 1
+        else if (brace_content(i:i) == '}') then
+          depth = depth - 1
+        else if (brace_content(i:i) == ',' .and. depth == 0) then
+          ! Found a comma at depth 0 - extract item
           item = brace_content(last_pos:i-1)
           if (len_trim(result_buf) > 0) then
-            result_buf = trim(result_buf) // ' ' // trim(item)
+            result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(item) // trim(suffix)
           else
-            result_buf = trim(item)
+            result_buf = trim(prefix) // trim(item) // trim(suffix)
           end if
           last_pos = i + 1
         end if
@@ -4432,9 +4455,9 @@ contains
       ! Don't forget last item
       item = brace_content(last_pos:)
       if (len_trim(result_buf) > 0) then
-        result_buf = trim(result_buf) // ' ' // trim(item)
+        result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(item) // trim(suffix)
       else
-        result_buf = trim(item)
+        result_buf = trim(prefix) // trim(item) // trim(suffix)
       end if
       expanded = trim(result_buf)
       return

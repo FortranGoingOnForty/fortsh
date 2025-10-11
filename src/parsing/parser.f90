@@ -444,7 +444,7 @@ contains
     integer :: arith_depth, array_depth
 
     working_copy = adjustl(input)
-    write(error_unit, '(a,a,a)') 'DEBUG tokenize: input=[', trim(input), ']'
+    ! write(error_unit, '(a,a,a)') 'DEBUG tokenize: input=[', trim(input), ']'
     if (len_trim(working_copy) == 0) then
       num_tokens = 0
       return
@@ -657,40 +657,58 @@ contains
     character(len=*), intent(in) :: token
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
-    
-    character(len=MAX_TOKEN_LEN) :: result
+
+    character(len=MAX_TOKEN_LEN) :: result, working_token
     integer :: i, j, var_start, brace_depth
     character(len=MAX_TOKEN_LEN) :: var_name
-    character(len=:), allocatable :: var_value
+    character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
-    
+    logical :: is_quoted
+
+    ! Check if token is quoted (starts and ends with matching quotes)
+    is_quoted = .false.
+    if (len_trim(token) >= 2) then
+      if ((token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"') .or. &
+          (token(1:1) == "'" .and. token(len_trim(token):len_trim(token)) == "'")) then
+        is_quoted = .true.
+      end if
+    end if
+
+    ! Apply brace expansion ONLY if token is not quoted
+    if (.not. is_quoted) then
+      brace_expanded = expand_braces(token)
+      working_token = brace_expanded
+    else
+      working_token = token
+    end if
+
     result = ''
     i = 1
     j = 1
-    
-    do while (i <= len_trim(token))
-      if (token(i:i) == '~' .and. (i == 1 .or. token(i-1:i-1) == ' ')) then
+
+    do while (i <= len_trim(working_token))
+      if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ')) then
         ! Tilde expansion
-        call process_tilde_expansion(token, i, result, j, shell)
-      else if (token(i:i) == '$' .and. i < len_trim(token)) then
+        call process_tilde_expansion(working_token, i, result, j, shell)
+      else if (working_token(i:i) == '$' .and. i < len_trim(working_token)) then
         i = i + 1
         
         ! Check for special variables
-        if (token(i:i) == '?') then
+        if (working_token(i:i) == '?') then
           write(result(j:), '(i0)') shell%last_exit_status
           j = j + len_trim(result(j:))
           i = i + 1
-        else if (token(i:i) == '$') then
+        else if (working_token(i:i) == '$') then
           write(pid_str, '(i0)') c_getpid()
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
-        else if (token(i:i) == '!') then
+        else if (working_token(i:i) == '!') then
           write(pid_str, '(i0)') shell%last_pid
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
-        else if (token(i:i) == '@') then
+        else if (working_token(i:i) == '@') then
           ! $@ - all positional parameters
           var_value = get_shell_variable(shell, '@')
           if (len_trim(var_value) > 0) then
@@ -698,7 +716,7 @@ contains
             j = j + len_trim(var_value)
           end if
           i = i + 1
-        else if (token(i:i) == '#') then
+        else if (working_token(i:i) == '#') then
           ! $# - number of positional parameters
           var_value = get_shell_variable(shell, '#')
           if (len_trim(var_value) > 0) then
@@ -706,7 +724,7 @@ contains
             j = j + len_trim(var_value)
           end if
           i = i + 1
-        else if (token(i:i) == '*') then
+        else if (working_token(i:i) == '*') then
           ! $* - all positional parameters as single word
           var_value = get_shell_variable(shell, '*')
           if (len_trim(var_value) > 0) then
@@ -714,34 +732,34 @@ contains
             j = j + len_trim(var_value)
           end if
           i = i + 1
-        else if (token(i:i) >= '0' .and. token(i:i) <= '9') then
+        else if (working_token(i:i) >= '0' .and. working_token(i:i) <= '9') then
           ! $0, $1, $2, ... - positional parameters
-          var_name = token(i:i)
+          var_name = working_token(i:i)
           var_value = get_shell_variable(shell, trim(var_name))
           if (len_trim(var_value) > 0) then
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
           i = i + 1
-        else if (token(i:i) == '(') then
+        else if (working_token(i:i) == '(') then
           ! Check if it's $(( arithmetic expansion or $( command substitution
-          if (i+1 <= len_trim(token) .and. token(i+1:i+1) == '(') then
+          if (i+1 <= len_trim(working_token) .and. working_token(i+1:i+1) == '(') then
             ! $((arithmetic)) expansion
             var_start = i - 1  ! Include the $ character
             i = i + 2  ! Skip both opening parens
             brace_depth = 2
 
-            do while (i <= len_trim(token) .and. brace_depth > 0)
-              if (token(i:i) == '(') then
+            do while (i <= len_trim(working_token) .and. brace_depth > 0)
+              if (working_token(i:i) == '(') then
                 brace_depth = brace_depth + 1
-              else if (token(i:i) == ')') then
+              else if (working_token(i:i) == ')') then
                 brace_depth = brace_depth - 1
               end if
               i = i + 1
             end do
 
             ! Extract full $((expr)) including delimiters
-            var_name = token(var_start:i-1)
+            var_name = working_token(var_start:i-1)
 
             ! Evaluate arithmetic expansion with shell context
             var_value = arithmetic_expansion_shell(trim(var_name), shell)
@@ -755,16 +773,16 @@ contains
             var_start = i
             brace_depth = 1
 
-            do while (i <= len_trim(token) .and. brace_depth > 0)
-              if (token(i:i) == '(') then
+            do while (i <= len_trim(working_token) .and. brace_depth > 0)
+              if (working_token(i:i) == '(') then
                 brace_depth = brace_depth + 1
-              else if (token(i:i) == ')') then
+              else if (working_token(i:i) == ')') then
                 brace_depth = brace_depth - 1
               end if
               i = i + 1
             end do
 
-            var_name = token(var_start:i-2)  ! This is actually the command
+            var_name = working_token(var_start:i-2)  ! This is actually the command
 
             ! Execute command substitution
             call execute_command_substitution(trim(var_name), var_value, shell)
@@ -773,22 +791,22 @@ contains
               j = j + len(var_value)
             end if
           end if
-        else if (token(i:i) == '{') then
+        else if (working_token(i:i) == '{') then
           ! ${VAR} or ${VAR:operation} parameter expansion
           i = i + 1
           var_start = i
           brace_depth = 1
           
-          do while (i <= len_trim(token) .and. brace_depth > 0)
-            if (token(i:i) == '{') then
+          do while (i <= len_trim(working_token) .and. brace_depth > 0)
+            if (working_token(i:i) == '{') then
               brace_depth = brace_depth + 1
-            else if (token(i:i) == '}') then
+            else if (working_token(i:i) == '}') then
               brace_depth = brace_depth - 1
             end if
             i = i + 1
           end do
           
-          var_name = token(var_start:i-2)
+          var_name = working_token(var_start:i-2)
           
           ! Process parameter expansion
           call process_parameter_expansion(var_name, var_value, shell)
@@ -799,12 +817,12 @@ contains
         else
           ! Simple $VAR syntax
           var_start = i
-          do while (i <= len_trim(token))
-            if (.not. (is_alnum(token(i:i)) .or. token(i:i) == '_')) exit
+          do while (i <= len_trim(working_token))
+            if (.not. (is_alnum(working_token(i:i)) .or. working_token(i:i) == '_')) exit
             i = i + 1
           end do
           
-          var_name = token(var_start:i-1)
+          var_name = working_token(var_start:i-1)
           
           ! Check shell variables first
           var_value = get_shell_variable(shell, trim(var_name))
@@ -820,18 +838,18 @@ contains
             end if
           end if
         end if
-      else if (token(i:i) == '`') then
+      else if (working_token(i:i) == '`') then
         ! Backtick command substitution
         i = i + 1
         var_start = i
         
         ! Find closing backtick
-        do while (i <= len_trim(token) .and. token(i:i) /= '`')
+        do while (i <= len_trim(working_token) .and. working_token(i:i) /= '`')
           i = i + 1
         end do
         
-        if (i <= len_trim(token) .and. token(i:i) == '`') then
-          var_name = token(var_start:i-1)  ! This is the command
+        if (i <= len_trim(working_token) .and. working_token(i:i) == '`') then
+          var_name = working_token(var_start:i-1)  ! This is the command
           i = i + 1  ! Skip closing backtick
           
           ! Execute command substitution
@@ -846,7 +864,7 @@ contains
           j = j + 1
         end if
       else
-        result(j:j) = token(i:i)
+        result(j:j) = working_token(i:i)
         i = i + 1
         j = j + 1
       end if
