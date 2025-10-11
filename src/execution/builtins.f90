@@ -16,6 +16,9 @@ module builtins
   use coprocess
   use substitution
   use signal_handling
+  use getopts_builtin
+  use printf_builtin
+  use read_builtin
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -66,6 +69,9 @@ contains
                 trim(cmd_name) == 'ulimit' .or. &
                 trim(cmd_name) == 'times' .or. &
                 trim(cmd_name) == 'let' .or. &
+                trim(cmd_name) == 'getopts' .or. &
+                trim(cmd_name) == 'printf' .or. &
+                trim(cmd_name) == 'read' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -156,6 +162,12 @@ contains
       call builtin_times(cmd, shell)
     case('let')
       call builtin_let(cmd, shell)
+    case('getopts')
+      call builtin_getopts(cmd, shell)
+    case('printf')
+      call builtin_printf(cmd, shell)
+    case('read')
+      call builtin_read(cmd, shell)
     case default
       ! Should not reach here if is_builtin works correctly
       shell%last_exit_status = 1
