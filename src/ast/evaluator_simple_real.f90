@@ -209,6 +209,8 @@ module evaluator_simple_real
     procedure :: get_array_element => context_get_array_element
     procedure :: get_array_all => context_get_array_all
     procedure :: get_array_count => context_get_array_count
+    procedure :: get_array_indices => context_get_array_indices
+    procedure :: slice_array => context_slice_array
   end type execution_context_t
 
   ! Simple real evaluator
@@ -499,6 +501,79 @@ contains
       end if
     end do
   end function context_get_array_count
+
+  ! Get array indices as a space-separated string (for ${!array[@]})
+  function context_get_array_indices(self, array_name) result(value)
+    class(execution_context_t), intent(in) :: self
+    character(*), intent(in) :: array_name
+    character(:), allocatable :: value
+    character(16) :: index_str
+    integer :: i, j
+
+    value = ''
+
+    if (.not. associated(self%shell)) return
+
+    ! Find the array variable
+    do i = 1, self%shell%num_variables
+      if (trim(self%shell%variables(i)%name) == trim(array_name)) then
+        if (.not. self%shell%variables(i)%is_array) return
+
+        ! Concatenate all indices as strings
+        do j = 1, self%shell%variables(i)%num_elements
+          if (j > 1) value = trim(value) // ' '
+          write(index_str, '(i0)') self%shell%variables(i)%elements(j)%index
+          value = trim(value) // trim(index_str)
+        end do
+        return
+      end if
+    end do
+  end function context_get_array_indices
+
+  ! Slice array elements (for ${array[@]:offset:length})
+  function context_slice_array(self, array_name, offset, length) result(value)
+    class(execution_context_t), intent(in) :: self
+    character(*), intent(in) :: array_name
+    integer, intent(in) :: offset, length
+    character(:), allocatable :: value
+    integer :: i, j, count, start_idx, end_idx
+    logical :: first
+
+    value = ''
+
+    if (.not. associated(self%shell)) return
+
+    ! Find the array variable
+    do i = 1, self%shell%num_variables
+      if (trim(self%shell%variables(i)%name) == trim(array_name)) then
+        if (.not. self%shell%variables(i)%is_array) return
+
+        ! Calculate start and end indices (0-based offset)
+        start_idx = offset + 1  ! Convert to 1-based
+        if (start_idx < 1) start_idx = 1
+        if (start_idx > self%shell%variables(i)%num_elements) return
+
+        if (length < 0) then
+          ! Negative length means "all remaining"
+          end_idx = self%shell%variables(i)%num_elements
+        else
+          end_idx = start_idx + length - 1
+          if (end_idx > self%shell%variables(i)%num_elements) then
+            end_idx = self%shell%variables(i)%num_elements
+          end if
+        end if
+
+        ! Collect the sliced elements
+        first = .true.
+        do j = start_idx, end_idx
+          if (.not. first) value = trim(value) // ' '
+          value = trim(value) // trim(self%shell%variables(i)%elements(j)%value)
+          first = .false.
+        end do
+        return
+      end if
+    end do
+  end function context_slice_array
 
   ! Get variable
   function context_get_var(self, name) result(value)
@@ -2368,7 +2443,25 @@ contains
         end if
       else
         ! Regular variable or array element
-        if (node%is_array_ref .and. allocated(node%index_expr)) then
+        ! Check for array indices expansion: ${!array[@]}
+        if (node%get_indices) then
+          ! Get array indices (keys) instead of values
+          if (node%is_array_ref .and. allocated(node%index_expr)) then
+            if (trim(node%index_expr) == '@' .or. trim(node%index_expr) == '*') then
+              ! ${!array[@]} - get all array indices
+              var_value = self%context%get_array_indices(trim(node%name))
+              is_set = .true.
+            else
+              ! ${!array[index]} - not a standard bash feature, treat as empty
+              var_value = ''
+              is_set = .false.
+            end if
+          else
+            ! ${!var} - indirect variable expansion (not implemented yet)
+            var_value = ''
+            is_set = .false.
+          end if
+        else if (node%is_array_ref .and. allocated(node%index_expr)) then
           ! Array element access: ${array[index]}, ${array[@]}, or ${array[*]}
           ! Check for special array expansions
           if (trim(node%index_expr) == '@' .or. trim(node%index_expr) == '*') then
@@ -2458,19 +2551,44 @@ contains
       end if
 
     case(MOD_SUBSTRING)
-      ! ${var:offset:length} - substring
+      ! ${var:offset:length} - substring or ${array[@]:offset:length} - array slice
       call parse_substring_params(node%modifier, offset, length)
-      if (offset < 0) offset = len_trim(var_value) + offset + 1
-      if (offset < 1) offset = 1
-      if (offset > len_trim(var_value)) then
-        result = ''
-      else
-        if (length < 0) then
-          result = trim(var_value(offset:))
-        else if (offset + length - 1 > len_trim(var_value)) then
-          result = trim(var_value(offset:))
+
+      ! Check if this is array slicing
+      if (node%is_array_ref .and. allocated(node%index_expr)) then
+        if (trim(node%index_expr) == '@' .or. trim(node%index_expr) == '*') then
+          ! ${array[@]:offset:length} - array slicing
+          result = self%context%slice_array(trim(node%name), offset, length)
         else
-          result = trim(var_value(offset:offset+length-1))
+          ! ${array[i]:offset:length} - substring of array element
+          if (offset < 0) offset = len_trim(var_value) + offset + 1
+          if (offset < 1) offset = 1
+          if (offset > len_trim(var_value)) then
+            result = ''
+          else
+            if (length < 0) then
+              result = trim(var_value(offset:))
+            else if (offset + length - 1 > len_trim(var_value)) then
+              result = trim(var_value(offset:))
+            else
+              result = trim(var_value(offset:offset+length-1))
+            end if
+          end if
+        end if
+      else
+        ! ${var:offset:length} - string substring
+        if (offset < 0) offset = len_trim(var_value) + offset + 1
+        if (offset < 1) offset = 1
+        if (offset > len_trim(var_value)) then
+          result = ''
+        else
+          if (length < 0) then
+            result = trim(var_value(offset:))
+          else if (offset + length - 1 > len_trim(var_value)) then
+            result = trim(var_value(offset:))
+          else
+            result = trim(var_value(offset:offset+length-1))
+          end if
         end if
       end if
 

@@ -1176,40 +1176,44 @@ contains
 
     ! Parse the variable expansion: "var:-default", "var#pattern", "array[index]", etc.
     call parse_var_expansion(full_value, var_node%name, var_node%modifier_type, var_node%modifier, &
-                              var_node%index_expr, var_node%is_array_ref)
+                              var_node%index_expr, var_node%is_array_ref, var_node%get_indices)
 
     call self%advance()
     node => var_node
 
   contains
-    subroutine parse_var_expansion(text, var_name, mod_type, mod_value, index_expr, is_array_ref)
+    subroutine parse_var_expansion(text, var_name, mod_type, mod_value, index_expr, is_array_ref, get_indices)
       character(*), intent(in) :: text
       character(:), allocatable, intent(out) :: var_name, mod_value, index_expr
       integer, intent(out) :: mod_type
-      logical, intent(out) :: is_array_ref
+      logical, intent(out) :: is_array_ref, get_indices
       integer :: i, colon_pos, bracket_pos, bracket_end
       character(:), allocatable :: base_text
 
       mod_type = MOD_NONE
       is_array_ref = .false.
+      get_indices = .false.
+
+      ! Check for array indices expansion ${!array[@]}
+      if (len_trim(text) > 0 .and. text(1:1) == '!') then
+        get_indices = .true.
+        base_text = trim(text(2:))
+      else
+        base_text = text
+      end if
 
       ! Check for array indexing: var[index] or var[@] or var[*]
-      bracket_pos = index(text, '[')
+      bracket_pos = index(base_text, '[')
       if (bracket_pos > 0) then
         ! Find the matching ]
-        bracket_end = index(text, ']')
+        bracket_end = index(base_text, ']')
         if (bracket_end > bracket_pos) then
           ! Extract array index
           is_array_ref = .true.
-          index_expr = text(bracket_pos+1:bracket_end-1)
+          index_expr = base_text(bracket_pos+1:bracket_end-1)
           ! Continue processing the base name (without [index]) for modifiers
-          base_text = text(1:bracket_pos-1) // text(bracket_end+1:)
-        else
-          ! No closing bracket - treat as regular variable
-          base_text = text
+          base_text = base_text(1:bracket_pos-1) // base_text(bracket_end+1:)
         end if
-      else
-        base_text = text
       end if
 
       ! Check for string length ${#var} or ${#array[@]}
