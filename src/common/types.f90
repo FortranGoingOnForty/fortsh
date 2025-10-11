@@ -242,7 +242,7 @@ module shell_types
     character(len=MAX_PATH_LEN) :: oldpwd = '' ! $OLDPWD (previous working directory)
     logical :: is_login_shell = .false.        ! Started as login shell
     ! Prompt strings
-    character(len=1024) :: ps1 = '\u@\h :: \w\$ ' ! Primary prompt (fortsh style!)
+    character(len=1024) :: ps1 = '\u@\h :: \w > ' ! Primary prompt (user@host :: cwd >)
     character(len=256) :: ps2 = '> '              ! Continuation prompt
     character(len=256) :: ps3 = '#? '             ! Select prompt
     character(len=256) :: ps4 = '+ '              ! Trace prompt (set -x)

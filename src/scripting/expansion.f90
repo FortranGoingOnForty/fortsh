@@ -1419,6 +1419,203 @@ contains
     end if
   end function
   
+  ! Brace expansion - expands braces to multiple words
+  ! Examples:
+  !   {a,b,c} → a b c
+  !   {1..5} → 1 2 3 4 5
+  !   {a..e} → a b c d e
+  !   {1..10..2} → 1 3 5 7 9
+  !   file{1,2,3}.txt → file1.txt file2.txt file3.txt (prefix/suffix support)
+  !   {A,B{1,2},C} → A B{1,2} C (respects nested braces)
+  function expand_braces(word) result(expanded)
+    character(*), intent(in) :: word
+    character(len=:), allocatable :: expanded
+    integer :: brace_start, brace_end, dot_pos, depth, pos
+    character(len=:), allocatable :: prefix, brace_content, suffix, item
+    character(1024) :: result_buf
+    integer :: i, start_val, end_val, step_val, current_val
+    integer :: start_char, end_char, current_char
+    integer :: last_pos, second_dot
+    logical :: is_numeric, is_alpha, has_step
+    character(16) :: num_str
+    character(len=:), allocatable :: start_str, end_str, step_str
+
+    expanded = word
+    result_buf = ''
+
+    ! Find opening brace
+    brace_start = index(word, '{')
+    if (brace_start == 0) return
+
+    ! Find MATCHING closing brace by counting depth (supports nested braces)
+    depth = 0
+    brace_end = 0
+    do pos = brace_start, len_trim(word)
+      if (word(pos:pos) == '{') then
+        depth = depth + 1
+      else if (word(pos:pos) == '}') then
+        depth = depth - 1
+        if (depth == 0) then
+          brace_end = pos
+          exit
+        end if
+      end if
+    end do
+
+    if (brace_end == 0) return
+
+    ! Extract prefix, brace content, and suffix
+    if (brace_start > 1) then
+      prefix = word(1:brace_start-1)
+    else
+      prefix = ''
+    end if
+
+    brace_content = word(brace_start+1:brace_end-1)
+
+    if (brace_end < len_trim(word)) then
+      suffix = word(brace_end+1:)
+    else
+      suffix = ''
+    end if
+
+    if (len_trim(brace_content) == 0) return
+
+    ! Check if it's a range expansion (contains ..)
+    dot_pos = index(brace_content, '..')
+    if (dot_pos > 0) then
+      ! Range expansion: {start..end} or {start..end..step}
+
+      ! Extract start
+      start_str = brace_content(1:dot_pos-1)
+
+      ! Check for step (second ..)
+      second_dot = index(brace_content(dot_pos+2:), '..')
+      has_step = (second_dot > 0)
+
+      if (has_step) then
+        ! {start..end..step}
+        second_dot = dot_pos + 1 + second_dot
+        end_str = brace_content(dot_pos+2:second_dot-1)
+        step_str = brace_content(second_dot+2:)
+        read(step_str, *, iostat=i) step_val
+        if (i /= 0) then
+          step_val = 1
+        end if
+      else
+        ! {start..end}
+        end_str = brace_content(dot_pos+2:)
+        step_val = 1
+      end if
+
+      ! Check if numeric or alphabetic
+      is_numeric = .false.
+      is_alpha = .false.
+
+      read(start_str, *, iostat=i) start_val
+      if (i == 0) then
+        ! Numeric range
+        read(end_str, *, iostat=i) end_val
+        if (i == 0) then
+          is_numeric = .true.
+        end if
+      end if
+
+      if (.not. is_numeric .and. len_trim(start_str) == 1 .and. len_trim(end_str) == 1) then
+        ! Alphabetic range
+        start_char = ichar(start_str(1:1))
+        end_char = ichar(end_str(1:1))
+        is_alpha = .true.
+      end if
+
+      if (is_numeric) then
+        ! Numeric range expansion
+        if (start_val <= end_val) then
+          current_val = start_val
+          do while (current_val <= end_val)
+            write(num_str, '(i0)') current_val
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
+            else
+              result_buf = trim(prefix) // trim(num_str) // trim(suffix)
+            end if
+            current_val = current_val + step_val
+          end do
+        else
+          ! Descending range
+          current_val = start_val
+          do while (current_val >= end_val)
+            write(num_str, '(i0)') current_val
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
+            else
+              result_buf = trim(prefix) // trim(num_str) // trim(suffix)
+            end if
+            current_val = current_val - step_val
+          end do
+        end if
+        expanded = trim(result_buf)
+        return
+      else if (is_alpha) then
+        ! Alphabetic range expansion
+        if (start_char <= end_char) then
+          current_char = start_char
+          do while (current_char <= end_char)
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // char(current_char) // trim(suffix)
+            else
+              result_buf = trim(prefix) // char(current_char) // trim(suffix)
+            end if
+            current_char = current_char + step_val
+          end do
+        else
+          ! Descending range
+          current_char = start_char
+          do while (current_char >= end_char)
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // trim(prefix) // char(current_char) // trim(suffix)
+            else
+              result_buf = trim(prefix) // char(current_char) // trim(suffix)
+            end if
+            current_char = current_char - step_val
+          end do
+        end if
+        expanded = trim(result_buf)
+        return
+      end if
+    else
+      ! List expansion: {a,b,c} - respect nested braces when finding commas
+      last_pos = 1
+      depth = 0
+      do i = 1, len_trim(brace_content)
+        if (brace_content(i:i) == '{') then
+          depth = depth + 1
+        else if (brace_content(i:i) == '}') then
+          depth = depth - 1
+        else if (brace_content(i:i) == ',' .and. depth == 0) then
+          ! Found a comma at depth 0 - extract item
+          item = brace_content(last_pos:i-1)
+          if (len_trim(result_buf) > 0) then
+            result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(item) // trim(suffix)
+          else
+            result_buf = trim(prefix) // trim(item) // trim(suffix)
+          end if
+          last_pos = i + 1
+        end if
+      end do
+      ! Don't forget last item
+      item = brace_content(last_pos:)
+      if (len_trim(result_buf) > 0) then
+        result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(item) // trim(suffix)
+      else
+        result_buf = trim(prefix) // trim(item) // trim(suffix)
+      end if
+      expanded = trim(result_buf)
+      return
+    end if
+
+  end function expand_braces
+
   ! Tilde expansion - expands ~ to home directory
   subroutine tilde_expansion(shell, input, output)
     type(shell_state_t), intent(inout) :: shell
@@ -1427,13 +1624,13 @@ contains
     character(len=1024) :: home_dir
     character(len=:), allocatable :: env_home
     integer :: tilde_pos, slash_pos
-    
+
     output = input
-    
+
     ! Find tilde at start of word
     tilde_pos = 1
     if (len_trim(input) == 0 .or. input(1:1) /= '~') return
-    
+
     ! Get home directory
     env_home = get_environment_var('HOME')
     if (allocated(env_home) .and. len(env_home) > 0) then
@@ -1441,9 +1638,9 @@ contains
     else
       home_dir = '/home/' // trim(shell%username)
     end if
-    
+
     if (len_trim(input) == 1) then
-      ! Just ~ 
+      ! Just ~
       output = trim(home_dir)
     else if (input(2:2) == '/') then
       ! ~/path
@@ -1459,31 +1656,40 @@ contains
   end subroutine
   
   ! Complete word expansion including all POSIX expansions
+  ! Order follows POSIX standard:
+  !   1. Brace expansion
+  !   2. Tilde expansion
+  !   3. Parameter and variable expansion
+  !   4. Quote removal
+  !   5. Field splitting
   subroutine expand_word(shell, input, expanded_words, word_count)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
     character(len=1024), intent(out) :: expanded_words(:)
     integer, intent(out) :: word_count
-    
-    character(len=:), allocatable :: temp_result
+
+    character(len=:), allocatable :: temp_result, brace_expanded
     character(len=1024) :: tilde_expanded, quote_removed
     integer :: i
-    
+
     word_count = 1
-    
+
+    ! Step 0: Brace expansion (happens FIRST, before all other expansions)
+    brace_expanded = expand_braces(input)
+
     ! Step 1: Tilde expansion
-    call tilde_expansion(shell, input, tilde_expanded)
-    
+    call tilde_expansion(shell, brace_expanded, tilde_expanded)
+
     ! Step 2: Parameter and variable expansion
     call simple_expand_variables(tilde_expanded, temp_result, shell)
-    
+
     ! Step 3: Quote removal
     quote_removed = remove_quotes(temp_result)
-    
+
     ! Step 4: Field splitting (if not quoted)
     ! TODO: Track whether original input was quoted to skip field splitting
     call word_split(shell, quote_removed, expanded_words, word_count)
-    
+
     ! If no words resulted, return the processed result as single word
     if (word_count == 0) then
       word_count = 1

@@ -202,14 +202,14 @@ contains
     character(len=*), intent(in) :: input
     character(len=256), intent(out) :: expanded_list(100)
     integer, intent(out) :: count
-    
-    integer :: brace_start, brace_end, comma_pos
+
+    integer :: brace_start, brace_end, comma_pos, depth, pos
     character(len=256) :: prefix, suffix, middle_part
     character(len=256) :: options(50)
     integer :: option_count, i
-    
+
     count = 0
-    
+
     ! Find first brace expansion
     brace_start = index(input, '{')
     if (brace_start == 0) then
@@ -217,15 +217,27 @@ contains
       expanded_list(1) = input
       return
     end if
-    
-    brace_end = index(input(brace_start:), '}')
+
+    ! Find MATCHING closing brace by counting depth
+    depth = 0
+    brace_end = 0
+    do pos = brace_start, len_trim(input)
+      if (input(pos:pos) == '{') then
+        depth = depth + 1
+      else if (input(pos:pos) == '}') then
+        depth = depth - 1
+        if (depth == 0) then
+          brace_end = pos
+          exit
+        end if
+      end if
+    end do
+
     if (brace_end == 0) then
       count = 1
       expanded_list(1) = input
       return
     end if
-    
-    brace_end = brace_start + brace_end - 1
     
     prefix = input(:brace_start-1)
     suffix = input(brace_end+1:)
@@ -298,15 +310,22 @@ contains
     character(len=*), intent(in) :: list_str
     character(len=256), intent(out) :: options(50)
     integer, intent(out) :: count
-    
-    integer :: pos, start_pos, comma_pos
-    
+
+    integer :: pos, start_pos, comma_pos, depth
+
     count = 0
     pos = 1
     start_pos = 1
-    
+    depth = 0
+
     do while (pos <= len_trim(list_str))
-      if (list_str(pos:pos) == ',') then
+      ! Track brace depth to avoid splitting on commas inside nested braces
+      if (list_str(pos:pos) == '{') then
+        depth = depth + 1
+      else if (list_str(pos:pos) == '}') then
+        depth = depth - 1
+      else if (list_str(pos:pos) == ',' .and. depth == 0) then
+        ! Only split on commas at depth 0 (not inside braces)
         if (count < 50 .and. pos > start_pos) then
           count = count + 1
           options(count) = list_str(start_pos:pos-1)
@@ -315,7 +334,7 @@ contains
       end if
       pos = pos + 1
     end do
-    
+
     ! Handle last option
     if (count < 50 .and. start_pos <= len_trim(list_str)) then
       count = count + 1
