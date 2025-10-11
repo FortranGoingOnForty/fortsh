@@ -4,6 +4,7 @@
 ! ==============================================================================
 module shell_options
   use shell_types
+  use variables, only: set_shell_variable
   use system_interface, only: get_pid, get_ppid
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
@@ -42,27 +43,67 @@ contains
   subroutine builtin_set(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    character(len=256) :: option_str, option_name
-    integer :: i, arg_len
-    logical :: enable_option
-    
+
+    character(len=256) :: option_str, option_name, param_idx_str
+    integer :: i, arg_len, param_idx
+    logical :: enable_option, setting_positional
+
     if (cmd%num_tokens == 1) then
       ! Show all variables (simplified)
       call show_shell_variables(shell)
       return
     end if
-    
+
+    setting_positional = .false.
     i = 2
     do while (i <= cmd%num_tokens)
       option_str = trim(cmd%tokens(i))
       arg_len = len_trim(option_str)
-      
+
+      ! Check for '--' which signals end of options and start of positional parameters
+      if (option_str == '--') then
+        setting_positional = .true.
+        i = i + 1
+        ! Clear existing positional parameters
+        shell%num_positional = 0
+        ! Set remaining arguments as positional parameters
+        param_idx = 1
+        do while (i <= cmd%num_tokens .and. param_idx <= 50)
+          shell%positional_params(param_idx) = trim(cmd%tokens(i))
+          write(param_idx_str, '(I0)') param_idx
+          call set_shell_variable(shell, trim(param_idx_str), trim(cmd%tokens(i)))
+          param_idx = param_idx + 1
+          i = i + 1
+        end do
+        shell%num_positional = param_idx - 1
+        write(param_idx_str, '(I0)') shell%num_positional
+        call set_shell_variable(shell, '#', trim(param_idx_str))
+        exit
+      end if
+
+      ! If argument doesn't start with - or +, treat rest as positional parameters
+      if (arg_len >= 1 .and. option_str(1:1) /= '-' .and. option_str(1:1) /= '+') then
+        setting_positional = .true.
+        shell%num_positional = 0
+        param_idx = 1
+        do while (i <= cmd%num_tokens .and. param_idx <= 50)
+          shell%positional_params(param_idx) = trim(cmd%tokens(i))
+          write(param_idx_str, '(I0)') param_idx
+          call set_shell_variable(shell, trim(param_idx_str), trim(cmd%tokens(i)))
+          param_idx = param_idx + 1
+          i = i + 1
+        end do
+        shell%num_positional = param_idx - 1
+        write(param_idx_str, '(I0)') shell%num_positional
+        call set_shell_variable(shell, '#', trim(param_idx_str))
+        exit
+      end if
+
       if (arg_len < 2) then
         i = i + 1
         cycle
       end if
-      
+
       ! Check if enabling (+) or disabling (-) option
       if (option_str(1:1) == '-') then
         enable_option = .true.
