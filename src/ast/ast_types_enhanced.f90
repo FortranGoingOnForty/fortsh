@@ -186,6 +186,7 @@ module ast_types_enhanced
     integer :: modifier_type = 0
     character(:), allocatable :: index_expr  ! For array indexing: [0], [@], [*], or [$i]
     logical :: is_array_ref = .false.
+    logical :: get_indices = .false.  ! For ${!array[@]} - get array indices
   contains
     procedure :: clone => variable_node_clone
   end type variable_node_t
@@ -525,6 +526,7 @@ contains
     typed_clone%modifier_type = self%modifier_type
     if (allocated(self%index_expr)) typed_clone%index_expr = self%index_expr
     typed_clone%is_array_ref = self%is_array_ref
+    typed_clone%get_indices = self%get_indices
 
     clone => typed_clone
   end function variable_node_clone
