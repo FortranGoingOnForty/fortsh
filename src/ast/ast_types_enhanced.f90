@@ -49,6 +49,10 @@ module ast_types_enhanced
   integer, parameter :: TOKEN_ARITH_START = 39
   integer, parameter :: TOKEN_ARITH_END = 40
   integer, parameter :: TOKEN_REDIRECT_HERE_STRING = 41
+  integer, parameter :: TOKEN_LBRACKET_DOUBLE = 42
+  integer, parameter :: TOKEN_RBRACKET_DOUBLE = 43
+  integer, parameter :: TOKEN_PROC_SUBST_IN = 44   ! <(...)
+  integer, parameter :: TOKEN_PROC_SUBST_OUT = 45  ! >(...)
 
   ! AST Node types
   integer, parameter :: NODE_SCRIPT = 100
@@ -75,6 +79,29 @@ module ast_types_enhanced
   integer, parameter :: NODE_REDIRECTION = 120
   integer, parameter :: NODE_COMMAND_SUBST = 121
   integer, parameter :: NODE_ARITHMETIC = 122
+  integer, parameter :: NODE_COND_EXPR = 124
+  integer, parameter :: NODE_PROC_SUBST = 125  ! Process substitution
+
+  ! Variable expansion modifier types
+  integer, parameter :: MOD_NONE = 0              ! No modifier
+  integer, parameter :: MOD_USE_DEFAULT = 1       ! ${var:-default}
+  integer, parameter :: MOD_ASSIGN_DEFAULT = 2    ! ${var:=default}
+  integer, parameter :: MOD_ERROR_IF_UNSET = 3    ! ${var:?error}
+  integer, parameter :: MOD_USE_ALTERNATE = 4     ! ${var:+alternate}
+  integer, parameter :: MOD_STRING_LENGTH = 5     ! ${#var}
+  integer, parameter :: MOD_SUBSTRING = 6         ! ${var:offset:length}
+  integer, parameter :: MOD_REMOVE_PREFIX_MIN = 7 ! ${var#pattern}
+  integer, parameter :: MOD_REMOVE_PREFIX_MAX = 8 ! ${var##pattern}
+  integer, parameter :: MOD_REMOVE_SUFFIX_MIN = 9 ! ${var%pattern}
+  integer, parameter :: MOD_REMOVE_SUFFIX_MAX = 10! ${var%%pattern}
+  integer, parameter :: MOD_REPLACE_FIRST = 11    ! ${var/pattern/replacement}
+  integer, parameter :: MOD_REPLACE_ALL = 12      ! ${var//pattern/replacement}
+  integer, parameter :: MOD_REPLACE_PREFIX = 13   ! ${var/#pattern/replacement}
+  integer, parameter :: MOD_REPLACE_SUFFIX = 14   ! ${var/%pattern/replacement}
+  integer, parameter :: MOD_UPPERCASE_FIRST = 15  ! ${var^}
+  integer, parameter :: MOD_UPPERCASE_ALL = 16    ! ${var^^}
+  integer, parameter :: MOD_LOWERCASE_FIRST = 17  ! ${var,}
+  integer, parameter :: MOD_LOWERCASE_ALL = 18    ! ${var,,}
 
   ! Token structure
   type :: token_t
@@ -157,6 +184,8 @@ module ast_types_enhanced
     character(:), allocatable :: name
     character(:), allocatable :: modifier
     integer :: modifier_type = 0
+    character(:), allocatable :: index_expr  ! For array indexing: [0], [@], [*], or [$i]
+    logical :: is_array_ref = .false.
   contains
     procedure :: clone => variable_node_clone
   end type variable_node_t
@@ -198,6 +227,17 @@ module ast_types_enhanced
   contains
     procedure :: clone => for_node_clone
   end type for_node_t
+
+  ! Arithmetic for loop node - for ((init; cond; incr))
+  type, extends(ast_node_t) :: for_arith_node_t
+    character(:), allocatable :: init_expr     ! Initialization expression
+    character(:), allocatable :: cond_expr     ! Condition expression
+    character(:), allocatable :: incr_expr     ! Increment expression
+    type(ast_node_ptr_t), allocatable :: body(:)
+    integer :: num_body = 0
+  contains
+    procedure :: clone => for_arith_node_clone
+  end type for_arith_node_t
 
   ! While loop node
   type, extends(ast_node_t) :: while_node_t
@@ -274,6 +314,21 @@ module ast_types_enhanced
   contains
     procedure :: clone => group_node_clone
   end type group_node_t
+
+  ! Conditional expression node - for [[ ]] expressions
+  type, extends(ast_node_t) :: cond_expr_node_t
+    character(:), allocatable :: expression  ! The conditional expression
+  contains
+    procedure :: clone => cond_expr_node_clone
+  end type cond_expr_node_t
+
+  ! Process substitution node - for <(...) and >(...)
+  type, extends(ast_node_t) :: proc_subst_node_t
+    type(ast_node_ptr_t) :: command  ! The command to execute
+    logical :: is_input = .true.  ! True for <(...), false for >(...)
+  contains
+    procedure :: clone => proc_subst_node_clone
+  end type proc_subst_node_t
 
   ! Linked list for building collections (same as before)
   type :: node_list_element_t
@@ -468,6 +523,8 @@ contains
     typed_clone%name = self%name
     if (allocated(self%modifier)) typed_clone%modifier = self%modifier
     typed_clone%modifier_type = self%modifier_type
+    if (allocated(self%index_expr)) typed_clone%index_expr = self%index_expr
+    typed_clone%is_array_ref = self%is_array_ref
 
     clone => typed_clone
   end function variable_node_clone
@@ -561,6 +618,34 @@ contains
 
     clone => typed_clone
   end function for_node_clone
+
+  function for_arith_node_clone(self) result(clone)
+    class(for_arith_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(for_arith_node_t), pointer :: typed_clone
+    integer :: i
+
+    allocate(for_arith_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    typed_clone%num_body = self%num_body
+
+    if (allocated(self%init_expr)) typed_clone%init_expr = self%init_expr
+    if (allocated(self%cond_expr)) typed_clone%cond_expr = self%cond_expr
+    if (allocated(self%incr_expr)) typed_clone%incr_expr = self%incr_expr
+
+    if (allocated(self%body)) then
+      allocate(typed_clone%body(self%num_body))
+      do i = 1, self%num_body
+        if (associated(self%body(i)%ptr)) then
+          typed_clone%body(i)%ptr => self%body(i)%ptr%clone()
+        end if
+      end do
+    end if
+
+    clone => typed_clone
+  end function for_arith_node_clone
 
   function while_node_clone(self) result(clone)
     class(while_node_t), intent(in) :: self
@@ -776,6 +861,37 @@ contains
 
     clone => typed_clone
   end function group_node_clone
+
+  function cond_expr_node_clone(self) result(clone)
+    class(cond_expr_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(cond_expr_node_t), pointer :: typed_clone
+
+    allocate(cond_expr_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    if (allocated(self%expression)) then
+      typed_clone%expression = self%expression
+    end if
+    clone => typed_clone
+  end function cond_expr_node_clone
+
+  function proc_subst_node_clone(self) result(clone)
+    class(proc_subst_node_t), intent(in) :: self
+    class(ast_node_t), pointer :: clone
+    type(proc_subst_node_t), pointer :: typed_clone
+
+    allocate(proc_subst_node_t :: typed_clone)
+    typed_clone%node_type = self%node_type
+    typed_clone%line_number = self%line_number
+    typed_clone%column = self%column
+    typed_clone%is_input = self%is_input
+    if (associated(self%command%ptr)) then
+      typed_clone%command%ptr => self%command%ptr%clone()
+    end if
+    clone => typed_clone
+  end function proc_subst_node_clone
 
   ! Linked list methods
   subroutine node_list_append(self, node)
