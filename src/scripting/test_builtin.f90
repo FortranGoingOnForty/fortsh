@@ -52,8 +52,8 @@ contains
       ! test STRING - true if STRING is not empty
       test_result = (len_trim(cmd%tokens(2)) > 0)
 
-    else if (cmd%num_tokens == 3) then
-      ! Unary operators: test OP ARG
+    else if (cmd%num_tokens == 3 .or. (cmd%num_tokens == 4 .and. trim(cmd%tokens(1)) == '[')) then
+      ! Unary operators: test OP ARG or [ OP ARG ]
       operator = cmd%tokens(2)
       right_operand = cmd%tokens(3)
 
@@ -112,8 +112,9 @@ contains
         test_result = .false.
       end select
 
-    else if (cmd%num_tokens == 4) then
+    else if (cmd%num_tokens == 4 .or. (cmd%num_tokens == 5 .and. trim(cmd%tokens(1)) == '[')) then
       ! test ARG1 OP ARG2 - binary operators
+      ! For '[' command, skip the closing ']' token
       left_operand = cmd%tokens(2)
       operator = cmd%tokens(3)
       right_operand = cmd%tokens(4)

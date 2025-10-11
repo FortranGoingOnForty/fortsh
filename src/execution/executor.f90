@@ -148,8 +148,12 @@ contains
         
         ! Expand glob patterns
         call expand_command_globs(pipeline%commands(i))
-        
-        if (is_builtin(pipeline%commands(i)%tokens(1))) then
+
+        ! Handle eval builtin directly (to avoid circular dependency)
+        if (trim(pipeline%commands(i)%tokens(1)) == 'eval') then
+          call execute_eval_builtin(pipeline%commands(i), shell)
+          call c_exit(int(shell%last_exit_status, c_int))
+        else if (is_builtin(pipeline%commands(i)%tokens(1))) then
           call execute_builtin(pipeline%commands(i), shell)
           call c_exit(int(shell%last_exit_status, c_int))
         else
@@ -248,6 +252,7 @@ contains
     character(len=*), intent(in) :: original_input
     logical :: should_execute
     integer(int64) :: exec_start_time
+    character(len=2048) :: reconstructed_cmd
 
     ! Start performance timing
     call start_timer('execute_single', exec_start_time)
@@ -258,18 +263,21 @@ contains
     if (shell%control_depth > 0) then
       if (shell%control_stack(shell%control_depth)%capturing_loop_body) then
         if (allocated(cmd%tokens) .and. cmd%num_tokens > 0) then
+          ! Reconstruct the command from tokens (don't use original_input which may contain the whole line)
+          call reconstruct_command_from_tokens(cmd, reconstructed_cmd)
+
           ! Track nested depth for proper 'done' matching
           if (trim(cmd%tokens(1)) == 'for' .or. trim(cmd%tokens(1)) == 'while' .or. &
               (len_trim(cmd%tokens(1)) >= 5 .and. cmd%tokens(1)(1:5) == 'for((')) then
             ! Starting a nested loop - increment nesting depth
             shell%control_stack(shell%control_depth)%capture_nesting_depth = &
               shell%control_stack(shell%control_depth)%capture_nesting_depth + 1
-            call capture_loop_command(shell, original_input)
+            call capture_loop_command(shell, trim(reconstructed_cmd))
             return
           else if (trim(cmd%tokens(1)) == 'do') then
             ! 'do' for nested loop - just capture it
             if (shell%control_stack(shell%control_depth)%capture_nesting_depth > 0) then
-              call capture_loop_command(shell, original_input)
+              call capture_loop_command(shell, trim(reconstructed_cmd))
               return
             end if
             ! If nesting depth is 0, this 'do' is an error - let it be processed
@@ -279,14 +287,14 @@ contains
               ! This 'done' ends a nested loop
               shell%control_stack(shell%control_depth)%capture_nesting_depth = &
                 shell%control_stack(shell%control_depth)%capture_nesting_depth - 1
-              call capture_loop_command(shell, original_input)
+              call capture_loop_command(shell, trim(reconstructed_cmd))
               return
             else
               ! This 'done' ends the current capturing loop - process normally
             end if
           else
             ! Everything else gets captured
-            call capture_loop_command(shell, original_input)
+            call capture_loop_command(shell, trim(reconstructed_cmd))
             return
           end if
         end if
@@ -338,6 +346,9 @@ contains
     ! Check if it's a user-defined function
     else if (is_function(shell, cmd%tokens(1))) then
       call execute_function(cmd, shell)
+    ! Handle eval builtin directly (to avoid circular dependency with builtins)
+    else if (trim(cmd%tokens(1)) == 'eval') then
+      call execute_eval_builtin(cmd, shell)
     else if (is_builtin(cmd%tokens(1))) then
       call execute_builtin(cmd, shell)
     else
@@ -817,6 +828,52 @@ contains
     shell%num_positional = saved_num_positional
   end subroutine
 
+  ! Execute eval builtin (moved here to avoid circular dependency with builtins module)
+  subroutine execute_eval_builtin(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+
+    character(len=4096) :: eval_command
+    integer :: i
+    type(pipeline_t) :: pipeline
+
+    ! If no arguments, just return success
+    if (cmd%num_tokens < 2) then
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! Concatenate all arguments into a single command string
+    eval_command = trim(cmd%tokens(2))
+    do i = 3, cmd%num_tokens
+      eval_command = trim(eval_command) // ' ' // trim(cmd%tokens(i))
+    end do
+
+    ! Parse the concatenated string as a pipeline
+    call parse_pipeline(trim(eval_command), pipeline)
+
+    ! Execute the parsed pipeline in the current shell context
+    if (pipeline%num_commands > 0) then
+      call execute_pipeline(pipeline, shell, trim(eval_command))
+
+      ! Clean up pipeline allocations
+      do i = 1, pipeline%num_commands
+        if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+        if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+        if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+        if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+        if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+        if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+        if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+      end do
+
+      if (allocated(pipeline%commands)) deallocate(pipeline%commands)
+    else
+      ! Empty command - success
+      shell%last_exit_status = 0
+    end if
+  end subroutine
+
   ! Replay loop body if needed
   subroutine replay_loop_if_needed(shell)
     use parser, only: parse_pipeline
@@ -896,6 +953,25 @@ contains
         end if
       else
         exit  ! Couldn't parse done, exit
+      end if
+    end do
+  end subroutine
+
+  ! Reconstruct command line from command tokens
+  subroutine reconstruct_command_from_tokens(cmd, result)
+    type(command_t), intent(in) :: cmd
+    character(len=*), intent(out) :: result
+    integer :: i
+
+    result = ''
+    if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
+
+    ! Join tokens with spaces
+    do i = 1, cmd%num_tokens
+      if (i == 1) then
+        result = trim(cmd%tokens(i))
+      else
+        result = trim(result) // ' ' // trim(cmd%tokens(i))
       end if
     end do
   end subroutine

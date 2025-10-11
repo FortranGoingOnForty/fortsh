@@ -150,8 +150,6 @@ contains
       call builtin_return(cmd, shell)
     case('exec')
       call builtin_exec(cmd, shell)
-    case('eval')
-      call builtin_eval(cmd, shell)
     case('hash')
       call builtin_hash(cmd, shell)
     case('umask')
@@ -1724,53 +1722,6 @@ contains
     ! Report error
     write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': cannot execute'
     shell%last_exit_status = 126
-  end subroutine
-
-  subroutine builtin_eval(cmd, shell)
-    use parser, only: parse_pipeline
-    use executor, only: execute_pipeline
-    type(command_t), intent(in) :: cmd
-    type(shell_state_t), intent(inout) :: shell
-
-    character(len=4096) :: eval_command
-    integer :: i, j
-    type(pipeline_t) :: pipeline
-
-    ! If no arguments, just return success
-    if (cmd%num_tokens < 2) then
-      shell%last_exit_status = 0
-      return
-    end if
-
-    ! Concatenate all arguments into a single command string
-    eval_command = trim(cmd%tokens(2))
-    do i = 3, cmd%num_tokens
-      eval_command = trim(eval_command) // ' ' // trim(cmd%tokens(i))
-    end do
-
-    ! Parse the concatenated string as a pipeline
-    call parse_pipeline(trim(eval_command), pipeline)
-
-    ! Execute the parsed pipeline in the current shell context
-    if (pipeline%num_commands > 0) then
-      call execute_pipeline(pipeline, shell, trim(eval_command))
-
-      ! Clean up pipeline allocations
-      do i = 1, pipeline%num_commands
-        if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-        if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-        if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-        if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-        if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-        if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-        if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-      end do
-
-      if (allocated(pipeline%commands)) deallocate(pipeline%commands)
-    else
-      ! Empty command - success
-      shell%last_exit_status = 0
-    end if
   end subroutine
 
   subroutine builtin_hash(cmd, shell)

@@ -96,8 +96,10 @@ program fortran_shell
     if (pipeline%num_commands > 0) then
       call execute_pipeline(pipeline, shell, expanded_line)
 
-      ! Check if we need to replay loop body
-      call replay_loop_if_needed(shell)
+      ! Check if we need to replay loop body (only if NOT currently capturing)
+      if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+        call replay_loop_if_needed(shell)
+      end if
 
       ! Increment command number and history number for next prompt
       shell%command_number = shell%command_number + 1
@@ -201,8 +203,10 @@ contains
       if (pipeline%num_commands > 0) then
         call execute_pipeline(pipeline, shell, expanded_line)
 
-        ! Check if we need to replay loop body
-        call replay_loop_if_needed(shell)
+        ! Check if we need to replay loop body (only if NOT currently capturing)
+        if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+          call replay_loop_if_needed(shell)
+        end if
 
         ! Clean up pipeline
         if (allocated(pipeline%commands)) then

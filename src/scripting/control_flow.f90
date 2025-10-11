@@ -6,6 +6,7 @@ module control_flow
   use shell_types
   use system_interface
   use advanced_test, only: evaluate_test_expression
+  use variables, only: set_shell_variable, get_shell_variable
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -128,10 +129,6 @@ contains
     should_execute = .true.  ! Default: execute normally
 
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
-
-
-    write(error_unit, '(a,a,a,i0)') 'DEBUG control_flow: token(1)=[', trim(cmd%tokens(1)), &
-      '], depth=', shell%control_depth
 
     ! Check for arithmetic for loop without space: for((  ...
     if (len_trim(cmd%tokens(1)) >= 5) then
@@ -670,16 +667,14 @@ contains
   end function
 
   subroutine evaluate_condition(condition_cmd, shell, result)
-    use builtins, only: is_builtin, execute_builtin
-    use expansion, only: parameter_expansion
+    use test_builtin, only: execute_test_command
     character(len=*), intent(in) :: condition_cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: result
 
     type(command_t) :: cmd
-    character(len=256) :: tokens(50), expanded_token
-    integer :: num_tokens, i, pos, start_pos
-    character(len=:), allocatable :: expanded_result
+    character(len=256) :: tokens(50)
+    integer :: num_tokens, i
 
     ! Simple condition evaluation
     ! For now, we'll execute the test builtin or check exit status
@@ -690,48 +685,14 @@ contains
       ! Execute test command and check result
       call execute_test_condition(condition_cmd, shell, result)
     else
-      ! For other commands, parse and execute them to check exit status
-      ! This allows any command to be used as a loop/if condition (POSIX compliant)
+      ! For other commands that might be builtins, we'll tokenize and call test_builtin
+      ! This is a simplified approach - full implementation would execute any command
 
-      ! Tokenize the condition command
-      num_tokens = 0
-      start_pos = 1
+      ! Tokenize the condition command with variable expansion
+      call tokenize_and_expand(condition_cmd, tokens, num_tokens, shell)
 
-      do while (start_pos <= len_trim(condition_cmd) .and. num_tokens < 50)
-        ! Skip leading spaces
-        do while (start_pos <= len_trim(condition_cmd) .and. condition_cmd(start_pos:start_pos) == ' ')
-          start_pos = start_pos + 1
-        end do
-
-        if (start_pos > len_trim(condition_cmd)) exit
-
-        ! Find end of token
-        pos = start_pos
-        do while (pos <= len_trim(condition_cmd) .and. condition_cmd(pos:pos) /= ' ')
-          pos = pos + 1
-        end do
-
-        ! Extract token and expand variables
-        num_tokens = num_tokens + 1
-        expanded_token = condition_cmd(start_pos:pos-1)
-
-        ! Expand variables in the token (e.g., $count becomes the value of count)
-        if (index(expanded_token, '$') > 0) then
-          expanded_result = parameter_expansion(shell, trim(expanded_token))
-          if (allocated(expanded_result)) then
-            tokens(num_tokens) = expanded_result
-          else
-            tokens(num_tokens) = expanded_token
-          end if
-        else
-          tokens(num_tokens) = expanded_token
-        end if
-
-        start_pos = pos + 1
-      end do
-
-      ! If we have tokens and the first is a builtin, execute it
-      if (num_tokens > 0 .and. is_builtin(trim(tokens(1)))) then
+      ! Check if it's a test-like command and execute it
+      if (num_tokens > 0) then
         ! Build command structure
         cmd%num_tokens = num_tokens
         allocate(character(len=256) :: cmd%tokens(num_tokens))
@@ -739,8 +700,8 @@ contains
           cmd%tokens(i) = trim(tokens(i))
         end do
 
-        ! Execute the builtin
-        call execute_builtin(cmd, shell)
+        ! Try to execute as test command
+        call execute_test_command(cmd, shell)
 
         ! Clean up
         deallocate(cmd%tokens)
@@ -748,21 +709,70 @@ contains
         ! Check exit status
         result = (shell%last_exit_status == 0)
       else
-        ! Not a builtin - for now, treat as false
-        ! In a full implementation, we'd execute external commands too
         result = .false.
       end if
     end if
   end subroutine
 
+  ! Helper to tokenize and expand variables
+  subroutine tokenize_and_expand(input, tokens, num_tokens, shell)
+    character(len=*), intent(in) :: input
+    character(len=256), intent(out) :: tokens(:)
+    integer, intent(out) :: num_tokens
+    type(shell_state_t), intent(inout) :: shell
+
+    integer :: pos, start_pos
+    character(len=256) :: expanded_token
+    character(len=:), allocatable :: expanded_result
+
+    num_tokens = 0
+    start_pos = 1
+
+    do while (start_pos <= len_trim(input) .and. num_tokens < size(tokens))
+      ! Skip leading spaces
+      do while (start_pos <= len_trim(input) .and. input(start_pos:start_pos) == ' ')
+        start_pos = start_pos + 1
+      end do
+
+      if (start_pos > len_trim(input)) exit
+
+      ! Find end of token
+      pos = start_pos
+      do while (pos <= len_trim(input) .and. input(pos:pos) /= ' ')
+        pos = pos + 1
+      end do
+
+      ! Extract token and expand variables
+      num_tokens = num_tokens + 1
+      expanded_token = input(start_pos:pos-1)
+
+      ! Expand variables in the token
+      if (index(expanded_token, '$') > 0) then
+        call simple_variable_expand(expanded_token, expanded_result, shell)
+        if (allocated(expanded_result)) then
+          tokens(num_tokens) = expanded_result
+        else
+          tokens(num_tokens) = expanded_token
+        end if
+      else
+        tokens(num_tokens) = expanded_token
+      end if
+
+      start_pos = pos + 1
+    end do
+  end subroutine
+
   subroutine execute_test_condition(test_cmd, shell, result)
+    use test_builtin, only: execute_test_command
     character(len=*), intent(in) :: test_cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: result
 
-    character(len=256) :: tokens(50)
+    type(command_t) :: cmd
+    character(len=256) :: tokens(50), expanded_token
     integer :: num_tokens, i, pos, start_pos, test_exit_status
     character(len=1024) :: trimmed_cmd
+    character(len=:), allocatable :: expanded_result
 
     ! Check if this is a [[ ]] expression
     trimmed_cmd = trim(test_cmd)
@@ -800,25 +810,64 @@ contains
       result = (test_exit_status == 0)
 
     else
-      ! Fall back to simple test evaluation for [ ] and test commands
-      if (index(test_cmd, '-f') > 0) then
-        result = .false.  ! File test - simplified
-      else if (index(test_cmd, '=') > 0) then
-        ! For string equality, check specific patterns we know about
-        if (index(test_cmd, '"success"') > 0 .and. index(test_cmd, '"failure"') > 0) then
-          result = .false.  ! Different strings
-        else if (index(test_cmd, '"hello"') > 0 .and. index(test_cmd, '"world"') > 0) then
-          result = .false.  ! Different strings
-        else if (index(test_cmd, '"hello"') > 0) then
-          result = (count_substring(test_cmd, '"hello"') >= 2)  ! Same string twice
-        else if (index(test_cmd, '"success"') > 0) then
-          result = (count_substring(test_cmd, '"success"') >= 2)  ! Same string twice
-        else if (index(test_cmd, '"done"') > 0) then
-          result = (count_substring(test_cmd, '"done"') >= 2)  ! Same string twice
+      ! For [ ] test commands, tokenize and call the test builtin
+      num_tokens = 0
+      start_pos = 1
+
+      do while (start_pos <= len_trim(trimmed_cmd) .and. num_tokens < 50)
+        ! Skip leading spaces
+        do while (start_pos <= len_trim(trimmed_cmd) .and. trimmed_cmd(start_pos:start_pos) == ' ')
+          start_pos = start_pos + 1
+        end do
+
+        if (start_pos > len_trim(trimmed_cmd)) exit
+
+        ! Find end of token
+        pos = start_pos
+        do while (pos <= len_trim(trimmed_cmd) .and. trimmed_cmd(pos:pos) /= ' ')
+          pos = pos + 1
+        end do
+
+        ! Extract token and expand variables
+        num_tokens = num_tokens + 1
+        expanded_token = trimmed_cmd(start_pos:pos-1)
+
+        ! Expand variables in the token (e.g., $count becomes the value of count)
+        if (index(expanded_token, '$') > 0) then
+          ! Use get_shell_variable for simple $var expansion
+          ! parameter_expansion is only for ${var} format
+          call simple_variable_expand(expanded_token, expanded_result, shell)
+          if (allocated(expanded_result)) then
+            tokens(num_tokens) = expanded_result
+          else
+            tokens(num_tokens) = expanded_token
+          end if
         else
-          result = .false.  ! Default for unknown patterns
+          tokens(num_tokens) = expanded_token
         end if
+
+        start_pos = pos + 1
+      end do
+
+      ! If we have tokens and the first is '[' or 'test', execute the test builtin
+      if (num_tokens > 0 .and. (trim(tokens(1)) == '[' .or. trim(tokens(1)) == 'test')) then
+        ! Build command structure
+        cmd%num_tokens = num_tokens
+        allocate(character(len=256) :: cmd%tokens(num_tokens))
+        do i = 1, num_tokens
+          cmd%tokens(i) = trim(tokens(i))
+        end do
+
+        ! Execute the test command
+        call execute_test_command(cmd, shell)
+
+        ! Clean up
+        deallocate(cmd%tokens)
+
+        ! Check exit status
+        result = (shell%last_exit_status == 0)
       else
+        ! Fallback: check last exit status
         result = (shell%last_exit_status == 0)
       end if
     end if
@@ -899,34 +948,7 @@ contains
   end subroutine
 
   ! Note: return and local are now implemented as builtins in builtins.f90
-
-  subroutine set_shell_variable(shell, name, value)
-    type(shell_state_t), intent(inout) :: shell
-    character(len=*), intent(in) :: name, value
-    integer :: i, empty_slot
-    
-    empty_slot = -1
-    
-    ! Look for existing variable or empty slot
-    do i = 1, size(shell%variables)
-      if (trim(shell%variables(i)%name) == trim(name)) then
-        ! Update existing variable
-        shell%variables(i)%value = value
-        return
-      else if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
-        if (empty_slot == -1) empty_slot = i
-      end if
-    end do
-    
-    ! Add new variable if there's space
-    if (empty_slot > 0) then
-      shell%variables(empty_slot)%name = name
-      shell%variables(empty_slot)%value = value
-      shell%num_variables = shell%num_variables + 1
-    else
-      write(error_unit, '(a)') 'Too many variables defined'
-    end if
-  end subroutine
+  ! Note: set_shell_variable is now imported from the variables module
 
   subroutine handle_case_statement(cmd, shell)
     type(command_t), intent(in) :: cmd
@@ -1105,9 +1127,6 @@ contains
     if (shell%control_stack(shell%control_depth)%loop_body_count <= 100) then
       shell%control_stack(shell%control_depth)%loop_body(&
         shell%control_stack(shell%control_depth)%loop_body_count) = command_line
-      write(error_unit, '(a,i0,a,i0,a,a)') 'DEBUG capture: depth=', shell%control_depth, &
-        ', cmd #', shell%control_stack(shell%control_depth)%loop_body_count, &
-        ': [', trim(command_line), ']'
     end if
   end subroutine
 
@@ -1122,5 +1141,55 @@ contains
 
     should_replay = .true.
   end function
+
+  ! Simple variable expansion for $var (not ${var})
+  subroutine simple_variable_expand(input, output, shell)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable, intent(out) :: output
+    type(shell_state_t), intent(inout) :: shell
+    character(len=1024) :: result
+    character(len=256) :: var_name
+    character(len=1024) :: var_value
+    integer :: i, j, var_start
+
+    result = ''
+    i = 1
+    j = 1
+
+    do while (i <= len_trim(input))
+      if (input(i:i) == '$' .and. i < len_trim(input)) then
+        i = i + 1
+        var_start = i
+
+        ! Extract variable name (alphanumeric + underscore)
+        do while (i <= len_trim(input))
+          if (.not. ((input(i:i) >= 'a' .and. input(i:i) <= 'z') .or. &
+                     (input(i:i) >= 'A' .and. input(i:i) <= 'Z') .or. &
+                     (input(i:i) >= '0' .and. input(i:i) <= '9') .or. &
+                     input(i:i) == '_')) exit
+          i = i + 1
+        end do
+
+        if (i > var_start) then
+          var_name = input(var_start:i-1)
+          var_value = get_shell_variable(shell, trim(var_name))
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          end if
+        else
+          ! Just a $ with no variable name
+          result(j:j) = '$'
+          j = j + 1
+        end if
+      else
+        result(j:j) = input(i:i)
+        i = i + 1
+        j = j + 1
+      end if
+    end do
+
+    output = trim(result)
+  end subroutine
 
 end module control_flow
