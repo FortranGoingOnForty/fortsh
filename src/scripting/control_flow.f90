@@ -263,12 +263,12 @@ contains
     
     ! Evaluate condition
     call evaluate_condition(condition_cmd, shell, condition_result)
-    
-    ! For now, implement a simple while that executes once if condition is true
-    ! A full implementation would need loop state management and command replay
-    
+
     ! Push while block onto control stack
     call push_control_block(shell, BLOCK_WHILE, condition_result)
+
+    ! IMPORTANT: Store the condition command for re-evaluation at each iteration
+    shell%control_stack(shell%control_depth)%condition_cmd = condition_cmd
   end subroutine
   
   subroutine process_for_statement(cmd, shell, should_execute)
@@ -531,6 +531,7 @@ contains
 
     character(len=:), allocatable :: cond_result
     integer :: cond_value
+    logical :: condition_result
 
     should_execute = .false.  ! Don't execute the "done" keyword itself
 
@@ -603,11 +604,17 @@ contains
 
     else if (shell%control_stack(shell%control_depth)%block_type == BLOCK_WHILE) then
       ! For while loops, re-evaluate condition and replay if true
-      ! The condition is stored in condition_cmd and was already evaluated
-      ! We need to check the last exit status or re-evaluate
-      if (shell%last_exit_status == 0) then
-        ! Condition was true, executor will replay the loop body
-        return
+      ! The condition is stored in condition_cmd
+
+      if (len_trim(shell%control_stack(shell%control_depth)%condition_cmd) > 0) then
+        ! Re-evaluate the while condition with current variable values
+        call evaluate_condition(shell%control_stack(shell%control_depth)%condition_cmd, &
+                               shell, condition_result)
+
+        if (condition_result) then
+          ! Condition is still true - executor will replay the loop body
+          return
+        end if
       end if
     end if
 
@@ -664,13 +671,15 @@ contains
 
   subroutine evaluate_condition(condition_cmd, shell, result)
     use builtins, only: is_builtin, execute_builtin
+    use expansion, only: parameter_expansion
     character(len=*), intent(in) :: condition_cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: result
 
     type(command_t) :: cmd
-    character(len=256) :: tokens(50)
+    character(len=256) :: tokens(50), expanded_token
     integer :: num_tokens, i, pos, start_pos
+    character(len=:), allocatable :: expanded_result
 
     ! Simple condition evaluation
     ! For now, we'll execute the test builtin or check exit status
@@ -702,9 +711,22 @@ contains
           pos = pos + 1
         end do
 
-        ! Extract token
+        ! Extract token and expand variables
         num_tokens = num_tokens + 1
-        tokens(num_tokens) = condition_cmd(start_pos:pos-1)
+        expanded_token = condition_cmd(start_pos:pos-1)
+
+        ! Expand variables in the token (e.g., $count becomes the value of count)
+        if (index(expanded_token, '$') > 0) then
+          expanded_result = parameter_expansion(shell, trim(expanded_token))
+          if (allocated(expanded_result)) then
+            tokens(num_tokens) = expanded_result
+          else
+            tokens(num_tokens) = expanded_token
+          end if
+        else
+          tokens(num_tokens) = expanded_token
+        end if
+
         start_pos = pos + 1
       end do
 
