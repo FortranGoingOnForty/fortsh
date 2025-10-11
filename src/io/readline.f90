@@ -224,13 +224,10 @@ contains
     ! Return the result
     if (iostat == 0) then
       line = input_state%buffer(:input_state%length)
-      ! write(error_unit, '(a,a,a,i0)') 'DEBUG: Got line: "', trim(line), '", length: ', input_state%length
-      if (input_state%length > 0) then
-        call add_to_history(line)
-      end if
+      ! Note: History addition is now handled in the main loop AFTER expansion
+      ! This prevents history expansion commands like !! from referencing themselves
     else
       line = ''
-      ! write(error_unit, '(a)') 'DEBUG: iostat not 0, no line returned'
     end if
   end subroutine
 
@@ -240,18 +237,15 @@ contains
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
-    
+
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
     flush(output_unit)
-    
+
     ! Read line using standard input (no special key handling yet)
     read(input_unit, '(a)', iostat=iostat) line
-    
-    ! Add to history if successful and non-empty
-    if (iostat == 0 .and. len_trim(line) > 0) then
-      call add_to_history(line)
-    end if
+
+    ! Note: History addition is now handled in the main loop AFTER expansion
   end subroutine
 
   ! Enhanced readline with tab completion support
@@ -306,11 +300,8 @@ contains
     else
       line = temp_line
     end if
-    
-    ! Add to history if non-empty
-    if (len_trim(line) > 0) then
-      call add_to_history(line)
-    end if
+
+    ! Note: History addition is now handled in the main loop AFTER expansion
   end subroutine
 
   subroutine add_to_history(line)
@@ -540,26 +531,26 @@ contains
   function expand_history(input_line) result(expanded_line)
     character(len=*), intent(in) :: input_line
     character(len=len(input_line)) :: expanded_line
-    
+
     character(len=len(input_line)) :: work_line
     integer :: pos, expansion_start, expansion_end
     character(len=256) :: expansion, replacement
     logical :: found_expansion
-    
+
     work_line = input_line
     expanded_line = ''
     pos = 1
-    
+
     do while (pos <= len_trim(work_line))
-      if (work_line(pos:pos) == '!' .and. pos < len_trim(work_line)) then
+      if (work_line(pos:pos) == '!' .and. pos <= len_trim(work_line)) then
         ! Found potential history expansion
         expansion_start = pos
         expansion_end = find_history_expansion_end(work_line, pos)
-        
+
         if (expansion_end > expansion_start) then
           expansion = work_line(expansion_start:expansion_end)
           call process_history_expansion(expansion, replacement, found_expansion)
-          
+
           if (found_expansion) then
             expanded_line = trim(expanded_line) // trim(replacement)
             pos = expansion_end + 1
@@ -689,29 +680,32 @@ contains
   function needs_history_expansion(line) result(needs_expansion)
     character(len=*), intent(in) :: line
     logical :: needs_expansion
-    
-    integer :: pos
-    
+
+    integer :: pos, old_pos
+
     needs_expansion = .false.
     pos = index(line, '!')
-    
-    do while (pos > 0 .and. pos < len_trim(line))
+
+    do while (pos > 0 .and. pos <= len_trim(line))
       ! Check if this ! is the start of a history expansion
       if (pos == 1 .or. line(pos-1:pos-1) == ' ' .or. line(pos-1:pos-1) == char(9)) then
-        ! Check what follows the !
-        if (line(pos+1:pos+1) == '!' .or. &
-            (line(pos+1:pos+1) >= '0' .and. line(pos+1:pos+1) <= '9') .or. &
-            line(pos+1:pos+1) == '-' .or. &
-            (line(pos+1:pos+1) >= 'a' .and. line(pos+1:pos+1) <= 'z') .or. &
-            (line(pos+1:pos+1) >= 'A' .and. line(pos+1:pos+1) <= 'Z')) then
-          needs_expansion = .true.
-          return
+        ! Check what follows the ! (if there is something after it)
+        if (pos < len_trim(line)) then
+          if (line(pos+1:pos+1) == '!' .or. &
+              (line(pos+1:pos+1) >= '0' .and. line(pos+1:pos+1) <= '9') .or. &
+              line(pos+1:pos+1) == '-' .or. &
+              (line(pos+1:pos+1) >= 'a' .and. line(pos+1:pos+1) <= 'z') .or. &
+              (line(pos+1:pos+1) >= 'A' .and. line(pos+1:pos+1) <= 'Z')) then
+            needs_expansion = .true.
+            return
+          end if
         end if
       end if
-      
+
       ! Look for next !
+      old_pos = pos
       pos = index(line(pos+1:), '!')
-      if (pos > 0) pos = pos + len_trim(line(1:pos))
+      if (pos > 0) pos = pos + old_pos
     end do
   end function
 

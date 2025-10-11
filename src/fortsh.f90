@@ -21,7 +21,7 @@ program fortran_shell
   type(shell_state_t) :: shell
   type(pipeline_t) :: pipeline
   character(len=1024) :: input_line
-  character(len=:), allocatable :: expanded_line, prompt_str
+  character(len=:), allocatable :: expanded_line, prompt_str, history_expanded
   integer :: iostat, i
 
   ! Initialize performance monitoring
@@ -75,10 +75,7 @@ program fortran_shell
       call readline_enhanced(prompt_str, input_line, iostat)
     else
       read(input_unit, '(a)', iostat=iostat) input_line
-      ! Add to history in non-interactive mode too
-      if (iostat == 0 .and. len_trim(input_line) > 0) then
-        call add_to_history(input_line)
-      end if
+      ! Note: History will be added after expansion below
     end if
 
     ! Check for EOF (Ctrl-D)
@@ -90,8 +87,23 @@ program fortran_shell
     ! Skip empty lines
     if (len_trim(input_line) == 0) cycle
 
-    ! Expand aliases
-    call expand_alias(shell, trim(input_line), expanded_line)
+    ! Expand history (!!, !n, !string, etc.) if needed
+    if (needs_history_expansion(input_line)) then
+      history_expanded = expand_history(input_line)
+      ! Print expanded command if interactive (like bash does)
+      if (shell%is_interactive) then
+        write(output_unit, '(a)') trim(history_expanded)
+      end if
+      ! Add the EXPANDED command to history (not the original !!)
+      call add_to_history(history_expanded)
+      ! Now expand aliases on the history-expanded line
+      call expand_alias(shell, trim(history_expanded), expanded_line)
+    else
+      ! No history expansion needed, add original line to history
+      call add_to_history(input_line)
+      ! Then expand aliases
+      call expand_alias(shell, trim(input_line), expanded_line)
+    end if
 
     ! Parse pipeline
     call parse_pipeline(expanded_line, pipeline)
@@ -177,7 +189,7 @@ contains
     character(len=1024) :: input_line
     integer :: file_unit, iostat, i
     type(pipeline_t) :: pipeline
-    character(len=:), allocatable :: expanded_line
+    character(len=:), allocatable :: expanded_line, history_expanded
 
     ! Reset the source flag first
     shell%should_source = .false.
@@ -198,11 +210,17 @@ contains
       ! Skip empty lines and comments
       if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
 
-      ! Add to history
-      call add_to_history(input_line)
-
-      ! Expand aliases
-      call expand_alias(shell, trim(input_line), expanded_line)
+      ! Expand history if needed, then expand aliases
+      if (needs_history_expansion(input_line)) then
+        history_expanded = expand_history(input_line)
+        ! Add the EXPANDED command to history
+        call add_to_history(history_expanded)
+        call expand_alias(shell, trim(history_expanded), expanded_line)
+      else
+        ! Add original line to history
+        call add_to_history(input_line)
+        call expand_alias(shell, trim(input_line), expanded_line)
+      end if
 
       ! Parse and execute pipeline
       call parse_pipeline(expanded_line, pipeline)
