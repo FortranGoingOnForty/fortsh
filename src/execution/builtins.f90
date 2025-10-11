@@ -20,7 +20,17 @@ module builtins
   use printf_builtin
   use read_builtin
   use iso_fortran_env, only: output_unit, error_unit
+  use iso_c_binding
   implicit none
+
+  ! C interface for system() call
+  interface
+    function c_system(command) bind(C, name="system")
+      use iso_c_binding
+      character(kind=c_char), intent(in) :: command(*)
+      integer(c_int) :: c_system
+    end function c_system
+  end interface
 
 contains
 
@@ -72,6 +82,7 @@ contains
                 trim(cmd_name) == 'getopts' .or. &
                 trim(cmd_name) == 'printf' .or. &
                 trim(cmd_name) == 'read' .or. &
+                trim(cmd_name) == 'fc' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -166,6 +177,8 @@ contains
       call builtin_printf(cmd, shell)
     case('read')
       call builtin_read(cmd, shell)
+    case('fc')
+      call builtin_fc(cmd, shell)
     case default
       ! Should not reach here if is_builtin works correctly
       shell%last_exit_status = 1
@@ -2532,6 +2545,309 @@ contains
         end if
       end do
       shell%last_exit_status = 0
+    end if
+  end subroutine
+
+  subroutine builtin_fc(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical :: list_mode, no_line_numbers, reverse_order, subst_mode
+    character(len=:), allocatable :: editor, old_str, new_str
+    character(len=1024) :: line, tmpfile, edit_cmd
+    integer :: first, last, i, arg_idx, iostat, tmp_unit
+    integer :: eq_pos, history_count
+    logical :: found
+
+    ! Initialize flags
+    list_mode = .false.
+    no_line_numbers = .false.
+    reverse_order = .false.
+    subst_mode = .false.
+    editor = ''
+    first = -1
+    last = -1
+    arg_idx = 2
+
+    ! Get history count
+    history_count = get_history_count()
+    if (history_count == 0) then
+      write(error_unit, '(a)') 'fc: no commands in history'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Parse options
+    do while (arg_idx <= cmd%num_tokens)
+      if (cmd%tokens(arg_idx)(1:1) == '-') then
+        select case(trim(cmd%tokens(arg_idx)))
+        case('-l')
+          list_mode = .true.
+          arg_idx = arg_idx + 1
+        case('-n')
+          no_line_numbers = .true.
+          arg_idx = arg_idx + 1
+        case('-r')
+          reverse_order = .true.
+          arg_idx = arg_idx + 1
+        case('-e')
+          ! Next argument is editor name
+          if (arg_idx + 1 > cmd%num_tokens) then
+            write(error_unit, '(a)') 'fc: -e requires an argument'
+            shell%last_exit_status = 1
+            return
+          end if
+          editor = trim(cmd%tokens(arg_idx + 1))
+          arg_idx = arg_idx + 2
+        case('-s')
+          subst_mode = .true.
+          arg_idx = arg_idx + 1
+        case default
+          write(error_unit, '(a)') 'fc: invalid option: ' // trim(cmd%tokens(arg_idx))
+          shell%last_exit_status = 1
+          return
+        end select
+      else
+        exit  ! Done with options
+      end if
+    end do
+
+    ! Parse range arguments [first] [last] (skip for -s mode)
+    if (.not. subst_mode .and. arg_idx <= cmd%num_tokens) then
+      ! Parse first
+      if (cmd%tokens(arg_idx)(1:1) == '-') then
+        ! Negative offset from end
+        read(cmd%tokens(arg_idx), *, iostat=iostat) first
+        if (iostat == 0) first = history_count + first + 1
+      else
+        ! Try to parse as number
+        read(cmd%tokens(arg_idx), *, iostat=iostat) first
+        if (iostat /= 0) then
+          ! Not a number, search for command starting with this string
+          first = find_history_by_prefix(trim(cmd%tokens(arg_idx)))
+          if (first < 0) then
+            write(error_unit, '(a)') 'fc: ' // trim(cmd%tokens(arg_idx)) // ': event not found'
+            shell%last_exit_status = 1
+            return
+          end if
+        end if
+      end if
+      arg_idx = arg_idx + 1
+    end if
+
+    if (.not. subst_mode .and. arg_idx <= cmd%num_tokens) then
+      ! Parse last
+      if (cmd%tokens(arg_idx)(1:1) == '-') then
+        read(cmd%tokens(arg_idx), *, iostat=iostat) last
+        if (iostat == 0) last = history_count + last + 1
+      else
+        read(cmd%tokens(arg_idx), *, iostat=iostat) last
+        if (iostat /= 0) then
+          last = find_history_by_prefix(trim(cmd%tokens(arg_idx)))
+          if (last < 0) then
+            write(error_unit, '(a)') 'fc: ' // trim(cmd%tokens(arg_idx)) // ': event not found'
+            shell%last_exit_status = 1
+            return
+          end if
+        end if
+      end if
+    end if
+
+    ! Set defaults if not specified
+    if (first < 0) then
+      if (list_mode) then
+        first = max(1, history_count - 15)  ! Show last 16 commands by default
+      else if (subst_mode) then
+        first = max(1, history_count - 1)  ! Get command before fc itself
+      else
+        first = history_count  ! Edit last command
+      end if
+    end if
+
+    if (last < 0) then
+      if (list_mode) then
+        last = history_count
+      else
+        last = first  ! Edit single command
+      end if
+    end if
+
+    ! Validate range
+    if (first < 1) first = 1
+    if (last > history_count) last = history_count
+    if (first > last .and. .not. reverse_order) then
+      ! Swap if needed
+      i = first
+      first = last
+      last = i
+    end if
+
+    ! Handle -s (substitution mode)
+    if (subst_mode) then
+      ! fc -s [old=new] [command]
+      ! Parse old=new substitution
+      old_str = ''
+      new_str = ''
+
+      if (arg_idx <= cmd%num_tokens) then
+        eq_pos = index(cmd%tokens(arg_idx), '=')
+        if (eq_pos > 0) then
+          old_str = cmd%tokens(arg_idx)(:eq_pos-1)
+          new_str = cmd%tokens(arg_idx)(eq_pos+1:)
+          arg_idx = arg_idx + 1
+        end if
+      end if
+
+      ! Get the command to re-execute
+      call get_history_line(first, line, found)
+      if (.not. found) then
+        write(error_unit, '(a)') 'fc: history entry not found'
+        shell%last_exit_status = 1
+        return
+      end if
+
+      ! Perform substitution if requested
+      if (len_trim(old_str) > 0) then
+        i = index(line, trim(old_str))
+        if (i > 0) then
+          line = line(:i-1) // trim(new_str) // line(i+len_trim(old_str):)
+        else
+          write(error_unit, '(a)') 'fc: substitution failed'
+          shell%last_exit_status = 1
+          return
+        end if
+      end if
+
+      ! Print the command being executed
+      write(output_unit, '(a)') trim(line)
+
+      ! Execute using c_system
+      shell%last_exit_status = c_system(trim(line) // c_null_char)
+
+      return
+    end if
+
+    ! Handle -l (list mode)
+    if (list_mode) then
+      if (reverse_order) then
+        do i = last, first, -1
+          call get_history_line(i, line, found)
+          if (found) then
+            if (no_line_numbers) then
+              write(output_unit, '(a)') trim(line)
+            else
+              write(output_unit, '(i5,2x,a)') i, trim(line)
+            end if
+          end if
+        end do
+      else
+        do i = first, last
+          call get_history_line(i, line, found)
+          if (found) then
+            if (no_line_numbers) then
+              write(output_unit, '(a)') trim(line)
+            else
+              write(output_unit, '(i5,2x,a)') i, trim(line)
+            end if
+          end if
+        end do
+      end if
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! Handle edit mode (default)
+    ! Determine editor to use
+    if (len_trim(editor) == 0) then
+      editor = get_environment_var('FCEDIT')
+      if (len_trim(editor) == 0) then
+        editor = get_environment_var('EDITOR')
+        if (len_trim(editor) == 0) then
+          editor = 'vi'  ! Default to vi
+        end if
+      end if
+    end if
+
+    ! Create temporary file with commands to edit
+    write(tmpfile, '(a,i0)') '/tmp/fortsh_fc_', c_getpid()
+
+    open(newunit=tmp_unit, file=trim(tmpfile), status='replace', action='write', iostat=iostat)
+    if (iostat /= 0) then
+      write(error_unit, '(a)') 'fc: failed to create temporary file'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Write commands to temp file
+    do i = first, last
+      call get_history_line(i, line, found)
+      if (found) then
+        write(tmp_unit, '(a)') trim(line)
+      end if
+    end do
+    close(tmp_unit)
+
+    ! Launch editor
+    write(edit_cmd, '(a,1x,a)') trim(editor), trim(tmpfile)
+    i = c_system(trim(edit_cmd) // c_null_char)
+
+    ! Read back edited commands and execute them
+    open(newunit=tmp_unit, file=trim(tmpfile), status='old', action='read', iostat=iostat)
+    if (iostat /= 0) then
+      write(error_unit, '(a)') 'fc: failed to read edited file'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    do
+      read(tmp_unit, '(a)', iostat=iostat) line
+      if (iostat /= 0) exit
+
+      if (len_trim(line) == 0 .or. line(1:1) == '#') cycle
+
+      ! Execute the line using c_system
+      shell%last_exit_status = c_system(trim(line) // c_null_char)
+    end do
+
+    close(tmp_unit)
+
+    ! Clean up temporary file
+    call unlink_file(trim(tmpfile))
+
+    shell%last_exit_status = 0
+  end subroutine
+
+  function find_history_by_prefix(prefix) result(hist_index)
+    character(len=*), intent(in) :: prefix
+    integer :: hist_index
+    character(len=1024) :: line
+    logical :: found
+    integer :: i, count, pos
+
+    count = get_history_count()
+
+    ! Search backwards from most recent
+    do i = count, 1, -1
+      call get_history_line(i, line, found)
+      if (found) then
+        pos = index(line, trim(prefix))
+        if (pos == 1) then
+          hist_index = i
+          return
+        end if
+      end if
+    end do
+
+    hist_index = -1  ! Not found
+  end function
+
+  subroutine unlink_file(filepath)
+    character(len=*), intent(in) :: filepath
+    integer :: iostat
+
+    ! Use Fortran intrinsic to delete file
+    open(newunit=iostat, file=trim(filepath), status='old')
+    if (iostat >= 0) then
+      close(iostat, status='delete')
     end if
   end subroutine
 
