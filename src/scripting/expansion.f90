@@ -15,26 +15,140 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: expression
     character(len=2048) :: expanded
-    
-    character(len=256) :: var_name, operation, param1, param2
+
+    character(len=256) :: var_name, operation, param1, param2, pattern, replacement
     character(len=1024) :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos
-    integer :: offset, length, i
-    
+    integer :: offset, length, i, double_op_pos
+    logical :: replace_all, greedy
+
     expanded = ''
-    
+
     ! Remove ${ and }
     if (len_trim(expression) < 4) return
     var_name = expression(3:len_trim(expression)-1)
-    
-    ! Check for various expansion operations
+
+    ! Check for various expansion operations (need to check in right order!)
+
+    ! Check for case conversion first (^, ^^, ,, ,,)
+    ! Find the position of ^ or , to determine if it's case conversion
+    i = len_trim(var_name)
+    if (i > 1) then
+      if (var_name(i:i) == '^') then
+        ! Check for ^^ (uppercase all) or ^ (uppercase first)
+        if (i > 1 .and. var_name(i-1:i-1) == '^') then
+          ! ${var^^} - uppercase all
+          operation = var_name(:i-2)
+          var_value = get_shell_variable(shell, trim(operation))
+          expanded = to_upper(trim(var_value))
+        else
+          ! ${var^} - uppercase first
+          operation = var_name(:i-1)
+          var_value = get_shell_variable(shell, trim(operation))
+          if (len_trim(var_value) > 0) then
+            expanded = to_upper(var_value(1:1))
+            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+          end if
+        end if
+        return
+      else if (var_name(i:i) == ',') then
+        ! Check for ,, (lowercase all) or , (lowercase first)
+        if (i > 1 .and. var_name(i-1:i-1) == ',') then
+          ! ${var,,} - lowercase all
+          operation = var_name(:i-2)
+          var_value = get_shell_variable(shell, trim(operation))
+          expanded = to_lower(trim(var_value))
+        else
+          ! ${var,} - lowercase first
+          operation = var_name(:i-1)
+          var_value = get_shell_variable(shell, trim(operation))
+          if (len_trim(var_value) > 0) then
+            expanded = to_lower(var_value(1:1))
+            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+          end if
+        end if
+        return
+      end if
+    end if
+
+    ! Now check for other operations
     colon_pos = index(var_name, ':')
     dash_pos = index(var_name, '-')
     plus_pos = index(var_name, '+')
     percent_pos = index(var_name, '%')
     hash_pos = index(var_name, '#')
     slash_pos = index(var_name, '/')
-    
+
+    ! Pattern replacement: ${var/pattern/replacement} or ${var//pattern/replacement}
+    if (slash_pos > 0) then
+      ! Find second slash to separate pattern from replacement
+      i = index(var_name(slash_pos+1:), '/')
+      if (i > 0) then
+        i = slash_pos + i
+        operation = var_name(:slash_pos-1)
+        pattern = var_name(slash_pos+1:i-1)
+        replacement = var_name(i+1:)
+
+        ! Check if it's replace all (//)
+        if (slash_pos > 1 .and. var_name(slash_pos-1:slash_pos-1) == '/') then
+          replace_all = .true.
+          operation = var_name(:slash_pos-2)
+        else
+          replace_all = .false.
+        end if
+
+        var_value = get_shell_variable(shell, trim(operation))
+        call pattern_replace(trim(var_value), trim(pattern), trim(replacement), &
+                            replace_all, expanded)
+        return
+      end if
+    end if
+
+    ! Suffix removal: ${var%pattern} or ${var%%pattern}
+    if (percent_pos > 0) then
+      ! Check for %%
+      if (percent_pos < len_trim(var_name) .and. var_name(percent_pos+1:percent_pos+1) == '%') then
+        ! ${var%%pattern} - remove largest matching suffix
+        greedy = .true.
+        operation = var_name(:percent_pos-1)
+        pattern = var_name(percent_pos+2:)
+      else
+        ! ${var%pattern} - remove smallest matching suffix
+        greedy = .false.
+        operation = var_name(:percent_pos-1)
+        pattern = var_name(percent_pos+1:)
+      end if
+      var_value = get_shell_variable(shell, trim(operation))
+      call remove_suffix(trim(var_value), trim(pattern), greedy, expanded)
+      return
+    end if
+
+    ! Prefix removal: ${var#pattern} or ${var##pattern}
+    ! But first check if it's ${#var} (length)
+    if (hash_pos == 1 .and. len_trim(var_name) > 1) then
+      ! ${#var} length expansion
+      operation = var_name(2:)
+      var_value = get_shell_variable(shell, trim(operation))
+      write(expanded, '(I0)') len_trim(var_value)
+      return
+    else if (hash_pos > 1) then
+      ! Check for ##
+      if (hash_pos < len_trim(var_name) .and. var_name(hash_pos+1:hash_pos+1) == '#') then
+        ! ${var##pattern} - remove largest matching prefix
+        greedy = .true.
+        operation = var_name(:hash_pos-1)
+        pattern = var_name(hash_pos+2:)
+      else
+        ! ${var#pattern} - remove smallest matching prefix
+        greedy = .false.
+        operation = var_name(:hash_pos-1)
+        pattern = var_name(hash_pos+1:)
+      end if
+      var_value = get_shell_variable(shell, trim(operation))
+      call remove_prefix(trim(var_value), trim(pattern), greedy, expanded)
+      return
+    end if
+
     if (colon_pos > 0) then
       ! ${var:offset:length} substring expansion
       call parse_substring_expansion(var_name, operation, param1, param2)
@@ -118,6 +232,199 @@ contains
       offset_str = input(first_colon+1:)
     end if
   end subroutine
+
+  ! ============================================================================
+  ! Parameter Expansion Helper Functions
+  ! ============================================================================
+
+  ! Convert string to uppercase
+  function to_upper(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=len(input)) :: output
+    integer :: i, char_code
+
+    output = input
+    do i = 1, len_trim(input)
+      char_code = ichar(input(i:i))
+      if (char_code >= ichar('a') .and. char_code <= ichar('z')) then
+        output(i:i) = char(char_code - 32)
+      end if
+    end do
+  end function
+
+  ! Convert string to lowercase
+  function to_lower(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=len(input)) :: output
+    integer :: i, char_code
+
+    output = input
+    do i = 1, len_trim(input)
+      char_code = ichar(input(i:i))
+      if (char_code >= ichar('A') .and. char_code <= ichar('Z')) then
+        output(i:i) = char(char_code + 32)
+      end if
+    end do
+  end function
+
+  ! Pattern replacement in string
+  subroutine pattern_replace(input, pattern, replacement, replace_all, output)
+    character(len=*), intent(in) :: input, pattern, replacement
+    logical, intent(in) :: replace_all
+    character(len=*), intent(out) :: output
+    integer :: pos, last_pos
+    character(len=2048) :: temp
+
+    output = ''
+    temp = input
+
+    if (len_trim(pattern) == 0) then
+      output = input
+      return
+    end if
+
+    last_pos = 1
+    do
+      pos = index(temp(last_pos:), trim(pattern))
+      if (pos == 0) then
+        ! No more matches, append rest
+        output = trim(output) // temp(last_pos:)
+        exit
+      end if
+
+      ! Append text before match + replacement
+      pos = last_pos + pos - 1
+      output = trim(output) // temp(last_pos:pos-1) // trim(replacement)
+      last_pos = pos + len_trim(pattern)
+
+      if (.not. replace_all) then
+        ! Only replace first occurrence
+        output = trim(output) // temp(last_pos:)
+        exit
+      end if
+    end do
+  end subroutine
+
+  ! Remove suffix matching pattern (greedy or non-greedy)
+  subroutine remove_suffix(input, pattern, greedy, output)
+    character(len=*), intent(in) :: input, pattern
+    logical, intent(in) :: greedy
+    character(len=*), intent(out) :: output
+    integer :: pos, best_pos, i
+
+    output = input
+
+    if (len_trim(pattern) == 0) return
+
+    if (greedy) then
+      ! Remove largest matching suffix (%%)
+      ! Try to match from start of string
+      best_pos = 0
+      do i = 1, len_trim(input)
+        if (match_pattern(input(i:), trim(pattern))) then
+          best_pos = i
+          exit
+        end if
+      end do
+      if (best_pos > 0) then
+        output = input(1:best_pos-1)
+      end if
+    else
+      ! Remove smallest matching suffix (%)
+      ! Try to match from end of string
+      do i = len_trim(input), 1, -1
+        if (match_pattern(input(i:), trim(pattern))) then
+          output = input(1:i-1)
+          return
+        end if
+      end do
+    end if
+  end subroutine
+
+  ! Remove prefix matching pattern (greedy or non-greedy)
+  subroutine remove_prefix(input, pattern, greedy, output)
+    character(len=*), intent(in) :: input, pattern
+    logical, intent(in) :: greedy
+    character(len=*), intent(out) :: output
+    integer :: pos, best_pos, i
+
+    output = input
+
+    if (len_trim(pattern) == 0) return
+
+    if (greedy) then
+      ! Remove largest matching prefix (##)
+      ! Try to match from end, working backwards
+      best_pos = 0
+      do i = len_trim(input), 1, -1
+        if (match_pattern(input(1:i), trim(pattern))) then
+          best_pos = i
+          exit
+        end if
+      end do
+      if (best_pos > 0) then
+        output = input(best_pos+1:)
+      end if
+    else
+      ! Remove smallest matching prefix (#)
+      ! Try to match from start
+      do i = 1, len_trim(input)
+        if (match_pattern(input(1:i), trim(pattern))) then
+          output = input(i+1:)
+          return
+        end if
+      end do
+    end if
+  end subroutine
+
+  ! Simple pattern matching (supports * and ? wildcards)
+  function match_pattern(str, pattern) result(matches)
+    character(len=*), intent(in) :: str, pattern
+    logical :: matches
+    integer :: s_pos, p_pos, s_len, p_len
+    integer :: star_pos, s_star_pos
+
+    s_len = len_trim(str)
+    p_len = len_trim(pattern)
+    s_pos = 1
+    p_pos = 1
+    star_pos = 0
+    s_star_pos = 0
+
+    do while (s_pos <= s_len)
+      if (p_pos <= p_len) then
+        if (pattern(p_pos:p_pos) == '*') then
+          ! Found *, record position and try to match rest
+          star_pos = p_pos
+          s_star_pos = s_pos
+          p_pos = p_pos + 1
+          cycle
+        else if (pattern(p_pos:p_pos) == '?' .or. pattern(p_pos:p_pos) == str(s_pos:s_pos)) then
+          ! Match single character
+          p_pos = p_pos + 1
+          s_pos = s_pos + 1
+          cycle
+        end if
+      end if
+
+      ! No match, backtrack if we had a *
+      if (star_pos > 0) then
+        p_pos = star_pos + 1
+        s_star_pos = s_star_pos + 1
+        s_pos = s_star_pos
+      else
+        matches = .false.
+        return
+      end if
+    end do
+
+    ! Check remaining pattern for trailing *
+    do while (p_pos <= p_len .and. pattern(p_pos:p_pos) == '*')
+      p_pos = p_pos + 1
+    end do
+
+    matches = (p_pos > p_len)
+  end function
 
   ! ============================================================================
   ! Arithmetic Expansion: $((expression))
@@ -1257,13 +1564,13 @@ contains
         start_pos = i
         bracket_count = 1
         i = i + 2
-        
+
         do while (i <= len_trim(input) .and. bracket_count > 0)
           if (input(i:i) == '{') bracket_count = bracket_count + 1
           if (input(i:i) == '}') bracket_count = bracket_count - 1
           i = i + 1
         end do
-        
+
         if (bracket_count == 0) then
           var_expr = input(start_pos:i-1)
           var_value = parameter_expansion(shell, var_expr)
@@ -1681,7 +1988,7 @@ contains
     call tilde_expansion(shell, brace_expanded, tilde_expanded)
 
     ! Step 2: Parameter and variable expansion
-    call simple_expand_variables(tilde_expanded, temp_result, shell)
+    call enhanced_expand_variables(tilde_expanded, temp_result, shell)
 
     ! Step 3: Quote removal
     quote_removed = remove_quotes(temp_result)

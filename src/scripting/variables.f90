@@ -301,6 +301,9 @@ contains
       var_name = input_line(:eq_pos-1)
       var_value = input_line(eq_pos+1:)
 
+      ! Strip surrounding quotes from value
+      call strip_quotes(var_value)
+
       ! Check for indexed/associative array assignment: arr[index]=value or map[key]=value
       bracket_pos = index(var_name, '[')
       if (bracket_pos > 0) then
@@ -1324,6 +1327,34 @@ contains
     end if
 
     write(value, '(i0)') elapsed
+  end subroutine
+
+  ! Strip surrounding quotes (single or double) from a string
+  subroutine strip_quotes(str)
+    character(len=*), intent(inout) :: str
+    integer :: len_str
+    character(len=len(str)) :: temp
+
+    len_str = len_trim(str)
+
+    ! Check if string has surrounding quotes
+    if (len_str >= 2) then
+      ! Check for single quotes
+      if (str(1:1) == "'" .and. str(len_str:len_str) == "'") then
+        temp = str(2:len_str-1)
+        str = ''
+        str = temp
+        return
+      end if
+
+      ! Check for double quotes
+      if (str(1:1) == '"' .and. str(len_str:len_str) == '"') then
+        temp = str(2:len_str-1)
+        str = ''
+        str = temp
+        return
+      end if
+    end if
   end subroutine
 
 end module variables
