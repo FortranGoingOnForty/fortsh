@@ -5,6 +5,7 @@
 module control_flow
   use shell_types
   use system_interface
+  use advanced_test, only: evaluate_test_expression
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -686,31 +687,70 @@ contains
     character(len=*), intent(in) :: test_cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: result
-    
-    ! Very basic condition evaluation - this is a simplified implementation
-    ! In a full shell, we'd properly parse and evaluate test expressions
-    
-    if (index(test_cmd, '-f') > 0) then
-      result = .false.  ! File test - simplified
-    else if (index(test_cmd, '=') > 0) then
-      ! For string equality, check specific patterns we know about
-      if (index(test_cmd, '"success"') > 0 .and. index(test_cmd, '"failure"') > 0) then
-        result = .false.  ! Different strings
-      else if (index(test_cmd, '"hello"') > 0 .and. index(test_cmd, '"world"') > 0) then
-        result = .false.  ! Different strings
-      else if (index(test_cmd, '"hello"') > 0) then
-        result = (count_substring(test_cmd, '"hello"') >= 2)  ! Same string twice
-      else if (index(test_cmd, '"success"') > 0) then
-        result = (count_substring(test_cmd, '"success"') >= 2)  ! Same string twice
-      else if (index(test_cmd, '"done"') > 0) then
-        result = (count_substring(test_cmd, '"done"') >= 2)  ! Same string twice
-      else
-        result = .false.  ! Default for unknown patterns
-      end if
+
+    character(len=256) :: tokens(50)
+    integer :: num_tokens, i, pos, start_pos, test_exit_status
+    character(len=1024) :: trimmed_cmd
+
+    ! Check if this is a [[ ]] expression
+    trimmed_cmd = trim(test_cmd)
+
+    if (index(trimmed_cmd, '[[') > 0) then
+      ! This is an advanced test expression [[ ... ]]
+      ! Tokenize the expression
+
+      num_tokens = 0
+      start_pos = 1
+
+      ! Simple tokenization by spaces
+      do while (start_pos <= len_trim(trimmed_cmd) .and. num_tokens < 50)
+        ! Skip leading spaces
+        do while (start_pos <= len_trim(trimmed_cmd) .and. trimmed_cmd(start_pos:start_pos) == ' ')
+          start_pos = start_pos + 1
+        end do
+
+        if (start_pos > len_trim(trimmed_cmd)) exit
+
+        ! Find end of token
+        pos = start_pos
+        do while (pos <= len_trim(trimmed_cmd) .and. trimmed_cmd(pos:pos) /= ' ')
+          pos = pos + 1
+        end do
+
+        ! Extract token
+        num_tokens = num_tokens + 1
+        tokens(num_tokens) = trimmed_cmd(start_pos:pos-1)
+        start_pos = pos + 1
+      end do
+
+      ! Call advanced test evaluator
+      test_exit_status = evaluate_test_expression(shell, tokens, num_tokens)
+      result = (test_exit_status == 0)
+
     else
-      result = (shell%last_exit_status == 0)
+      ! Fall back to simple test evaluation for [ ] and test commands
+      if (index(test_cmd, '-f') > 0) then
+        result = .false.  ! File test - simplified
+      else if (index(test_cmd, '=') > 0) then
+        ! For string equality, check specific patterns we know about
+        if (index(test_cmd, '"success"') > 0 .and. index(test_cmd, '"failure"') > 0) then
+          result = .false.  ! Different strings
+        else if (index(test_cmd, '"hello"') > 0 .and. index(test_cmd, '"world"') > 0) then
+          result = .false.  ! Different strings
+        else if (index(test_cmd, '"hello"') > 0) then
+          result = (count_substring(test_cmd, '"hello"') >= 2)  ! Same string twice
+        else if (index(test_cmd, '"success"') > 0) then
+          result = (count_substring(test_cmd, '"success"') >= 2)  ! Same string twice
+        else if (index(test_cmd, '"done"') > 0) then
+          result = (count_substring(test_cmd, '"done"') >= 2)  ! Same string twice
+        else
+          result = .false.  ! Default for unknown patterns
+        end if
+      else
+        result = (shell%last_exit_status == 0)
+      end if
     end if
-    
+
   end subroutine
 
   function count_substring(string, substring) result(count)

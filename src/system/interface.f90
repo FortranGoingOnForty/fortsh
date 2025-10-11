@@ -74,6 +74,60 @@ module system_interface
     integer(c_long) :: st_ctime    ! Status change time
   end type stat_t
 
+  ! timeval structure for getrusage
+  type, bind(c) :: timeval_t
+    integer(c_long) :: tv_sec      ! Seconds
+    integer(c_long) :: tv_usec     ! Microseconds
+  end type timeval_t
+
+  ! rusage structure for getrusage
+  type, bind(c) :: rusage_t
+    type(timeval_t) :: ru_utime    ! User CPU time used
+    type(timeval_t) :: ru_stime    ! System CPU time used
+    integer(c_long) :: ru_maxrss   ! Maximum resident set size
+    integer(c_long) :: ru_ixrss    ! Integral shared memory size
+    integer(c_long) :: ru_idrss    ! Integral unshared data size
+    integer(c_long) :: ru_isrss    ! Integral unshared stack size
+    integer(c_long) :: ru_minflt   ! Page reclaims (soft page faults)
+    integer(c_long) :: ru_majflt   ! Page faults (hard page faults)
+    integer(c_long) :: ru_nswap    ! Swaps
+    integer(c_long) :: ru_inblock  ! Block input operations
+    integer(c_long) :: ru_oublock  ! Block output operations
+    integer(c_long) :: ru_msgsnd   ! IPC messages sent
+    integer(c_long) :: ru_msgrcv   ! IPC messages received
+    integer(c_long) :: ru_nsignals ! Signals received
+    integer(c_long) :: ru_nvcsw    ! Voluntary context switches
+    integer(c_long) :: ru_nivcsw   ! Involuntary context switches
+  end type rusage_t
+
+  ! getrusage who parameter values
+  integer(c_int), parameter :: RUSAGE_SELF = 0
+  integer(c_int), parameter :: RUSAGE_CHILDREN = -1
+
+  ! rlimit structure for getrlimit/setrlimit
+  type, bind(c) :: rlimit_t
+    integer(c_long) :: rlim_cur    ! Current (soft) limit
+    integer(c_long) :: rlim_max    ! Maximum (hard) limit
+  end type rlimit_t
+
+  ! Resource limit constants
+  integer(c_int), parameter :: RLIMIT_CPU = 0        ! CPU time in seconds
+  integer(c_int), parameter :: RLIMIT_FSIZE = 1      ! Maximum file size
+  integer(c_int), parameter :: RLIMIT_DATA = 2       ! Maximum data segment size
+  integer(c_int), parameter :: RLIMIT_STACK = 3      ! Maximum stack size
+  integer(c_int), parameter :: RLIMIT_CORE = 4       ! Maximum core file size
+  integer(c_int), parameter :: RLIMIT_RSS = 5        ! Maximum resident set size
+  integer(c_int), parameter :: RLIMIT_NOFILE = 7     ! Maximum number of open files
+  integer(c_int), parameter :: RLIMIT_AS = 9         ! Address space (virtual memory) limit
+  integer(c_int), parameter :: RLIMIT_NPROC = 6      ! Maximum number of processes
+  integer(c_int), parameter :: RLIMIT_MEMLOCK = 8    ! Maximum locked-in-memory address space
+  integer(c_int), parameter :: RLIMIT_LOCKS = 10     ! Maximum file locks
+  integer(c_int), parameter :: RLIMIT_SIGPENDING = 11 ! Maximum pending signals
+  integer(c_int), parameter :: RLIMIT_MSGQUEUE = 12  ! Maximum bytes in POSIX message queues
+
+  ! Infinite limit value
+  integer(c_long), parameter :: RLIM_INFINITY = -1
+
   ! C function interfaces
   interface
     function c_fork() bind(C, name="fork")
@@ -304,6 +358,33 @@ module system_interface
       type(c_ptr), value :: pathname
       integer(c_int), value :: mode
       integer(c_int) :: c_access
+    end function
+
+    function c_umask(mask) bind(C, name="umask")
+      import :: c_int
+      integer(c_int), value :: mask
+      integer(c_int) :: c_umask
+    end function
+
+    function c_getrusage(who, usage) bind(C, name="getrusage")
+      import :: c_int, rusage_t
+      integer(c_int), value :: who
+      type(rusage_t), intent(out) :: usage
+      integer(c_int) :: c_getrusage
+    end function
+
+    function c_getrlimit(resource, rlim) bind(C, name="getrlimit")
+      import :: c_int, rlimit_t
+      integer(c_int), value :: resource
+      type(rlimit_t), intent(out) :: rlim
+      integer(c_int) :: c_getrlimit
+    end function
+
+    function c_setrlimit(resource, rlim) bind(C, name="setrlimit")
+      import :: c_int, rlimit_t
+      integer(c_int), value :: resource
+      type(rlimit_t), intent(in) :: rlim
+      integer(c_int) :: c_setrlimit
     end function
   end interface
 

@@ -6,6 +6,7 @@ module test_builtin
   use shell_types
   use system_interface
   use variables, only: is_shell_variable_set
+  use advanced_test, only: evaluate_test_expression
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -30,10 +31,16 @@ contains
     logical :: left_result, right_result
     character(len=256) :: log_op, op2, arg2
     type(command_t) :: sub_cmd
-    integer :: i
+    integer :: i, test_exit_status
 
-    ! Simple test implementation - would need to parse arguments properly
-    ! For now, implement basic tests
+    ! Check if this is [[ ]] (advanced test) - use advanced_test module
+    if (trim(cmd%tokens(1)) == '[[') then
+      test_exit_status = evaluate_test_expression(shell, cmd%tokens, cmd%num_tokens)
+      shell%last_exit_status = test_exit_status
+      return
+    end if
+
+    ! Simple test implementation for [ and test commands
 
     if (cmd%num_tokens < 2) then
       shell%last_exit_status = 1  ! False
