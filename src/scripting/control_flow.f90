@@ -670,7 +670,8 @@ contains
   end function
 
   subroutine evaluate_condition(condition_cmd, shell, result)
-    use builtins, only: is_builtin, execute_builtin
+    ! FIXME: Circular dependency with builtins - temporarily disabled
+    !use builtins, only: is_builtin, execute_builtin
     use expansion, only: parameter_expansion
     character(len=*), intent(in) :: condition_cmd
     type(shell_state_t), intent(inout) :: shell
@@ -730,28 +731,29 @@ contains
         start_pos = pos + 1
       end do
 
+      ! FIXME: Circular dependency - builtin execution disabled temporarily
       ! If we have tokens and the first is a builtin, execute it
-      if (num_tokens > 0 .and. is_builtin(trim(tokens(1)))) then
-        ! Build command structure
-        cmd%num_tokens = num_tokens
-        allocate(character(len=256) :: cmd%tokens(num_tokens))
-        do i = 1, num_tokens
-          cmd%tokens(i) = trim(tokens(i))
-        end do
-
-        ! Execute the builtin
-        call execute_builtin(cmd, shell)
-
-        ! Clean up
-        deallocate(cmd%tokens)
-
-        ! Check exit status
-        result = (shell%last_exit_status == 0)
-      else
+      !if (num_tokens > 0 .and. is_builtin(trim(tokens(1)))) then
+      !  ! Build command structure
+      !  cmd%num_tokens = num_tokens
+      !  allocate(character(len=256) :: cmd%tokens(num_tokens))
+      !  do i = 1, num_tokens
+      !    cmd%tokens(i) = trim(tokens(i))
+      !  end do
+      !
+      !  ! Execute the builtin
+      !  call execute_builtin(cmd, shell)
+      !
+      !  ! Clean up
+      !  deallocate(cmd%tokens)
+      !
+      !  ! Check exit status
+      !  result = (shell%last_exit_status == 0)
+      !else
         ! Not a builtin - for now, treat as false
         ! In a full implementation, we'd execute external commands too
         result = .false.
-      end if
+      !end if
     end if
   end subroutine
 
