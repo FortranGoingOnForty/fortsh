@@ -663,23 +663,73 @@ contains
   end function
 
   subroutine evaluate_condition(condition_cmd, shell, result)
+    use builtins, only: is_builtin, execute_builtin
     character(len=*), intent(in) :: condition_cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: result
-    
+
+    type(command_t) :: cmd
+    character(len=256) :: tokens(50)
+    integer :: num_tokens, i, pos, start_pos
+
     ! Simple condition evaluation
     ! For now, we'll execute the test builtin or check exit status
-    
+
     ! Check if it's a test command (starts with [ or test)
     if (index(trim(condition_cmd), '[') == 1 .or. &
         index(trim(condition_cmd), 'test ') == 1) then
       ! Execute test command and check result
       call execute_test_condition(condition_cmd, shell, result)
     else
-      ! For other commands, check exit status 
-      ! For now, just default to true for simple conditions
-      result = .true.
-      write(output_unit, '(a,a)') 'Condition evaluation not fully implemented: ', trim(condition_cmd)
+      ! For other commands, parse and execute them to check exit status
+      ! This allows any command to be used as a loop/if condition (POSIX compliant)
+
+      ! Tokenize the condition command
+      num_tokens = 0
+      start_pos = 1
+
+      do while (start_pos <= len_trim(condition_cmd) .and. num_tokens < 50)
+        ! Skip leading spaces
+        do while (start_pos <= len_trim(condition_cmd) .and. condition_cmd(start_pos:start_pos) == ' ')
+          start_pos = start_pos + 1
+        end do
+
+        if (start_pos > len_trim(condition_cmd)) exit
+
+        ! Find end of token
+        pos = start_pos
+        do while (pos <= len_trim(condition_cmd) .and. condition_cmd(pos:pos) /= ' ')
+          pos = pos + 1
+        end do
+
+        ! Extract token
+        num_tokens = num_tokens + 1
+        tokens(num_tokens) = condition_cmd(start_pos:pos-1)
+        start_pos = pos + 1
+      end do
+
+      ! If we have tokens and the first is a builtin, execute it
+      if (num_tokens > 0 .and. is_builtin(trim(tokens(1)))) then
+        ! Build command structure
+        cmd%num_tokens = num_tokens
+        allocate(character(len=256) :: cmd%tokens(num_tokens))
+        do i = 1, num_tokens
+          cmd%tokens(i) = trim(tokens(i))
+        end do
+
+        ! Execute the builtin
+        call execute_builtin(cmd, shell)
+
+        ! Clean up
+        deallocate(cmd%tokens)
+
+        ! Check exit status
+        result = (shell%last_exit_status == 0)
+      else
+        ! Not a builtin - for now, treat as false
+        ! In a full implementation, we'd execute external commands too
+        result = .false.
+      end if
     end if
   end subroutine
 
