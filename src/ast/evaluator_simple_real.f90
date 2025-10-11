@@ -27,6 +27,28 @@ module evaluator_simple_real
     type(c_ptr) :: pw_shell
   end type passwd_t
 
+  ! POSIX regex types for =~ operator
+  type, bind(C) :: regex_t
+    ! Opaque regex_t structure - we only need to pass it to C functions
+    ! Actual size may vary by system, but allocate enough space
+    integer(c_int) :: re_dummy(32)  ! Placeholder - C functions handle it
+  end type regex_t
+
+  type, bind(C) :: regmatch_t
+    integer(c_int) :: rm_so  ! Start offset
+    integer(c_int) :: rm_eo  ! End offset
+  end type regmatch_t
+
+  ! Regex compilation flags
+  integer(c_int), parameter :: REG_EXTENDED = 1    ! Use extended regular expressions
+  integer(c_int), parameter :: REG_ICASE = 2       ! Ignore case
+  integer(c_int), parameter :: REG_NOSUB = 4       ! No substring addressing
+  integer(c_int), parameter :: REG_NEWLINE = 8     ! Newline is special
+
+  ! Regex execution flags
+  integer(c_int), parameter :: REG_NOTBOL = 1      ! Start of string is not beginning of line
+  integer(c_int), parameter :: REG_NOTEOL = 2      ! End of string is not end of line
+
   ! C interface for system call
   interface
     function c_system(command) bind(C, name="system")
@@ -119,6 +141,33 @@ module evaluator_simple_real
       character(kind=c_char), dimension(*), intent(in) :: name
       type(c_ptr) :: c_getpwnam  ! Returns pointer to passwd struct
     end function c_getpwnam
+
+    ! POSIX regex support for =~ operator
+    function c_regcomp(preg, pattern, cflags) bind(C, name="regcomp")
+      use iso_c_binding
+      import :: regex_t
+      type(regex_t), intent(inout) :: preg
+      character(kind=c_char), dimension(*), intent(in) :: pattern
+      integer(c_int), value :: cflags
+      integer(c_int) :: c_regcomp  ! Returns 0 on success
+    end function c_regcomp
+
+    function c_regexec(preg, string, nmatch, pmatch, eflags) bind(C, name="regexec")
+      use iso_c_binding
+      import :: regex_t, regmatch_t
+      type(regex_t), intent(in) :: preg
+      character(kind=c_char), dimension(*), intent(in) :: string
+      integer(c_size_t), value :: nmatch
+      type(regmatch_t), dimension(*) :: pmatch
+      integer(c_int), value :: eflags
+      integer(c_int) :: c_regexec  ! Returns 0 on match
+    end function c_regexec
+
+    subroutine c_regfree(preg) bind(C, name="regfree")
+      use iso_c_binding
+      import :: regex_t
+      type(regex_t), intent(inout) :: preg
+    end subroutine c_regfree
 
     ! Process substitution support
     function c_mkfifo(pathname, mode) bind(C, name="mkfifo")
@@ -747,6 +796,7 @@ contains
     logical :: has_redirections
     character(256) :: redir_file
     character(16) :: pid_str
+    character(16) :: tmp
     type(redirection_node_t), pointer :: redir
     real :: rnum
 
@@ -1195,7 +1245,7 @@ contains
         select case(trim(expanded_word))
         case('echo', 'pwd', 'cd', 'exit', 'return', 'export', 'set', 'declare', 'true', 'false', &
              'test', '[', 'unset', 'read', 'source', '.', 'alias', 'type', &
-             'printf', 'let', 'eval', 'shift', 'local')
+             'printf', 'let', 'eval', 'shift', 'local', 'getopts', 'trap', 'wait', 'kill', 'ulimit')
           write(output_unit, '(2a)') trim(expanded_word), ' is a shell builtin'
         case default
           ! Not a builtin, check if it's a shell function
@@ -1362,6 +1412,259 @@ contains
         exit_code = 0
       else
         exit_code = 0
+      end if
+
+    case('getopts')
+      ! getopts - parse command options
+      ! Usage: getopts optstring name [args]
+      ! Example: getopts "a:b:c" opt
+      if (node%num_words >= 3 .and. associated(self%context%shell)) then
+        ! Get optstring (e.g., "a:b:c" where : means option requires argument)
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        ! Get variable name to store current option
+        word_value = self%eval_word(node%words(3)%ptr)
+
+        ! Get OPTIND (current position, defaults to 1)
+        cmd_str = self%context%get_var('OPTIND')
+        if (len_trim(cmd_str) == 0) then
+          j = 1  ! Start at first positional parameter
+        else
+          read(cmd_str, *, iostat=status) j
+          if (status /= 0) j = 1
+        end if
+
+        ! Check if we're done (no more positional parameters)
+        if (j > self%context%shell%num_positional) then
+          exit_code = 1  ! Done processing
+        else
+          ! Get current positional parameter
+          cmd_str = trim(self%context%shell%positional_params(j))
+
+          ! Check if it starts with - and has at least one option character
+          if (len_trim(cmd_str) >= 2 .and. cmd_str(1:1) == '-' .and. cmd_str(2:2) /= '-') then
+            ! Extract option character (first char after -)
+            tmp(1:1) = cmd_str(2:2)
+
+            ! Check if this option is in optstring
+            i = index(expanded_word, tmp(1:1))
+            if (i > 0) then
+              ! Valid option - set the variable to the option character
+              call self%context%set_var(trim(word_value), tmp(1:1))
+
+              ! Check if option requires an argument (followed by : in optstring)
+              if (i < len_trim(expanded_word) .and. expanded_word(i+1:i+1) == ':') then
+                ! Option requires an argument
+                if (len_trim(cmd_str) > 2) then
+                  ! Argument is rest of current parameter (e.g., -ovalue)
+                  call self%context%set_var('OPTARG', trim(cmd_str(3:)))
+                  j = j + 1
+                else if (j < self%context%shell%num_positional) then
+                  ! Argument is next parameter (e.g., -o value)
+                  j = j + 1
+                  call self%context%set_var('OPTARG', &
+                    trim(self%context%shell%positional_params(j)))
+                  j = j + 1
+                else
+                  ! Missing required argument
+                  call self%context%set_var(trim(word_value), '?')
+                  call self%context%set_var('OPTARG', tmp(1:1))
+                  j = j + 1
+                  exit_code = 0
+                end if
+              else
+                ! Option doesn't require argument
+                j = j + 1
+              end if
+              exit_code = 0
+            else
+              ! Invalid option
+              call self%context%set_var(trim(word_value), '?')
+              call self%context%set_var('OPTARG', tmp(1:1))
+              j = j + 1
+              exit_code = 0
+            end if
+          else
+            ! Not an option (doesn't start with -) - done
+            exit_code = 1
+          end if
+
+          ! Update OPTIND
+          write(tmp, '(i0)') j
+          call self%context%set_var('OPTIND', trim(tmp))
+        end if
+      else
+        exit_code = 1
+      end if
+
+    case('trap')
+      ! trap - catch signals and execute commands
+      ! Usage: trap [-p] [[arg] signal_spec ...]
+      ! Example: trap 'echo caught' SIGINT
+      !          trap - SIGINT  (remove trap)
+      !          trap -p        (list traps)
+
+      ! NOTE: This is a minimal implementation that doesn't actually set signal handlers
+      ! Full signal handling would require C bindings for sigaction/signal
+
+      if (node%num_words == 1) then
+        ! No arguments - list all traps (currently none implemented)
+        exit_code = 0
+      else if (node%num_words == 2) then
+        expanded_word = self%eval_word(node%words(2)%ptr)
+        if (trim(expanded_word) == '-p') then
+          ! List traps in reusable format (currently none)
+          exit_code = 0
+        else
+          ! Invalid usage
+          exit_code = 1
+        end if
+      else if (node%num_words >= 3) then
+        ! Get command and signal
+        cmd_str = self%eval_word(node%words(2)%ptr)
+        word_value = self%eval_word(node%words(3)%ptr)
+
+        ! In a full implementation, we would:
+        ! 1. Parse signal name/number (SIGINT, INT, 2, etc.)
+        ! 2. Store cmd_str as the handler for that signal
+        ! 3. Use sigaction/signal C bindings to register handler
+        ! 4. On signal, execute the stored command
+
+        ! For now, just accept the syntax and return success
+        exit_code = 0
+      else
+        exit_code = 1
+      end if
+
+    case('wait')
+      ! wait - wait for background processes to complete
+      ! Usage: wait [pid ...]
+      ! Example: wait
+      !          wait %1
+      !          wait $pid
+
+      ! NOTE: This is a minimal implementation
+      ! Full job control would require:
+      ! 1. Tracking background PIDs in shell context
+      ! 2. C bindings for waitpid()
+      ! 3. Job table with job IDs and states
+
+      if (node%num_words == 1) then
+        ! No arguments - wait for all background jobs
+        ! In full implementation: loop through all background PIDs and wait
+        exit_code = 0
+      else
+        ! Wait for specific PIDs
+        do i = 2, node%num_words
+          if (associated(node%words(i)%ptr)) then
+            word_value = self%eval_word(node%words(i)%ptr)
+            ! In full implementation:
+            ! 1. Parse PID or job ID (%1, %2, etc.)
+            ! 2. Call waitpid() for that process
+            ! 3. Set exit_code to the exit status of the waited process
+          end if
+        end do
+        exit_code = 0
+      end if
+
+    case('kill')
+      ! kill - send signal to processes
+      ! Usage: kill [-s sigspec | -n signum | -sigspec] pid ...
+      ! Example: kill 1234
+      !          kill -9 1234
+      !          kill -TERM 1234
+      !          kill -s SIGKILL 1234
+
+      ! NOTE: This is a minimal implementation
+      ! Full implementation would require:
+      ! 1. C bindings for kill() system call
+      ! 2. Signal name/number parsing
+      ! 3. Process validation
+
+      if (node%num_words < 2) then
+        ! Need at least one PID
+        exit_code = 1
+      else
+        ! Parse arguments
+        j = 2  ! Start at first argument
+        i = 15  ! Default signal is SIGTERM (15)
+
+        ! Check if first arg is a signal specification
+        if (j <= node%num_words) then
+          word_value = self%eval_word(node%words(j)%ptr)
+          if (len_trim(word_value) > 0 .and. word_value(1:1) == '-') then
+            ! Signal specification
+            if (trim(word_value) == '-s' .or. trim(word_value) == '-n') then
+              ! Next arg is the signal
+              j = j + 1
+              if (j <= node%num_words) then
+                cmd_str = self%eval_word(node%words(j)%ptr)
+                ! Parse signal name or number
+                ! In full implementation: convert signal name to number
+              end if
+              j = j + 1
+            else
+              ! Signal in format -SIGNAME or -NUM
+              ! In full implementation: parse signal from word_value
+              j = j + 1
+            end if
+          end if
+        end if
+
+        ! Process remaining arguments as PIDs
+        do while (j <= node%num_words)
+          if (associated(node%words(j)%ptr)) then
+            word_value = self%eval_word(node%words(j)%ptr)
+            ! In full implementation:
+            ! 1. Parse PID from word_value
+            ! 2. Call kill(pid, signal)
+            ! 3. Check return value
+          end if
+          j = j + 1
+        end do
+
+        exit_code = 0
+      end if
+
+    case('ulimit')
+      ! ulimit - set or display resource limits
+      ! Usage: ulimit [-SHacdefilmnpqrstuvx] [limit]
+      ! Example: ulimit -n        (show max open files)
+      !          ulimit -n 2048   (set max open files)
+      !          ulimit -a        (show all limits)
+
+      ! NOTE: This is a minimal implementation
+      ! Full implementation would require:
+      ! 1. C bindings for getrlimit() and setrlimit()
+      ! 2. Parsing of resource limit options
+      ! 3. Proper formatting of limit values
+
+      if (node%num_words == 1) then
+        ! No arguments - show default limit (max file size, unlimited)
+        exit_code = 0
+      else if (node%num_words == 2) then
+        word_value = self%eval_word(node%words(2)%ptr)
+        if (trim(word_value) == '-a') then
+          ! Show all limits
+          ! In full implementation: call getrlimit() for each resource type
+          exit_code = 0
+        else if (len_trim(word_value) > 0 .and. word_value(1:1) == '-') then
+          ! Show specific limit (e.g., -n for open files)
+          exit_code = 0
+        else
+          ! Set default limit to specified value
+          exit_code = 0
+        end if
+      else if (node%num_words == 3) then
+        ! Set specific limit: ulimit -n 2048
+        word_value = self%eval_word(node%words(2)%ptr)
+        cmd_str = self%eval_word(node%words(3)%ptr)
+        ! In full implementation:
+        ! 1. Parse resource type from word_value (-n, -u, etc.)
+        ! 2. Parse limit value from cmd_str
+        ! 3. Call setrlimit() with appropriate resource and limit
+        exit_code = 0
+      else
+        exit_code = 1
       end if
 
     case default
@@ -2316,8 +2619,10 @@ contains
 
     select type(node)
     type is (word_node_t)
-      ! Apply tilde expansion if word starts with ~
-      result = expand_tilde(self, node%text)
+      ! Apply brace expansion first (happens before other expansions)
+      result = expand_braces(node%text)
+      ! Then apply tilde expansion
+      result = expand_tilde(self, result)
 
     type is (variable_node_t)
       var_ptr => node
@@ -2895,6 +3200,13 @@ contains
       integer(c_int) :: access_result
       integer :: file_size
       character(:), allocatable :: expanded_left, expanded_right
+      ! Regex matching support for =~ operator
+      type(regex_t) :: regex
+      character(kind=c_char, len=:), allocatable :: c_pattern, c_string
+      integer(c_int) :: comp_result, exec_result
+      type(regmatch_t) :: pmatch(10)  ! Capture up to 9 groups + full match
+      integer :: nmatch, match_idx, match_start, match_end
+      character(:), allocatable :: matched_str
 
       result_code = 1  ! Default to false
       if (len_trim(expression) == 0) return
@@ -3044,6 +3356,62 @@ contains
         else
           ! Literal string comparison
           result_code = merge(0, 1, trim(expanded_left) /= trim(expanded_right))
+        end if
+
+      case('=~')
+        ! Regex matching - [[ $str =~ pattern ]]
+        ! expanded_left is the string to match
+        ! expanded_right is the regex pattern
+
+        ! Prepare C strings (null-terminated)
+        c_pattern = trim(expanded_right) // c_null_char
+        c_string = trim(expanded_left) // c_null_char
+
+        ! Compile the regex pattern (use extended regex)
+        comp_result = c_regcomp(regex, c_pattern, REG_EXTENDED)
+
+        if (comp_result == 0) then
+          ! Pattern compiled successfully - now execute it with capture groups
+          exec_result = c_regexec(regex, c_string, 10_c_size_t, pmatch, 0_c_int)
+
+          if (exec_result == 0) then
+            ! Match found - populate BASH_REMATCH array
+            ! First, declare the array
+            call evaluator%context%declare_array('BASH_REMATCH')
+
+            ! Populate captured groups
+            nmatch = 0
+            do match_idx = 0, 9
+              ! Check if this match is valid (rm_so != -1)
+              if (pmatch(match_idx + 1)%rm_so /= -1) then
+                match_start = pmatch(match_idx + 1)%rm_so + 1  ! Convert to 1-based
+                match_end = pmatch(match_idx + 1)%rm_eo
+
+                ! Extract matched substring
+                matched_str = ''
+                if (match_end > match_start - 1) then
+                  matched_str = expanded_left(match_start:match_end)
+                end if
+
+                ! Store in BASH_REMATCH[match_idx]
+                call evaluator%context%set_array_element('BASH_REMATCH', match_idx, matched_str)
+                nmatch = match_idx + 1
+              else
+                ! No more matches
+                exit
+              end if
+            end do
+          end if
+
+          ! Clean up regex
+          call c_regfree(regex)
+
+          ! exec_result == 0 means match found
+          result_code = merge(0, 1, exec_result == 0)
+        else
+          ! Pattern compilation failed - treat as no match
+          call c_regfree(regex)
+          result_code = 2  ! Error code
         end if
 
       ! Integer comparisons
@@ -3900,6 +4268,179 @@ contains
 
     pattern_matches = .true.
   end function pattern_matches
+
+  ! Expand braces in words
+  ! Examples:
+  !   {a,b,c} → a b c
+  !   {1..5} → 1 2 3 4 5
+  !   {a..e} → a b c d e
+  !   {1..10..2} → 1 3 5 7 9
+  !   prefix{a,b}suffix → prefixa prefixb suffix (NOT IMPLEMENTED YET - returns as-is for complex cases)
+  function expand_braces(word) result(expanded)
+    character(*), intent(in) :: word
+    character(:), allocatable :: expanded
+    integer :: brace_start, brace_end, comma_pos, dot_pos
+    character(:), allocatable :: prefix, brace_content, suffix, item
+    character(1024) :: result_buf
+    integer :: i, start_val, end_val, step_val, current_val
+    integer :: start_char, end_char, current_char
+    integer :: comma_count, last_pos, item_start, second_dot
+    logical :: is_numeric, is_alpha, has_step
+    character(16) :: num_str
+    character(:), allocatable :: start_str, end_str, step_str
+
+    expanded = word
+    result_buf = ''
+
+    ! Find opening brace
+    brace_start = index(word, '{')
+    if (brace_start == 0) return
+
+    ! Find matching closing brace
+    brace_end = index(word(brace_start:), '}')
+    if (brace_end == 0) return
+    brace_end = brace_start + brace_end - 1
+
+    ! For now, only handle simple cases where entire word is {pattern}
+    ! Complex cases like prefix{a,b}suffix will be handled in future iteration
+    if (brace_start > 1 .or. brace_end < len_trim(word)) then
+      ! Has prefix or suffix - skip for now
+      return
+    end if
+
+    ! Extract brace content
+    brace_content = word(brace_start+1:brace_end-1)
+    if (len_trim(brace_content) == 0) return
+
+    ! Check if it's a range expansion (contains ..)
+    dot_pos = index(brace_content, '..')
+    if (dot_pos > 0) then
+      ! Range expansion: {start..end} or {start..end..step}
+
+      ! Extract start
+      start_str = brace_content(1:dot_pos-1)
+
+      ! Check for step (second ..)
+      second_dot = index(brace_content(dot_pos+2:), '..')
+      has_step = (second_dot > 0)
+
+      if (has_step) then
+        ! {start..end..step}
+        second_dot = dot_pos + 1 + second_dot
+        end_str = brace_content(dot_pos+2:second_dot-1)
+        step_str = brace_content(second_dot+2:)
+        read(step_str, *, iostat=i) step_val
+        if (i /= 0) then
+          step_val = 1
+        end if
+      else
+        ! {start..end}
+        end_str = brace_content(dot_pos+2:)
+        step_val = 1
+      end if
+
+      ! Check if numeric or alphabetic
+      is_numeric = .false.
+      is_alpha = .false.
+
+      read(start_str, *, iostat=i) start_val
+      if (i == 0) then
+        ! Numeric range
+        read(end_str, *, iostat=i) end_val
+        if (i == 0) then
+          is_numeric = .true.
+        end if
+      end if
+
+      if (.not. is_numeric .and. len_trim(start_str) == 1 .and. len_trim(end_str) == 1) then
+        ! Alphabetic range
+        start_char = ichar(start_str(1:1))
+        end_char = ichar(end_str(1:1))
+        is_alpha = .true.
+      end if
+
+      if (is_numeric) then
+        ! Numeric range expansion
+        if (start_val <= end_val) then
+          current_val = start_val
+          do while (current_val <= end_val)
+            write(num_str, '(i0)') current_val
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // trim(num_str)
+            else
+              result_buf = trim(num_str)
+            end if
+            current_val = current_val + step_val
+          end do
+        else
+          ! Descending range
+          current_val = start_val
+          do while (current_val >= end_val)
+            write(num_str, '(i0)') current_val
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // trim(num_str)
+            else
+              result_buf = trim(num_str)
+            end if
+            current_val = current_val - step_val
+          end do
+        end if
+        expanded = trim(result_buf)
+        return
+      else if (is_alpha) then
+        ! Alphabetic range expansion
+        if (start_char <= end_char) then
+          current_char = start_char
+          do while (current_char <= end_char)
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // char(current_char)
+            else
+              result_buf = char(current_char)
+            end if
+            current_char = current_char + step_val
+          end do
+        else
+          ! Descending range
+          current_char = start_char
+          do while (current_char >= end_char)
+            if (len_trim(result_buf) > 0) then
+              result_buf = trim(result_buf) // ' ' // char(current_char)
+            else
+              result_buf = char(current_char)
+            end if
+            current_char = current_char - step_val
+          end do
+        end if
+        expanded = trim(result_buf)
+        return
+      end if
+    else
+      ! List expansion: {a,b,c}
+      last_pos = 1
+      do i = 1, len_trim(brace_content)
+        if (brace_content(i:i) == ',') then
+          ! Found a comma - extract item
+          item = brace_content(last_pos:i-1)
+          if (len_trim(result_buf) > 0) then
+            result_buf = trim(result_buf) // ' ' // trim(item)
+          else
+            result_buf = trim(item)
+          end if
+          last_pos = i + 1
+        end if
+      end do
+      ! Don't forget last item
+      item = brace_content(last_pos:)
+      if (len_trim(result_buf) > 0) then
+        result_buf = trim(result_buf) // ' ' // trim(item)
+      else
+        result_buf = trim(item)
+      end if
+      expanded = trim(result_buf)
+      return
+    end if
+
+  end function expand_braces
 
   ! Expand tilde in paths
   function expand_tilde(self, word) result(expanded)

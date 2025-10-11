@@ -169,6 +169,13 @@ module shell_types
     logical :: active = .false.
   end type shell_trap_t
 
+  ! Command hash table entry (for 'hash' builtin)
+  type :: command_hash_entry_t
+    character(len=256) :: command_name = ''
+    character(len=MAX_PATH_LEN) :: full_path = ''
+    integer :: hits = 0
+  end type command_hash_entry_t
+
   type :: shell_state_t
     character(len=256) :: username
     character(len=256) :: hostname
@@ -194,6 +201,9 @@ module shell_types
     ! Shell traps
     type(shell_trap_t) :: traps(20)
     integer :: num_traps = 0
+    ! Command hash table
+    type(command_hash_entry_t) :: command_hash(50)
+    integer :: num_hashed_commands = 0
     ! Control flow state
     type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)
     integer :: control_depth = 0

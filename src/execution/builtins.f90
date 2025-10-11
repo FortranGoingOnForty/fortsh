@@ -15,6 +15,7 @@ module builtins
   use parser
   use coprocess
   use substitution
+  use signal_handling
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -728,17 +729,110 @@ contains
   subroutine builtin_trap(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! Simplified trap implementation - in a full shell this would
-    ! handle signal trap management
+    character(len=1024) :: action
+    character(len=256) :: signal_spec
+    integer :: i, j, k, signum
+    logical :: list_mode, remove_mode
+
+    list_mode = .false.
+    remove_mode = .false.
+
+    ! trap (no arguments) - list all traps
+    if (cmd%num_tokens == 1) then
+      call list_traps(shell)
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! trap -l (list signals)
+    if (cmd%num_tokens == 2 .and. trim(cmd%tokens(2)) == '-l') then
+      write(output_unit, '(a)') 'Available signals:'
+      write(output_unit, '(a)') '  1) SIGHUP    2) SIGINT    3) SIGQUIT   4) SIGILL'
+      write(output_unit, '(a)') '  5) SIGTRAP   6) SIGABRT   7) SIGBUS    8) SIGFPE'
+      write(output_unit, '(a)') '  9) SIGKILL  10) SIGUSR1  11) SIGSEGV  12) SIGUSR2'
+      write(output_unit, '(a)') ' 13) SIGPIPE  14) SIGALRM  15) SIGTERM  16) SIGSTKFLT'
+      write(output_unit, '(a)') ' 17) SIGCHLD  18) SIGCONT  19) SIGSTOP  20) SIGTSTP'
+      write(output_unit, '(a)') ' 21) SIGTTIN  22) SIGTTOU'
+      write(output_unit, '(a)') ''
+      write(output_unit, '(a)') 'Special signals:'
+      write(output_unit, '(a)') '  0) EXIT      DEBUG        ERR          RETURN'
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! trap -p [signal...] (print traps)
+    if (trim(cmd%tokens(2)) == '-p') then
+      if (cmd%num_tokens == 2) then
+        ! Print all traps
+        call list_traps(shell)
+      else
+        ! Print specific traps
+        do j = 3, cmd%num_tokens
+          signum = signal_name_to_number(trim(cmd%tokens(j)))
+          if (signum == -999) then
+            write(error_unit, '(a)') 'trap: invalid signal: ' // trim(cmd%tokens(j))
+            shell%last_exit_status = 1
+            return
+          end if
+          ! Print trap for this signal if it exists
+          do k = 1, size(shell%traps)
+            if (shell%traps(k)%signal == signum .and. shell%traps(k)%active) then
+              write(output_unit, '(a)') 'trap -- ' // "'" // &
+                                        trim(shell%traps(k)%command) // "' " // &
+                                        trim(signal_number_to_name(signum))
+              exit
+            end if
+          end do
+        end do
+      end if
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! trap action signal [signal...]
     if (cmd%num_tokens < 3) then
-      write(error_unit, '(a)') 'trap: usage: trap action signal...'
+      write(error_unit, '(a)') 'trap: usage: trap [-lp] [action signal_spec ...]'
       shell%last_exit_status = 1
       return
     end if
-    
-    ! For now, just acknowledge the trap command
-    write(output_unit, '(a)') 'trap: signal trapping not yet fully implemented'
+
+    ! Get action
+    action = trim(cmd%tokens(2))
+
+    ! Check for removal syntax: trap - signal or trap "" signal
+    if (trim(action) == '-' .or. len_trim(action) == 0) then
+      remove_mode = .true.
+    end if
+
+    ! Process each signal
+    do i = 3, cmd%num_tokens
+      signal_spec = trim(cmd%tokens(i))
+
+      ! Convert signal name/number to signal number
+      signum = signal_name_to_number(signal_spec)
+
+      if (signum == -999) then
+        write(error_unit, '(a)') 'trap: invalid signal specification: ' // trim(signal_spec)
+        shell%last_exit_status = 1
+        cycle
+      end if
+
+      ! Check if signal is trappable
+      if (.not. is_trappable_signal(signum) .and. signum > 0) then
+        write(error_unit, '(a)') 'trap: ' // trim(signal_spec) // ': cannot trap signal'
+        shell%last_exit_status = 1
+        cycle
+      end if
+
+      if (remove_mode) then
+        ! Remove trap
+        call remove_signal_trap(shell, signum)
+      else
+        ! Set trap
+        call set_signal_trap(shell, signum, action)
+      end if
+    end do
+
     shell%last_exit_status = 0
   end subroutine
 
@@ -1557,72 +1651,654 @@ contains
   end subroutine
 
   subroutine builtin_exec(cmd, shell)
+    use command_builtin, only: find_command_full_path
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! TODO: Implement process replacement
-    ! This is complex and requires careful implementation
-    write(output_unit, '(a)') 'exec: feature not fully implemented'
-    shell%last_exit_status = 0
+
+    character(len=256), target :: c_prog_name
+    character(len=256), target, allocatable :: c_args(:)
+    type(c_ptr), allocatable, target :: argv(:)
+    integer :: i, ret
+    character(len=MAX_PATH_LEN) :: prog_path
+
+    ! exec without arguments is an error (could be used for redirections in future)
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'exec: usage: exec command [arguments ...]'
+      shell%last_exit_status = 2
+      return
+    end if
+
+    ! Get the command name
+    c_prog_name = trim(cmd%tokens(2)) // c_null_char
+
+    ! Find full path for the command (if it's not an absolute/relative path)
+    if (index(cmd%tokens(2), '/') == 0) then
+      prog_path = find_command_full_path(trim(cmd%tokens(2)))
+      if (len_trim(prog_path) == 0) then
+        write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': command not found'
+        shell%last_exit_status = 127
+        return
+      end if
+      c_prog_name = trim(prog_path) // c_null_char
+    end if
+
+    ! Build argv array for execvp (NULL-terminated array of C string pointers)
+    ! argv[0] is the program name, argv[1..n-1] are arguments, argv[n] is NULL
+    allocate(c_args(cmd%num_tokens - 1))
+    allocate(argv(cmd%num_tokens))
+
+    ! First argument is program name
+    c_args(1) = trim(cmd%tokens(2)) // c_null_char
+    argv(1) = c_loc(c_args(1))
+
+    ! Copy remaining arguments
+    do i = 3, cmd%num_tokens
+      c_args(i - 1) = trim(cmd%tokens(i)) // c_null_char
+      argv(i - 1) = c_loc(c_args(i - 1))
+    end do
+
+    ! NULL-terminate the argv array
+    argv(cmd%num_tokens) = c_null_ptr
+
+    ! Replace the current process with the new command
+    ! If execvp succeeds, this function never returns
+    ret = c_execvp(c_loc(c_prog_name), c_loc(argv))
+
+    ! If we reach here, execvp failed
+    ! Clean up allocations
+    deallocate(c_args)
+    deallocate(argv)
+
+    ! Report error
+    write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': cannot execute'
+    shell%last_exit_status = 126
   end subroutine
 
   subroutine builtin_eval(cmd, shell)
+    use parser, only: parse_pipeline
+    use executor, only: execute_pipeline
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    character(len=2048) :: eval_command
-    integer :: i
-    
+
+    character(len=4096) :: eval_command
+    integer :: i, j
+    type(pipeline_t) :: pipeline
+
+    ! If no arguments, just return success
     if (cmd%num_tokens < 2) then
       shell%last_exit_status = 0
       return
     end if
-    
-    ! Concatenate all arguments
+
+    ! Concatenate all arguments into a single command string
     eval_command = trim(cmd%tokens(2))
     do i = 3, cmd%num_tokens
       eval_command = trim(eval_command) // ' ' // trim(cmd%tokens(i))
     end do
-    
-    ! TODO: Implement proper command parsing and execution
-    ! For now, just echo what would be evaluated
-    write(output_unit, '(a)') 'eval would execute: ' // trim(eval_command)
-    shell%last_exit_status = 0
+
+    ! Parse the concatenated string as a pipeline
+    call parse_pipeline(trim(eval_command), pipeline)
+
+    ! Execute the parsed pipeline in the current shell context
+    if (pipeline%num_commands > 0) then
+      call execute_pipeline(pipeline, shell, trim(eval_command))
+
+      ! Clean up pipeline allocations
+      do i = 1, pipeline%num_commands
+        if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+        if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+        if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+        if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+        if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+        if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+        if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+      end do
+
+      if (allocated(pipeline%commands)) deallocate(pipeline%commands)
+    else
+      ! Empty command - success
+      shell%last_exit_status = 0
+    end if
   end subroutine
 
   subroutine builtin_hash(cmd, shell)
+    use command_builtin, only: find_command_full_path
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! TODO: Implement command hashing
-    write(output_unit, '(a)') 'hash: feature not fully implemented'
+    character(len=256) :: cmd_name, pathname
+    integer :: i, j
+    logical :: remove_mode, list_mode, path_mode, delete_mode
+    character(len=MAX_PATH_LEN) :: found_path
+
+    remove_mode = .false.
+    list_mode = .false.
+    path_mode = .false.
+    delete_mode = .false.
+
+    ! Parse options
+    if (cmd%num_tokens > 1) then
+      if (trim(cmd%tokens(2)) == '-r') then
+        ! Clear hash table
+        shell%num_hashed_commands = 0
+        do i = 1, size(shell%command_hash)
+          shell%command_hash(i)%command_name = ''
+          shell%command_hash(i)%full_path = ''
+          shell%command_hash(i)%hits = 0
+        end do
+        shell%last_exit_status = 0
+        return
+      else if (trim(cmd%tokens(2)) == '-l') then
+        list_mode = .true.
+      else if (trim(cmd%tokens(2)) == '-d') then
+        delete_mode = .true.
+        if (cmd%num_tokens < 3) then
+          write(error_unit, '(a)') 'hash: -d requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (trim(cmd%tokens(2)) == '-p') then
+        path_mode = .true.
+        if (cmd%num_tokens < 4) then
+          write(error_unit, '(a)') 'hash: usage: hash -p pathname name'
+          shell%last_exit_status = 1
+          return
+        end if
+      end if
+    end if
+
+    ! hash with no arguments - display hash table
+    if (cmd%num_tokens == 1) then
+      if (shell%num_hashed_commands == 0) then
+        shell%last_exit_status = 0
+        return
+      end if
+      write(output_unit, '(a)') 'hits    command'
+      do i = 1, shell%num_hashed_commands
+        if (len_trim(shell%command_hash(i)%command_name) > 0) then
+          write(output_unit, '(i4,4x,a)') shell%command_hash(i)%hits, &
+            trim(shell%command_hash(i)%full_path)
+        end if
+      end do
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! hash -l - list format
+    if (list_mode) then
+      do i = 1, shell%num_hashed_commands
+        if (len_trim(shell%command_hash(i)%command_name) > 0) then
+          write(output_unit, '(a)') 'builtin hash -p ' // &
+            trim(shell%command_hash(i)%full_path) // ' ' // &
+            trim(shell%command_hash(i)%command_name)
+        end if
+      end do
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! hash -d name - delete specific command
+    if (delete_mode) then
+      cmd_name = trim(cmd%tokens(3))
+      do i = 1, shell%num_hashed_commands
+        if (trim(shell%command_hash(i)%command_name) == cmd_name) then
+          ! Remove this entry by shifting others down
+          do j = i, shell%num_hashed_commands - 1
+            shell%command_hash(j) = shell%command_hash(j + 1)
+          end do
+          shell%command_hash(shell%num_hashed_commands)%command_name = ''
+          shell%command_hash(shell%num_hashed_commands)%full_path = ''
+          shell%command_hash(shell%num_hashed_commands)%hits = 0
+          shell%num_hashed_commands = shell%num_hashed_commands - 1
+          shell%last_exit_status = 0
+          return
+        end if
+      end do
+      write(error_unit, '(a)') 'hash: ' // trim(cmd_name) // ': not found'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! hash -p pathname name - add with explicit path
+    if (path_mode) then
+      pathname = trim(cmd%tokens(3))
+      cmd_name = trim(cmd%tokens(4))
+
+      ! Check if command already exists
+      do i = 1, shell%num_hashed_commands
+        if (trim(shell%command_hash(i)%command_name) == cmd_name) then
+          shell%command_hash(i)%full_path = pathname
+          shell%last_exit_status = 0
+          return
+        end if
+      end do
+
+      ! Add new entry
+      if (shell%num_hashed_commands < size(shell%command_hash)) then
+        shell%num_hashed_commands = shell%num_hashed_commands + 1
+        shell%command_hash(shell%num_hashed_commands)%command_name = cmd_name
+        shell%command_hash(shell%num_hashed_commands)%full_path = pathname
+        shell%command_hash(shell%num_hashed_commands)%hits = 0
+        shell%last_exit_status = 0
+      else
+        write(error_unit, '(a)') 'hash: hash table full'
+        shell%last_exit_status = 1
+      end if
+      return
+    end if
+
+    ! hash name [name...] - add commands to hash table
+    do i = 2, cmd%num_tokens
+      cmd_name = trim(cmd%tokens(i))
+
+      ! Search PATH for command
+      found_path = find_command_full_path(cmd_name)
+      if (len_trim(found_path) == 0) then
+        write(error_unit, '(a)') 'hash: ' // trim(cmd_name) // ': not found'
+        shell%last_exit_status = 1
+        cycle
+      end if
+
+      ! Check if command already exists
+      do j = 1, shell%num_hashed_commands
+        if (trim(shell%command_hash(j)%command_name) == cmd_name) then
+          shell%command_hash(j)%full_path = found_path
+          shell%last_exit_status = 0
+          goto 100  ! Skip to next command
+        end if
+      end do
+
+      ! Add new entry
+      if (shell%num_hashed_commands < size(shell%command_hash)) then
+        shell%num_hashed_commands = shell%num_hashed_commands + 1
+        shell%command_hash(shell%num_hashed_commands)%command_name = cmd_name
+        shell%command_hash(shell%num_hashed_commands)%full_path = found_path
+        shell%command_hash(shell%num_hashed_commands)%hits = 0
+      else
+        write(error_unit, '(a)') 'hash: hash table full'
+        shell%last_exit_status = 1
+      end if
+
+100   continue
+    end do
+
     shell%last_exit_status = 0
   end subroutine
 
   subroutine builtin_umask(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! TODO: Implement file creation mask
-    write(output_unit, '(a)') 'umask: feature not fully implemented'
+    integer(c_int) :: current_mask, new_mask, temp_mask
+    integer :: new_mask_int, iostat
+    logical :: symbolic_mode, print_mode
+    character(len=16) :: mask_str
+
+    symbolic_mode = .false.
+    print_mode = .false.
+
+    ! Parse options
+    if (cmd%num_tokens > 1) then
+      if (trim(cmd%tokens(2)) == '-S') then
+        symbolic_mode = .true.
+      else if (trim(cmd%tokens(2)) == '-p') then
+        print_mode = .true.
+      else if (cmd%tokens(2)(1:1) == '-') then
+        write(error_unit, '(a)') 'umask: invalid option: ' // trim(cmd%tokens(2))
+        shell%last_exit_status = 1
+        return
+      end if
+    end if
+
+    ! Get current umask (set to 0 temporarily, then restore)
+    current_mask = c_umask(0_c_int)  ! Save the current mask
+    temp_mask = c_umask(current_mask) ! Restore it
+
+    ! If no value specified, display current mask
+    if (cmd%num_tokens == 1 .or. symbolic_mode .or. print_mode) then
+      if (symbolic_mode) then
+        ! Display in symbolic form: u=rwx,g=rx,o=rx
+        call print_umask_symbolic(current_mask)
+      else if (print_mode) then
+        ! Display in a form that can be reused as input
+        write(mask_str, '(o4.4)') current_mask
+        write(output_unit, '(a)') 'umask ' // trim(adjustl(mask_str))
+      else
+        ! Display in octal (default)
+        write(mask_str, '(o4.4)') current_mask
+        write(output_unit, '(a)') trim(adjustl(mask_str))
+      end if
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! Set new mask
+    ! Determine starting index for mask value (skip -S or -p if present)
+    if (trim(cmd%tokens(2)) == '-S' .or. trim(cmd%tokens(2)) == '-p') then
+      if (cmd%num_tokens < 3) then
+        write(error_unit, '(a)') 'umask: usage: umask [-p] [-S] [mode]'
+        shell%last_exit_status = 1
+        return
+      end if
+      mask_str = trim(cmd%tokens(3))
+    else
+      mask_str = trim(cmd%tokens(2))
+    end if
+
+    ! Parse octal mask value
+    read(mask_str, '(o10)', iostat=iostat) new_mask_int
+    if (iostat /= 0) then
+      write(error_unit, '(a)') 'umask: invalid mode: ' // trim(mask_str)
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Validate mask (should be 0-0777)
+    if (new_mask_int < 0 .or. new_mask_int > int(o'0777')) then
+      write(error_unit, '(a)') 'umask: octal number out of range'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Set the new mask
+    new_mask = int(new_mask_int, c_int)
+    temp_mask = c_umask(new_mask)
+
     shell%last_exit_status = 0
+  end subroutine
+
+  subroutine print_umask_symbolic(mask)
+    integer(c_int), intent(in) :: mask
+    character(len=9) :: perm_str
+    integer :: u_perm, g_perm, o_perm
+
+    ! Extract permissions for user, group, and others
+    ! umask inverts permissions, so we need to flip bits
+    u_perm = iand(ishft(not(mask), -6), 7)  ! User permissions
+    g_perm = iand(ishft(not(mask), -3), 7)  ! Group permissions
+    o_perm = iand(not(mask), 7)             ! Other permissions
+
+    ! Build symbolic string
+    perm_str = 'u='
+    if (iand(u_perm, 4) /= 0) perm_str = trim(perm_str) // 'r'
+    if (iand(u_perm, 2) /= 0) perm_str = trim(perm_str) // 'w'
+    if (iand(u_perm, 1) /= 0) perm_str = trim(perm_str) // 'x'
+
+    perm_str = trim(perm_str) // ',g='
+    if (iand(g_perm, 4) /= 0) perm_str = trim(perm_str) // 'r'
+    if (iand(g_perm, 2) /= 0) perm_str = trim(perm_str) // 'w'
+    if (iand(g_perm, 1) /= 0) perm_str = trim(perm_str) // 'x'
+
+    perm_str = trim(perm_str) // ',o='
+    if (iand(o_perm, 4) /= 0) perm_str = trim(perm_str) // 'r'
+    if (iand(o_perm, 2) /= 0) perm_str = trim(perm_str) // 'w'
+    if (iand(o_perm, 1) /= 0) perm_str = trim(perm_str) // 'x'
+
+    write(output_unit, '(a)') trim(perm_str)
   end subroutine
 
   subroutine builtin_ulimit(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    ! TODO: Implement resource limits
-    write(output_unit, '(a)') 'ulimit: feature not fully implemented'
+
+    type(rlimit_t) :: rlim
+    integer :: i, ret, resource
+    character(len=256) :: arg, value_str
+    logical :: show_all, set_hard, set_soft, setting_value
+    integer(c_long) :: new_limit
+    character(len=20) :: limit_name
+
+    ! Default: query soft limit for file size
+    resource = RLIMIT_FSIZE
+    show_all = .false.
+    set_hard = .false.
+    set_soft = .true.  ! Default to soft limit
+    setting_value = .false.
+    limit_name = 'file size'
+
+    ! Parse options
+    i = 2
+    do while (i <= cmd%num_tokens)
+      arg = trim(cmd%tokens(i))
+
+      if (arg == '-a') then
+        show_all = .true.
+        i = i + 1
+      else if (arg == '-H') then
+        set_hard = .true.
+        set_soft = .false.
+        i = i + 1
+      else if (arg == '-S') then
+        set_soft = .true.
+        set_hard = .false.
+        i = i + 1
+      else if (arg == '-c') then
+        resource = RLIMIT_CORE
+        limit_name = 'core file size'
+        i = i + 1
+      else if (arg == '-d') then
+        resource = RLIMIT_DATA
+        limit_name = 'data seg size'
+        i = i + 1
+      else if (arg == '-f') then
+        resource = RLIMIT_FSIZE
+        limit_name = 'file size'
+        i = i + 1
+      else if (arg == '-l') then
+        resource = RLIMIT_MEMLOCK
+        limit_name = 'max locked memory'
+        i = i + 1
+      else if (arg == '-m') then
+        resource = RLIMIT_RSS
+        limit_name = 'max memory size'
+        i = i + 1
+      else if (arg == '-n') then
+        resource = RLIMIT_NOFILE
+        limit_name = 'open files'
+        i = i + 1
+      else if (arg == '-s') then
+        resource = RLIMIT_STACK
+        limit_name = 'stack size'
+        i = i + 1
+      else if (arg == '-t') then
+        resource = RLIMIT_CPU
+        limit_name = 'cpu time'
+        i = i + 1
+      else if (arg == '-u') then
+        resource = RLIMIT_NPROC
+        limit_name = 'max user processes'
+        i = i + 1
+      else if (arg == '-v') then
+        resource = RLIMIT_AS
+        limit_name = 'virtual memory'
+        i = i + 1
+      else
+        ! This is the value to set
+        value_str = arg
+        setting_value = .true.
+        exit
+      end if
+    end do
+
+    ! Display all limits if -a was specified
+    if (show_all) then
+      call display_all_limits(shell)
+      return
+    end if
+
+    ! Get current limit
+    ret = c_getrlimit(resource, rlim)
+    if (ret /= 0) then
+      write(error_unit, '(a)') 'ulimit: failed to get resource limit'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! If setting a new value
+    if (setting_value) then
+      ! Parse the new limit value
+      if (trim(value_str) == 'unlimited') then
+        new_limit = RLIM_INFINITY
+      else
+        read(value_str, *, iostat=ret) new_limit
+        if (ret /= 0) then
+          write(error_unit, '(a)') 'ulimit: invalid number: ' // trim(value_str)
+          shell%last_exit_status = 1
+          return
+        end if
+
+        ! Convert based on resource type (some are in KB)
+        if (resource == RLIMIT_FSIZE .or. resource == RLIMIT_CORE .or. &
+            resource == RLIMIT_DATA .or. resource == RLIMIT_STACK .or. &
+            resource == RLIMIT_RSS .or. resource == RLIMIT_MEMLOCK .or. &
+            resource == RLIMIT_AS) then
+          new_limit = new_limit * 1024  ! Convert KB to bytes
+        end if
+      end if
+
+      ! Set the new limit
+      if (set_hard) then
+        rlim%rlim_max = new_limit
+      else
+        rlim%rlim_cur = new_limit
+      end if
+
+      ret = c_setrlimit(resource, rlim)
+      if (ret /= 0) then
+        write(error_unit, '(a)') 'ulimit: failed to set resource limit'
+        shell%last_exit_status = 1
+        return
+      end if
+    else
+      ! Display current limit
+      if (set_hard) then
+        call display_limit(rlim%rlim_max, resource)
+      else
+        call display_limit(rlim%rlim_cur, resource)
+      end if
+    end if
+
     shell%last_exit_status = 0
+
+  contains
+
+    subroutine display_limit(limit_value, res)
+      integer(c_long), intent(in) :: limit_value
+      integer(c_int), intent(in) :: res
+      integer(c_long) :: display_value
+
+      if (limit_value == RLIM_INFINITY .or. limit_value < 0) then
+        write(output_unit, '(a)') 'unlimited'
+      else
+        ! Convert bytes to KB for display
+        if (res == RLIMIT_FSIZE .or. res == RLIMIT_CORE .or. &
+            res == RLIMIT_DATA .or. res == RLIMIT_STACK .or. &
+            res == RLIMIT_RSS .or. res == RLIMIT_MEMLOCK .or. &
+            res == RLIMIT_AS) then
+          display_value = limit_value / 1024
+        else
+          display_value = limit_value
+        end if
+        write(output_unit, '(i0)') display_value
+      end if
+    end subroutine
+
+    subroutine display_all_limits(sh)
+      type(shell_state_t), intent(inout) :: sh
+      type(rlimit_t) :: r
+      integer :: res_ret
+
+      write(output_unit, '(a)') 'core file size          (blocks, -c) ' // get_limit_str(RLIMIT_CORE)
+      write(output_unit, '(a)') 'data seg size           (kbytes, -d) ' // get_limit_str(RLIMIT_DATA)
+      write(output_unit, '(a)') 'file size               (blocks, -f) ' // get_limit_str(RLIMIT_FSIZE)
+      write(output_unit, '(a)') 'max locked memory       (kbytes, -l) ' // get_limit_str(RLIMIT_MEMLOCK)
+      write(output_unit, '(a)') 'max memory size         (kbytes, -m) ' // get_limit_str(RLIMIT_RSS)
+      write(output_unit, '(a)') 'open files                      (-n) ' // get_limit_str(RLIMIT_NOFILE)
+      write(output_unit, '(a)') 'stack size              (kbytes, -s) ' // get_limit_str(RLIMIT_STACK)
+      write(output_unit, '(a)') 'cpu time                (seconds,-t) ' // get_limit_str(RLIMIT_CPU)
+      write(output_unit, '(a)') 'max user processes              (-u) ' // get_limit_str(RLIMIT_NPROC)
+      write(output_unit, '(a)') 'virtual memory          (kbytes, -v) ' // get_limit_str(RLIMIT_AS)
+
+      sh%last_exit_status = 0
+    end subroutine
+
+    function get_limit_str(res) result(str)
+      integer(c_int), intent(in) :: res
+      character(len=20) :: str
+      type(rlimit_t) :: r
+      integer :: res_ret
+      integer(c_long) :: val
+
+      res_ret = c_getrlimit(res, r)
+      if (res_ret /= 0) then
+        str = 'error'
+        return
+      end if
+
+      if (r%rlim_cur == RLIM_INFINITY .or. r%rlim_cur < 0) then
+        str = 'unlimited'
+      else
+        ! Convert to appropriate units
+        if (res == RLIMIT_FSIZE .or. res == RLIMIT_CORE .or. &
+            res == RLIMIT_DATA .or. res == RLIMIT_STACK .or. &
+            res == RLIMIT_RSS .or. res == RLIMIT_MEMLOCK .or. &
+            res == RLIMIT_AS) then
+          val = r%rlim_cur / 1024
+        else
+          val = r%rlim_cur
+        end if
+        write(str, '(i0)') val
+      end if
+    end function
+
   end subroutine
 
   subroutine builtin_times(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
+    type(rusage_t) :: self_usage, children_usage
+    integer :: ret
+    real :: self_user_sec, self_sys_sec, children_user_sec, children_sys_sec
+    integer :: self_user_min, self_sys_min, children_user_min, children_sys_min
 
-    ! TODO: Implement process time reporting
-    write(output_unit, '(a)') 'times: feature not fully implemented'
+    ! Get resource usage for the shell itself
+    ret = c_getrusage(RUSAGE_SELF, self_usage)
+    if (ret /= 0) then
+      write(error_unit, '(a)') 'times: failed to get resource usage'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Get resource usage for all children
+    ret = c_getrusage(RUSAGE_CHILDREN, children_usage)
+    if (ret /= 0) then
+      write(error_unit, '(a)') 'times: failed to get child resource usage'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Convert timeval structures to seconds (tv_sec + tv_usec/1000000)
+    self_user_sec = real(self_usage%ru_utime%tv_sec) + real(self_usage%ru_utime%tv_usec) / 1000000.0
+    self_sys_sec = real(self_usage%ru_stime%tv_sec) + real(self_usage%ru_stime%tv_usec) / 1000000.0
+    children_user_sec = real(children_usage%ru_utime%tv_sec) + real(children_usage%ru_utime%tv_usec) / 1000000.0
+    children_sys_sec = real(children_usage%ru_stime%tv_sec) + real(children_usage%ru_stime%tv_usec) / 1000000.0
+
+    ! Extract minutes and seconds
+    self_user_min = int(self_user_sec / 60.0)
+    self_user_sec = self_user_sec - (self_user_min * 60.0)
+    self_sys_min = int(self_sys_sec / 60.0)
+    self_sys_sec = self_sys_sec - (self_sys_min * 60.0)
+    children_user_min = int(children_user_sec / 60.0)
+    children_user_sec = children_user_sec - (children_user_min * 60.0)
+    children_sys_min = int(children_sys_sec / 60.0)
+    children_sys_sec = children_sys_sec - (children_sys_min * 60.0)
+
+    ! Print in bash format: user_time system_time (one line for shell, one for children)
+    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
+      self_user_min, 'm', self_user_sec, 's', &
+      self_sys_min, 'm', self_sys_sec, 's'
+    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
+      children_user_min, 'm', children_user_sec, 's', &
+      children_sys_min, 'm', children_sys_sec, 's'
+
     shell%last_exit_status = 0
   end subroutine
 

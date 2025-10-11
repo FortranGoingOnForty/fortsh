@@ -424,9 +424,72 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_name
     logical :: is_alias
-    
+
     ! Simplified - in real implementation would check alias table
     is_alias = .false.
+  end function
+
+  function find_command_full_path(command_name) result(full_path)
+    use system_interface, only: get_environment_var
+    character(len=*), intent(in) :: command_name
+    character(len=MAX_PATH_LEN) :: full_path
+    character(len=:), allocatable :: path_var_alloc
+    character(len=4096) :: path_var
+    character(len=1024) :: path_component, candidate_path
+    integer :: start_pos, end_pos, colon_pos
+
+    full_path = ''
+
+    ! If command contains '/', it's an absolute or relative path
+    if (index(command_name, '/') > 0) then
+      if (is_executable_file(command_name)) then
+        full_path = command_name
+      end if
+      return
+    end if
+
+    ! Get PATH environment variable
+    path_var_alloc = get_environment_var('PATH')
+    if (allocated(path_var_alloc)) then
+      path_var = path_var_alloc
+    else
+      path_var = '/usr/bin:/bin'
+    end if
+
+    if (len_trim(path_var) == 0) then
+      path_var = '/usr/bin:/bin'
+    end if
+
+    ! Search each directory in PATH
+    start_pos = 1
+    do while (start_pos <= len_trim(path_var))
+      colon_pos = index(path_var(start_pos:), ':')
+      if (colon_pos == 0) then
+        end_pos = len_trim(path_var)
+      else
+        end_pos = start_pos + colon_pos - 2
+      end if
+
+      path_component = path_var(start_pos:end_pos)
+      if (len_trim(path_component) == 0) then
+        path_component = '.'
+      end if
+
+      ! Construct full path
+      if (path_component(len_trim(path_component):len_trim(path_component)) == '/') then
+        write(candidate_path, '(a,a)') trim(path_component), trim(command_name)
+      else
+        write(candidate_path, '(a,a,a)') trim(path_component), '/', trim(command_name)
+      end if
+
+      if (is_executable_file(candidate_path)) then
+        full_path = candidate_path
+        return
+      end if
+
+      if (colon_pos == 0) exit
+      start_pos = start_pos + colon_pos
+    end do
   end function
 
 end module command_builtin

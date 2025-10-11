@@ -7,6 +7,7 @@ module advanced_test
   use system_interface
   use variables
   use iso_fortran_env, only: output_unit, error_unit
+  use iso_c_binding
   implicit none
 
   ! Test result constants
@@ -14,20 +15,65 @@ module advanced_test
   integer, parameter :: TEST_FALSE = 1
   integer, parameter :: TEST_ERROR = 2
 
+  ! POSIX regex types for =~ operator
+  type, bind(C) :: regex_t
+    integer(c_int) :: re_dummy(32)  ! Opaque structure
+  end type regex_t
+
+  type, bind(C) :: regmatch_t
+    integer(c_int) :: rm_so  ! Start offset
+    integer(c_int) :: rm_eo  ! End offset
+  end type regmatch_t
+
+  ! Regex compilation flags
+  integer(c_int), parameter :: REG_EXTENDED = 1
+  integer(c_int), parameter :: REG_ICASE = 2
+  integer(c_int), parameter :: REG_NOSUB = 4
+  integer(c_int), parameter :: REG_NEWLINE = 8
+
+  ! C interface for POSIX regex
+  interface
+    function c_regcomp(preg, pattern, cflags) bind(C, name="regcomp")
+      use iso_c_binding
+      import :: regex_t
+      type(regex_t), intent(inout) :: preg
+      character(kind=c_char), dimension(*), intent(in) :: pattern
+      integer(c_int), value :: cflags
+      integer(c_int) :: c_regcomp
+    end function c_regcomp
+
+    function c_regexec(preg, string, nmatch, pmatch, eflags) bind(C, name="regexec")
+      use iso_c_binding
+      import :: regex_t, regmatch_t
+      type(regex_t), intent(in) :: preg
+      character(kind=c_char), dimension(*), intent(in) :: string
+      integer(c_size_t), value :: nmatch
+      type(regmatch_t), dimension(*) :: pmatch
+      integer(c_int), value :: eflags
+      integer(c_int) :: c_regexec
+    end function c_regexec
+
+    subroutine c_regfree(preg) bind(C, name="regfree")
+      use iso_c_binding
+      import :: regex_t
+      type(regex_t), intent(inout) :: preg
+    end subroutine c_regfree
+  end interface
+
 contains
 
   ! Main [[ ]] test evaluation
   function evaluate_test_expression(shell, tokens, num_tokens) result(test_result)
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
     integer :: test_result
-    
+
     character(len=256) :: left_operand, operator, right_operand
     logical :: result_bool
-    
+
     test_result = TEST_FALSE
-    
+
     if (num_tokens < 3) then
       test_result = TEST_ERROR
       return
@@ -74,18 +120,18 @@ contains
 
   ! Evaluate binary test conditions
   function evaluate_binary_test(shell, left, operator, right) result(result_bool)
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: left, operator, right
     logical :: result_bool
-    
+
     character(len=256) :: expanded_left, expanded_right
-    
+
     result_bool = .false.
-    
+
     ! Expand variables in operands
     call expand_test_operand(shell, left, expanded_left)
     call expand_test_operand(shell, right, expanded_right)
-    
+
     select case (trim(operator))
     ! String comparisons
     case ('=', '==')
@@ -97,9 +143,9 @@ contains
     case ('>')
       result_bool = (trim(expanded_left) > trim(expanded_right))
     case ('=~')
-      result_bool = match_regex(expanded_left, expanded_right)
+      result_bool = match_regex(shell, expanded_left, expanded_right)
     case ('!~')
-      result_bool = .not. match_regex(expanded_left, expanded_right)
+      result_bool = .not. match_regex(shell, expanded_left, expanded_right)
     
     ! Numeric comparisons
     case ('-eq')
@@ -130,7 +176,7 @@ contains
 
   ! Evaluate complex expressions with && || ! operators
   function evaluate_complex_test(shell, tokens, num_tokens) result(result_bool)
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
     logical :: result_bool
@@ -234,16 +280,60 @@ contains
     end select
   end function
 
-  ! String pattern matching (simplified regex)
-  function match_regex(string, pattern) result(matches)
+  ! String pattern matching with POSIX regex
+  function match_regex(shell, string, pattern) result(matches)
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: string, pattern
     logical :: matches
-    
-    ! Simple pattern matching - basic wildcard support
-    if (index(pattern, '*') > 0) then
-      matches = wildcard_match(string, pattern)
-    else
-      matches = (index(string, trim(pattern)) > 0)
+
+    type(regex_t) :: regex
+    type(regmatch_t) :: pmatch(10)  ! Capture up to 9 groups + full match
+    character(kind=c_char, len=:), allocatable :: c_pattern, c_string
+    integer(c_int) :: comp_result, exec_result
+    integer :: match_idx, match_start, match_end
+    character(len=256) :: matched_str
+
+    matches = .false.
+
+    ! Prepare C strings (null-terminated)
+    c_pattern = trim(pattern) // c_null_char
+    c_string = trim(string) // c_null_char
+
+    ! Compile the regex pattern (use extended regex)
+    comp_result = c_regcomp(regex, c_pattern, REG_EXTENDED)
+
+    if (comp_result == 0) then
+      ! Pattern compiled successfully - now execute it with capture groups
+      exec_result = c_regexec(regex, c_string, 10_c_size_t, pmatch, 0_c_int)
+
+      if (exec_result == 0) then
+        ! Match found - populate BASH_REMATCH array
+        matches = .true.
+
+        ! Populate captured groups
+        do match_idx = 0, 9
+          ! Check if this match is valid (rm_so != -1)
+          if (pmatch(match_idx + 1)%rm_so /= -1) then
+            match_start = pmatch(match_idx + 1)%rm_so + 1  ! Convert to 1-based
+            match_end = pmatch(match_idx + 1)%rm_eo
+
+            ! Extract matched substring
+            matched_str = ''
+            if (match_end > match_start - 1) then
+              matched_str = string(match_start:match_end)
+            end if
+
+            ! Store in BASH_REMATCH[match_idx] (use 1-based index for Fortran)
+            call set_array_element(shell, 'BASH_REMATCH', match_idx + 1, trim(matched_str))
+          else
+            ! No more matches
+            exit
+          end if
+        end do
+      end if
+
+      ! Clean up regex
+      call c_regfree(regex)
     end if
   end function
 
@@ -512,13 +602,28 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: operand
     character(len=*), intent(out) :: expanded
-    
+
+    character(len=256) :: temp
+    integer :: temp_len
+
     ! Simple variable expansion for test operands
     if (operand(1:1) == '$') then
-      expanded = get_shell_variable(shell, operand(2:))
+      temp = get_shell_variable(shell, operand(2:))
     else
-      expanded = operand
+      temp = operand
     end if
+
+    ! Strip surrounding quotes if present
+    temp_len = len_trim(temp)
+    if (temp_len >= 2) then
+      if ((temp(1:1) == '"' .and. temp(temp_len:temp_len) == '"') .or. &
+          (temp(1:1) == "'" .and. temp(temp_len:temp_len) == "'")) then
+        expanded = temp(2:temp_len-1)
+        return
+      end if
+    end if
+
+    expanded = temp
   end subroutine
 
 end module advanced_test
