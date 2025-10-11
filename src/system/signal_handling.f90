@@ -79,7 +79,20 @@ module signal_handling
   ! Note: This is a simplification - in production, we'd need thread-safe access
   type(shell_state_t), pointer, save :: global_shell_state => null()
 
+  ! Pending signals array - set by signal handlers, checked by shell
+  logical, save :: pending_signals(32) = .false.
+
 contains
+
+  ! Generic signal handler (BIND(C) so it can be called from C)
+  subroutine generic_signal_handler(signum) bind(C, name="fortsh_signal_handler")
+    integer(c_int), value :: signum
+
+    ! Just set the flag - don't do anything complex in a signal handler
+    if (signum > 0 .and. signum <= 32) then
+      pending_signals(signum) = .true.
+    end if
+  end subroutine
 
   ! Initialize signal handling module with shell state
   subroutine init_signal_handling(shell)
@@ -269,19 +282,16 @@ contains
     ! For real signals (not pseudo-signals like EXIT), register signal handler
     if (signum > 0 .and. signum <= 31) then
       ! Initialize sigaction structure
-      sa%sa_handler = c_null_funptr  ! We'll use SIG_DFL for now
+      sa%sa_handler = c_funloc(generic_signal_handler)
       sa%sa_mask = 0
-      sa%sa_flags = 0
+      sa%sa_flags = 0  ! Could add SA_RESTART for automatic syscall restart
       sa%sa_restorer = c_null_funptr
 
-      ! For actual signal handling, we would need a C wrapper
-      ! For now, we'll just acknowledge the trap is set
-      ! Future: Implement proper signal handler that calls execute_trap_command
-
-      ! ret = c_sigaction(int(signum, c_int), sa, old_sa)
-      ! if (ret /= 0) then
-      !   write(error_unit, '(a)') 'trap: failed to set signal handler'
-      ! end if
+      ! Register the signal handler
+      ret = c_sigaction(int(signum, c_int), sa, old_sa)
+      if (ret /= 0) then
+        write(error_unit, '(a,i0)') 'trap: failed to set signal handler for signal ', signum
+      end if
     end if
   end subroutine
 
@@ -307,7 +317,10 @@ contains
           sa%sa_flags = 0
           sa%sa_restorer = c_null_funptr
 
-          ! ret = c_sigaction(int(signum, c_int), sa, old_sa)
+          ret = c_sigaction(int(signum, c_int), sa, old_sa)
+          if (ret /= 0) then
+            write(error_unit, '(a,i0)') 'trap: failed to reset signal handler for signal ', signum
+          end if
         end if
 
         exit
@@ -330,20 +343,43 @@ contains
     end do
   end subroutine
 
-  ! Execute a trap command (called when signal is received)
-  subroutine execute_trap_command(shell, signum)
-    type(shell_state_t), intent(inout) :: shell
+  ! Get trap command for a signal (returns empty string if no trap set)
+  function get_trap_command(shell, signum) result(command)
+    type(shell_state_t), intent(in) :: shell
     integer, intent(in) :: signum
+    character(len=4096) :: command
     integer :: i
 
-    ! Find and execute the trap command
+    command = ''
+
+    ! Find the trap command for this signal
     do i = 1, size(shell%traps)
       if (shell%traps(i)%signal == signum .and. shell%traps(i)%active) then
-        ! TODO: Execute the trap command
-        ! This would require parsing and executing the command string
-        ! For now, just print it
-        write(output_unit, '(a)') 'Executing trap: ' // trim(shell%traps(i)%command)
+        command = trim(shell%traps(i)%command)
         exit
+      end if
+    end do
+  end function
+
+  ! Get pending trap signals and clear flags
+  ! Returns array of signal numbers that have pending traps (0-terminated)
+  subroutine get_pending_trap_signals(signals, count)
+    integer, intent(out) :: signals(32)
+    integer, intent(out) :: count
+    integer :: signum
+
+    count = 0
+    signals = 0
+
+    ! Check each signal
+    do signum = 1, 32
+      if (pending_signals(signum)) then
+        ! Clear the flag
+        pending_signals(signum) = .false.
+
+        ! Add to list
+        count = count + 1
+        signals(count) = signum
       end if
     end do
   end subroutine

@@ -5,6 +5,7 @@ program fortran_shell
   use shell_types
   use system_interface
   use signal_handler
+  use signal_handling
   use parser
   use executor
   use job_control
@@ -28,6 +29,9 @@ program fortran_shell
 
   ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
+
+  ! Initialize signal handling module
+  call init_signal_handling(shell)
 
   ! Setup signal handlers if interactive
   if (shell%is_interactive) then
@@ -121,6 +125,9 @@ program fortran_shell
       deallocate(pipeline%commands)
     end if
   end do
+
+  ! Execute EXIT trap if one is set
+  call execute_trap_for_signal(shell, 0)  ! 0 is TRAP_EXIT
 
   ! Save command history to file (if histfile is set)
   if (len_trim(shell%histfile) > 0 .and. get_history_count() > 0) then
@@ -340,6 +347,47 @@ contains
     if (len(temp) > 0 .and. trim(temp) == '1') then
       call set_performance_monitoring(.true.)
     end if
+  end subroutine
+
+  subroutine execute_trap_for_signal(shell, signum)
+    type(shell_state_t), intent(inout) :: shell
+    integer, intent(in) :: signum
+    character(len=4096) :: trap_command
+    type(pipeline_t) :: trap_pipeline
+    integer :: saved_exit_status, i
+
+    ! Get the trap command for this signal
+    trap_command = get_trap_command(shell, signum)
+
+    if (len_trim(trap_command) == 0) return
+
+    ! Save current exit status (trap should not affect $?)
+    saved_exit_status = shell%last_exit_status
+
+    ! Parse the trap command
+    call parse_pipeline(trim(trap_command), trap_pipeline)
+
+    ! Execute the trap command if parsing succeeded
+    if (trap_pipeline%num_commands > 0) then
+      call execute_pipeline(trap_pipeline, shell, trim(trap_command))
+    end if
+
+    ! Clean up pipeline
+    if (allocated(trap_pipeline%commands)) then
+      do i = 1, trap_pipeline%num_commands
+        if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
+        if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
+        if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
+        if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
+        if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
+        if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
+        if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
+      end do
+      deallocate(trap_pipeline%commands)
+    end if
+
+    ! Restore exit status
+    shell%last_exit_status = saved_exit_status
   end subroutine
 
 end program fortran_shell
