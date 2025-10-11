@@ -220,7 +220,7 @@ contains
         return
       end if
     end do
-    
+
     ! Handle environment variables if not found in shell variables
     value = get_environment_var(trim(name))
   end function
