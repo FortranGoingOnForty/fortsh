@@ -403,6 +403,12 @@ contains
     character(len=4096) :: trap_cmd
     integer :: original_status
 
+    ! Prevent recursive trap execution (traps don't trigger traps)
+    if (shell%executing_trap) then
+      executed = .false.
+      return
+    end if
+
     ! Get the trap command
     trap_cmd = get_trap_command(shell, signum)
 
@@ -419,21 +425,11 @@ contains
       original_status = saved_exit_status
     end if
 
-    ! Execute the trap command using eval-style execution
-    ! Note: This is a simplified version - full implementation would
-    ! parse and execute the trap command in current context
-    ! For now, we'll mark that trap execution is needed
-
-    ! In a full implementation, we would:
-    ! 1. Parse trap_cmd as a pipeline
-    ! 2. Execute it in current shell context
-    ! 3. Restore original exit status
-
-    ! TODO: Implement full trap command execution
-    ! For now, just output that we would execute it
-    if (shell%option_verbose) then
-      write(error_unit, '(a,i0,a)') 'trap: would execute trap for signal ', signum, ': ' // trim(trap_cmd)
-    end if
+    ! Store the trap command for execution by the caller (executor module)
+    ! This avoids circular dependency between signal_handling and executor modules
+    ! The executor will parse and execute the trap command using execute_eval style
+    shell%pending_trap_command = trim(trap_cmd)
+    shell%pending_trap_signal = signum
 
     ! Restore original exit status (traps don't affect $?)
     shell%last_exit_status = original_status
