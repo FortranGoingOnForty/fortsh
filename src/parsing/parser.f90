@@ -682,9 +682,9 @@ contains
         pos = pos + 1
       end do
 
-      ! Store token
+      ! Store token (strip outer quotes)
       token_count = token_count + 1
-      temp_tokens(token_count) = working_copy(start:pos-1)
+      temp_tokens(token_count) = strip_outer_quotes(working_copy(start:pos-1))
     end do
 
     ! Now allocate the final deferred-length character array
@@ -696,6 +696,30 @@ contains
 
     deallocate(temp_tokens)
   end subroutine
+
+  ! Helper function to strip outer quotes from a token
+  function strip_outer_quotes(token) result(stripped)
+    character(len=*), intent(in) :: token
+    character(len=len(token)) :: stripped
+    integer :: token_len
+
+    stripped = token
+    token_len = len_trim(token)
+
+    ! Check if token has matching outer quotes
+    if (token_len >= 2) then
+      ! Check for double quotes
+      if (token(1:1) == '"' .and. token(token_len:token_len) == '"') then
+        stripped = token(2:token_len-1)
+        return
+      end if
+      ! Check for single quotes
+      if (token(1:1) == "'" .and. token(token_len:token_len) == "'") then
+        stripped = token(2:token_len-1)
+        return
+      end if
+    end if
+  end function
 
   subroutine expand_variables(token, expanded, shell)
     character(len=*), intent(in) :: token

@@ -964,6 +964,11 @@ contains
           call parse_pipeline(expanded_line, pipeline)
           if (pipeline%num_commands > 0) then
             call execute_pipeline(pipeline, shell, expanded_line)
+
+            ! Check if we need to replay loop body (only if NOT currently capturing)
+            if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+              call replay_loop_if_needed(shell)
+            end if
           end if
 
           ! Clean up
