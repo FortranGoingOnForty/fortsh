@@ -400,8 +400,9 @@ contains
     character(len=100) :: index_str
     character(len=:), allocatable :: expanded_value
     integer :: eq_pos, paren_start, paren_end, num_elements, bracket_pos
-    integer :: bracket_end, array_index, read_status
+    integer :: bracket_end, array_index, read_status, actual_value_len, i
     logical :: is_indexed_assignment
+    character(len=1) :: quote_char_temp
 
     token = trim(cmd%tokens(1))
     eq_pos = index(token, '=')
@@ -465,16 +466,41 @@ contains
       ! Simple assignment: var=value
       var_value = token(eq_pos+1:)
 
+      ! Calculate actual content length BEFORE stripping quotes (to preserve trailing spaces)
+      actual_value_len = len_trim(var_value)
+      if (actual_value_len >= 2) then
+        if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
+          ! Find closing quote position by searching backwards
+          quote_char_temp = var_value(1:1)
+          do i = actual_value_len, 2, -1
+            if (var_value(i:i) == quote_char_temp) then
+              ! Content length is closing_quote_pos - 2
+              actual_value_len = i - 2
+              exit
+            end if
+          end do
+        else
+          ! No quotes, use len_trim
+          actual_value_len = len_trim(var_value)
+        end if
+      else
+        actual_value_len = len_trim(var_value)
+      end if
+
+      ! Strip surrounding quotes from value (single or double quotes)
+      call strip_quotes_local(var_value)
+
       ! Expand variables in the value (including parameter expansions like ${var##pattern})
       if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
         call expand_variables(var_value, expanded_value, shell)
         if (allocated(expanded_value)) then
-          call var_set_shell_variable(shell, trim(var_name), trim(expanded_value))
+          ! For expanded values, use the allocated length
+          call var_set_shell_variable(shell, trim(var_name), expanded_value, len(expanded_value))
         else
-          call var_set_shell_variable(shell, trim(var_name), '')
+          call var_set_shell_variable(shell, trim(var_name), '', 0)
         end if
       else
-        call var_set_shell_variable(shell, trim(var_name), trim(var_value))
+        call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
       end if
       shell%last_exit_status = 0
     end if
@@ -974,6 +1000,44 @@ contains
         result = trim(result) // ' ' // trim(cmd%tokens(i))
       end if
     end do
+  end subroutine
+
+  ! Strip surrounding quotes (single or double) from a string
+  ! Preserves trailing spaces within quotes
+  subroutine strip_quotes_local(str)
+    character(len=*), intent(inout) :: str
+    integer :: i, len_str, closing_quote_pos
+    character(len=len(str)) :: temp
+    character(len=1) :: quote_char
+
+    len_str = len_trim(str)
+    if (len_str < 2) return
+
+    ! Check if string starts with a quote
+    if (str(1:1) /= "'" .and. str(1:1) /= '"') return
+
+    quote_char = str(1:1)
+
+    ! Search for matching closing quote (search backwards from end)
+    closing_quote_pos = 0
+    do i = len_str, 2, -1
+      if (str(i:i) == quote_char) then
+        closing_quote_pos = i
+        exit
+      end if
+    end do
+
+    ! If we found a matching closing quote, extract the content (preserving all characters including trailing spaces)
+    if (closing_quote_pos > 1) then
+      ! Save the original string first
+      temp = str
+      ! Clear the output string
+      str = repeat(' ', len(str))
+      ! Copy character by character from positions 2 to closing_quote_pos-1
+      do i = 2, closing_quote_pos - 1
+        str(i-1:i-1) = temp(i:i)
+      end do
+    end if
   end subroutine
 
 end module executor

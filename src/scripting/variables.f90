@@ -10,27 +10,39 @@ module variables
 
 contains
 
-  subroutine set_shell_variable(shell, name, value)
+  subroutine set_shell_variable(shell, name, value, value_length)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: name, value
-    integer :: i, empty_slot, iostat
+    integer, intent(in), optional :: value_length
+    integer :: i, empty_slot, iostat, actual_len
 
 
     empty_slot = -1
+
+    ! Calculate actual length (use provided length or len_trim as fallback)
+    if (present(value_length)) then
+      actual_len = value_length
+    else
+      actual_len = len_trim(value)
+    end if
 
     ! Handle special built-in variables
     select case (trim(name))
       case ('PS1')
         shell%ps1 = value
+        shell%ps1_len = actual_len  ! Store actual length including trailing spaces
         return
       case ('PS2')
         shell%ps2 = value
+        shell%ps2_len = actual_len
         return
       case ('PS3')
         shell%ps3 = value
+        shell%ps3_len = actual_len
         return
       case ('PS4')
         shell%ps4 = value
+        shell%ps4_len = actual_len
         return
       case ('IFS')
         shell%ifs = value
@@ -62,6 +74,7 @@ contains
           return
         end if
         shell%variables(i)%value = value
+        shell%variables(i)%value_len = actual_len  ! Store actual length
         ! If exported, update environment
         if (shell%variables(i)%exported) then
           if (.not. set_environment_var(trim(name), trim(value))) then
@@ -85,6 +98,7 @@ contains
     if (empty_slot > 0) then
       shell%variables(empty_slot)%name = name
       shell%variables(empty_slot)%value = value
+      shell%variables(empty_slot)%value_len = actual_len  ! Store actual length
       shell%num_variables = shell%num_variables + 1
     end if
   end subroutine
@@ -173,19 +187,19 @@ contains
         return
       case ('IFS')
         ! Internal field separator
-        value = trim(shell%ifs)
+        value = shell%ifs
         return
       case ('PS1')
-        value = trim(shell%ps1)
+        value = shell%ps1
         return
       case ('PS2')
-        value = trim(shell%ps2)
+        value = shell%ps2
         return
       case ('PS3')
-        value = trim(shell%ps3)
+        value = shell%ps3
         return
       case ('PS4')
-        value = trim(shell%ps4)
+        value = shell%ps4
         return
       case ('HISTFILE')
         value = trim(shell%histfile)
@@ -293,13 +307,36 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input_line
     integer :: eq_pos, bracket_pos, bracket_end, array_index, read_status
+    integer :: actual_value_len, i
     character(len=256) :: var_name, var_value, index_str
     character(len=:), allocatable :: expanded_value
+    character(len=1) :: quote_char_temp
 
     eq_pos = index(input_line, '=')
     if (eq_pos > 1) then
       var_name = input_line(:eq_pos-1)
       var_value = input_line(eq_pos+1:)
+
+      ! Calculate actual content length BEFORE stripping quotes (to preserve trailing spaces)
+      actual_value_len = len_trim(var_value)
+      if (actual_value_len >= 2) then
+        if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
+          ! Find closing quote position by searching backwards
+          quote_char_temp = var_value(1:1)
+          do i = actual_value_len, 2, -1
+            if (var_value(i:i) == quote_char_temp) then
+              ! Content length is closing_quote_pos - 2
+              actual_value_len = i - 2
+              exit
+            end if
+          end do
+        else
+          ! No quotes, use len_trim
+          actual_value_len = len_trim(var_value)
+        end if
+      else
+        actual_value_len = len_trim(var_value)
+      end if
 
       ! Strip surrounding quotes from value
       call strip_quotes(var_value)
@@ -345,8 +382,16 @@ contains
         call handle_array_assignment(shell, trim(var_name), var_value)
       else
         ! Simple variable expansion during assignment
-        call simple_expand_variables(var_value, expanded_value, shell)
-        call set_shell_variable(shell, trim(var_name), expanded_value)
+        ! Check if value needs expansion (contains $ or ~)
+        if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
+          ! Needs expansion
+          call simple_expand_variables(var_value, expanded_value, shell)
+          ! For expanded values, use the allocated length
+          call set_shell_variable(shell, trim(var_name), expanded_value, len(expanded_value))
+        else
+          ! No expansion needed, preserve trailing spaces
+          call set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
+        end if
       end if
       shell%last_exit_status = 0
     else
@@ -1329,31 +1374,92 @@ contains
     write(value, '(i0)') elapsed
   end subroutine
 
+  ! Get the actual stored length of a variable (for ${#var} expansion)
+  ! Returns -1 if variable not found or doesn't have stored length
+  subroutine get_variable_length(shell, name, length)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    integer, intent(out) :: length
+    integer :: i, depth
+
+    length = -1
+
+    ! First check local variables (innermost scope first)
+    if (shell%function_depth > 0) then
+      do depth = shell%function_depth, 1, -1
+        if (depth <= size(shell%local_var_counts)) then
+          do i = 1, shell%local_var_counts(depth)
+            if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+              length = shell%local_vars(depth, i)%value_len
+              return
+            end if
+          end do
+        end if
+      end do
+    end if
+
+    ! Check special prompt variables
+    select case (trim(name))
+      case ('PS1')
+        length = shell%ps1_len
+        return
+      case ('PS2')
+        length = shell%ps2_len
+        return
+      case ('PS3')
+        length = shell%ps3_len
+        return
+      case ('PS4')
+        length = shell%ps4_len
+        return
+    end select
+
+    ! Check regular shell variables
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        length = shell%variables(i)%value_len
+        return
+      end if
+    end do
+  end subroutine
+
   ! Strip surrounding quotes (single or double) from a string
+  ! Preserves trailing spaces within quotes
   subroutine strip_quotes(str)
     character(len=*), intent(inout) :: str
-    integer :: len_str
+    integer :: i, search_end, closing_quote_pos, content_len
     character(len=len(str)) :: temp
+    character(len=1) :: quote_char
 
-    len_str = len_trim(str)
+    if (len_trim(str) < 2) return
 
-    ! Check if string has surrounding quotes
-    if (len_str >= 2) then
-      ! Check for single quotes
-      if (str(1:1) == "'" .and. str(len_str:len_str) == "'") then
-        temp = str(2:len_str-1)
-        str = ''
-        str = temp
-        return
+    ! Check if string starts with a quote
+    if (str(1:1) /= "'" .and. str(1:1) /= '"') return
+
+    quote_char = str(1:1)
+
+    ! Search backwards to find closing quote (use len_trim to avoid padding)
+    closing_quote_pos = 0
+    search_end = len_trim(str)
+    do i = search_end, 2, -1
+      if (str(i:i) == quote_char) then
+        closing_quote_pos = i
+        exit
       end if
+    end do
 
-      ! Check for double quotes
-      if (str(1:1) == '"' .and. str(len_str:len_str) == '"') then
-        temp = str(2:len_str-1)
-        str = ''
-        str = temp
-        return
-      end if
+    ! If we found a matching closing quote, extract the content (preserving all characters including trailing spaces)
+    if (closing_quote_pos > 1) then
+      content_len = closing_quote_pos - 2
+      ! Save the original string first
+      temp = str
+      ! Clear the output string
+      str = repeat(' ', len(str))
+      ! Copy character by character from positions 2 to closing_quote_pos-1
+      ! This preserves ALL characters including trailing spaces
+      do i = 1, content_len
+        str(i:i) = temp(i+1:i+1)
+      end do
     end if
   end subroutine
 

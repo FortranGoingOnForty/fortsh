@@ -14,9 +14,10 @@ module prompt_formatting
 contains
 
   ! Main function to expand prompt string with escape sequences
-  function expand_prompt(prompt_str, shell) result(expanded)
+  function expand_prompt(prompt_str, shell, stored_len) result(expanded)
     character(len=*), intent(in) :: prompt_str
     type(shell_state_t), intent(in) :: shell
+    integer, intent(in), optional :: stored_len
     character(len=:), allocatable :: expanded
 
     character(len=4096) :: result
@@ -26,7 +27,13 @@ contains
     result = ''
     j = 1
     i = 1
-    prompt_len = len_trim(prompt_str)
+    ! Use stored length if provided (preserves intentional trailing spaces),
+    ! otherwise fall back to len_trim for backwards compatibility
+    if (present(stored_len) .and. stored_len > 0) then
+      prompt_len = min(stored_len, len(prompt_str))
+    else
+      prompt_len = len_trim(prompt_str)
+    end if
 
     do while (i <= prompt_len)
       if (prompt_str(i:i) == '\' .and. i < prompt_len) then
@@ -47,7 +54,8 @@ contains
       end if
     end do
 
-    expanded = trim(result)
+    ! Allocate exact length to preserve trailing spaces
+    expanded = result(1:j-1)
   end function
 
   ! Process individual escape sequence
