@@ -842,6 +842,15 @@ contains
     ! Get action
     action = trim(cmd%tokens(2))
 
+    ! Strip quotes from action if present
+    if (len_trim(action) >= 2) then
+      if (action(1:1) == '"' .and. action(len_trim(action):len_trim(action)) == '"') then
+        action = action(2:len_trim(action)-1)
+      else if (action(1:1) == "'" .and. action(len_trim(action):len_trim(action)) == "'") then
+        action = action(2:len_trim(action)-1)
+      end if
+    end if
+
     ! Check for removal syntax: trap - signal or trap "" signal
     if (trim(action) == '-' .or. len_trim(action) == 0) then
       remove_mode = .true.

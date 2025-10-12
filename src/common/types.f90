@@ -202,6 +202,10 @@ module shell_types
     ! Shell traps
     type(shell_trap_t) :: traps(20)
     integer :: num_traps = 0
+    ! Pending trap execution (to avoid circular dependency in signal_handling)
+    character(len=1024) :: pending_trap_command = ''
+    integer :: pending_trap_signal = 0
+    logical :: executing_trap = .false.  ! Prevent recursive trap execution
     ! Command hash table
     type(command_hash_entry_t) :: command_hash(50)
     integer :: num_hashed_commands = 0
