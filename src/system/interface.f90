@@ -7,13 +7,24 @@ module system_interface
   use shell_types
   implicit none
 
-  ! Signal numbers
+  ! Signal numbers (platform-specific)
+#ifdef __APPLE__
+  ! macOS/Darwin signal numbers
+  integer(c_int), parameter :: SIGINT = 2
+  integer(c_int), parameter :: SIGTSTP = 18
+  integer(c_int), parameter :: SIGCHLD = 20
+  integer(c_int), parameter :: SIGCONT = 19
+  integer(c_int), parameter :: SIGTTIN = 21
+  integer(c_int), parameter :: SIGTTOU = 22
+#else
+  ! Linux signal numbers
   integer(c_int), parameter :: SIGINT = 2
   integer(c_int), parameter :: SIGTSTP = 20
   integer(c_int), parameter :: SIGCHLD = 17
   integer(c_int), parameter :: SIGCONT = 18
   integer(c_int), parameter :: SIGTTIN = 21
   integer(c_int), parameter :: SIGTTOU = 22
+#endif
 
   ! Wait options
   integer(c_int), parameter :: WNOHANG = 1
@@ -31,7 +42,22 @@ module system_interface
     character(c_char) :: c_cc(NCCS) ! control characters
   end type termios_t
   
-  ! Terminal flags
+  ! Terminal flags (platform-specific values)
+#ifdef __APPLE__
+  ! macOS/Darwin values from sys/termios.h
+  integer(c_int), parameter :: ICANON = int(z'00000100', c_int)  ! canonical input
+  integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
+  integer(c_int), parameter :: ECHOE  = int(z'00000002', c_int)  ! echo erase character
+  integer(c_int), parameter :: ECHOK  = int(z'00000004', c_int)  ! echo kill character
+  integer(c_int), parameter :: ECHONL = int(z'00000010', c_int)  ! echo NL even if ECHO is off
+  integer(c_int), parameter :: IEXTEN = int(z'00000400', c_int)  ! extended input processing
+  integer(c_int), parameter :: ISIG   = int(z'00000080', c_int)  ! enable signals
+
+  ! Control character indices (macOS)
+  integer(c_int), parameter :: VMIN  = 16  ! minimum chars for noncanonical read
+  integer(c_int), parameter :: VTIME = 17  ! timeout for noncanonical read
+#else
+  ! Linux values from bits/termios.h
   integer(c_int), parameter :: ICANON = int(z'00000002', c_int)  ! canonical input
   integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
   integer(c_int), parameter :: ECHOE  = int(z'00000010', c_int)  ! echo erase character
@@ -40,9 +66,10 @@ module system_interface
   integer(c_int), parameter :: IEXTEN = int(z'00008000', c_int)  ! extended input processing
   integer(c_int), parameter :: ISIG   = int(z'00000001', c_int)  ! enable signals
 
-  ! Control character indices
+  ! Control character indices (Linux)
   integer(c_int), parameter :: VMIN  = 6   ! minimum chars for noncanonical read
   integer(c_int), parameter :: VTIME = 5   ! timeout for noncanonical read
+#endif
 
   ! tcsetattr options
   integer(c_int), parameter :: TCSANOW   = 0  ! change immediately

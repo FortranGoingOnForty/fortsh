@@ -3,10 +3,19 @@
 
 # Compiler settings
 FC = gfortran
+
+# Platform detection
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    PLATFORM_FLAGS = -D__APPLE__ -cpp
+else
+    PLATFORM_FLAGS = -cpp
+endif
+
 # Development flags (verbose warnings, debug symbols)
-FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O2
+FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O2 $(PLATFORM_FLAGS)
 # Production flags (minimal warnings, optimized, no debug symbols)
-FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2
+FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS)
 LDFLAGS = 
 
 # Directory structure
