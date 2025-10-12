@@ -12,6 +12,7 @@ module executor
   use error_handling
   use performance
   use shell_options
+  use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR
   use iso_fortran_env, only: error_unit, input_unit
   use iso_c_binding
   implicit none
@@ -250,7 +251,7 @@ contains
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
-    logical :: should_execute
+    logical :: should_execute, trap_executed
     integer(int64) :: exec_start_time
     character(len=2048) :: reconstructed_cmd
 
@@ -334,7 +335,19 @@ contains
     if (trim(cmd%tokens(1)) /= 'defun') then
       call expand_command_globs(cmd)
     end if
-    
+
+    ! === DEBUGGING & TRACING HOOKS ===
+    ! Execute DEBUG trap if set (before command execution)
+    trap_executed = execute_trap(shell, TRAP_DEBUG)
+
+    ! Trace command if xtrace is enabled (set -x)
+    if (shell%option_xtrace .and. cmd%num_tokens > 0) then
+      ! Reconstruct command for tracing
+      call reconstruct_command_from_tokens(cmd, reconstructed_cmd)
+      call trace_command(shell, trim(reconstructed_cmd))
+    end if
+    ! === END DEBUGGING & TRACING HOOKS ===
+
     ! Check for variable assignment: var=value or arr=(...)
     if (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1) then
       call execute_assignment(cmd, shell)
@@ -354,6 +367,13 @@ contains
     else
       call execute_external(cmd, shell, original_input)
     end if
+
+    ! === ERROR TRAP HOOK ===
+    ! Execute ERR trap if command failed (after command execution)
+    if (shell%last_exit_status /= 0) then
+      trap_executed = execute_trap(shell, TRAP_ERR, shell%last_exit_status)
+    end if
+    ! === END ERROR TRAP HOOK ===
 
     ! End performance timing
     call end_timer('execute_single', exec_start_time, total_exec_time)

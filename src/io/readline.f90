@@ -621,13 +621,15 @@ contains
     character(len=len(input_line)) :: expanded_line
 
     character(len=len(input_line)) :: work_line
-    integer :: pos, expansion_start, expansion_end
+    integer :: pos, expansion_start, expansion_end, out_pos
     character(len=256) :: expansion, replacement
     logical :: found_expansion
+    integer :: repl_len
 
     work_line = input_line
     expanded_line = ''
     pos = 1
+    out_pos = 1
 
     do while (pos <= len_trim(work_line))
       if (work_line(pos:pos) == '!' .and. pos <= len_trim(work_line)) then
@@ -640,18 +642,25 @@ contains
           call process_history_expansion(expansion, replacement, found_expansion)
 
           if (found_expansion) then
-            expanded_line = trim(expanded_line) // trim(replacement)
+            repl_len = len_trim(replacement)
+            if (out_pos + repl_len - 1 <= len(expanded_line)) then
+              expanded_line(out_pos:out_pos+repl_len-1) = trim(replacement)
+              out_pos = out_pos + repl_len
+            end if
             pos = expansion_end + 1
           else
-            expanded_line = trim(expanded_line) // '!'
+            expanded_line(out_pos:out_pos) = '!'
+            out_pos = out_pos + 1
             pos = pos + 1
           end if
         else
-          expanded_line = trim(expanded_line) // '!'
+          expanded_line(out_pos:out_pos) = '!'
+          out_pos = out_pos + 1
           pos = pos + 1
         end if
       else
-        expanded_line = trim(expanded_line) // work_line(pos:pos)
+        expanded_line(out_pos:out_pos) = work_line(pos:pos)
+        out_pos = out_pos + 1
         pos = pos + 1
       end if
     end do
