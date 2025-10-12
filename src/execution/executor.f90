@@ -182,6 +182,8 @@ contains
       job_id = add_job(shell, pgid, original_input, .false.)
       write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pgid
       shell%last_pid = pgid
+      ! Set $! to last process in background pipeline
+      shell%last_bg_pid = pids(pipe_count + 1)
     else if (shell%is_interactive) then
       ! Give terminal to job
       ret = c_tcsetpgrp(shell%shell_terminal, pgid)
@@ -239,12 +241,7 @@ contains
       ! Normal: return exit status of last (rightmost) command
       shell%last_exit_status = exit_statuses(num_processes)
     end if
-    
-    ! Update $! (last background PID) if this was a background pipeline
-    if (num_processes > 0) then
-      shell%last_bg_pid = pids(num_processes)
-    end if
-    
+
     deallocate(exit_statuses)
   end subroutine
 
@@ -752,6 +749,8 @@ contains
         ! Background job
         job_id = add_job(shell, pgid, original_input, .false.)
         write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pid
+        ! Set $! to the background job PID
+        shell%last_bg_pid = pid
       end if
     end if
   end subroutine
