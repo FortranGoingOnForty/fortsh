@@ -47,9 +47,9 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/scripting/substitution.o \
           $(BUILDDIR)/scripting/config.o \
           $(BUILDDIR)/scripting/aliases.o \
+          $(BUILDDIR)/io/readline.o \
           $(BUILDDIR)/scripting/shell_options.o \
           $(BUILDDIR)/execution/coprocess.o \
-          $(BUILDDIR)/io/readline.o \
           $(BUILDDIR)/io/heredoc.o \
           $(BUILDDIR)/io/fd_redirection.o \
           $(BUILDDIR)/execution/builtins.o \
@@ -153,7 +153,7 @@ $(BUILDDIR)/scripting/config.o: src/scripting/config.f90 $(BUILDDIR)/common/type
 $(BUILDDIR)/scripting/aliases.o: src/scripting/aliases.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/shell_options.o: src/scripting/shell_options.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/shell_options.o: src/scripting/shell_options.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/io/readline.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
