@@ -14,8 +14,7 @@ sha256sums=('SKIP')
 
 build() {
     cd fortsh
-    make clean
-    make all
+    make release
 }
 
 check() {
