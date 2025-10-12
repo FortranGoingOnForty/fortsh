@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        4.0.0
+Version:        4.0.1
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,12 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sat Oct 12 2024 mfw <espadon@outlook.com> - 4.0.1-1
+- Fixed multiline function conditionals
+- Improved scripting support and control flow
+- Minor fixes and adjustments for better compatibility
+- Updated README with compliance and parity targets
+
 * Sat Oct 12 2024 mfw <espadon@outlook.com> - 4.0.0-1
 - MAJOR RELEASE: Bash parity and POSIX compliance improvements
 - Implemented process substitution <() and >() operators
