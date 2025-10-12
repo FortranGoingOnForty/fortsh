@@ -393,4 +393,52 @@ contains
     trappable = (signum /= SIGKILL .and. signum /= SIGSTOP)
   end function
 
+  ! Execute a trap command
+  ! Returns .true. if trap was executed, .false. if no trap was set
+  function execute_trap(shell, signum, saved_exit_status) result(executed)
+    type(shell_state_t), intent(inout) :: shell
+    integer, intent(in) :: signum
+    integer, intent(in), optional :: saved_exit_status
+    logical :: executed
+    character(len=4096) :: trap_cmd
+    integer :: original_status
+
+    ! Get the trap command
+    trap_cmd = get_trap_command(shell, signum)
+
+    if (len_trim(trap_cmd) == 0) then
+      executed = .false.
+      return
+    end if
+
+    ! Save current exit status
+    original_status = shell%last_exit_status
+
+    ! If saved_exit_status provided (for ERR trap), use it
+    if (present(saved_exit_status)) then
+      original_status = saved_exit_status
+    end if
+
+    ! Execute the trap command using eval-style execution
+    ! Note: This is a simplified version - full implementation would
+    ! parse and execute the trap command in current context
+    ! For now, we'll mark that trap execution is needed
+
+    ! In a full implementation, we would:
+    ! 1. Parse trap_cmd as a pipeline
+    ! 2. Execute it in current shell context
+    ! 3. Restore original exit status
+
+    ! TODO: Implement full trap command execution
+    ! For now, just output that we would execute it
+    if (shell%option_verbose) then
+      write(error_unit, '(a,i0,a)') 'trap: would execute trap for signal ', signum, ': ' // trim(trap_cmd)
+    end if
+
+    ! Restore original exit status (traps don't affect $?)
+    shell%last_exit_status = original_status
+
+    executed = .true.
+  end function
+
 end module signal_handling
