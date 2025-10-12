@@ -447,6 +447,19 @@ module system_interface
       type(rlimit_t), intent(in) :: rlim
       integer(c_int) :: c_setrlimit
     end function
+
+    function c_mkfifo(pathname, mode) bind(C, name="mkfifo")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: pathname
+      integer(c_int), value :: mode
+      integer(c_int) :: c_mkfifo
+    end function
+
+    function c_unlink(pathname) bind(C, name="unlink")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: pathname
+      integer(c_int) :: c_unlink
+    end function
   end interface
 
   ! Signal handler types (initialized in module initialization)
@@ -481,6 +494,12 @@ module system_interface
   integer(c_int), parameter :: S_IRUSR  = int(o'000400', c_int)  ! Owner read
   integer(c_int), parameter :: S_IWUSR  = int(o'000200', c_int)  ! Owner write
   integer(c_int), parameter :: S_IXUSR  = int(o'000100', c_int)  ! Owner execute
+  integer(c_int), parameter :: S_IRGRP  = int(o'000040', c_int)  ! Group read
+  integer(c_int), parameter :: S_IWGRP  = int(o'000020', c_int)  ! Group write
+  integer(c_int), parameter :: S_IXGRP  = int(o'000010', c_int)  ! Group execute
+  integer(c_int), parameter :: S_IROTH  = int(o'000004', c_int)  ! Others read
+  integer(c_int), parameter :: S_IWOTH  = int(o'000002', c_int)  ! Others write
+  integer(c_int), parameter :: S_IXOTH  = int(o'000001', c_int)  ! Others execute
 
   ! Access mode flags
   integer(c_int), parameter :: F_OK = 0  ! File exists
@@ -983,6 +1002,39 @@ contains
     is_same = (ret1 == 0 .and. ret2 == 0 .and. &
                stat1%st_dev == stat2%st_dev .and. &
                stat1%st_ino == stat2%st_ino)
+  end function
+
+  ! Create a named pipe (FIFO)
+  function create_fifo(path, mode) result(success)
+    character(len=*), intent(in) :: path
+    integer, intent(in), optional :: mode
+    logical :: success
+    character(len=256), target :: c_path
+    integer(c_int) :: ret
+    integer(c_int) :: fifo_mode
+
+    ! Default mode is 0600 (read/write for owner only)
+    if (present(mode)) then
+      fifo_mode = int(mode, c_int)
+    else
+      fifo_mode = ior(S_IRUSR, S_IWUSR)
+    end if
+
+    c_path = trim(path)//c_null_char
+    ret = c_mkfifo(c_loc(c_path), fifo_mode)
+    success = (ret == 0)
+  end function
+
+  ! Remove a file or FIFO
+  function remove_file(path) result(success)
+    character(len=*), intent(in) :: path
+    logical :: success
+    character(len=256), target :: c_path
+    integer :: ret
+
+    c_path = trim(path)//c_null_char
+    ret = c_unlink(c_loc(c_path))
+    success = (ret == 0)
   end function
 
   ! Initialize signal handler constants
