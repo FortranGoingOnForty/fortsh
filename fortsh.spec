@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        3.3.9
+Version:        3.3.10
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,12 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sat Oct 12 2024 mfw <espadon@outlook.com> - 3.3.10-1
+- Major fixes to background job control
+- Fixed history expansion handling
+- Added tracing and trap hooks
+- Improved signal handling for background jobs
+
 * Sat Oct 12 2024 mfw <espadon@outlook.com> - 3.3.9-1
 - Fixed backgrounding jobs edge cases
 - Implemented $! expansion for last background job PID
