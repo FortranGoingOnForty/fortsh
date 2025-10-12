@@ -28,6 +28,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/common/error_handling.o \
           $(BUILDDIR)/common/performance.o \
           $(BUILDDIR)/system/interface.o \
+          $(BUILDDIR)/common/io_helpers.o \
           $(BUILDDIR)/system/signals.o \
           $(BUILDDIR)/system/signal_handling.o \
           $(BUILDDIR)/parsing/glob.o \
@@ -87,6 +88,9 @@ $(BUILDDIR)/common/performance.o: src/common/performance.f90 | $(BUILDDIR)/commo
 $(BUILDDIR)/system/interface.o: src/system/interface.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/system
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
+$(BUILDDIR)/common/io_helpers.o: src/common/io_helpers.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/common
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
 $(BUILDDIR)/system/signals.o: src/system/signals.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/system
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
@@ -105,7 +109,7 @@ $(BUILDDIR)/execution/jobs.o: src/execution/jobs.f90 $(BUILDDIR)/common/types.o 
 $(BUILDDIR)/execution/executor.o: src/execution/executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/control_flow.o $(BUILDDIR)/execution/builtins.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/builtins.o: src/execution/builtins.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/coprocess.o $(BUILDDIR)/scripting/command_builtin.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/substitution.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/builtins.o: src/execution/builtins.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/coprocess.o $(BUILDDIR)/scripting/command_builtin.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/substitution.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/control_flow.o: src/scripting/control_flow.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/advanced_test.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/test_builtin.o | $(BUILDDIR)/scripting
