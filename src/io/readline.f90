@@ -46,13 +46,15 @@ module readline
     character(len=MAX_LINE_LEN) :: buffer = ''
     character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
     character(len=MAX_LINE_LEN) :: kill_buffer = ''    ! Kill ring buffer for cut/paste
+    character(len=MAX_LINE_LEN) :: last_completion_buffer = '' ! Buffer when we last showed completions
     integer :: length = 0
     integer :: cursor_pos = 0  ! 0-based position in buffer
     integer :: history_pos = 0  ! Current position in history (0 = not browsing)
     integer :: kill_length = 0  ! Length of text in kill buffer
     logical :: dirty = .false. ! Needs redraw
     logical :: in_history = .false. ! Currently browsing history
-    
+    logical :: completions_shown = .false. ! Have we shown completion list for current buffer?
+
     ! Editing mode support
     integer :: editing_mode = EDITING_MODE_EMACS
     integer :: vi_mode = VI_MODE_INSERT
@@ -110,12 +112,14 @@ contains
     input_state%buffer = ''
     input_state%original_buffer = ''
     input_state%kill_buffer = ''
+    input_state%last_completion_buffer = ''
     input_state%length = 0
     input_state%cursor_pos = 0
     input_state%history_pos = 0
     input_state%kill_length = 0
     input_state%dirty = .false.
     input_state%in_history = .false.
+    input_state%completions_shown = .false.
     
     if (raw_enabled) then
       ! Enhanced input processing
@@ -142,7 +146,8 @@ contains
           end if
           
         case(KEY_CTRL_C)
-          ! Ctrl+C - cancel input
+          ! Ctrl+C - cancel input and clear line
+          write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
           write(output_unit, '(a)') '^C'
           input_state%buffer = ''
           input_state%length = 0
@@ -1218,42 +1223,66 @@ contains
     character(len=*), intent(in) :: dir_path, pattern
     character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
     integer, intent(inout) :: num_completions
-    
+
     character(len=MAX_LINE_LEN) :: ls_command, ls_output
     character(len=MAX_LINE_LEN) :: entries(100)  ! Temp storage for directory entries
+    character(len=MAX_LINE_LEN) :: full_path
     integer :: num_entries, i, pattern_len
-    
+    logical :: is_dir
+
     pattern_len = len_trim(pattern)
-    
+
     ! Use ls command to get directory listing
     ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
     ls_output = execute_and_capture(ls_command)
-    
+
     ! Parse ls output into individual entries
     call parse_ls_output(ls_output, entries, num_entries)
-    
+
     ! Filter entries by pattern and add to completions
     do i = 1, num_entries
       if (num_completions >= 50) exit
-      
+
       ! Skip . and .. unless explicitly requested
       if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
         if (pattern_len == 0 .or. (pattern_len > 0 .and. pattern(1:1) /= '.')) then
           cycle
         end if
       end if
-      
+
       ! Check if entry matches pattern
       if (pattern_len == 0 .or. index(entries(i), pattern(1:pattern_len)) == 1) then
         num_completions = num_completions + 1
+
+        ! Build full path for directory check
         if (trim(dir_path) == '.') then
-          completions(num_completions) = trim(entries(i))
+          full_path = trim(entries(i))
         else
-          completions(num_completions) = trim(dir_path) // '/' // trim(entries(i))
+          full_path = trim(dir_path) // '/' // trim(entries(i))
+        end if
+
+        ! Check if it's a directory and add trailing slash
+        is_dir = is_directory(full_path)
+        if (is_dir) then
+          completions(num_completions) = trim(full_path) // '/'
+        else
+          completions(num_completions) = trim(full_path)
         end if
       end if
     end do
   end subroutine
+
+  ! Check if a path is a directory
+  function is_directory(path) result(is_dir)
+    character(len=*), intent(in) :: path
+    logical :: is_dir
+    character(len=MAX_LINE_LEN) :: test_command, output
+
+    ! Use test command to check if path is a directory
+    test_command = 'test -d "' // trim(path) // '" && echo "yes" || echo "no"'
+    output = execute_and_capture(test_command)
+    is_dir = (index(output, 'yes') > 0)
+  end function
 
   ! Parse ls output into individual entries
   subroutine parse_ls_output(output, entries, num_entries)
@@ -1414,15 +1443,18 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
     integer :: i
-    
+
     ! Check if we have room
     if (input_state%length >= MAX_LINE_LEN) return
-    
+
     ! If we're browsing history, exit history mode when typing
     if (input_state%in_history) then
       input_state%in_history = .false.
       input_state%history_pos = 0
     end if
+
+    ! Reset completion state when buffer changes
+    input_state%completions_shown = .false.
     
     ! If cursor is at end, simple append
     if (input_state%cursor_pos >= input_state%length) then
@@ -1446,14 +1478,17 @@ contains
   subroutine handle_backspace(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i
-    
+
     if (input_state%cursor_pos <= 0) return
-    
+
     ! If we're browsing history, exit history mode when editing
     if (input_state%in_history) then
       input_state%in_history = .false.
       input_state%history_pos = 0
     end if
+
+    ! Reset completion state when buffer changes
+    input_state%completions_shown = .false.
     
     ! If cursor is at end, simple deletion
     if (input_state%cursor_pos >= input_state%length) then
@@ -1479,38 +1514,60 @@ contains
     character(len=MAX_LINE_LEN) :: partial_input
     character(len=MAX_LINE_LEN) :: completions(50)
     character(len=MAX_LINE_LEN) :: completed_line
+    character(len=MAX_LINE_LEN) :: saved_input
     integer :: num_completions
-    logical :: completed
-    
+    logical :: completed, made_progress, buffer_changed
+
     ! Exit history mode if we're browsing
     if (input_state%in_history) then
       input_state%in_history = .false.
       input_state%history_pos = 0
     end if
-    
+
     ! Get the current buffer content
     partial_input = input_state%buffer(:input_state%length)
-    
+    saved_input = partial_input
+
+    ! Check if buffer has changed since we last showed completions
+    buffer_changed = (trim(input_state%buffer(:input_state%length)) /= &
+                     trim(input_state%last_completion_buffer))
+
     ! Attempt smart completion
     call smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
-    
+
     if (completed) then
+      ! Check if we made actual progress
+      made_progress = (len_trim(completed_line) > len_trim(saved_input))
+
       ! Update the input buffer with completion
       input_state%buffer = completed_line
       input_state%length = len_trim(completed_line)
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
-      
+
       if (num_completions > 1) then
-        ! Show available options
-        write(output_unit, '()')  ! New line
-        call show_completions(completions, num_completions)
-        input_state%dirty = .true.
+        if (made_progress) then
+          ! We completed to common prefix - don't show options yet
+          ! User can press tab again to see options
+          input_state%completions_shown = .false.
+        else
+          ! At common prefix already - show available options only if not already shown
+          if (.not. input_state%completions_shown .or. buffer_changed) then
+            write(output_unit, '()')  ! New line
+            call show_completions(completions, num_completions)
+            input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+            input_state%completions_shown = .true.
+            input_state%dirty = .true.
+          end if
+        end if
+      else
+        ! Single completion - reset flag
+        input_state%completions_shown = .false.
       end if
     else
-      ! No completions found, just add spaces (old behavior)
-      call insert_char(input_state, ' ')
-      call insert_char(input_state, ' ')
+      ! No completions found - ring bell (ASCII 7)
+      write(output_unit, '(a)', advance='no') char(7)  ! Bell for audio feedback
+      flush(output_unit)
     end if
   end subroutine
   
@@ -1780,13 +1837,41 @@ contains
   
   subroutine handle_clear_screen(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     ! Clear screen with ANSI escape sequence
     write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
     flush(output_unit)
-    
+
     ! Force redraw of current line
     input_state%dirty = .true.
+  end subroutine
+
+  ! Cursor flash effect for visual feedback
+  subroutine cursor_flash_effect()
+    integer :: i, j
+    integer, parameter :: FLASH_COUNT = 3
+    integer, parameter :: DELAY_ITERATIONS = 50000
+
+    ! Flash cursor multiple times with visible delay
+    do i = 1, FLASH_COUNT
+      ! Hide cursor
+      write(output_unit, '(a)', advance='no') ESC_HIDE_CURSOR
+      flush(output_unit)
+
+      ! Small delay using busy-wait
+      do j = 1, DELAY_ITERATIONS
+        ! Busy wait
+      end do
+
+      ! Show cursor
+      write(output_unit, '(a)', advance='no') ESC_SHOW_CURSOR
+      flush(output_unit)
+
+      ! Small delay using busy-wait
+      do j = 1, DELAY_ITERATIONS
+        ! Busy wait
+      end do
+    end do
   end subroutine
 
 end module readline
