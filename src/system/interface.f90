@@ -297,7 +297,12 @@ module system_interface
       import :: c_int
       integer(c_int), value :: status
     end subroutine
-    
+
+    subroutine c_perror(s) bind(C, name="perror")
+      import :: c_ptr
+      type(c_ptr), value :: s
+    end subroutine
+
     ! Terminal control functions
     function c_tcgetattr(fd, termios_p) bind(C, name="tcgetattr")
       import :: c_int, termios_t
