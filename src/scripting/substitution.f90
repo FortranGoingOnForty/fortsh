@@ -345,12 +345,12 @@ contains
   subroutine recursive_brace_expansion(list, count)
     character(len=256), intent(inout) :: list(100)
     integer, intent(inout) :: count
-    
+
     character(len=256) :: temp_list(100), expanded_temp(100)
     integer :: i, j, temp_count, expanded_count, total_count
-    
+
     total_count = 0
-    
+
     do i = 1, count
       if (index(list(i), '{') > 0) then
         call expand_braces(list(i), expanded_temp, expanded_count)
@@ -367,9 +367,120 @@ contains
         end if
       end if
     end do
-    
+
     count = total_count
     list(1:count) = temp_list(1:count)
+  end subroutine
+
+  ! ===========================================================================
+  ! Process Substitution FIFO Management
+  ! ===========================================================================
+
+  ! Generate a unique FIFO path in /tmp
+  function generate_fifo_path(shell) result(fifo_path)
+    type(shell_state_t), intent(in) :: shell
+    character(len=MAX_PATH_LEN) :: fifo_path
+    character(len=32) :: suffix
+
+    ! Create unique suffix based on PID, timestamp, and counter
+    suffix = generate_temp_suffix()
+    write(fifo_path, '(A,I0,A,A,A,I0)') '/tmp/fortsh_fifo_', shell%shell_pid, '_', &
+                                         trim(suffix), '_', shell%num_proc_subst_fifos
+  end function
+
+  ! Create a FIFO and track it in shell state
+  function create_fifo_for_subst(shell, is_input) result(fifo_path)
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(in) :: is_input
+    character(len=MAX_PATH_LEN) :: fifo_path
+    logical :: success
+    integer :: idx
+
+    ! Generate unique FIFO path
+    fifo_path = generate_fifo_path(shell)
+
+    ! Create the FIFO with mode 0600 (owner read/write)
+    success = create_fifo(trim(fifo_path))
+
+    if (.not. success) then
+      write(error_unit, '(A)') 'fortsh: failed to create FIFO: ' // trim(fifo_path)
+      fifo_path = ''
+      return
+    end if
+
+    ! Track the FIFO in shell state
+    if (shell%num_proc_subst_fifos < 10) then
+      idx = shell%num_proc_subst_fifos + 1
+      shell%proc_subst_fifos(idx)%fifo_path = fifo_path
+      shell%proc_subst_fifos(idx)%is_input = is_input
+      shell%proc_subst_fifos(idx)%active = .true.
+      shell%proc_subst_fifos(idx)%pid = 0  ! Will be set when process is forked
+      shell%num_proc_subst_fifos = idx
+    else
+      write(error_unit, '(A)') 'fortsh: too many process substitutions (max 10)'
+    end if
+  end function
+
+  ! Update FIFO with background process PID
+  subroutine set_fifo_pid(shell, fifo_path, pid)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: fifo_path
+    integer(c_pid_t), intent(in) :: pid
+    integer :: i
+
+    do i = 1, shell%num_proc_subst_fifos
+      if (shell%proc_subst_fifos(i)%active .and. &
+          trim(shell%proc_subst_fifos(i)%fifo_path) == trim(fifo_path)) then
+        shell%proc_subst_fifos(i)%pid = pid
+        return
+      end if
+    end do
+  end subroutine
+
+  ! Clean up a specific FIFO
+  subroutine cleanup_fifo(shell, fifo_path)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: fifo_path
+    integer :: i
+    logical :: success
+
+    do i = 1, shell%num_proc_subst_fifos
+      if (shell%proc_subst_fifos(i)%active .and. &
+          trim(shell%proc_subst_fifos(i)%fifo_path) == trim(fifo_path)) then
+
+        ! Remove the FIFO file
+        success = remove_file(trim(fifo_path))
+        if (.not. success) then
+          write(error_unit, '(A)') 'fortsh: warning: failed to remove FIFO: ' // trim(fifo_path)
+        end if
+
+        ! Mark as inactive
+        shell%proc_subst_fifos(i)%active = .false.
+        shell%proc_subst_fifos(i)%fifo_path = ''
+        shell%proc_subst_fifos(i)%pid = 0
+        return
+      end if
+    end do
+  end subroutine
+
+  ! Clean up all active FIFOs
+  subroutine cleanup_all_fifos(shell)
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i
+    logical :: success
+
+    do i = 1, shell%num_proc_subst_fifos
+      if (shell%proc_subst_fifos(i)%active) then
+        success = remove_file(trim(shell%proc_subst_fifos(i)%fifo_path))
+        if (.not. success) then
+          write(error_unit, '(A)') 'fortsh: warning: failed to remove FIFO: ' // &
+                                   trim(shell%proc_subst_fifos(i)%fifo_path)
+        end if
+        shell%proc_subst_fifos(i)%active = .false.
+      end if
+    end do
+
+    shell%num_proc_subst_fifos = 0
   end subroutine
 
 end module substitution

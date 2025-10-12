@@ -20,7 +20,7 @@ program fortran_shell
 
   type(shell_state_t) :: shell
   type(pipeline_t) :: pipeline
-  character(len=1024) :: input_line
+  character(len=1024) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, prompt_str, history_expanded
   integer :: iostat, i
 
@@ -105,8 +105,11 @@ program fortran_shell
       call expand_alias(shell, trim(input_line), expanded_line)
     end if
 
+    ! Process substitutions <() and >() before parsing
+    call process_substitutions(shell, expanded_line, proc_subst_line)
+
     ! Parse pipeline
-    call parse_pipeline(expanded_line, pipeline)
+    call parse_pipeline(proc_subst_line, pipeline)
 
     ! Execute pipeline
     if (pipeline%num_commands > 0) then
@@ -186,7 +189,7 @@ contains
 
   subroutine process_source_file(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line
+    character(len=1024) :: input_line, proc_subst_line
     integer :: file_unit, iostat, i
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line, history_expanded
@@ -222,8 +225,11 @@ contains
         call expand_alias(shell, trim(input_line), expanded_line)
       end if
 
+      ! Process substitutions <() and >() before parsing
+      call process_substitutions(shell, expanded_line, proc_subst_line)
+
       ! Parse and execute pipeline
-      call parse_pipeline(expanded_line, pipeline)
+      call parse_pipeline(proc_subst_line, pipeline)
 
       if (pipeline%num_commands > 0) then
         call execute_pipeline(pipeline, shell, expanded_line)

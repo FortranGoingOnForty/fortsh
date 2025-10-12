@@ -177,6 +177,14 @@ module shell_types
     integer :: hits = 0
   end type command_hash_entry_t
 
+  ! Process substitution FIFO tracking
+  type :: proc_subst_fifo_t
+    character(len=MAX_PATH_LEN) :: fifo_path = ''
+    integer(c_pid_t) :: pid = 0
+    logical :: active = .false.
+    logical :: is_input = .false.  ! True for <(), False for >()
+  end type proc_subst_fifo_t
+
   type :: shell_state_t
     character(len=256) :: username
     character(len=256) :: hostname
@@ -271,6 +279,9 @@ module shell_types
     logical :: function_return_pending = .false.  ! Set by 'return' builtin to exit function
     integer :: function_return_value = 0      ! Return value from 'return' builtin
     integer :: function_depth = 0             ! Current function call depth (for local vars)
+    ! Process substitution
+    type(proc_subst_fifo_t) :: proc_subst_fifos(10)
+    integer :: num_proc_subst_fifos = 0
   end type shell_state_t
 
 end module shell_types
