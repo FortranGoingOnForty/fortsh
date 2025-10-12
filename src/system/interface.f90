@@ -250,7 +250,13 @@ module system_interface
       integer(c_int), value :: fd
       integer(c_int) :: c_close
     end function
-    
+
+    function c_dup(fd) bind(C, name="dup")
+      import :: c_int
+      integer(c_int), value :: fd
+      integer(c_int) :: c_dup
+    end function
+
     function c_dup2(oldfd, newfd) bind(C, name="dup2")
       import :: c_int
       integer(c_int), value :: oldfd, newfd
