@@ -25,6 +25,8 @@ module readline
   integer, parameter :: KEY_CTRL_Y = 25   ! Yank (paste) killed text
   integer, parameter :: KEY_CTRL_F = 6    ! Forward character (same as right arrow)
   integer, parameter :: KEY_CTRL_B = 2    ! Backward character (same as left arrow)
+  integer, parameter :: KEY_CTRL_R = 18   ! Reverse-i-search
+  integer, parameter :: KEY_CTRL_G = 7    ! Cancel (alternate to Ctrl+C)
   integer, parameter :: KEY_ESC = 27
   integer, parameter :: KEY_UP = 65
   integer, parameter :: KEY_DOWN = 66
@@ -54,6 +56,12 @@ module readline
     logical :: dirty = .false. ! Needs redraw
     logical :: in_history = .false. ! Currently browsing history
     logical :: completions_shown = .false. ! Have we shown completion list for current buffer?
+
+    ! Reverse-i-search state
+    logical :: in_search = .false. ! Currently in reverse-i-search mode
+    character(len=MAX_LINE_LEN) :: search_string = '' ! Current search query
+    integer :: search_length = 0 ! Length of search string
+    integer :: search_match_index = 0 ! Current history match index
 
     ! Editing mode support
     integer :: editing_mode = EDITING_MODE_EMACS
@@ -120,6 +128,10 @@ contains
     input_state%dirty = .false.
     input_state%in_history = .false.
     input_state%completions_shown = .false.
+    input_state%in_search = .false.
+    input_state%search_string = ''
+    input_state%search_length = 0
+    input_state%search_match_index = 0
     
     if (raw_enabled) then
       ! Enhanced input processing
@@ -134,28 +146,46 @@ contains
         
         select case(char_code)
         case(KEY_ENTER)
-          ! Enter - finish input
-          write(output_unit, '()')  ! New line
-          done = .true.
-          
+          ! Enter - finish input or accept search
+          if (input_state%in_search) then
+            call accept_search(input_state, prompt)
+            done = .true.
+          else
+            write(output_unit, '()')  ! New line
+            done = .true.
+          end if
+
         case(KEY_CTRL_D)
           ! Ctrl+D - EOF
           if (input_state%length == 0) then
             iostat = -1
             done = .true.
           end if
-          
+
         case(KEY_CTRL_C)
           ! Ctrl+C - cancel input and clear line
-          write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-          write(output_unit, '(a)') '^C'
-          input_state%buffer = ''
-          input_state%length = 0
-          done = .true.
-          
+          if (input_state%in_search) then
+            call cancel_search(input_state)
+            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
+            write(output_unit, '(a)') '^C'
+            input_state%buffer = ''
+            input_state%length = 0
+            done = .true.
+          else
+            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
+            write(output_unit, '(a)') '^C'
+            input_state%buffer = ''
+            input_state%length = 0
+            done = .true.
+          end if
+
         case(KEY_BACKSPACE)
           ! Backspace
-          call handle_backspace(input_state)
+          if (input_state%in_search) then
+            call search_backspace(input_state, prompt)
+          else
+            call handle_backspace(input_state)
+          end if
           
         case(KEY_TAB)
           ! Tab completion (placeholder)
@@ -200,10 +230,24 @@ contains
         case(KEY_CTRL_L)
           ! Clear screen and redraw
           call handle_clear_screen(input_state)
-          
+
+        case(KEY_CTRL_R)
+          ! Reverse-i-search
+          call handle_reverse_search(input_state, prompt)
+
+        case(KEY_CTRL_G)
+          ! Cancel search if active
+          if (input_state%in_search) then
+            call cancel_search(input_state)
+          end if
+
         case(32:126)
           ! Regular printable characters
-          call insert_char(input_state, ch)
+          if (input_state%in_search) then
+            call search_add_char(input_state, ch, prompt)
+          else
+            call insert_char(input_state, ch)
+          end if
           
         case default
           ! Ignore other control characters for now
@@ -1872,6 +1916,179 @@ contains
         ! Busy wait
       end do
     end do
+  end subroutine
+
+  ! Reverse-i-search implementation
+  subroutine handle_reverse_search(input_state, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
+
+    ! Save current buffer if entering search for first time
+    if (.not. input_state%in_search) then
+      input_state%original_buffer = input_state%buffer(:input_state%length)
+      input_state%in_search = .true.
+      input_state%search_string = ''
+      input_state%search_length = 0
+      input_state%search_match_index = 0
+    else
+      ! Ctrl+R pressed again - find next match
+      call search_next_match(input_state)
+    end if
+
+    ! Display search prompt
+    call update_search_display(input_state, prompt)
+  end subroutine
+
+  subroutine search_next_match(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i
+    character(len=MAX_LINE_LEN) :: search_str
+
+    if (input_state%search_length == 0) return
+
+    search_str = input_state%search_string(:input_state%search_length)
+
+    ! Start from current match and search backwards
+    do i = input_state%search_match_index - 1, 1, -1
+      if (index(command_history%lines(i), trim(search_str)) > 0) then
+        input_state%search_match_index = i
+        input_state%buffer = command_history%lines(i)
+        input_state%length = len_trim(command_history%lines(i))
+        input_state%cursor_pos = input_state%length
+        return
+      end if
+    end do
+
+    ! Wrap around to end if no match found
+    if (input_state%search_match_index > 0) then
+      do i = command_history%count, input_state%search_match_index + 1, -1
+        if (index(command_history%lines(i), trim(search_str)) > 0) then
+          input_state%search_match_index = i
+          input_state%buffer = command_history%lines(i)
+          input_state%length = len_trim(command_history%lines(i))
+          input_state%cursor_pos = input_state%length
+          return
+        end if
+      end do
+    end if
+  end subroutine
+
+  subroutine search_add_char(input_state, ch, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: ch
+    character(len=*), intent(in) :: prompt
+    integer :: i
+    character(len=MAX_LINE_LEN) :: search_str
+
+    ! Add character to search string
+    if (input_state%search_length < MAX_LINE_LEN) then
+      input_state%search_length = input_state%search_length + 1
+      input_state%search_string(input_state%search_length:input_state%search_length) = ch
+
+      ! Search backwards through history
+      search_str = input_state%search_string(:input_state%search_length)
+      do i = command_history%count, 1, -1
+        if (index(command_history%lines(i), trim(search_str)) > 0) then
+          input_state%search_match_index = i
+          input_state%buffer = command_history%lines(i)
+          input_state%length = len_trim(command_history%lines(i))
+          input_state%cursor_pos = input_state%length
+          exit
+        end if
+      end do
+
+      call update_search_display(input_state, prompt)
+    end if
+  end subroutine
+
+  subroutine search_backspace(input_state, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
+    integer :: i
+    character(len=MAX_LINE_LEN) :: search_str
+
+    if (input_state%search_length > 0) then
+      input_state%search_length = input_state%search_length - 1
+
+      if (input_state%search_length > 0) then
+        ! Search again with shorter string
+        search_str = input_state%search_string(:input_state%search_length)
+        do i = command_history%count, 1, -1
+          if (index(command_history%lines(i), trim(search_str)) > 0) then
+            input_state%search_match_index = i
+            input_state%buffer = command_history%lines(i)
+            input_state%length = len_trim(command_history%lines(i))
+            input_state%cursor_pos = input_state%length
+            exit
+          end if
+        end do
+      else
+        ! Empty search - clear buffer
+        input_state%buffer = ''
+        input_state%length = 0
+        input_state%cursor_pos = 0
+        input_state%search_match_index = 0
+      end if
+
+      call update_search_display(input_state, prompt)
+    end if
+  end subroutine
+
+  subroutine cancel_search(input_state)
+    type(input_state_t), intent(inout) :: input_state
+
+    ! Restore original buffer
+    input_state%buffer = input_state%original_buffer
+    input_state%length = len_trim(input_state%original_buffer)
+    input_state%cursor_pos = input_state%length
+    input_state%in_search = .false.
+    input_state%search_string = ''
+    input_state%search_length = 0
+    input_state%search_match_index = 0
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine accept_search(input_state, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
+
+    ! Keep the current buffer (matched command)
+    input_state%in_search = .false.
+    input_state%search_string = ''
+    input_state%search_length = 0
+    input_state%search_match_index = 0
+
+    ! Clear the search prompt and show normal prompt with result
+    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
+    write(output_unit, '(a)', advance='no') prompt
+    if (input_state%length > 0) then
+      write(output_unit, '(a)') input_state%buffer(:input_state%length)
+    else
+      write(output_unit, '()')
+    end if
+    flush(output_unit)
+  end subroutine
+
+  subroutine update_search_display(input_state, prompt)
+    type(input_state_t), intent(in) :: input_state
+    character(len=*), intent(in) :: prompt
+    character(len=512) :: search_prompt
+
+    ! Build search prompt
+    if (input_state%search_length > 0) then
+      write(search_prompt, '(a,a,a)') '(reverse-i-search)`', &
+            input_state%search_string(:input_state%search_length), "': "
+    else
+      search_prompt = '(reverse-i-search)`'': '
+    end if
+
+    ! Clear line and redraw
+    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
+    write(output_unit, '(a)', advance='no') trim(search_prompt)
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+    end if
+    flush(output_unit)
   end subroutine
 
 end module readline
