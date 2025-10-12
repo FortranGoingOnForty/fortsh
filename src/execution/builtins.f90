@@ -11,6 +11,7 @@ module builtins
   use aliases
   use shell_options
   use command_builtin, only: find_command_in_path, builtin_which, builtin_command
+  use directory_builtin, only: builtin_pushd, builtin_popd, builtin_dirs
   use performance
   use parser
   use coprocess
@@ -41,6 +42,9 @@ contains
     is_built = (trim(cmd_name) == 'exit' .or. &
                 trim(cmd_name) == 'cd' .or. &
                 trim(cmd_name) == 'pwd' .or. &
+                trim(cmd_name) == 'pushd' .or. &
+                trim(cmd_name) == 'popd' .or. &
+                trim(cmd_name) == 'dirs' .or. &
                 trim(cmd_name) == 'export' .or. &
                 trim(cmd_name) == 'echo' .or. &
                 trim(cmd_name) == 'jobs' .or. &
@@ -99,6 +103,12 @@ contains
       call builtin_cd(cmd, shell)
     case('pwd')
       call builtin_pwd(cmd, shell)
+    case('pushd')
+      call builtin_pushd(cmd, shell)
+    case('popd')
+      call builtin_popd(cmd, shell)
+    case('dirs')
+      call builtin_dirs(cmd, shell)
     case('export')
       call builtin_export(cmd, shell)
     case('echo')

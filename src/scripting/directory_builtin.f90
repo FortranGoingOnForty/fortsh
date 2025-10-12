@@ -91,8 +91,13 @@ contains
           shell%last_exit_status = 1
           return
         end if
+        ! Update shell cwd after successful change
+        call get_current_dir(current_dir, status)
+        if (status == 0) then
+          shell%cwd = trim(current_dir)
+        end if
       end if
-      
+
       call print_directory_stack()
     else
       ! Directory specified
@@ -123,13 +128,14 @@ contains
           return
         end if
         
-        ! Update PWD variable
+        ! Update PWD variable and shell cwd
         call get_current_dir(current_dir, status)
         if (status == 0) then
           call set_shell_variable(shell, 'PWD', trim(current_dir))
+          shell%cwd = trim(current_dir)
         end if
       end if
-      
+
       call print_directory_stack()
     end if
     
@@ -197,10 +203,11 @@ contains
           return
         end if
         
-        ! Update PWD variable
+        ! Update PWD variable and shell cwd
         call get_current_dir(current_dir, status)
         if (status == 0) then
           call set_shell_variable(shell, 'PWD', trim(current_dir))
+          shell%cwd = trim(current_dir)
         end if
       end if
     else
