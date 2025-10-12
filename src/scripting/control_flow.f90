@@ -160,7 +160,7 @@ contains
     case('while')
       call process_while_statement(cmd, shell, should_execute)
     case('do')
-      call process_do_statement(shell, should_execute)
+      call process_do_statement(cmd, shell, should_execute)
     case('done')
       call process_done_statement(shell, should_execute)
     case('for')
@@ -315,14 +315,12 @@ contains
       ! Parse space-separated values
       call parse_for_values(shell%control_stack(shell%control_depth), list_part)
 
-      ! Set up for first iteration
-      shell%control_stack(shell%control_depth)%for_index = 1
+      ! Set up for first iteration - start at index 0 so first 'done' will set it to 1
+      shell%control_stack(shell%control_depth)%for_index = 0
       if (shell%control_stack(shell%control_depth)%for_count > 0 .and. &
           allocated(shell%control_stack(shell%control_depth)%for_values)) then
         shell%control_stack(shell%control_depth)%should_execute = .true.
-        ! Set loop variable to first value
-        call set_shell_variable(shell, var_name, &
-          trim(shell%control_stack(shell%control_depth)%for_values(1)))
+        ! Don't set loop variable yet - let first 'done' do it
       else
         shell%control_stack(shell%control_depth)%should_execute = .false.
       end if
@@ -499,9 +497,13 @@ contains
     call pop_control_block(shell)
   end subroutine
 
-  subroutine process_do_statement(shell, should_execute)
+  subroutine process_do_statement(cmd, shell, should_execute)
+    type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
+
+    character(len=1024) :: remainder_cmd
+    integer :: i
 
     should_execute = .false.  ! Don't execute the "do" keyword itself
 
@@ -519,6 +521,25 @@ contains
     shell%control_stack(shell%control_depth)%loop_body_count = 0
     shell%control_stack(shell%control_depth)%capturing_loop_body = .true.
     shell%control_stack(shell%control_depth)%capture_nesting_depth = 0
+
+    ! Handle single-line loops: for x in a; do echo $x; done
+    ! If there are tokens after "do", capture them as the first loop body command
+    if (cmd%num_tokens > 1) then
+      ! Build command from remaining tokens (skip "do")
+      remainder_cmd = ''
+      do i = 2, cmd%num_tokens
+        if (len_trim(remainder_cmd) > 0) then
+          remainder_cmd = trim(remainder_cmd) // ' ' // trim(cmd%tokens(i))
+        else
+          remainder_cmd = trim(cmd%tokens(i))
+        end if
+      end do
+
+      ! Capture the command in the loop body
+      if (len_trim(remainder_cmd) > 0) then
+        call capture_loop_command(shell, trim(remainder_cmd))
+      end if
+    end if
   end subroutine
 
   subroutine process_done_statement(shell, should_execute)
@@ -551,13 +572,15 @@ contains
 
     ! Handle for loop iteration
     if (shell%control_stack(shell%control_depth)%block_type == BLOCK_FOR) then
+      ! Increment to next iteration value
       shell%control_stack(shell%control_depth)%for_index = &
         shell%control_stack(shell%control_depth)%for_index + 1
 
+      ! Check if we have more iterations to do
       if (shell%control_stack(shell%control_depth)%for_index <= &
           shell%control_stack(shell%control_depth)%for_count .and. &
           allocated(shell%control_stack(shell%control_depth)%for_values)) then
-        ! More iterations to do - set variable to next value
+        ! Set variable to current iteration value
         call set_shell_variable(shell, &
           trim(shell%control_stack(shell%control_depth)%loop_variable), &
           trim(shell%control_stack(shell%control_depth)%for_values(&
