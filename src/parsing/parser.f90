@@ -168,6 +168,19 @@ contains
             temp_commands(cmd_count)%separator = SEP_PIPE
           end if
           start = i + 1
+        else if (working_input(i:i) == '&') then
+          ! Check it's not part of && (which is already handled above)
+          if ((i == 1 .or. working_input(i-1:i-1) /= '&') .and. &
+              (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '&')) then
+            ! Single & - mark current command as background and split
+            cmd_count = cmd_count + 1
+            if (cmd_count <= MAX_PIPELINE) then
+              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+              temp_commands(cmd_count)%separator = SEP_SEMICOLON  ! Execute like semicolon
+              temp_commands(cmd_count)%background = .true.  ! But run in background
+            end if
+            start = i + 1
+          end if
         else if (working_input(i:i) == ';') then
           if (in_for_arith) then
           else
