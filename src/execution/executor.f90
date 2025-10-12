@@ -751,24 +751,28 @@ contains
   subroutine exec_child(tokens, num_tokens)
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
-    
+
     type(c_ptr), target :: argv(num_tokens + 1)
-    character(kind=c_char), target :: c_tokens(num_tokens, MAX_TOKEN_LEN+1)
+    character(kind=c_char), target :: c_tokens(MAX_TOKEN_LEN+1, num_tokens)
     integer :: i, j
     integer :: ret
-    
+
     ! Convert tokens to C strings
     do i = 1, num_tokens
       do j = 1, len_trim(tokens(i))
-        c_tokens(i, j) = tokens(i)(j:j)
+        c_tokens(j, i) = tokens(i)(j:j)
       end do
-      c_tokens(i, len_trim(tokens(i)) + 1) = c_null_char
-      argv(i) = c_loc(c_tokens(i, 1))
+      c_tokens(len_trim(tokens(i)) + 1, i) = c_null_char
+      argv(i) = c_loc(c_tokens(1, i))
     end do
     argv(num_tokens + 1) = c_null_ptr
-    
+
     ! Execute the command
     ret = c_execvp(argv(1), c_loc(argv))
+
+    ! If we reach here, exec failed
+    write(error_unit, '(a)') 'fortsh: command not found: ' // trim(tokens(1)) // &
+                             '. Try "which ' // trim(tokens(1)) // '" or check your PATH.'
   end subroutine
 
   subroutine execute_function(cmd, shell)
