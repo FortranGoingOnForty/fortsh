@@ -163,18 +163,24 @@ contains
           end if
 
         case(KEY_CTRL_C)
-          ! Ctrl+C - cancel search or input
+          ! Ctrl+C - cancel and clear line (bash-compatible)
+          ! Move to beginning, clear line, print ^C on new line
+          write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
+          write(output_unit, '(a)') '^C'
+
+          ! Clear buffer and exit search mode if active
           if (input_state%in_search) then
-            call cancel_search(input_state)
-            call redraw_line(prompt, input_state)
-            input_state%dirty = .false.
-          else
-            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-            write(output_unit, '(a)') '^C'
-            input_state%buffer = ''
-            input_state%length = 0
-            done = .true.
+            input_state%in_search = .false.
+            input_state%search_string = ''
+            input_state%search_length = 0
+            input_state%search_match_index = 0
           end if
+
+          ! Clear buffer and return empty line
+          input_state%buffer = ''
+          input_state%length = 0
+          input_state%cursor_pos = 0
+          done = .true.
 
         case(KEY_BACKSPACE)
           ! Backspace
@@ -233,11 +239,22 @@ contains
           call handle_reverse_search(input_state, prompt)
 
         case(KEY_CTRL_G)
-          ! Cancel search if active
+          ! Cancel search if active (bash-compatible)
           if (input_state%in_search) then
-            call cancel_search(input_state)
-            call redraw_line(prompt, input_state)
-            input_state%dirty = .false.
+            ! Clear line and exit search mode
+            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
+            write(output_unit, '(a)') '^C'
+
+            input_state%in_search = .false.
+            input_state%search_string = ''
+            input_state%search_length = 0
+            input_state%search_match_index = 0
+
+            ! Clear buffer and return empty line
+            input_state%buffer = ''
+            input_state%length = 0
+            input_state%cursor_pos = 0
+            done = .true.
           end if
 
         case(32:126)

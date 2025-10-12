@@ -622,9 +622,9 @@ contains
     ! Copy to modify for raw mode
     raw_termios = original_termios
     
-    ! Disable canonical mode and echo
+    ! Disable canonical mode, echo, and signals
     raw_termios%c_lflag = iand(raw_termios%c_lflag, not(ior(ior(ICANON, ECHO), ior(ECHOE, ECHOK))))
-    raw_termios%c_lflag = iand(raw_termios%c_lflag, not(ior(ECHONL, IEXTEN)))
+    raw_termios%c_lflag = iand(raw_termios%c_lflag, not(ior(ior(ECHONL, IEXTEN), ISIG)))
     
     ! Set minimum characters and timeout for read
     raw_termios%c_cc(VMIN + 1) = char(1)  ! Read at least 1 character
