@@ -1237,4 +1237,133 @@ contains
     shell%last_exit_status = saved_status
   end subroutine
 
+  ! Initialize control_flow's evaluate_condition procedure pointer
+  ! This breaks the circular dependency by setting the pointer at runtime
+  subroutine init_control_flow_callbacks()
+    use control_flow
+    evaluate_condition => evaluate_condition_impl
+  end subroutine
+
+  ! Evaluate a condition for control flow (if/while statements)
+  subroutine evaluate_condition_impl(condition_cmd, shell, result)
+    use test_builtin, only: execute_test_command
+    use parser, only: parse_pipeline
+    character(len=*), intent(in) :: condition_cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(out) :: result
+
+    type(command_t) :: cmd
+    type(pipeline_t) :: pipeline
+    character(len=256) :: tokens(50)
+    integer :: num_tokens, i
+
+    ! Check if it's a test command (starts with [ or test)
+    if (index(trim(condition_cmd), '[') == 1 .or. &
+        index(trim(condition_cmd), 'test ') == 1) then
+      call execute_test_condition_impl(condition_cmd, shell, result)
+    else
+      ! For any other command, parse and execute it to get exit status
+      call parse_pipeline(trim(condition_cmd), pipeline)
+
+      if (pipeline%num_commands > 0) then
+        call execute_pipeline(pipeline, shell, trim(condition_cmd))
+
+        ! Clean up allocations
+        do i = 1, pipeline%num_commands
+          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+        end do
+
+        if (allocated(pipeline%commands)) deallocate(pipeline%commands)
+
+        result = (shell%last_exit_status == 0)
+      else
+        result = .false.
+      end if
+    end if
+  end subroutine
+
+  ! Simple tokenization by spaces
+  subroutine tokenize_line(input, tokens, num_tokens)
+    character(len=*), intent(in) :: input
+    character(len=256), intent(out) :: tokens(:)
+    integer, intent(out) :: num_tokens
+    integer :: i, start_pos
+
+    num_tokens = 0
+    i = 1
+
+    do while (i <= len_trim(input))
+      ! Skip spaces
+      do while (i <= len_trim(input) .and. input(i:i) == ' ')
+        i = i + 1
+      end do
+
+      if (i > len_trim(input)) exit
+
+      ! Start of token
+      start_pos = i
+      do while (i <= len_trim(input) .and. input(i:i) /= ' ')
+        i = i + 1
+      end do
+
+      ! Store token
+      num_tokens = num_tokens + 1
+      if (num_tokens <= size(tokens)) then
+        tokens(num_tokens) = input(start_pos:i-1)
+      end if
+    end do
+  end subroutine
+
+  ! Helper for evaluating test conditions
+  subroutine execute_test_condition_impl(condition_cmd, shell, result)
+    use test_builtin, only: execute_test_command
+    use control_flow, only: simple_variable_expand
+    character(len=*), intent(in) :: condition_cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(out) :: result
+
+    type(command_t) :: cmd
+    character(len=256) :: tokens(50), expanded_token
+    character(len=:), allocatable :: expanded_result
+    integer :: num_tokens, i
+
+    ! Tokenize the condition command
+    num_tokens = 0
+    call tokenize_line(trim(condition_cmd), tokens, num_tokens)
+
+    ! Allocate and set command tokens with variable expansion
+    if (allocated(cmd%tokens)) deallocate(cmd%tokens)
+    allocate(character(len=256) :: cmd%tokens(num_tokens))
+    cmd%num_tokens = num_tokens
+    do i = 1, num_tokens
+      expanded_token = tokens(i)
+
+      ! Expand variables in the token (e.g., $count becomes the value of count)
+      if (index(expanded_token, '$') > 0) then
+        call simple_variable_expand(expanded_token, expanded_result, shell)
+        if (allocated(expanded_result)) then
+          cmd%tokens(i) = expanded_result
+        else
+          cmd%tokens(i) = expanded_token
+        end if
+      else
+        cmd%tokens(i) = expanded_token
+      end if
+    end do
+
+    ! Execute the test command
+    call execute_test_command(cmd, shell)
+
+    ! Clean up
+    if (allocated(cmd%tokens)) deallocate(cmd%tokens)
+
+    result = (shell%last_exit_status == 0)
+  end subroutine
+
 end module executor

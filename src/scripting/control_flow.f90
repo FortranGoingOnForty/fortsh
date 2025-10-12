@@ -10,6 +10,22 @@ module control_flow
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
+  ! Interface for the evaluate_condition procedure
+  abstract interface
+    subroutine evaluate_condition_interface(condition_cmd, shell, result)
+      import :: shell_state_t
+      character(len=*), intent(in) :: condition_cmd
+      type(shell_state_t), intent(inout) :: shell
+      logical, intent(out) :: result
+    end subroutine
+  end interface
+
+  ! Procedure pointer for evaluate_condition (set by executor to avoid circular dependency)
+  procedure(evaluate_condition_interface), pointer, public :: evaluate_condition => null()
+
+  ! Make simple_variable_expand accessible to executor
+  public :: simple_variable_expand
+
   ! Control flow keywords
   integer, parameter :: FLOW_IF = 1
   integer, parameter :: FLOW_THEN = 2
@@ -152,7 +168,7 @@ contains
     case('if')
       call process_if_statement(cmd, shell, should_execute)
     case('then')
-      call process_then_statement(shell, should_execute)
+      call process_then_statement(cmd, shell, should_execute)
     case('else')
       call process_else_statement(shell, should_execute)  
     case('fi')
@@ -225,8 +241,13 @@ contains
     end do
     
     ! Evaluate condition
-    call evaluate_condition(condition_cmd, shell, condition_result)
-    
+    if (associated(evaluate_condition)) then
+      call evaluate_condition(condition_cmd, shell, condition_result)
+    else
+      write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
+      condition_result = .false.
+    end if
+
     ! Push if block onto control stack
     call push_control_block(shell, BLOCK_IF, condition_result)
   end subroutine
@@ -259,7 +280,12 @@ contains
     end do
     
     ! Evaluate condition
-    call evaluate_condition(condition_cmd, shell, condition_result)
+    if (associated(evaluate_condition)) then
+      call evaluate_condition(condition_cmd, shell, condition_result)
+    else
+      write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
+      condition_result = .false.
+    end if
 
     ! Push while block onto control stack
     call push_control_block(shell, BLOCK_WHILE, condition_result)
@@ -458,19 +484,61 @@ contains
     end if
   end subroutine
 
-  subroutine process_then_statement(shell, should_execute)
+  subroutine process_then_statement(cmd, shell, should_execute)
+    use parser, only: parse_pipeline
+    use executor, only: execute_pipeline
+    type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
-    
+    type(pipeline_t) :: inline_pipeline
+    character(len=1024) :: remainder_cmd
+    integer :: i
+
     should_execute = .false.  ! Don't execute the "then" keyword itself
-    
+
     if (shell%control_depth == 0) then
       write(error_unit, '(a)') 'then: no matching if'
       shell%last_exit_status = 1
       return
     end if
-    
-    ! "then" doesn't change the execution state, just marks the start of the if block
+
+    ! "then" marks the start of the if block
+    ! Handle single-line if: if condition; then command; fi
+    ! If there are tokens after "then", execute them immediately (if condition is met)
+    if (cmd%num_tokens > 1 .and. should_execute_command(shell)) then
+      ! Build command from remaining tokens (skip "then")
+      remainder_cmd = ''
+      do i = 2, cmd%num_tokens
+        if (len_trim(remainder_cmd) > 0) then
+          remainder_cmd = trim(remainder_cmd) // ' ' // trim(cmd%tokens(i))
+        else
+          remainder_cmd = trim(cmd%tokens(i))
+        end if
+      end do
+
+      ! Execute the command immediately (only if condition was true)
+      if (len_trim(remainder_cmd) > 0) then
+        call parse_pipeline(trim(remainder_cmd), inline_pipeline)
+        if (inline_pipeline%num_commands > 0) then
+          call execute_pipeline(inline_pipeline, shell, trim(remainder_cmd))
+
+          ! Clean up pipeline
+          if (allocated(inline_pipeline%commands)) then
+            do i = 1, inline_pipeline%num_commands
+              if (allocated(inline_pipeline%commands(i)%tokens)) &
+                deallocate(inline_pipeline%commands(i)%tokens)
+              if (allocated(inline_pipeline%commands(i)%input_file)) &
+                deallocate(inline_pipeline%commands(i)%input_file)
+              if (allocated(inline_pipeline%commands(i)%output_file)) &
+                deallocate(inline_pipeline%commands(i)%output_file)
+              if (allocated(inline_pipeline%commands(i)%error_file)) &
+                deallocate(inline_pipeline%commands(i)%error_file)
+            end do
+            deallocate(inline_pipeline%commands)
+          end if
+        end if
+      end if
+    end if
   end subroutine
 
   subroutine process_else_statement(shell, should_execute)
@@ -640,8 +708,13 @@ contains
 
       if (len_trim(shell%control_stack(shell%control_depth)%condition_cmd) > 0) then
         ! Re-evaluate the while condition with current variable values
-        call evaluate_condition(shell%control_stack(shell%control_depth)%condition_cmd, &
-                               shell, condition_result)
+        if (associated(evaluate_condition)) then
+          call evaluate_condition(shell%control_stack(shell%control_depth)%condition_cmd, &
+                                 shell, condition_result)
+        else
+          write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
+          condition_result = .false.
+        end if
 
         if (condition_result) then
           ! Condition is still true - executor will replay the loop body
@@ -701,55 +774,6 @@ contains
     end do
   end function
 
-  subroutine evaluate_condition(condition_cmd, shell, result)
-    use test_builtin, only: execute_test_command
-    use parser, only: parse_pipeline
-    use executor, only: execute_pipeline
-    character(len=*), intent(in) :: condition_cmd
-    type(shell_state_t), intent(inout) :: shell
-    logical, intent(out) :: result
-
-    type(command_t) :: cmd
-    type(pipeline_t) :: pipeline
-    character(len=256) :: tokens(50)
-    integer :: num_tokens, i
-
-    ! Execute the condition command and check its exit status
-
-    ! Check if it's a test command (starts with [ or test)
-    if (index(trim(condition_cmd), '[') == 1 .or. &
-        index(trim(condition_cmd), 'test ') == 1) then
-      ! Execute test command and check result
-      call execute_test_condition(condition_cmd, shell, result)
-    else
-      ! For any other command, parse and execute it to get exit status
-      call parse_pipeline(trim(condition_cmd), pipeline)
-
-      if (pipeline%num_commands > 0) then
-        ! Execute the condition command
-        call execute_pipeline(pipeline, shell, trim(condition_cmd))
-
-        ! Clean up pipeline
-        if (allocated(pipeline%commands)) then
-          do i = 1, pipeline%num_commands
-            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-          end do
-          deallocate(pipeline%commands)
-        end if
-
-        ! Check exit status
-        result = (shell%last_exit_status == 0)
-      else
-        result = .false.
-      end if
-    end if
-  end subroutine
 
   ! Helper to tokenize and expand variables
   subroutine tokenize_and_expand(input, tokens, num_tokens, shell)
