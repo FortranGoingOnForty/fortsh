@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        3.1.0
+Version:        3.2.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,12 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Fri Oct 11 2024 mfw <espadon@outlook.com> - 3.2.0-1
+- Full builtin compliance implementation
+- Enhanced directory builtins
+- Wired in which command
+- Updated documentation
+
 * Fri Oct 11 2024 mfw <espadon@outlook.com> - 3.1.0-1
 - Implemented proper signal handling for external commands
 - Shell now ignores signals to run commands in succession
