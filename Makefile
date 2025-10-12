@@ -216,7 +216,7 @@ help:
 
 # Package information
 PACKAGE = fortsh
-VERSION = 3.3.3
+VERSION = 3.3.4
 
 # Distribution and packaging targets
 dist: clean
