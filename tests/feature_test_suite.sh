@@ -88,7 +88,8 @@ else
 fi
 
 # Test 2.4: Error redirection (2>)
-if ls /nonexistent 2> /tmp/fortsh_test_5 && [ -s /tmp/fortsh_test_5 ]; then
+ls /nonexistent 2> /tmp/fortsh_test_5
+if [ -s /tmp/fortsh_test_5 ]; then
     pass "Error redirection (2>)"
 else
     fail "Error redirection (2>)" "stderr not captured"
