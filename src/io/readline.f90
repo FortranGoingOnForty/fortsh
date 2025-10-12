@@ -163,14 +163,11 @@ contains
           end if
 
         case(KEY_CTRL_C)
-          ! Ctrl+C - cancel input and clear line
+          ! Ctrl+C - cancel search or input
           if (input_state%in_search) then
             call cancel_search(input_state)
-            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-            write(output_unit, '(a)') '^C'
-            input_state%buffer = ''
-            input_state%length = 0
-            done = .true.
+            call redraw_line(prompt, input_state)
+            input_state%dirty = .false.
           else
             write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
             write(output_unit, '(a)') '^C'
@@ -239,6 +236,8 @@ contains
           ! Cancel search if active
           if (input_state%in_search) then
             call cancel_search(input_state)
+            call redraw_line(prompt, input_state)
+            input_state%dirty = .false.
           end if
 
         case(32:126)
