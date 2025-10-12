@@ -735,7 +735,7 @@ contains
           j = j + len_trim(pid_str)
           i = i + 1
         else if (working_token(i:i) == '!') then
-          write(pid_str, '(i0)') shell%last_pid
+          write(pid_str, '(i0)') shell%last_bg_pid
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
