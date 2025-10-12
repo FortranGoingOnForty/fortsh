@@ -56,6 +56,8 @@ module system_interface
   character(len=*), parameter :: ESC_CURSOR_RIGHT = char(27) // '[C'
   character(len=*), parameter :: ESC_SAVE_CURSOR = char(27) // '[s'
   character(len=*), parameter :: ESC_RESTORE_CURSOR = char(27) // '[u'
+  character(len=*), parameter :: ESC_HIDE_CURSOR = char(27) // '[?25l'
+  character(len=*), parameter :: ESC_SHOW_CURSOR = char(27) // '[?25h'
 
   ! stat structure (must be defined before interface block)
   type, bind(c) :: stat_t
