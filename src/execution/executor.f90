@@ -38,6 +38,8 @@ contains
           if (pipeline%commands(i)%separator /= SEP_PIPE) exit
           i = i + 1
         end do
+        ! Skip the last command in the pipeline (it has non-PIPE separator)
+        i = i + 1
         
       case(SEP_SEMICOLON, SEP_NONE)
         call execute_single(pipeline%commands(i), shell, original_input)
@@ -110,7 +112,7 @@ contains
     ! Fork all processes
     do i = start_idx, end_idx
       pids(i - start_idx + 1) = c_fork()
-      
+
       if (pids(i - start_idx + 1) == 0) then
         ! Child process
         
@@ -683,16 +685,16 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
-    
+
     integer(c_pid_t) :: pid, pgid
     integer(c_int), target :: wait_status
     integer :: ret, job_id
     logical :: foreground
     type(c_funptr) :: old_handler
-    
+
     foreground = .not. cmd%background
     pid = c_fork()
-    
+
     if (pid < 0) then
       write(error_unit, '(a)') 'Error: fork failed'
       shell%last_exit_status = 1
@@ -797,7 +799,7 @@ contains
     integer :: fd, ret
     integer :: flags
     character(len=256), target :: c_filename
-    
+
     ! Handle input redirection
     if (allocated(cmd%input_file)) then
       c_filename = trim(cmd%input_file)//c_null_char
@@ -810,7 +812,7 @@ contains
         call c_exit(1)
       end if
     end if
-    
+
     ! Handle output redirection
     if (allocated(cmd%output_file)) then
       if (cmd%append_output) then
@@ -818,7 +820,7 @@ contains
       else
         flags = ior(ior(O_WRONLY, O_CREAT), O_TRUNC)
       end if
-      
+
       c_filename = trim(cmd%output_file)//c_null_char
       fd = c_open(c_loc(c_filename), flags, int(o'644', c_int))
       if (fd >= 0) then
