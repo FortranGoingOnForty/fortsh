@@ -71,7 +71,7 @@ program fortran_shell
     ! Read input with enhanced readline (includes prompt only if interactive)
     if (shell%is_interactive) then
       ! Expand prompt with escape sequences
-      prompt_str = expand_prompt(shell%ps1, shell)
+      prompt_str = expand_prompt(shell%ps1, shell, shell%ps1_len)
       call readline_enhanced(prompt_str, input_line, iostat)
     else
       read(input_unit, '(a)', iostat=iostat) input_line
@@ -359,7 +359,13 @@ contains
       shell%functions(i)%name = ''
       shell%functions(i)%body_lines = 0
     end do
-    
+
+    ! Initialize prompt string lengths (to match default values in shell_state_t)
+    shell%ps1_len = len_trim(shell%ps1)  ! '\u@\h :: \w > ' = 17 chars
+    shell%ps2_len = len_trim(shell%ps2)  ! '> ' = 2 chars
+    shell%ps3_len = len_trim(shell%ps3)  ! '#? ' = 3 chars
+    shell%ps4_len = len_trim(shell%ps4)  ! '+ ' = 2 chars
+
     ! Check for performance monitoring environment variable
     temp = get_environment_var('FORTSH_PERF')
     if (len(temp) > 0 .and. trim(temp) == '1') then

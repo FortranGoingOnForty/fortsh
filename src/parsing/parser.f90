@@ -288,14 +288,14 @@ contains
     end if
 
     ! Check for here-string (<<<) - must come before here document
-    pos = index(working_input, '<<<')
+    pos = find_outside_quotes(working_input, '<<<')
     if (pos > 0) then
       call extract_filename(working_input(pos+3:), temp_str)
       cmd%here_string = trim(temp_str)
       working_input = working_input(:pos-1)
     else
       ! Check for here document (<<)
-      pos = index(working_input, '<<')
+      pos = find_outside_quotes(working_input, '<<')
       if (pos > 0) then
         call extract_word(working_input(pos+2:), temp_str)
         cmd%heredoc_delimiter = trim(temp_str)
@@ -306,27 +306,27 @@ contains
     ! Check for advanced redirections first (must come before simpler ones)
     
     ! Check for 1>&2 (stdout to stderr)
-    pos = index(working_input, '1>&2')
+    pos = find_outside_quotes(working_input, '1>&2')
     if (pos > 0) then
       cmd%redirect_stdout_to_stderr = .true.
       working_input = working_input(:pos-1) // ' ' // working_input(pos+5:)
     else
       ! Check for >&2 (stdout to stderr shorthand)
-      pos = index(working_input, '>&2')
+      pos = find_outside_quotes(working_input, '>&2')
       if (pos > 0) then
         cmd%redirect_stdout_to_stderr = .true.
         working_input = working_input(:pos-1) // ' ' // working_input(pos+4:)
       end if
     end if
-    
-    ! Check for 2>&1 (stderr to stdout)  
-    pos = index(working_input, '2>&1')
+
+    ! Check for 2>&1 (stderr to stdout)
+    pos = find_outside_quotes(working_input, '2>&1')
     if (pos > 0) then
       cmd%redirect_stderr_to_stdout = .true.
       working_input = working_input(:pos-1) // ' ' // working_input(pos+4:)
     else
       ! Check for &>file or &>>file (both stdout and stderr to file)
-      pos = index(working_input, '&>>')
+      pos = find_outside_quotes(working_input, '&>>')
       if (pos > 0) then
         cmd%redirect_both_to_file = .true.
         cmd%append_output = .true.
@@ -336,7 +336,7 @@ contains
         cmd%error_file = trim(temp_str)
         working_input = working_input(:pos-1)
       else
-        pos = index(working_input, '&>')
+        pos = find_outside_quotes(working_input, '&>')
         if (pos > 0) then
           cmd%redirect_both_to_file = .true.
           cmd%append_output = .false.
@@ -348,9 +348,9 @@ contains
         end if
       end if
     end if
-    
+
     ! Check for error redirection (2>>)
-    pos = index(working_input, '2>>')
+    pos = find_outside_quotes(working_input, '2>>')
     if (pos > 0) then
       cmd%append_error = .true.
       call extract_filename(working_input(pos+3:), temp_str)
@@ -358,7 +358,7 @@ contains
       working_input = working_input(:pos-1)
     else
       ! Check for error redirection (2>)
-      pos = index(working_input, '2>')
+      pos = find_outside_quotes(working_input, '2>')
       if (pos > 0) then
         cmd%append_error = .false.
         call extract_filename(working_input(pos+2:), temp_str)
@@ -366,9 +366,9 @@ contains
         working_input = working_input(:pos-1)
       end if
     end if
-    
+
     ! Check for output redirection (>>)
-    pos = index(working_input, '>>')
+    pos = find_outside_quotes(working_input, '>>')
     if (pos > 0) then
       cmd%append_output = .true.
       call extract_filename(working_input(pos+2:), temp_str)
@@ -376,7 +376,7 @@ contains
       working_input = working_input(:pos-1)
     else
       ! Check for output redirection (>)
-      pos = index(working_input, '>')
+      pos = find_outside_quotes(working_input, '>')
       if (pos > 0) then
         cmd%append_output = .false.
         call extract_filename(working_input(pos+1:), temp_str)
@@ -384,9 +384,9 @@ contains
         working_input = working_input(:pos-1)
       end if
     end if
-    
+
     ! Check for input redirection (<)
-    pos = index(working_input, '<')
+    pos = find_outside_quotes(working_input, '<')
     if (pos > 0) then
       call extract_filename(working_input(pos+1:), temp_str)
       cmd%input_file = trim(temp_str)
@@ -417,9 +417,9 @@ contains
     character(len=*), intent(in) :: input
     character(len=*), intent(out) :: word
     integer :: i
-    
+
     word = adjustl(input)
-    
+
     do i = 1, len_trim(word)
       if (word(i:i) == ' ' .or. word(i:i) == char(9) .or. &
           word(i:i) == '<' .or. word(i:i) == '>' .or. &
@@ -430,6 +430,35 @@ contains
       end if
     end do
   end subroutine
+
+  ! Find position of character outside quotes
+  function find_outside_quotes(str, char) result(pos)
+    character(len=*), intent(in) :: str, char
+    integer :: pos
+    integer :: i
+    logical :: in_quotes
+    character(len=1) :: quote_char
+
+    pos = 0
+    in_quotes = .false.
+    quote_char = ' '
+
+    do i = 1, len_trim(str)
+      if (.not. in_quotes) then
+        if (str(i:i) == '"' .or. str(i:i) == "'") then
+          in_quotes = .true.
+          quote_char = str(i:i)
+        else if (str(i:min(i+len(char)-1, len_trim(str))) == char) then
+          pos = i
+          return
+        end if
+      else
+        if (str(i:i) == quote_char) then
+          in_quotes = .false.
+        end if
+      end if
+    end do
+  end function
 
   subroutine tokenize_with_substitution(input, tokens, num_tokens)
     character(len=*), intent(in) :: input
@@ -470,7 +499,8 @@ contains
       array_depth = 0
 
       ! Skip to end of token (respecting quotes and arithmetic)
-      do while (pos <= len_trim(working_copy))
+      ! Continue past len_trim when inside quotes to preserve trailing spaces
+      do while (pos <= len_trim(working_copy) .or. (in_quotes .and. pos <= len(working_copy)))
         ! Check for quotes
         if (.not. in_arith) then
           if (.not. in_quotes .and. (working_copy(pos:pos) == '"' .or. working_copy(pos:pos) == "'")) then
@@ -567,7 +597,8 @@ contains
       array_depth = 0
 
       ! Find end of token (respecting quotes, arithmetic, and array literals)
-      do while (pos <= len_trim(working_copy))
+      ! Continue past len_trim when inside quotes to preserve trailing spaces
+      do while (pos <= len_trim(working_copy) .or. (in_quotes .and. pos <= len(working_copy)))
         ! Check for quotes
         if (.not. in_arith) then
           if (.not. in_quotes .and. (working_copy(pos:pos) == '"' .or. working_copy(pos:pos) == "'")) then
@@ -1271,15 +1302,23 @@ contains
 
     ! Not array access - fall back to original length logic
     if (is_length) then
-      current_value = get_shell_variable(shell, trim(var_name))
-      if (len_trim(current_value) == 0) then
-        current_value = get_environment_var(trim(var_name))
-      end if
-      if (allocated(current_value)) then
-        write(length_str, '(i0)') len_trim(current_value)
+      ! Get actual stored length from variable
+      call get_variable_length(shell, trim(var_name), str_length)
+      if (str_length >= 0) then
+        write(length_str, '(i0)') str_length
         result_value = trim(length_str)
       else
-        result_value = '0'
+        ! Variable not found or is environment variable - use len_trim
+        current_value = get_shell_variable(shell, trim(var_name))
+        if (len_trim(current_value) == 0) then
+          current_value = get_environment_var(trim(var_name))
+        end if
+        if (allocated(current_value)) then
+          write(length_str, '(i0)') len_trim(current_value)
+          result_value = trim(length_str)
+        else
+          result_value = '0'
+        end if
       end if
       return
     end if

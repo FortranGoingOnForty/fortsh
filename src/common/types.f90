@@ -104,6 +104,7 @@ module shell_types
   type :: shell_var_t
     character(len=256) :: name
     character(len=1024) :: value
+    integer :: value_len = 0           ! Actual length of value (preserves trailing spaces)
     logical :: is_array = .false.
     logical :: is_assoc_array = .false.
     logical :: readonly = .false.      ! Variable is read-only
@@ -243,9 +244,13 @@ module shell_types
     logical :: is_login_shell = .false.        ! Started as login shell
     ! Prompt strings
     character(len=1024) :: ps1 = '\u@\h :: \w > ' ! Primary prompt (user@host :: cwd > )
+    integer :: ps1_len = 0                     ! Actual length of PS1 (preserves trailing spaces)
     character(len=256) :: ps2 = '> '              ! Continuation prompt
+    integer :: ps2_len = 0                     ! Actual length of PS2
     character(len=256) :: ps3 = '#? '             ! Select prompt
+    integer :: ps3_len = 0                     ! Actual length of PS3
     character(len=256) :: ps4 = '+ '              ! Trace prompt (set -x)
+    integer :: ps4_len = 0                     ! Actual length of PS4
     integer :: command_number = 0              ! For \# in prompts
     ! Positional parameters
     character(len=1024) :: positional_params(50) ! $1, $2, ..., $n
