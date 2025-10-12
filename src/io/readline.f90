@@ -776,7 +776,10 @@ contains
 
     do while (pos > 0 .and. pos <= len_trim(line))
       ! Check if this ! is the start of a history expansion
-      if (pos == 1 .or. line(pos-1:pos-1) == ' ' .or. line(pos-1:pos-1) == char(9)) then
+      ! Skip if it's part of $! (special variable for last background PID)
+      if (pos > 1 .and. line(pos-1:pos-1) == '$') then
+        ! This is $!, not a history expansion
+      else if (pos == 1 .or. line(pos-1:pos-1) == ' ' .or. line(pos-1:pos-1) == char(9)) then
         ! Check what follows the ! (if there is something after it)
         if (pos < len_trim(line)) then
           if (line(pos+1:pos+1) == '!' .or. &
