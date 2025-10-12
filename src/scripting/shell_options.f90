@@ -336,11 +336,15 @@ contains
 
   ! Trace command execution if xtrace is enabled
   subroutine trace_command(shell, command_line)
+    use prompt_formatting, only: expand_prompt
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_line
-    
+    character(len=1024) :: expanded_ps4
+
     if (shell%option_xtrace) then
-      write(error_unit, '(a)') '+ ' // trim(command_line)
+      ! Expand PS4 prompt (supports escape sequences like \h, \w, etc.)
+      expanded_ps4 = expand_prompt(shell%ps4, shell, shell%ps4_len)
+      write(error_unit, '(a)') trim(expanded_ps4) // trim(command_line)
     end if
   end subroutine
 
