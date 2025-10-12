@@ -1,332 +1,249 @@
 # fortsh
 
-A POSIX-compliant shell implementation written in Fortran 2018.
+A POSIX-compliant shell implementation written in Fortran 2018. This project demonstrates shell construction techniques and provides a functional command-line interpreter suitable for interactive use and script execution.
 
-## Features
+## Overview
 
-### POSIX Built-ins
+fortsh implements the core POSIX shell specification with select bash-compatible extensions. The implementation emphasizes standards compliance and code clarity over feature completeness. While functional for daily scripting tasks, it lacks some advanced features present in mature shells.
 
-| Command | Status | Notes |
-|---------|--------|-------|
-| `cd` | ✓ | Change directory |
-| `pwd` | ✓ | Print working directory |
-| `echo` | ✓ | Display text |
-| `printf` | ✓ | Formatted output |
-| `read` | ✓ | Read input |
-| `test` / `[` | ✓ | Test conditions |
-| `export` | ✓ | Export variables |
-| `unset` | ✓ | Remove variables |
-| `set` | ✓ | Shell options |
-| `shift` | ✓ | Shift parameters |
-| `type` | ✓ | Command type |
-| `readonly` | ✓ | Read-only variables |
-| `break` | ✓ | Loop control |
-| `continue` | ✓ | Loop control |
-| `return` | ✓ | Function return |
-| `exec` | ✓ | Replace process |
-| `eval` | ✓ | Evaluate string |
-| `hash` | ✓ | Command hashing |
-| `umask` | ✓ | File mode mask |
-| `ulimit` | ✓ | Resource limits |
-| `times` | ✓ | Process times |
+**Current Status**: Approximately 90% POSIX compliance, 85% bash feature parity for commonly-used constructs.
+
+## Implementation Scope
+
+### Core POSIX Built-in Commands (Complete)
+
+The following POSIX-mandated built-in commands are implemented:
+
+| Command | Function |
+|---------|----------|
+| `:` | Null command |
+| `.` | Source file in current context |
+| `break` | Exit from loop |
+| `cd` | Change working directory |
+| `continue` | Resume loop iteration |
+| `echo` | Display arguments |
+| `eval` | Evaluate arguments as command |
+| `exec` | Replace shell process |
+| `exit` | Terminate shell |
+| `export` | Mark variables for export |
+| `getopts` | Parse command options |
+| `hash` | Cache command locations |
+| `printf` | Formatted output |
+| `pwd` | Print working directory |
+| `read` | Read line from input |
+| `readonly` | Mark variables immutable |
+| `return` | Exit function |
+| `set` | Set shell options |
+| `shift` | Shift positional parameters |
+| `test` / `[` | Evaluate conditions |
+| `times` | Display process times |
+| `trap` | Set signal handlers |
+| `type` | Identify command type |
+| `ulimit` | Control resource limits |
+| `umask` | Set file creation mask |
+| `unset` | Remove variables |
+| `wait` | Wait for background jobs |
+
+### Job Control Commands
+
+| Command | Function |
+|---------|----------|
+| `bg` | Continue job in background |
+| `fg` | Continue job in foreground |
+| `jobs` | List active jobs |
+| `kill` | Send signal to process |
+
+### bash-Compatible Extensions
+
+The following non-POSIX commands are provided for bash compatibility:
+
+| Command | Function |
+|---------|----------|
+| `[[` | Enhanced conditional evaluation |
+| `alias` | Define command aliases |
+| `command` | Execute command bypassing functions |
+| `declare` | Declare variables with attributes |
+| `fc` | History command editor |
+| `history` | Command history management |
+| `let` | Arithmetic evaluation |
+| `local` | Function-local variables |
+| `printenv` | Display environment |
+| `shopt` | Shell option control |
+| `source` | Synonym for `.` |
+| `unalias` | Remove aliases |
+| `which` | Locate command in PATH |
+
+### fortsh-Specific Commands
+
+| Command | Function |
+|---------|----------|
+| `config` | Configuration file management |
+| `memory` | Display memory usage statistics |
+| `perf` | Display performance metrics |
+
+### Feature Coverage
+
+**Implemented**:
+- Shell parameter expansion (${var:-default}, ${var#pattern}, etc.)
+- Arithmetic expansion $((expr))
+- Command substitution $(cmd) and \`cmd\`
+- Glob pattern expansion (*, ?, [...])
+- Brace expansion {a,b,c}
+- Tilde expansion ~user
+- I/O redirection (<, >, >>, 2>&1, etc.)
+- Here documents (<<EOF)
+- Pipeline construction (cmd1 | cmd2)
+- Background execution (cmd &)
+- Signal handling (trap command)
+- Command history with readline
+- Function definitions with local scope
+- Associative and indexed arrays
+
+**Not Implemented**:
+- Process substitution (<(cmd), >(cmd))
+- Coprocess support (incomplete)
+- Programmable completion
+- Extended glob patterns (extglob)
+- Advanced regex matching (partial)
+
+## Configuration
+
+fortsh reads configuration files following standard shell conventions:
+
+**Login shells**: `/etc/fortsh/profile`, `~/.fortsh_profile`
+**Interactive non-login shells**: `/etc/fortsh/fortshrc`, `~/.fortshrc`
+**Logout**: `~/.fortsh_logout`
+
+Legacy `.fshrc` files are also recognized for backward compatibility.
+
+On first execution, fortsh offers to create default configuration files with standard aliases and prompt settings.
 
 ## Building
 
-```bash
-# Prerequisites
-sudo dnf install gfortran make gcc git    # RHEL/Fedora
-sudo apt install gfortran make gcc git    # Debian/Ubuntu
-sudo pacman -S gcc-fortran make gcc git   # Arch
+### Prerequisites
 
-# Build
+- Fortran 2018 compiler (gfortran 8.0+, ifort 19.0+)
+- GNU Make
+- POSIX system (Linux, BSD, macOS)
+
+### Compilation
+
+```bash
+# Clone repository
 git clone https://github.com/FortranGoingOnForty/fortsh.git
 cd fortsh
+
+# Compile
 make
 
-# Install
-make install        # System-wide (/usr/local/bin)
-make dev-install    # User only (~/.local/bin)
+# Optional: Install to system paths
+sudo make install          # Installs to /usr/local/bin
+make dev-install          # Installs to ~/.local/bin
 ```
 
-## Basic Usage
+Build artifacts are placed in `bin/fortsh`.
 
-### Running fortsh
+## Usage
+
+### Invocation
 
 ```bash
-fortsh                      # Interactive shell
-fortsh script.sh            # Execute script
-fortsh -c 'echo Hello'      # Execute command
+fortsh                    # Interactive mode
+fortsh script.sh          # Execute script file
+fortsh -c 'command'       # Execute command string
 ```
 
-### Variables and Parameter Expansion
+### Basic Syntax
 
+Variable assignment and expansion:
 ```bash
-# Variable assignment
-name="value"
-export PATH="/usr/bin:/bin"
-
-# Parameter expansion
-echo ${var:-default}        # Use default if unset
-echo ${var:=default}        # Assign default if unset
-echo ${var:?error}          # Error if unset
-echo ${var:+alternate}      # Use alternate if set
-
-# String manipulation
-echo ${var%suffix}          # Remove suffix
-echo ${var#prefix}          # Remove prefix
-echo ${#var}                # String length
-
-# Positional parameters
-echo $1 $2 $3               # Script arguments
-echo $#                     # Number of arguments
-echo $*                     # All arguments (single string)
-echo $@                     # All arguments (separate)
-echo $$                     # Process ID
-echo $?                     # Last exit status
+var="value"
+echo ${var}              # Standard expansion
+echo ${var:-default}     # Default value if unset
+echo ${var%pattern}      # Pattern removal
 ```
 
-### Control Flow
-
+Control structures:
 ```bash
-# If statement
 if [ -f "$file" ]; then
     echo "File exists"
-elif [ -d "$file" ]; then
-    echo "Directory"
-else
-    echo "Not found"
 fi
 
-# Case statement
+for item in list; do
+    echo "$item"
+done
+
 case "$var" in
-    pattern1) echo "Match 1" ;;
-    pattern*) echo "Pattern" ;;
-    *) echo "Default" ;;
+    pattern) command ;;
 esac
-
-# For loop
-for file in *.txt; do
-    echo "$file"
-done
-
-# While loop
-while read line; do
-    echo "$line"
-done < input.txt
-
-# Until loop
-until [ $count -eq 10 ]; do
-    ((count++))
-done
 ```
 
-### Functions
-
+Functions:
 ```bash
-# Function definition
-my_function() {
-    local var="$1"
-    echo "Argument: $var"
+func_name() {
+    local arg="$1"
     return 0
 }
-
-# Function call
-my_function "test"
-result=$(my_function "test")
 ```
 
-### I/O Redirection
-
+Redirection and pipelines:
 ```bash
-# Basic redirection
-command > file              # Redirect stdout
-command < file              # Redirect stdin
-command >> file             # Append
-command 2> errors           # Redirect stderr
-command 2>&1                # Stderr to stdout
-
-# File descriptors
-command 3< input            # Custom fd
-command 5>&-                # Close fd
-
-# Process substitution
-diff <(sort file1) <(sort file2)
-```
-
-### Job Control
-
-```bash
-command &                   # Background job
-jobs                        # List jobs
-fg %1                       # Foreground job 1
-bg %2                       # Background job 2
-kill %3                     # Kill job 3
-wait                        # Wait for all jobs
-```
-
-### Test Operators
-
-```bash
-# File tests
-[ -f file ]                 # Regular file
-[ -d dir ]                  # Directory
-[ -r file ]                 # Readable
-[ -w file ]                 # Writable
-[ -x file ]                 # Executable
-[ -s file ]                 # Non-empty
-
-# String tests
-[ -z "$var" ]               # Empty string
-[ -n "$var" ]               # Non-empty
-[ "$a" = "$b" ]             # Equal
-[ "$a" != "$b" ]            # Not equal
-
-# Numeric tests
-[ $a -eq $b ]               # Equal
-[ $a -ne $b ]               # Not equal
-[ $a -lt $b ]               # Less than
-[ $a -le $b ]               # Less or equal
-[ $a -gt $b ]               # Greater than
-[ $a -ge $b ]               # Greater or equal
-```
-
-### Shell Options
-
-```bash
-set -e                      # Exit on error
-set -u                      # Error on undefined variables
-set -o pipefail             # Pipeline error detection
-set -x                      # Trace execution
-set -v                      # Verbose mode
-```
-
-## Examples
-
-### System Backup Script
-
-```bash
-#!/usr/bin/env fortsh
-
-set -euo pipefail
-
-BACKUP_DIR="/backup/$(date +%Y%m%d)"
-SOURCE_DIRS=("/home" "/etc" "/var/log")
-
-mkdir -p "$BACKUP_DIR"
-
-for dir in "${SOURCE_DIRS[@]}"; do
-    echo "Backing up $dir..."
-    tar -czf "$BACKUP_DIR/$(basename $dir).tar.gz" "$dir" 2>/dev/null || {
-        echo "Warning: Failed to backup $dir" >&2
-    }
-done
-
-echo "Backup completed to $BACKUP_DIR"
-```
-
-### Log Analysis
-
-```bash
-#!/usr/bin/env fortsh
-
-declare -A error_counts
-total_lines=0
-
-while IFS= read -r line; do
-    ((total_lines++))
-
-    if [[ $line =~ \[(ERROR|WARN|INFO)\] ]]; then
-        level=${BASH_REMATCH[1]}
-        ((error_counts[$level]++))
-    fi
-done < /var/log/app.log
-
-echo "Total lines: $total_lines"
-for level in ERROR WARN INFO; do
-    echo "$level: ${error_counts[$level]:-0}"
-done
-```
-
-### Parallel Processing
-
-```bash
-#!/usr/bin/env fortsh
-
-process_file() {
-    local file="$1"
-    # Process file
-    echo "Processing: $file"
-}
-
-export -f process_file
-
-for file in *.txt; do
-    process_file "$file" &
-
-    # Limit concurrent jobs to 4
-    (($(jobs -r | wc -l) >= 4)) && wait
-done
-
-wait  # Wait for all jobs
-```
-
-## Environment Variables
-
-```bash
-# Shell behavior
-FORTSH_DEBUG=1              # Enable debug output
-FORTSH_TRACE=1              # Enable execution tracing
-
-# History
-HISTSIZE=1000               # Command history size
-HISTFILE=~/.fortsh_history  # History file
-
-# Prompts
-PS1='[\u@\h \W]\$ '         # Primary prompt
-PS2='> '                    # Continuation prompt
+command < input > output 2>&1
+cmd1 | cmd2 | cmd3
+command &                 # Background execution
 ```
 
 ## Testing
 
 ```bash
-# Run test suite
+make check               # Run test suite
 ./tests/integration_test.sh
-
-# Quick smoke test
-make smoke-test
-
-# Full test with memory checking
-make check
 ```
+
+Test coverage includes lexer, parser, executor, and end-to-end integration tests.
 
 ## Project Structure
 
 ```
 fortsh/
 ├── src/
-│   ├── common/           # Core types, error handling
-│   ├── system/           # OS interface, signals
-│   ├── parsing/          # Command parser, glob expansion
-│   ├── execution/        # Command execution, job control
-│   ├── scripting/        # Variables, control flow
-│   ├── io/               # I/O, readline
-│   └── fortsh.f90        # Main program
-└── tests/                # Test suite
+│   ├── common/          # Type definitions, error handling, performance
+│   ├── system/          # OS interface, signals, job control
+│   ├── parsing/         # Lexer, parser, glob expansion
+│   ├── execution/       # Command executor, built-in dispatcher
+│   ├── scripting/       # Variables, control flow, expansion
+│   ├── io/              # Readline, redirection, here documents
+│   └── fortsh.f90       # Main program loop
+├── tests/               # Test scripts and test harness
+└── docs/                # Implementation documentation
 ```
 
-## Limitations
+## Known Limitations
 
-- Some bash-specific extensions may not be supported
-- Complex here-document constructs have limited support
-- Coprocess functionality is experimental
-- Unicode support depends on system locale
+- **Process substitution**: Not implemented. Use temporary files as workaround.
+- **Coprocess**: Partially implemented but not functional.
+- **Regex matching**: `=~` operator has limited support. Use external tools (grep, awk) for complex patterns.
+- **Completion**: Only basic filename completion is available.
+- **Unicode**: Support depends on system locale; not all locales have been tested.
+- **Performance**: Slower than optimized C implementations (bash, dash) for complex scripts.
+
+## Development
+
+fortsh is an educational project and research vehicle for shell implementation techniques. Contributions addressing standards compliance or fixing correctness issues are welcome. Feature requests for bash 4.x+ extensions will be evaluated based on implementation complexity and utility.
+
+## Standards Compliance
+
+Primary reference: POSIX.1-2017 (IEEE Std 1003.1-2017)
+Secondary reference: bash 5.x behavior for extensions
+
+Documented deviations from POSIX are tracked in `docs/POSIX_COMPLIANCE_STATUS.md`.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License. See LICENSE file for terms.
 
-## Links
+## References
 
+- POSIX Shell Command Language: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html
 - Repository: https://github.com/FortranGoingOnForty/fortsh
-- Issues: https://github.com/FortranGoingOnForty/fortsh/issues
-- POSIX Standard: https://pubs.opengroup.org/onlinepubs/9699919799/
+- Issue tracker: https://github.com/FortranGoingOnForty/fortsh/issues

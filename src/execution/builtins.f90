@@ -10,7 +10,7 @@ module builtins
   use shell_config
   use aliases
   use shell_options
-  use command_builtin, only: find_command_in_path
+  use command_builtin, only: find_command_in_path, builtin_which, builtin_command
   use performance
   use parser
   use coprocess
@@ -63,6 +63,8 @@ contains
                 trim(cmd_name) == 'set' .or. &
                 trim(cmd_name) == 'shopt' .or. &
                 trim(cmd_name) == 'type' .or. &
+                trim(cmd_name) == 'which' .or. &
+                trim(cmd_name) == 'command' .or. &
                 trim(cmd_name) == 'unset' .or. &
                 trim(cmd_name) == 'readonly' .or. &
                 trim(cmd_name) == 'declare' .or. &
@@ -119,6 +121,8 @@ contains
       call builtin_trap(cmd, shell)
     case('config')
       call builtin_config(cmd, shell)
+    case('command')
+      call builtin_command(cmd, shell)
     case('alias')
       call builtin_alias(cmd, shell)
     case('unalias')
@@ -141,6 +145,8 @@ contains
       call builtin_shopt(cmd, shell)
     case('type')
       call builtin_type(cmd, shell)
+    case('which')
+      call builtin_which(cmd, shell)
     case('unset')
       call builtin_unset(cmd, shell)
     case('readonly')
