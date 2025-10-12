@@ -55,17 +55,19 @@ contains
 
   subroutine setup_signal_handlers()
     type(c_funptr) :: old_handler
-    
+
+    ! Initialize signal constants first
+    call init_signal_constants()
+
     ! Ignore interactive signals for shell itself
-    SIG_IGN = c_null_funptr
     old_handler = c_signal(2, SIG_IGN)  ! SIGINT
     old_handler = c_signal(20, SIG_IGN) ! SIGTSTP
     old_handler = c_signal(21, SIG_IGN) ! SIGTTIN
     old_handler = c_signal(22, SIG_IGN) ! SIGTTOU
-    
+
     ! Handle child termination
     old_handler = c_signal(17, c_funloc(sigchld_handler))  ! SIGCHLD
-    
+
     ! Handle alarm for timeouts
     old_handler = c_signal(SIGALRM, c_funloc(sigalrm_handler))
   end subroutine

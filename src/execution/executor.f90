@@ -117,13 +117,12 @@ contains
         ! Set process group
         if (pgid == 0) pgid = c_getpid()
         ret = c_setpgid(0, pgid)
-        
-        ! Reset signal handlers
-        SIG_DFL = c_null_funptr
-        old_handler = c_signal(SIGINT, SIG_DFL)
-        old_handler = c_signal(SIGTSTP, SIG_DFL)
-        old_handler = c_signal(SIGTTIN, SIG_DFL)
-        old_handler = c_signal(SIGTTOU, SIG_DFL)
+
+        ! Reset signal handlers to default
+        old_handler = c_signal(SIGINT, c_null_funptr)
+        old_handler = c_signal(SIGTSTP, c_null_funptr)
+        old_handler = c_signal(SIGTTIN, c_null_funptr)
+        old_handler = c_signal(SIGTTOU, c_null_funptr)
         
         ! Set up pipes
         if (i > start_idx) then
@@ -592,13 +591,12 @@ contains
       ! Set process group
       pgid = c_getpid()
       ret = c_setpgid(0, pgid)
-      
-      ! Reset signal handlers
-      SIG_DFL = c_null_funptr
-      old_handler = c_signal(SIGINT, SIG_DFL)
-      old_handler = c_signal(SIGTSTP, SIG_DFL)
-      old_handler = c_signal(SIGTTIN, SIG_DFL)
-      old_handler = c_signal(SIGTTOU, SIG_DFL)
+
+      ! Reset signal handlers to default
+      old_handler = c_signal(SIGINT, c_null_funptr)
+      old_handler = c_signal(SIGTSTP, c_null_funptr)
+      old_handler = c_signal(SIGTTIN, c_null_funptr)
+      old_handler = c_signal(SIGTTOU, c_null_funptr)
       
       ! Handle here document
       call handle_heredoc(cmd)

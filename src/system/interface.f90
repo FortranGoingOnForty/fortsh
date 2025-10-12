@@ -388,7 +388,7 @@ module system_interface
     end function
   end interface
 
-  ! Signal handler types
+  ! Signal handler types (initialized in module initialization)
   type(c_funptr) :: SIG_DFL, SIG_IGN
 
   ! File flags for open()
@@ -923,5 +923,14 @@ contains
                stat1%st_dev == stat2%st_dev .and. &
                stat1%st_ino == stat2%st_ino)
   end function
+
+  ! Initialize signal handler constants
+  ! Must be called before using SIG_DFL or SIG_IGN
+  subroutine init_signal_constants()
+    ! SIG_DFL is (void(*)())0 which is c_null_funptr
+    SIG_DFL = c_null_funptr
+    ! SIG_IGN is (void(*)())1, use transfer to convert integer to c_funptr
+    SIG_IGN = transfer(1_c_intptr_t, SIG_IGN)
+  end subroutine
 
 end module system_interface
