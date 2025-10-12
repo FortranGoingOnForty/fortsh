@@ -153,6 +153,8 @@ contains
           call execute_eval_builtin(pipeline%commands(i), shell)
           call c_exit(int(shell%last_exit_status, c_int))
         else if (is_builtin(pipeline%commands(i)%tokens(1))) then
+          ! Builtins in pipes need redirections applied
+          call setup_redirections(pipeline%commands(i))
           call execute_builtin(pipeline%commands(i), shell)
           call c_exit(int(shell%last_exit_status, c_int))
         else
@@ -349,13 +351,122 @@ contains
     else if (trim(cmd%tokens(1)) == 'eval') then
       call execute_eval_builtin(cmd, shell)
     else if (is_builtin(cmd%tokens(1))) then
-      call execute_builtin(cmd, shell)
+      call execute_builtin_with_redirects(cmd, shell)
     else
       call execute_external(cmd, shell, original_input)
     end if
-    
+
     ! End performance timing
     call end_timer('execute_single', exec_start_time, total_exec_time)
+  end subroutine
+
+  ! Execute builtin with redirection support
+  subroutine execute_builtin_with_redirects(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+
+    integer :: saved_stdout, saved_stdin, saved_stderr
+    integer :: fd, ret, flags
+    character(len=256), target :: c_filename
+    logical :: has_redirects
+
+    ! Check if we have any redirections
+    has_redirects = allocated(cmd%output_file) .or. allocated(cmd%input_file) .or. &
+                    allocated(cmd%error_file) .or. cmd%redirect_stderr_to_stdout .or. &
+                    cmd%redirect_stdout_to_stderr
+
+    if (.not. has_redirects) then
+      ! No redirections, just execute the builtin normally
+      call execute_builtin(cmd, shell)
+      return
+    end if
+
+    ! Save current file descriptors
+    saved_stdout = c_dup(STDOUT_FD)
+    saved_stdin = c_dup(STDIN_FD)
+    saved_stderr = c_dup(STDERR_FD)
+
+    ! Handle input redirection
+    if (allocated(cmd%input_file)) then
+      c_filename = trim(cmd%input_file)//c_null_char
+      fd = c_open(c_loc(c_filename), O_RDONLY, 0)
+      if (fd >= 0) then
+        ret = c_dup2(fd, STDIN_FD)
+        ret = c_close(fd)
+      else
+        write(error_unit, '(3a)') 'fortsh: cannot open input file: ', trim(cmd%input_file)
+        shell%last_exit_status = 1
+        return
+      end if
+    end if
+
+    ! Handle output redirection
+    if (allocated(cmd%output_file)) then
+      if (cmd%append_output) then
+        flags = ior(ior(O_WRONLY, O_CREAT), O_APPEND)
+      else
+        flags = ior(ior(O_WRONLY, O_CREAT), O_TRUNC)
+      end if
+
+      c_filename = trim(cmd%output_file)//c_null_char
+      fd = c_open(c_loc(c_filename), flags, int(o'644', c_int))
+      if (fd >= 0) then
+        ret = c_dup2(fd, STDOUT_FD)
+        ret = c_close(fd)
+      else
+        write(error_unit, '(3a)') 'fortsh: cannot open output file: ', trim(cmd%output_file)
+        shell%last_exit_status = 1
+        ! Restore stdin before returning
+        ret = c_dup2(saved_stdin, STDIN_FD)
+        ret = c_close(saved_stdin)
+        return
+      end if
+    end if
+
+    ! Handle error redirection
+    if (allocated(cmd%error_file)) then
+      if (cmd%append_error) then
+        flags = ior(ior(O_WRONLY, O_CREAT), O_APPEND)
+      else
+        flags = ior(ior(O_WRONLY, O_CREAT), O_TRUNC)
+      end if
+
+      c_filename = trim(cmd%error_file)//c_null_char
+      fd = c_open(c_loc(c_filename), flags, int(o'644', c_int))
+      if (fd >= 0) then
+        ret = c_dup2(fd, STDERR_FD)
+        ret = c_close(fd)
+      else
+        write(error_unit, '(3a)') 'fortsh: cannot open error file: ', trim(cmd%error_file)
+        shell%last_exit_status = 1
+        ! Restore fds before returning
+        ret = c_dup2(saved_stdin, STDIN_FD)
+        ret = c_dup2(saved_stdout, STDOUT_FD)
+        ret = c_close(saved_stdin)
+        ret = c_close(saved_stdout)
+        return
+      end if
+    end if
+
+    ! Handle advanced redirections
+    if (cmd%redirect_stderr_to_stdout) then
+      ret = c_dup2(STDOUT_FD, STDERR_FD)
+    end if
+
+    if (cmd%redirect_stdout_to_stderr) then
+      ret = c_dup2(STDERR_FD, STDOUT_FD)
+    end if
+
+    ! Execute the builtin
+    call execute_builtin(cmd, shell)
+
+    ! Restore original file descriptors
+    ret = c_dup2(saved_stdout, STDOUT_FD)
+    ret = c_dup2(saved_stdin, STDIN_FD)
+    ret = c_dup2(saved_stderr, STDERR_FD)
+    ret = c_close(saved_stdout)
+    ret = c_close(saved_stdin)
+    ret = c_close(saved_stderr)
   end subroutine
 
   ! Execute ((expression)) arithmetic evaluation command
