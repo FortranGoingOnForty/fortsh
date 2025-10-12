@@ -223,6 +223,7 @@ module shell_types
     logical :: option_noclobber = .false.      ! set -C (no clobber)
     logical :: option_monitor = .false.        ! set -m (job control)
     logical :: option_allexport = .false.      ! set -a (auto export)
+    logical :: option_vi = .false.             ! set -o vi (vi editing mode)
     ! Bash-style shell options (shopt)
     logical :: shopt_nullglob = .false.        ! nullglob (empty glob matches)
     logical :: shopt_failglob = .false.        ! failglob (error on no glob matches) 

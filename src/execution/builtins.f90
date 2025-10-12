@@ -89,6 +89,7 @@ contains
                 trim(cmd_name) == 'printf' .or. &
                 trim(cmd_name) == 'read' .or. &
                 trim(cmd_name) == 'fc' .or. &
+                trim(cmd_name) == 'coproc' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -195,6 +196,8 @@ contains
       call builtin_read(cmd, shell)
     case('fc')
       call builtin_fc(cmd, shell)
+    case('coproc')
+      call builtin_coproc(cmd, shell)
     case default
       ! Should not reach here if is_builtin works correctly
       shell%last_exit_status = 1
@@ -1217,38 +1220,82 @@ contains
     shell%last_exit_status = 0
   end subroutine
 
-  ! Coprocess built-in commands
+  ! Coprocess built-in command: coproc [NAME] command [args]
   subroutine builtin_coproc(cmd, shell)
+    use coprocess, only: start_coprocess, coprocs
+    use variables, only: set_array_element
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    character(len=256) :: coproc_name
-    character(len=1024) :: command
-    integer :: coproc_id
-    
+
+    character(len=256) :: coproc_name, command_str
+    integer :: coproc_id, i, cmd_start_idx
+    character(len=16) :: fd_str
+
+    ! Default name
+    coproc_name = 'COPROC'
+
+    ! Parse arguments: coproc [NAME] command [args]
     if (cmd%num_tokens < 2) then
-      call list_coprocesses()
-      shell%last_exit_status = 0
+      write(error_unit, '(a)') 'coproc: usage: coproc [NAME] command [args]'
+      shell%last_exit_status = 1
       return
     end if
-    
-    if (cmd%num_tokens == 2) then
-      ! coproc command
-      command = trim(cmd%tokens(2))
-      coproc_id = start_coprocess(command)
-    else
-      ! coproc name command
+
+    ! Check if first argument is a name (uppercase letters)
+    if (cmd%num_tokens >= 3 .and. is_valid_coproc_name(cmd%tokens(2))) then
       coproc_name = trim(cmd%tokens(2))
-      command = trim(cmd%tokens(3))
-      coproc_id = start_coprocess(command, coproc_name)
-    end if
-    
-    if (coproc_id > 0) then
-      shell%last_exit_status = 0
+      cmd_start_idx = 3
     else
-      shell%last_exit_status = 1
+      cmd_start_idx = 2
     end if
+
+    ! Build command string from remaining tokens
+    command_str = ''
+    do i = cmd_start_idx, cmd%num_tokens
+      if (i > cmd_start_idx) command_str = trim(command_str) // ' '
+      command_str = trim(command_str) // trim(cmd%tokens(i))
+    end do
+
+    ! Start the coprocess
+    coproc_id = start_coprocess(trim(command_str), trim(coproc_name))
+
+    if (coproc_id < 0) then
+      write(error_unit, '(a)') 'coproc: failed to start coprocess'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Create array variables: NAME[0] = read_fd, NAME[1] = write_fd
+    write(fd_str, '(I0)') coprocs(coproc_id)%read_fd
+    call set_array_element(shell, trim(coproc_name), 1, trim(fd_str))  ! Bash index 0 = Fortran index 1
+    write(fd_str, '(I0)') coprocs(coproc_id)%write_fd
+    call set_array_element(shell, trim(coproc_name), 2, trim(fd_str))  ! Bash index 1 = Fortran index 2
+
+    shell%last_exit_status = 0
   end subroutine
+
+  ! Helper: Check if name is valid (uppercase letters/digits/underscore)
+  function is_valid_coproc_name(name) result(is_valid)
+    character(len=*), intent(in) :: name
+    logical :: is_valid
+    integer :: i
+    character :: c
+
+    is_valid = .false.
+    if (len_trim(name) == 0) return
+
+    ! Name must start with letter or underscore
+    c = name(1:1)
+    if (.not. ((c >= 'A' .and. c <= 'Z') .or. c == '_')) return
+
+    ! Rest can be letters, digits, or underscore
+    do i = 2, len_trim(name)
+      c = name(i:i)
+      if (.not. ((c >= 'A' .and. c <= 'Z') .or. (c >= '0' .and. c <= '9') .or. c == '_')) return
+    end do
+
+    is_valid = .true.
+  end function
 
   subroutine builtin_timeout(cmd, shell)
     type(command_t), intent(in) :: cmd
