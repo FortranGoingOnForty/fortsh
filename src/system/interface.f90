@@ -31,33 +31,54 @@ module system_interface
   integer(c_int), parameter :: WUNTRACED = 2
 
   ! Terminal control structures and constants
+#ifdef __APPLE__
+  ! macOS has NCCS=20 and uses 8-byte tcflag_t
+  integer(c_int), parameter :: NCCS = 20
+#else
+  ! Linux has NCCS=32 and uses 4-byte tcflag_t
   integer(c_int), parameter :: NCCS = 32
-  
-  ! termios structure - simplified version matching C struct termios
+#endif
+
+  ! termios structure - must match C struct termios exactly
   type, bind(c) :: termios_t
-    integer(c_int) :: c_iflag    ! input flags
-    integer(c_int) :: c_oflag    ! output flags  
-    integer(c_int) :: c_cflag    ! control flags
-    integer(c_int) :: c_lflag    ! local flags
-    character(c_char) :: c_cc(NCCS) ! control characters
+#ifdef __APPLE__
+    ! macOS: tcflag_t is unsigned long (8 bytes)
+    integer(c_long) :: c_iflag    ! input flags (8 bytes)
+    integer(c_long) :: c_oflag    ! output flags (8 bytes)
+    integer(c_long) :: c_cflag    ! control flags (8 bytes)
+    integer(c_long) :: c_lflag    ! local flags (8 bytes)
+    character(c_char) :: c_cc(20) ! control characters (20 bytes)
+    character(c_char) :: padding(4) ! padding for alignment (4 bytes)
+    integer(c_long) :: c_ispeed   ! input speed (8 bytes)
+    integer(c_long) :: c_ospeed   ! output speed (8 bytes)
+    ! Total: 72 bytes
+#else
+    ! Linux: tcflag_t is unsigned int (4 bytes)
+    integer(c_int) :: c_iflag     ! input flags (4 bytes)
+    integer(c_int) :: c_oflag     ! output flags (4 bytes)
+    integer(c_int) :: c_cflag     ! control flags (4 bytes)
+    integer(c_int) :: c_lflag     ! local flags (4 bytes)
+    character(c_char) :: c_cc(NCCS) ! control characters (32 bytes)
+    ! Total: 48 bytes
+#endif
   end type termios_t
   
   ! Terminal flags (platform-specific values)
 #ifdef __APPLE__
-  ! macOS/Darwin values from sys/termios.h
-  integer(c_int), parameter :: ICANON = int(z'00000100', c_int)  ! canonical input
-  integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
-  integer(c_int), parameter :: ECHOE  = int(z'00000002', c_int)  ! echo erase character
-  integer(c_int), parameter :: ECHOK  = int(z'00000004', c_int)  ! echo kill character
-  integer(c_int), parameter :: ECHONL = int(z'00000010', c_int)  ! echo NL even if ECHO is off
-  integer(c_int), parameter :: IEXTEN = int(z'00000400', c_int)  ! extended input processing
-  integer(c_int), parameter :: ISIG   = int(z'00000080', c_int)  ! enable signals
+  ! macOS/Darwin values from sys/termios.h - use c_long to match tcflag_t
+  integer(c_long), parameter :: ICANON = int(z'00000100', c_long)  ! canonical input
+  integer(c_long), parameter :: ECHO   = int(z'00000008', c_long)  ! enable echo
+  integer(c_long), parameter :: ECHOE  = int(z'00000002', c_long)  ! echo erase character
+  integer(c_long), parameter :: ECHOK  = int(z'00000004', c_long)  ! echo kill character
+  integer(c_long), parameter :: ECHONL = int(z'00000010', c_long)  ! echo NL even if ECHO is off
+  integer(c_long), parameter :: IEXTEN = int(z'00000400', c_long)  ! extended input processing
+  integer(c_long), parameter :: ISIG   = int(z'00000080', c_long)  ! enable signals
 
   ! Control character indices (macOS)
   integer(c_int), parameter :: VMIN  = 16  ! minimum chars for noncanonical read
   integer(c_int), parameter :: VTIME = 17  ! timeout for noncanonical read
 #else
-  ! Linux values from bits/termios.h
+  ! Linux values from bits/termios.h - use c_int to match tcflag_t
   integer(c_int), parameter :: ICANON = int(z'00000002', c_int)  ! canonical input
   integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
   integer(c_int), parameter :: ECHOE  = int(z'00000010', c_int)  ! echo erase character
