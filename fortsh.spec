@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        3.3.3
+Version:        3.3.4
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,10 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sat Oct 12 2024 mfw <espadon@outlook.com> - 3.3.4-1
+- Further macOS completion and readline fixes
+- Improved platform-specific compatibility
+
 * Sat Oct 12 2024 mfw <espadon@outlook.com> - 3.3.3-1
 - Fixed macOS readline compatibility issues
 - Added platform-specific build flags for Darwin
