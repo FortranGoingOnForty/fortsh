@@ -247,7 +247,7 @@ contains
           
         case(KEY_CTRL_L)
           ! Clear screen and redraw
-          call handle_clear_screen(input_state)
+          call handle_clear_screen(input_state, prompt)
 
         case(KEY_CTRL_R)
           ! Reverse-i-search
@@ -1925,15 +1925,23 @@ contains
     input_state%dirty = .true.
   end subroutine
   
-  subroutine handle_clear_screen(input_state)
+  subroutine handle_clear_screen(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
 
     ! Clear screen with ANSI escape sequence
     write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
     flush(output_unit)
 
-    ! Force redraw of current line
-    input_state%dirty = .true.
+    ! Immediately redraw the prompt and current line
+    write(output_unit, '(a)', advance='no') prompt
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+    end if
+    flush(output_unit)
+
+    ! Don't need dirty flag since we just redrew
+    input_state%dirty = .false.
   end subroutine
 
   ! Cursor flash effect for visual feedback
