@@ -4,6 +4,7 @@
 module builtins
   use shell_types
   use system_interface
+  use io_helpers
   use job_control
   use test_builtin
   use readline
@@ -340,22 +341,22 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i
     logical :: first
-    
-    ! Simple echo implementation
+
+    ! Simple echo implementation - uses C FD-aware I/O
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens < 1) then
-      write(*,'(a)') ''
+      call write_stdout('')
       shell%last_exit_status = 0
       return
     end if
-    
+
     first = .true.
     do i = 2, cmd%num_tokens
-      if (.not. first) write(*,'(a)',advance='no') ' '
-      write(*,'(a)',advance='no') trim(cmd%tokens(i))
+      if (.not. first) call write_stdout_nonl(' ')
+      call write_stdout_nonl(trim(cmd%tokens(i)))
       first = .false.
     end do
-    write(*,'(a)') ''
-    
+    call write_stdout('')
+
     shell%last_exit_status = 0
   end subroutine
 
