@@ -3,7 +3,10 @@
 
 # Compiler settings
 FC = gfortran
+# Development flags (verbose warnings, debug symbols)
 FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O2
+# Production flags (minimal warnings, optimized, no debug symbols)
+FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2
 LDFLAGS = 
 
 # Directory structure
@@ -177,18 +180,25 @@ test: $(TARGET)
 debug: FCFLAGS += -g -fbacktrace -fcheck=bounds
 debug: $(TARGET)
 
+release: FCFLAGS = $(FCFLAGS_RELEASE)
+release: clean $(TARGET)
+	@echo "Building release version..."
+	strip $(TARGET)
+	@echo "Release build complete! Binary size: $$(du -h $(TARGET) | cut -f1)"
+
 # Help target
 help:
 	@echo "Fortran Shell (Fortsh) Build System"
 	@echo "==================================="
 	@echo ""
 	@echo "Available targets:"
-	@echo "  all       - Build fortsh (default)"
+	@echo "  all       - Build fortsh (default, development mode)"
+	@echo "  release   - Build optimized production binary (stripped, minimal warnings)"
+	@echo "  debug     - Build with extra debug flags and checks"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  distclean - Remove all generated files"
 	@echo "  install   - Install fortsh to /usr/local/bin"
 	@echo "  test      - Run basic functionality test"
-	@echo "  debug     - Build with debug flags"
 	@echo "  help      - Show this help"
 	@echo "  dist      - Create distribution package"
 	@echo "  rpm       - Build RPM package"
@@ -247,4 +257,4 @@ smoke-test: $(TARGET)
 	@echo "perf on\necho 'test'\nperf\nexit" | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
 	@echo "All smoke tests passed!"
 
-.PHONY: all clean distclean install test debug help dist rpm dev-install uninstall check smoke-test
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test
