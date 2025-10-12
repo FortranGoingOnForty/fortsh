@@ -19,7 +19,7 @@ contains
     character(len=*), intent(in) :: input
     type(pipeline_t), intent(out) :: pipeline
 
-    character(len=len(input)) :: working_input
+    character(len=len(input)) :: working_input, proc_subst_input
     integer :: pos, start, cmd_count
     integer :: i, comment_pos
     type(command_t), allocatable :: temp_commands(:)
@@ -1728,6 +1728,149 @@ contains
       
       ! Don't increment pos here as it's already at the next character
       pos = pos - 1  ! Adjust because main loop will increment
+    end if
+  end subroutine
+
+  ! Detect and replace process substitution <(...) and >(...) with FIFO paths
+  subroutine process_substitutions(shell, input, output)
+    use substitution, only: create_fifo_for_subst, set_fifo_pid
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: input
+    character(len=*), intent(out) :: output
+
+    integer :: i, start_pos, paren_depth, out_pos, fifo_len
+    character(len=MAX_PATH_LEN) :: fifo_path, command
+    logical :: is_input_subst
+    integer(c_pid_t) :: pid
+    character(len=1) :: subst_type
+
+    output = ''
+    out_pos = 1
+    i = 1
+
+    do while (i <= len_trim(input))
+      ! Check for <( or >(
+      if (i < len_trim(input) .and. &
+          (input(i:i+1) == '<(' .or. input(i:i+1) == '>(')) then
+
+        subst_type = input(i:i)
+        is_input_subst = (subst_type == '<')
+
+        ! Find matching closing parenthesis
+        start_pos = i + 2
+        paren_depth = 1
+        i = start_pos
+
+        do while (i <= len_trim(input) .and. paren_depth > 0)
+          if (input(i:i) == '(') then
+            paren_depth = paren_depth + 1
+          else if (input(i:i) == ')') then
+            paren_depth = paren_depth - 1
+          end if
+          i = i + 1
+        end do
+
+        if (paren_depth == 0) then
+          ! Extract the command
+          command = input(start_pos:i-2)
+
+          ! Create FIFO
+          fifo_path = create_fifo_for_subst(shell, is_input_subst)
+
+          if (len_trim(fifo_path) > 0) then
+            ! Fork background process to execute command with proper redirection
+            pid = c_fork()
+
+            if (pid == 0) then
+              ! Child process
+              call execute_proc_subst_command(trim(command), trim(fifo_path), is_input_subst)
+              call c_exit(0)
+            else
+              ! Parent process - track the PID
+              call set_fifo_pid(shell, fifo_path, pid)
+
+              ! Replace <(command) or >(command) with FIFO path
+              fifo_len = len_trim(fifo_path)
+              if (out_pos + fifo_len - 1 <= len(output)) then
+                output(out_pos:out_pos+fifo_len-1) = trim(fifo_path)
+                out_pos = out_pos + fifo_len
+              end if
+            end if
+          else
+            write(error_unit, '(A)') 'fortsh: failed to create process substitution'
+            ! Keep original if failed - but this is a rare error case
+          end if
+        end if
+      else
+        ! Regular character - copy without trimming
+        if (out_pos <= len(output)) then
+          output(out_pos:out_pos) = input(i:i)
+          out_pos = out_pos + 1
+        end if
+        i = i + 1
+      end if
+    end do
+  end subroutine
+
+  ! Execute a process substitution command with proper redirection
+  subroutine execute_proc_subst_command(command, fifo_path, is_input)
+    character(len=*), intent(in) :: command, fifo_path
+    logical, intent(in) :: is_input
+    character(len=512) :: full_command
+    character(len=256), target :: shell_cmd, command_c
+    character(len=16), target :: shell_flag
+    type(c_ptr), target :: argv(4)
+    integer :: result
+
+    ! Build redirected command using shell
+    if (is_input) then
+      ! <(command) - redirect command's stdout to FIFO
+      write(full_command, '(A,A,A,A)') trim(command), ' > ', trim(fifo_path), c_null_char
+    else
+      ! >(command) - redirect FIFO to command's stdin
+      write(full_command, '(A,A,A,A)') trim(command), ' < ', trim(fifo_path), c_null_char
+    end if
+
+    ! Execute via /bin/sh -c
+    shell_cmd = '/bin/sh'//c_null_char
+    shell_flag = '-c'//c_null_char
+    command_c = trim(full_command)
+
+    argv(1) = c_loc(shell_cmd)
+    argv(2) = c_loc(shell_flag)
+    argv(3) = c_loc(command_c)
+    argv(4) = c_null_ptr
+
+    result = c_execvp(c_loc(shell_cmd), c_loc(argv))
+    if (result < 0) then
+      write(error_unit, '(A)') 'fortsh: failed to execute process substitution command'
+      call c_exit(1)
+    end if
+  end subroutine
+
+  ! Execute a command via system shell (for process substitution)
+  subroutine execute_command_via_shell(command)
+    character(len=*), intent(in) :: command
+    character(len=256), target :: shell_cmd, command_c
+    character(len=16), target :: shell_flag
+    type(c_ptr), target :: argv(4)
+    integer :: result
+
+    ! Build command: /bin/sh -c "command"
+    shell_cmd = '/bin/sh'//c_null_char
+    shell_flag = '-c'//c_null_char
+    command_c = trim(command)//c_null_char
+
+    argv(1) = c_loc(shell_cmd)
+    argv(2) = c_loc(shell_flag)
+    argv(3) = c_loc(command_c)
+    argv(4) = c_null_ptr
+
+    ! Execute /bin/sh -c "command"
+    result = c_execvp(c_loc(shell_cmd), c_loc(argv))
+    if (result < 0) then
+      write(error_unit, '(A)') 'fortsh: failed to execute process substitution command'
+      call c_exit(1)
     end if
   end subroutine
 
