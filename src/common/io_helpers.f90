@@ -47,7 +47,8 @@ contains
     integer(c_size_t) :: bytes_written
     integer :: i, str_len
 
-    str_len = len_trim(str)
+    ! Use actual length, not trimmed length, to preserve trailing/leading spaces
+    str_len = len(str)
     if (str_len == 0) return
 
     allocate(c_str(str_len))

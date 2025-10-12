@@ -269,11 +269,14 @@ contains
   end subroutine
   
   subroutine process_for_statement(cmd, shell, should_execute)
+    use substitution, only: expand_braces
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
 
     character(len=256) :: var_name, list_part
+    character(len=256) :: expanded_items(100)
+    integer :: expanded_count
     integer :: in_pos, i, j, word_start, word_end
 
     should_execute = .false.  ! Don't execute the for command itself
@@ -292,9 +295,9 @@ contains
       shell%last_exit_status = 1
       return
     end if
-    
+
     var_name = trim(cmd%tokens(2))
-    
+
     ! Build the list from remaining tokens
     list_part = ''
     do i = 4, cmd%num_tokens
@@ -304,16 +307,25 @@ contains
         list_part = trim(cmd%tokens(i))
       end if
     end do
-    
-    ! Push for block onto control stack and parse values
+
+    ! Expand braces before parsing values (e.g., {1..5} -> 1 2 3 4 5)
+    call expand_braces(list_part, expanded_items, expanded_count)
+
+    ! Push for block onto control stack and use expanded items directly
     if (shell%control_depth < MAX_CONTROL_DEPTH) then
       shell%control_depth = shell%control_depth + 1
       shell%control_stack(shell%control_depth)%block_type = BLOCK_FOR
       shell%control_stack(shell%control_depth)%loop_variable = var_name
       shell%control_stack(shell%control_depth)%for_list = list_part
-      
-      ! Parse space-separated values
-      call parse_for_values(shell%control_stack(shell%control_depth), list_part)
+
+      ! Use expanded items directly instead of parsing again
+      shell%control_stack(shell%control_depth)%for_count = expanded_count
+      if (expanded_count > 0) then
+        allocate(shell%control_stack(shell%control_depth)%for_values(expanded_count))
+        do i = 1, expanded_count
+          shell%control_stack(shell%control_depth)%for_values(i) = trim(expanded_items(i))
+        end do
+      end if
 
       ! Set up for first iteration - start at index 0 so first 'done' will set it to 1
       shell%control_stack(shell%control_depth)%for_index = 0
@@ -691,16 +703,18 @@ contains
 
   subroutine evaluate_condition(condition_cmd, shell, result)
     use test_builtin, only: execute_test_command
+    use parser, only: parse_pipeline
+    use executor, only: execute_pipeline
     character(len=*), intent(in) :: condition_cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: result
 
     type(command_t) :: cmd
+    type(pipeline_t) :: pipeline
     character(len=256) :: tokens(50)
     integer :: num_tokens, i
 
-    ! Simple condition evaluation
-    ! For now, we'll execute the test builtin or check exit status
+    ! Execute the condition command and check its exit status
 
     ! Check if it's a test command (starts with [ or test)
     if (index(trim(condition_cmd), '[') == 1 .or. &
@@ -708,26 +722,26 @@ contains
       ! Execute test command and check result
       call execute_test_condition(condition_cmd, shell, result)
     else
-      ! For other commands that might be builtins, we'll tokenize and call test_builtin
-      ! This is a simplified approach - full implementation would execute any command
+      ! For any other command, parse and execute it to get exit status
+      call parse_pipeline(trim(condition_cmd), pipeline)
 
-      ! Tokenize the condition command with variable expansion
-      call tokenize_and_expand(condition_cmd, tokens, num_tokens, shell)
+      if (pipeline%num_commands > 0) then
+        ! Execute the condition command
+        call execute_pipeline(pipeline, shell, trim(condition_cmd))
 
-      ! Check if it's a test-like command and execute it
-      if (num_tokens > 0) then
-        ! Build command structure
-        cmd%num_tokens = num_tokens
-        allocate(character(len=256) :: cmd%tokens(num_tokens))
-        do i = 1, num_tokens
-          cmd%tokens(i) = trim(tokens(i))
-        end do
-
-        ! Try to execute as test command
-        call execute_test_command(cmd, shell)
-
-        ! Clean up
-        deallocate(cmd%tokens)
+        ! Clean up pipeline
+        if (allocated(pipeline%commands)) then
+          do i = 1, pipeline%num_commands
+            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+          end do
+          deallocate(pipeline%commands)
+        end if
 
         ! Check exit status
         result = (shell%last_exit_status == 0)

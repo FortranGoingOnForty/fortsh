@@ -22,13 +22,43 @@ program fortran_shell
   type(pipeline_t) :: pipeline
   character(len=1024) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, prompt_str, history_expanded
-  integer :: iostat, i
+  integer :: iostat, i, num_args
+  character(len=1024) :: arg1, command_string
+  logical :: execute_command_string, execute_script_file
+  character(len=:), allocatable :: script_file
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
 
   ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
+
+  ! Check for command-line arguments
+  num_args = command_argument_count()
+  execute_command_string = .false.
+  execute_script_file = .false.
+
+  ! Handle command-line arguments for script execution
+  if (num_args > 0) then
+    call get_command_argument(1, arg1)
+
+    ! Check for -c flag (execute command string)
+    if (trim(arg1) == '-c') then
+      if (num_args >= 2) then
+        call get_command_argument(2, command_string)
+        execute_command_string = .true.
+        shell%is_interactive = .false.
+      else
+        write(error_unit, '(a)') 'fortsh: -c: option requires an argument'
+        stop 2
+      end if
+    ! Check if it's not a flag (assume it's a script file)
+    else if (arg1(1:1) /= '-') then
+      script_file = trim(arg1)
+      execute_script_file = .true.
+      shell%is_interactive = .false.
+    end if
+  end if
 
   ! Initialize signal handling module
   call init_signal_handling(shell)
@@ -52,6 +82,47 @@ program fortran_shell
     if (len_trim(shell%histfile) > 0) then
       call load_history_from_file(trim(shell%histfile), shell%histsize)
     end if
+  end if
+
+  ! Execute command string if -c was specified
+  if (execute_command_string) then
+    call process_substitutions(shell, trim(command_string), proc_subst_line)
+    call parse_pipeline(proc_subst_line, pipeline)
+
+    if (pipeline%num_commands > 0) then
+      call execute_pipeline(pipeline, shell, trim(command_string))
+
+      ! Clean up pipeline
+      if (allocated(pipeline%commands)) then
+        do i = 1, pipeline%num_commands
+          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+        end do
+        deallocate(pipeline%commands)
+      end if
+    end if
+
+    ! Exit with last command's exit status
+    stop
+  end if
+
+  ! Execute script file if specified
+  if (execute_script_file) then
+    shell%source_file = script_file
+    shell%should_source = .true.
+    call process_source_file(shell)
+
+    ! Exit with last command's exit status (don't print Goodbye for scripts)
+    if (perf_monitoring_enabled) then
+      call print_performance_stats()
+    end if
+    call cleanup_performance_monitoring()
+    stop
   end if
 
   ! Main REPL loop
@@ -188,11 +259,15 @@ contains
 
 
   subroutine process_source_file(shell)
+    use variables, only: add_function
     type(shell_state_t), intent(inout) :: shell
     character(len=1024) :: input_line, proc_subst_line
-    integer :: file_unit, iostat, i
+    integer :: file_unit, iostat, i, brace_depth, func_line_count
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line, history_expanded
+    logical :: in_function
+    character(len=256) :: func_name
+    character(len=1024) :: func_body(100)  ! Max 100 lines per function
 
     ! Reset the source flag first
     shell%should_source = .false.
@@ -205,22 +280,74 @@ contains
       return
     end if
 
+    ! Initialize function capture state
+    in_function = .false.
+    brace_depth = 0
+    func_line_count = 0
+    func_name = ''
+
     ! Execute each line in the file
     do
       read(file_unit, '(a)', iostat=iostat) input_line
       if (iostat /= 0) exit  ! End of file or error
 
-      ! Skip empty lines and comments
-      if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+      ! Skip empty lines and comments (unless we're inside a function)
+      if (.not. in_function) then
+        if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+      end if
 
+      ! Check if this is the start of a function definition
+      if (.not. in_function .and. is_function_definition(input_line, func_name)) then
+        in_function = .true.
+        brace_depth = count_braces(input_line)
+        func_line_count = 0
+
+        ! If the opening brace is on the same line, start capturing from next line
+        ! Otherwise, this line might have the brace on next line
+        if (index(input_line, '{') > 0) then
+          ! Extract any commands after the opening brace on the same line
+          call extract_first_line_body(input_line, func_body, func_line_count)
+          if (brace_depth == 0) then
+            ! Function complete on one line: name() { commands; }
+            call add_function(shell, trim(func_name), func_body, func_line_count)
+            in_function = .false.
+            func_name = ''
+            func_line_count = 0
+          end if
+        end if
+        cycle
+      end if
+
+      ! If we're capturing a function, accumulate lines
+      if (in_function) then
+        ! Update brace depth
+        brace_depth = brace_depth + count_braces(input_line)
+
+        ! Check if this closes the function
+        if (brace_depth <= 0) then
+          ! Function definition complete - store it
+          call add_function(shell, trim(func_name), func_body, func_line_count)
+          in_function = .false.
+          func_name = ''
+          func_line_count = 0
+          brace_depth = 0
+        else
+          ! Add this line to function body (skip the closing } line)
+          if (func_line_count < 100 .and. trim(input_line) /= '}') then
+            func_line_count = func_line_count + 1
+            func_body(func_line_count) = trim(input_line)
+          end if
+        end if
+        cycle
+      end if
+
+      ! Normal line processing (not in a function)
       ! Expand history if needed, then expand aliases
       if (needs_history_expansion(input_line)) then
         history_expanded = expand_history(input_line)
-        ! Add the EXPANDED command to history
         call add_to_history(history_expanded)
         call expand_alias(shell, trim(history_expanded), expanded_line)
       else
-        ! Add original line to history
         call add_to_history(input_line)
         call expand_alias(shell, trim(input_line), expanded_line)
       end if
@@ -260,6 +387,101 @@ contains
 
     close(file_unit)
     shell%source_file = ''
+  end subroutine
+
+  ! Helper: Check if a line is a function definition and extract the name
+  function is_function_definition(line, func_name) result(is_func)
+    character(len=*), intent(in) :: line
+    character(len=*), intent(out) :: func_name
+    logical :: is_func
+    integer :: paren_pos, brace_pos, func_pos, i
+    character(len=1024) :: trimmed
+
+    is_func = .false.
+    func_name = ''
+    trimmed = adjustl(line)
+
+    ! Check for "function name" or "function name()" syntax
+    if (index(trimmed, 'function ') == 1) then
+      func_pos = 10  ! After "function "
+      i = func_pos
+      ! Extract function name
+      do while (i <= len_trim(trimmed) .and. trimmed(i:i) /= ' ' .and. &
+                trimmed(i:i) /= '(' .and. trimmed(i:i) /= '{')
+        i = i + 1
+      end do
+      if (i > func_pos) then
+        func_name = trimmed(func_pos:i-1)
+        is_func = .true.
+        return
+      end if
+    end if
+
+    ! Check for "name()" syntax
+    paren_pos = index(trimmed, '()')
+    if (paren_pos > 1) then
+      ! Extract name before ()
+      i = 1
+      do while (i < paren_pos .and. (is_alnum_underscore(trimmed(i:i))))
+        i = i + 1
+      end do
+      if (i == paren_pos) then
+        func_name = trimmed(1:paren_pos-1)
+        is_func = .true.
+        return
+      end if
+    end if
+  end function
+
+  ! Helper: Count net change in brace depth for a line
+  function count_braces(line) result(depth_change)
+    character(len=*), intent(in) :: line
+    integer :: depth_change
+    integer :: i
+
+    depth_change = 0
+    do i = 1, len_trim(line)
+      if (line(i:i) == '{') then
+        depth_change = depth_change + 1
+      else if (line(i:i) == '}') then
+        depth_change = depth_change - 1
+      end if
+    end do
+  end function
+
+  ! Helper: Check if character is alphanumeric or underscore
+  function is_alnum_underscore(c) result(is_valid)
+    character(len=1), intent(in) :: c
+    logical :: is_valid
+
+    is_valid = ((c >= 'a' .and. c <= 'z') .or. &
+                (c >= 'A' .and. c <= 'Z') .or. &
+                (c >= '0' .and. c <= '9') .or. &
+                c == '_')
+  end function
+
+  ! Helper: Extract function body from first line (for one-liners)
+  subroutine extract_first_line_body(line, func_body, count)
+    character(len=*), intent(in) :: line
+    character(len=1024), intent(inout) :: func_body(*)
+    integer, intent(inout) :: count
+    integer :: brace_pos, close_pos
+
+    brace_pos = index(line, '{')
+    if (brace_pos == 0) return
+
+    close_pos = index(line(brace_pos+1:), '}')
+    if (close_pos > 0) then
+      ! One-liner: name() { commands }
+      count = 1
+      func_body(1) = trim(adjustl(line(brace_pos+1:brace_pos+close_pos-1)))
+    else
+      ! Multi-line but with content after {
+      if (brace_pos < len_trim(line)) then
+        count = 1
+        func_body(1) = trim(adjustl(line(brace_pos+1:)))
+      end if
+    end if
   end subroutine
 
   subroutine initialize_shell(shell)
