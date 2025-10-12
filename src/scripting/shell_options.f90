@@ -6,6 +6,7 @@ module shell_options
   use shell_types
   use variables, only: set_shell_variable
   use system_interface, only: get_pid, get_ppid
+  use readline, only: set_global_editing_mode
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -29,7 +30,8 @@ contains
     shell%option_noclobber = .false.
     shell%option_monitor = .true.     ! Enable job control by default
     shell%option_allexport = .false.
-    
+    shell%option_vi = .false.         ! Emacs mode by default
+
     ! Set default bash-style options
     shell%shopt_nullglob = .false.
     shell%shopt_failglob = .false.
@@ -166,6 +168,19 @@ contains
                   shell%option_monitor = enable_option
                 case ('allexport')
                   shell%option_allexport = enable_option
+                case ('vi')
+                  shell%option_vi = enable_option
+                  call set_global_editing_mode(enable_option)
+                  if (enable_option .and. shell%option_verbose) then
+                    write(output_unit, '(a)') 'set: vi editing mode enabled'
+                  end if
+                case ('emacs')
+                  ! Emacs is the default, so disabling vi enables emacs
+                  shell%option_vi = .not. enable_option
+                  call set_global_editing_mode(.not. enable_option)
+                  if (enable_option .and. shell%option_verbose) then
+                    write(output_unit, '(a)') 'set: emacs editing mode enabled'
+                  end if
                 case default
                   write(error_unit, '(a)') 'set: unknown option: ' // trim(option_name)
                   shell%last_exit_status = 1

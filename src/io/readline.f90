@@ -82,12 +82,25 @@ module readline
   ! Module-level HISTCONTROL setting (set by shell)
   character(len=256), save :: current_histcontrol = ''
 
+  ! Module-level editing mode (set by shell via option_vi)
+  integer, save :: global_editing_mode = EDITING_MODE_EMACS
+
 contains
 
   ! Set the HISTCONTROL setting for history management
   subroutine set_histcontrol(histcontrol)
     character(len=*), intent(in) :: histcontrol
     current_histcontrol = histcontrol
+  end subroutine
+
+  ! Set the global editing mode (vi or emacs)
+  subroutine set_global_editing_mode(vi_mode)
+    logical, intent(in) :: vi_mode
+    if (vi_mode) then
+      global_editing_mode = EDITING_MODE_VI
+    else
+      global_editing_mode = EDITING_MODE_EMACS
+    end if
   end subroutine
 
   ! Enhanced readline with character-by-character input processing
@@ -132,7 +145,9 @@ contains
     input_state%search_string = ''
     input_state%search_length = 0
     input_state%search_match_index = 0
-    
+    input_state%editing_mode = global_editing_mode  ! Initialize from global state
+    input_state%vi_mode = VI_MODE_INSERT
+
     if (raw_enabled) then
       ! Enhanced input processing
       do while (.not. done)
@@ -261,6 +276,14 @@ contains
           ! Regular printable characters
           if (input_state%in_search) then
             call search_add_char(input_state, ch, prompt)
+          else if (input_state%editing_mode == EDITING_MODE_VI .and. &
+                   input_state%vi_mode == VI_MODE_COMMAND) then
+            ! In Vi command mode - route to command handler
+            call handle_vi_command_mode(input_state, char_code)
+            ! Check if we switched back to insert mode
+            if (input_state%vi_mode == VI_MODE_INSERT) then
+              call handle_vi_mode_switch(input_state, char_code)
+            end if
           else
             call insert_char(input_state, ch)
           end if
@@ -1636,20 +1659,27 @@ contains
     logical, intent(inout) :: done
     character :: ch1, ch2
     logical :: success
-    
+
+    ! Check if we're in Vi insert mode - ESC switches to command mode
+    if (input_state%editing_mode == EDITING_MODE_VI .and. &
+        input_state%vi_mode == VI_MODE_INSERT) then
+      call handle_vi_mode_switch(input_state, KEY_ESC)
+      return
+    end if
+
     ! Try to read the next character
     success = read_single_char(ch1)
     if (.not. success) return
-    
+
     if (ch1 == '[') then
       ! ANSI escape sequence
       success = read_single_char(ch2)
       if (.not. success) return
-      
+
       select case(ch2)
       case('A')  ! Up arrow
         call handle_history_up(input_state)
-      case('B')  ! Down arrow  
+      case('B')  ! Down arrow
         call handle_history_down(input_state)
       case('C')  ! Right arrow
         call handle_cursor_right(input_state)

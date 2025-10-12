@@ -8,6 +8,7 @@ module coprocess
   use iso_c_binding, only: c_int
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
+  private :: kill_c  ! Make kill_c private to avoid conflicts
 
   ! Coprocess type
   type :: coproc_t
@@ -55,7 +56,49 @@ module coprocess
       integer(c_int), value :: options
       integer(c_pid_t) :: ret
     end function
+
+    function read_c(fd, buf, count) bind(C, name="read") result(bytes_read)
+      import :: c_int, c_ptr, c_size_t
+      integer(c_int), value :: fd
+      type(c_ptr), value :: buf
+      integer(c_size_t), value :: count
+      integer(c_size_t) :: bytes_read
+    end function
+
+    function write_c(fd, buf, count) bind(C, name="write") result(bytes_written)
+      import :: c_int, c_ptr, c_size_t
+      integer(c_int), value :: fd
+      type(c_ptr), value :: buf
+      integer(c_size_t), value :: count
+      integer(c_size_t) :: bytes_written
+    end function
+
+    function kill_c(pid, sig) bind(C, name="kill") result(ret)
+      import :: c_pid_t, c_int
+      integer(c_pid_t), value :: pid
+      integer(c_int), value :: sig
+      integer(c_int) :: ret
+    end function
+
+    function execlp_c(file, arg) bind(C, name="execlp")
+      import :: c_int, c_ptr
+      type(c_ptr), value :: file
+      type(c_ptr), value :: arg
+      integer(c_int) :: execlp_c
+    end function
   end interface
+
+  ! C system() binding (avoid duplicate - use from system_interface if available)
+  interface
+    function system_c(command) bind(C, name="system")
+      import :: c_int, c_char
+      character(kind=c_char), intent(in) :: command(*)
+      integer(c_int) :: system_c
+    end function
+  end interface
+
+  integer, parameter :: SIGTERM = 15
+  integer, parameter :: SIGKILL = 9
 
 contains
 
@@ -115,9 +158,9 @@ contains
       ret = dup2_c(pipe_from_child(2), 1)
       ret = close_c(pipe_from_child(1))
       ret = close_c(pipe_from_child(2))
-      
-      ! Execute command - placeholder
-      stop 0
+
+      ! Execute command using shell
+      call execute_command_in_shell(command)
       
     else if (pid > 0) then
       ! Parent process
@@ -161,18 +204,29 @@ contains
     integer, intent(in) :: coproc_id
     character(len=*), intent(in) :: data
     logical :: success
-    
-    integer :: unit, iostat
-    
+
+    character(kind=c_char), target :: c_data(len(data)+1)
+    integer(c_size_t) :: bytes_written
+    integer :: i
+
     success = .false.
-    
+
     if (coproc_id < 1 .or. coproc_id > size(coprocs)) return
     if (.not. coprocs(coproc_id)%active) return
-    
-    ! Write to coprocess stdin - simplified approach
-    success = .true.  ! Placeholder implementation
-    
-    if (.not. success) then
+    if (coprocs(coproc_id)%write_fd < 0) return
+
+    ! Convert to C string
+    do i = 1, len(data)
+      c_data(i) = data(i:i)
+    end do
+    c_data(len(data)+1) = c_null_char
+
+    ! Write to coprocess stdin
+    bytes_written = write_c(coprocs(coproc_id)%write_fd, c_loc(c_data), int(len(data), c_size_t))
+
+    if (bytes_written > 0) then
+      success = .true.
+    else
       write(error_unit, '(a,a)') 'coprocess: write failed to ', trim(coprocs(coproc_id)%name)
     end if
   end function
@@ -182,18 +236,33 @@ contains
     integer, intent(in) :: coproc_id
     integer, intent(in), optional :: timeout_ms
     character(len=4096) :: data
-    
-    integer :: unit, iostat
-    character(len=256) :: line
-    
+
+    character(kind=c_char), target :: c_buffer(4096)
+    integer(c_size_t) :: bytes_read
+    integer :: i
+
     data = ''
-    
+
     if (coproc_id < 1 .or. coproc_id > size(coprocs)) return
     if (.not. coprocs(coproc_id)%active) return
     if (coprocs(coproc_id)%eof_reached) return
-    
-    ! Read from coprocess stdout - simplified approach
-    data = ''  ! Placeholder implementation
+    if (coprocs(coproc_id)%read_fd < 0) return
+
+    ! Read from coprocess stdout
+    bytes_read = read_c(coprocs(coproc_id)%read_fd, c_loc(c_buffer), int(4096, c_size_t))
+
+    if (bytes_read > 0) then
+      ! Convert C buffer to Fortran string
+      do i = 1, int(bytes_read)
+        data(i:i) = c_buffer(i)
+      end do
+    else if (bytes_read == 0) then
+      ! EOF reached
+      coprocs(coproc_id)%eof_reached = .true.
+    else
+      ! Read error
+      write(error_unit, '(a,a)') 'coprocess: read failed from ', trim(coprocs(coproc_id)%name)
+    end if
   end function
 
   ! Find coprocess by name
@@ -230,9 +299,17 @@ contains
       ret = close_c(coprocs(coproc_id)%write_fd)
     end if
     
-    ! Kill process if still running - placeholder
+    ! Kill process if still running
     if (coprocs(coproc_id)%pid > 0) then
-      ret = 0  ! Placeholder
+      ! Try SIGTERM first (graceful)
+      ret = kill_c(coprocs(coproc_id)%pid, SIGTERM)
+      ! Wait briefly and check if process is still alive
+      ret = waitpid_c(coprocs(coproc_id)%pid, status, 1) ! WNOHANG = 1
+      if (ret == 0) then
+        ! Process still running, force kill
+        ret = kill_c(coprocs(coproc_id)%pid, SIGKILL)
+        ret = waitpid_c(coprocs(coproc_id)%pid, status, 0)
+      end if
     end if
     
     ! Mark as inactive
@@ -290,8 +367,23 @@ contains
 
   subroutine execute_command_in_shell(command)
     character(len=*), intent(in) :: command
-    
-    ! Simple command execution - placeholder implementation
+
+    character(kind=c_char), target :: c_command(len(command)+1)
+    integer(c_int) :: exit_status
+    integer :: i
+
+    ! Convert command to C string
+    do i = 1, len(command)
+      c_command(i) = command(i:i)
+    end do
+    c_command(len(command)+1) = c_null_char
+
+    ! Execute command using system()
+    ! This runs the command in a subshell (via /bin/sh -c)
+    exit_status = system_c(c_command)
+
+    ! Exit with the command's exit status (use c_exit from iso_c_binding)
+    call c_exit(int(exit_status / 256, c_int))  ! Extract exit code from wait status
   end subroutine
 
 end module coprocess
