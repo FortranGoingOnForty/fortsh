@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        3.3.7
+Version:        3.3.8
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,10 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sat Oct 12 2024 mfw <espadon@outlook.com> - 3.3.8-1
+- Resolved pipeline+redirect edge case
+- Further improvements to pipe and redirect handling
+
 * Sat Oct 12 2024 mfw <espadon@outlook.com> - 3.3.7-1
 - Enhanced redirect and pipe handling
 - Fixed edge cases with builtins after pipes
