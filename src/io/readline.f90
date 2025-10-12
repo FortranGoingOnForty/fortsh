@@ -633,30 +633,38 @@ contains
 
     do while (pos <= len_trim(work_line))
       if (work_line(pos:pos) == '!' .and. pos <= len_trim(work_line)) then
-        ! Found potential history expansion
-        expansion_start = pos
-        expansion_end = find_history_expansion_end(work_line, pos)
+        ! Skip if this is $! (special variable for last background PID)
+        if (pos > 1 .and. work_line(pos-1:pos-1) == '$') then
+          ! This is $!, not a history expansion - copy the ! as-is
+          expanded_line(out_pos:out_pos) = '!'
+          out_pos = out_pos + 1
+          pos = pos + 1
+        else
+          ! Found potential history expansion
+          expansion_start = pos
+          expansion_end = find_history_expansion_end(work_line, pos)
 
-        if (expansion_end > expansion_start) then
-          expansion = work_line(expansion_start:expansion_end)
-          call process_history_expansion(expansion, replacement, found_expansion)
+          if (expansion_end > expansion_start) then
+            expansion = work_line(expansion_start:expansion_end)
+            call process_history_expansion(expansion, replacement, found_expansion)
 
-          if (found_expansion) then
-            repl_len = len_trim(replacement)
-            if (out_pos + repl_len - 1 <= len(expanded_line)) then
-              expanded_line(out_pos:out_pos+repl_len-1) = trim(replacement)
-              out_pos = out_pos + repl_len
+            if (found_expansion) then
+              repl_len = len_trim(replacement)
+              if (out_pos + repl_len - 1 <= len(expanded_line)) then
+                expanded_line(out_pos:out_pos+repl_len-1) = trim(replacement)
+                out_pos = out_pos + repl_len
+              end if
+              pos = expansion_end + 1
+            else
+              expanded_line(out_pos:out_pos) = '!'
+              out_pos = out_pos + 1
+              pos = pos + 1
             end if
-            pos = expansion_end + 1
           else
             expanded_line(out_pos:out_pos) = '!'
             out_pos = out_pos + 1
             pos = pos + 1
           end if
-        else
-          expanded_line(out_pos:out_pos) = '!'
-          out_pos = out_pos + 1
-          pos = pos + 1
         end if
       else
         expanded_line(out_pos:out_pos) = work_line(pos:pos)
