@@ -498,26 +498,41 @@ contains
         else
           ! Handle simple $variable expansions
           var_start = i
-          
-          ! Extract variable name  
-          do while (i <= len_trim(input))
-            if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
-            i = i + 1
-          end do
-          
-          var_name = input(var_start:i-1)
-          
-          ! Check shell variables first
-          var_value = get_shell_variable(shell, trim(var_name))
-          if (len_trim(var_value) > 0) then
-            result(j:j+len_trim(var_value)-1) = trim(var_value)
-            j = j + len_trim(var_value)
+
+          ! Check for special single-character variables first
+          if (i <= len_trim(input)) then
+            select case (input(i:i))
+              case ('!', '?', '$', '#', '*', '@', '-', '_', '0')
+                ! Single-character special variable
+                var_name = input(i:i)
+                i = i + 1
+              case default
+                ! Extract alphanumeric variable name
+                do while (i <= len_trim(input))
+                  if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
+                  i = i + 1
+                end do
+                var_name = input(var_start:i-1)
+            end select
           else
-            ! Fall back to environment variables
-            env_value = get_environment_var(trim(var_name))
-            if (allocated(env_value) .and. len(env_value) > 0) then
-              result(j:j+len(env_value)-1) = env_value
-              j = j + len(env_value)
+            var_name = ''
+          end if
+
+          ! Check shell variables first
+          if (len_trim(var_name) > 0) then
+            var_value = get_shell_variable(shell, trim(var_name))
+            if (len_trim(var_value) > 0) then
+              result(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
+            else
+              ! Fall back to environment variables (not for special vars)
+              if (.not. any(var_name == ['!', '?', '$', '#', '*', '@', '-', '_', '0'])) then
+                env_value = get_environment_var(trim(var_name))
+                if (allocated(env_value) .and. len(env_value) > 0) then
+                  result(j:j+len(env_value)-1) = env_value
+                  j = j + len(env_value)
+                end if
+              end if
             end if
           end if
         end if
