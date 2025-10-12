@@ -22,11 +22,99 @@ contains
     integer :: offset, length, i, double_op_pos
     logical :: replace_all, greedy
 
+    ! Array expansion variables
+    integer :: bracket_pos, bracket_end, j, num_keys
+    character(len=256) :: array_name, array_key
+    character(len=256), allocatable :: keys(:)
+    logical :: is_keys_expansion, is_length_expansion, is_all_expansion
+
     expanded = ''
 
     ! Remove ${ and }
     if (len_trim(expression) < 4) return
     var_name = expression(3:len_trim(expression)-1)
+
+    ! ========================================================================
+    ! Check for array bracket syntax FIRST: ${array[key]}, ${!array[@]}, ${#array[@]}
+    ! ========================================================================
+    bracket_pos = index(var_name, '[')
+    if (bracket_pos > 0) then
+      bracket_end = index(var_name, ']')
+      if (bracket_end > bracket_pos) then
+        ! Extract array name and key
+        array_name = var_name(:bracket_pos-1)
+        array_key = var_name(bracket_pos+1:bracket_end-1)
+
+        ! Check for special prefixes (! for keys, # for length)
+        is_keys_expansion = .false.
+        is_length_expansion = .false.
+
+        if (len_trim(array_name) > 0 .and. array_name(1:1) == '!') then
+          ! ${!array[@]} - get all keys
+          is_keys_expansion = .true.
+          array_name = array_name(2:)  ! Remove ! prefix
+        else if (len_trim(array_name) > 0 .and. array_name(1:1) == '#') then
+          ! ${#array[@]} - get array length
+          is_length_expansion = .true.
+          array_name = array_name(2:)  ! Remove # prefix
+        end if
+
+        ! Check for [@] or [*] (all values/keys)
+        is_all_expansion = (trim(array_key) == '@' .or. trim(array_key) == '*')
+
+        ! Handle associative arrays
+        if (is_associative_array(shell, trim(array_name))) then
+          if (is_keys_expansion .and. is_all_expansion) then
+            ! ${!array[@]} - return all keys
+            allocate(keys(50))  ! Match size in get_assoc_array_keys
+            call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
+            expanded = ''
+            do j = 1, min(num_keys, 50)
+              if (len_trim(expanded) + len_trim(keys(j)) + 2 > 2048) exit  ! Prevent overflow
+              if (j > 1) expanded = trim(expanded) // ' '
+              expanded = trim(expanded) // trim(keys(j))
+            end do
+            deallocate(keys)
+            return
+          else if (is_length_expansion .and. is_all_expansion) then
+            ! ${#array[@]} - return number of keys
+            allocate(keys(50))
+            call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
+            deallocate(keys)
+            write(expanded, '(I0)') num_keys
+            return
+          else if (is_all_expansion) then
+            ! ${array[@]} - return all values
+            ! Get all keys, then get value for each key
+            allocate(keys(50))
+            call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
+            expanded = ''
+            do j = 1, min(num_keys, 50)
+              var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
+              if (len_trim(expanded) + len_trim(var_value) + 2 > 2048) exit  ! Prevent overflow
+              if (j > 1) expanded = trim(expanded) // ' '
+              expanded = trim(expanded) // trim(var_value)
+            end do
+            deallocate(keys)
+            return
+          else
+            ! ${array[key]} - get value for specific key
+            var_value = get_assoc_array_value(shell, trim(array_name), trim(array_key))
+            expanded = trim(var_value)
+            return
+          end if
+        else
+          ! Handle indexed arrays (use existing get_array_element if available)
+          ! For now, if not an associative array, try normal variable expansion
+          if (.not. is_all_expansion) then
+            ! Try to get indexed array element
+            ! Note: indexed arrays use numeric indices
+            ! This would call get_array_element(shell, array_name, index)
+            ! For now, fall through to normal variable expansion
+          end if
+        end if
+      end if
+    end if
 
     ! Check for various expansion operations (need to check in right order!)
 

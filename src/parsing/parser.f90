@@ -1180,8 +1180,8 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation, index_str
-    character(len=1024) :: assoc_value, keys(100)
-    character(len=256) :: offset_str, length_str_temp
+    character(len=1024) :: assoc_value
+    character(len=256) :: keys(100), offset_str, length_str_temp
     integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
     integer :: num_keys, key_idx
     integer :: colon_pos, offset, str_length, second_colon, iostat_val, char_code
@@ -1222,9 +1222,17 @@ contains
 
           if (is_length) then
             ! ${#arr[@]} - return array length
-            array_sz = get_array_size(shell, trim(var_name))
-            write(length_str, '(i0)') array_sz
-            result_value = trim(length_str)
+            if (is_associative_array(shell, trim(var_name))) then
+              ! For associative arrays, count the keys
+              call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
+              write(length_str, '(i0)') num_keys
+              result_value = trim(length_str)
+            else
+              ! For indexed arrays, use get_array_size
+              array_sz = get_array_size(shell, trim(var_name))
+              write(length_str, '(i0)') array_sz
+              result_value = trim(length_str)
+            end if
             return
           else if (get_keys) then
             ! ${!arr[@]} - return indices (for indexed) or keys (for associative)
