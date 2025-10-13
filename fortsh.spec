@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        4.4.1
+Version:        5.0.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,18 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Oct 13 2024 mfw <espadon@outlook.com> - 5.0.0-1
+- MAJOR RELEASE: Modern Interactive Shell Experience Complete
+- Unix standard keybindings (Ctrl-A, Ctrl-E, Ctrl-U, Ctrl-K, Ctrl-W, Ctrl-L, etc.)
+- Enhanced directory navigation with cd - (return to previous directory)
+- Complete fish-like UX: syntax highlighting, history suggestions, error corrections
+- Interactive tab completion with arrow key navigation
+- Programmable completion system
+- Git-aware prompts and intelligent prompt shortening
+- Advanced vi mode with forward search
+- File descriptor redirection for coprocesses
+- Production-ready interactive shell for daily use
+
 * Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.4.1-1
 - Interactive tab completion preview selection (Zsh/Fish-style)
 - Navigate completion previews with arrow keys or Tab
