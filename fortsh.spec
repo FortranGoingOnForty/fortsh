@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        4.4.0
+Version:        4.4.1
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,13 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.4.1-1
+- Interactive tab completion preview selection (Zsh/Fish-style)
+- Navigate completion previews with arrow keys or Tab
+- Visual selection highlighting for active completion candidate
+- Fixed space trimming on completion insertion
+- Enhanced completion preview interface
+
 * Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.4.0-1
 - MAJOR FEATURE: Fish-like interactive shell enhancements
 - NEW: Syntax highlighting in command line with color-coded commands, strings, and operators
