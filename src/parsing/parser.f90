@@ -605,7 +605,7 @@ contains
     character(len=len(input)) :: working_copy
     integer :: pos, start, token_count, i, token_len
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
-    logical :: in_quotes, in_arith, in_array_literal, in_cmd_subst
+    logical :: in_quotes, in_arith, in_array_literal, in_cmd_subst, escaped
     character :: quote_char
     integer :: arith_depth, array_depth, cmd_depth
 
@@ -636,12 +636,20 @@ contains
       array_depth = 0
       in_cmd_subst = .false.
       cmd_depth = 0
+      escaped = .false.
 
       ! Skip to end of token (respecting quotes and arithmetic)
       ! Continue past len_trim when inside quotes to preserve trailing spaces
       do while (pos <= len_trim(working_copy) .or. (in_quotes .and. pos <= len(working_copy)))
-        ! Check for quotes
-        if (.not. in_arith) then
+        ! Handle backslash escaping outside quotes
+        if (.not. in_quotes .and. .not. escaped .and. working_copy(pos:pos) == '\') then
+          escaped = .true.
+          pos = pos + 1
+          cycle
+        end if
+
+        ! Check for quotes (unless escaped)
+        if (.not. in_arith .and. .not. escaped) then
           if (.not. in_quotes .and. (working_copy(pos:pos) == '"' .or. working_copy(pos:pos) == "'")) then
             in_quotes = .true.
             quote_char = working_copy(pos:pos)
@@ -651,7 +659,7 @@ contains
         end if
 
         ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
-        if (.not. in_quotes) then
+        if (.not. in_quotes .and. .not. escaped) then
           ! First, check for special patterns that start arithmetic mode
           if (.not. in_arith .and. .not. in_cmd_subst) then
             if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
@@ -720,9 +728,12 @@ contains
           end if
         end if
 
-        ! Check for token boundary (space outside quotes/arithmetic/array/command-subst)
+        ! Check for token boundary (space outside quotes/arithmetic/array/command-subst, and not escaped)
         if (.not. in_quotes .and. .not. in_arith .and. .not. in_array_literal .and. &
-            .not. in_cmd_subst .and. working_copy(pos:pos) == ' ') exit
+            .not. in_cmd_subst .and. .not. escaped .and. working_copy(pos:pos) == ' ') exit
+
+        ! Clear escaped flag after processing the escaped character
+        if (escaped) escaped = .false.
 
         pos = pos + 1
       end do
@@ -753,12 +764,20 @@ contains
       array_depth = 0
       in_cmd_subst = .false.
       cmd_depth = 0
+      escaped = .false.
 
       ! Find end of token (respecting quotes, arithmetic, and array literals)
       ! Continue past len_trim when inside quotes to preserve trailing spaces
       do while (pos <= len_trim(working_copy) .or. (in_quotes .and. pos <= len(working_copy)))
-        ! Check for quotes
-        if (.not. in_arith) then
+        ! Handle backslash escaping outside quotes
+        if (.not. in_quotes .and. .not. escaped .and. working_copy(pos:pos) == '\') then
+          escaped = .true.
+          pos = pos + 1
+          cycle
+        end if
+
+        ! Check for quotes (unless escaped)
+        if (.not. in_arith .and. .not. escaped) then
           if (.not. in_quotes .and. (working_copy(pos:pos) == '"' .or. working_copy(pos:pos) == "'")) then
             in_quotes = .true.
             quote_char = working_copy(pos:pos)
@@ -768,7 +787,7 @@ contains
         end if
 
         ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
-        if (.not. in_quotes) then
+        if (.not. in_quotes .and. .not. escaped) then
           ! First, check for special patterns that start arithmetic mode
           if (.not. in_arith .and. .not. in_cmd_subst) then
             if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
@@ -837,16 +856,20 @@ contains
           end if
         end if
 
-        ! Check for token boundary (space outside quotes/arithmetic/array/command-subst)
+        ! Check for token boundary (space outside quotes/arithmetic/array/command-subst, and not escaped)
         if (.not. in_quotes .and. .not. in_arith .and. .not. in_array_literal .and. &
-            .not. in_cmd_subst .and. working_copy(pos:pos) == ' ') exit
+            .not. in_cmd_subst .and. .not. escaped .and. working_copy(pos:pos) == ' ') exit
+
+        ! Clear escaped flag after processing the escaped character
+        if (escaped) escaped = .false.
 
         pos = pos + 1
       end do
 
       ! Store token (DON'T strip quotes yet - expand_variables needs to see them)
+      ! But DO process backslash escapes
       token_count = token_count + 1
-      temp_tokens(token_count) = working_copy(start:pos-1)
+      temp_tokens(token_count) = process_escapes(working_copy(start:pos-1))
     end do
 
     ! Now allocate the final deferred-length character array
@@ -881,6 +904,49 @@ contains
         return
       end if
     end if
+  end function
+
+  ! Helper function to process backslash escape sequences outside quotes
+  function process_escapes(token) result(processed)
+    character(len=*), intent(in) :: token
+    character(len=len(token)) :: processed
+    integer :: i, j, token_len
+    logical :: in_quotes
+    character :: quote_char
+
+    processed = ''
+    i = 1
+    j = 1
+    token_len = len_trim(token)
+    in_quotes = .false.
+    quote_char = ' '
+
+    do while (i <= token_len)
+      ! Track quotes
+      if (.not. in_quotes .and. (token(i:i) == '"' .or. token(i:i) == "'")) then
+        in_quotes = .true.
+        quote_char = token(i:i)
+        processed(j:j) = token(i:i)
+        j = j + 1
+        i = i + 1
+      else if (in_quotes .and. token(i:i) == quote_char) then
+        in_quotes = .false.
+        processed(j:j) = token(i:i)
+        j = j + 1
+        i = i + 1
+      else if (.not. in_quotes .and. token(i:i) == '\' .and. i < token_len) then
+        ! Backslash escape outside quotes - skip the backslash, keep the next char
+        i = i + 1
+        processed(j:j) = token(i:i)
+        j = j + 1
+        i = i + 1
+      else
+        ! Regular character
+        processed(j:j) = token(i:i)
+        j = j + 1
+        i = i + 1
+      end if
+    end do
   end function
 
   subroutine expand_variables(token, expanded, shell)
