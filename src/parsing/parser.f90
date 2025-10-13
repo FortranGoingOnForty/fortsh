@@ -170,7 +170,10 @@ contains
           start = i + 1
         else if (working_input(i:i) == '&') then
           ! Check it's not part of && (which is already handled above)
-          if ((i == 1 .or. working_input(i-1:i-1) /= '&') .and. &
+          ! Also check it's not part of >& or <& (FD redirection)
+          if ((i == 1 .or. (working_input(i-1:i-1) /= '&' .and. &
+                           working_input(i-1:i-1) /= '>' .and. &
+                           working_input(i-1:i-1) /= '<')) .and. &
               (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '&')) then
             ! Single & - mark current command as background and split
             cmd_count = cmd_count + 1
@@ -226,7 +229,11 @@ contains
         pipeline%commands(i)%redirect_both_to_file = temp_commands(i)%redirect_both_to_file
         pipeline%commands(i)%background = temp_commands(i)%background
         pipeline%commands(i)%separator = temp_commands(i)%separator
-        
+
+        ! Copy redirection array
+        pipeline%commands(i)%num_redirections = temp_commands(i)%num_redirections
+        pipeline%commands(i)%redirections = temp_commands(i)%redirections
+
         ! Copy allocatable components explicitly
         if (allocated(temp_commands(i)%tokens)) then
           allocate(character(len=MAX_TOKEN_LEN) :: pipeline%commands(i)%tokens(temp_commands(i)%num_tokens))
@@ -273,11 +280,12 @@ contains
     type(command_t), intent(out) :: cmd
 
     character(len=len(input)) :: working_input
-    integer :: pos, end_pos
+    integer :: pos, end_pos, source_fd
     character(len=MAX_TOKEN_LEN) :: temp_str
 
 
     working_input = adjustl(input)
+    ! write(error_unit, '(a,a)') 'DEBUG parse_single_command input: ', trim(working_input)
 
     ! Skip redirection processing for arithmetic commands ((expression)) and for (( loops
     if (len_trim(working_input) >= 2 .and. working_input(1:2) == '((') then
@@ -316,28 +324,144 @@ contains
       end if
     end if
     
-    ! Check for advanced redirections first (must come before simpler ones)
-    
-    ! Check for 1>&2 (stdout to stderr)
-    pos = find_outside_quotes(working_input, '1>&2')
-    if (pos > 0) then
-      cmd%redirect_stdout_to_stderr = .true.
-      working_input = working_input(:pos-1) // ' ' // working_input(pos+5:)
-    else
-      ! Check for >&2 (stdout to stderr shorthand)
-      pos = find_outside_quotes(working_input, '>&2')
-      if (pos > 0) then
-        cmd%redirect_stdout_to_stderr = .true.
-        working_input = working_input(:pos-1) // ' ' // working_input(pos+4:)
-      end if
-    end if
-
-    ! Check for 2>&1 (stderr to stdout)
+    ! Check for specific 2>&1 redirection (stderr to stdout) - keep this as it's common
+    ! and is best handled specially
     pos = find_outside_quotes(working_input, '2>&1')
     if (pos > 0) then
       cmd%redirect_stderr_to_stdout = .true.
       working_input = working_input(:pos-1) // ' ' // working_input(pos+4:)
-    else
+    end if
+
+    ! Note: >&2, 1>&2, and other FD redirections are now handled by the general
+    ! FD duplication code below
+
+    ! Check for variable FD redirections >&${var} and <&${var}
+    pos = find_outside_quotes(working_input, '>&$')
+    if (pos > 0 .and. pos + 3 <= len_trim(working_input)) then
+      if (working_input(pos+3:pos+3) == '{') then
+        ! Found >&${...} pattern
+        end_pos = index(working_input(pos+4:), '}')
+        if (end_pos > 0) then
+          end_pos = pos + 3 + end_pos  ! Adjust for full string position
+          ! Store variable expression and add redirection
+          if (cmd%num_redirections < 10) then
+            cmd%num_redirections = cmd%num_redirections + 1
+            cmd%redirections(cmd%num_redirections)%type = REDIR_DUP_OUT
+            cmd%redirections(cmd%num_redirections)%fd = 1  ! Default stdout
+            cmd%redirections(cmd%num_redirections)%target_fd = -1  ! Will be resolved at runtime
+            cmd%redirections(cmd%num_redirections)%target_fd_expr = working_input(pos+2:end_pos)  ! Include ${...}
+            ! Remove from working input
+            working_input = working_input(:pos-1) // ' ' // working_input(end_pos+1:)
+          end if
+        end if
+      end if
+    end if
+
+    pos = find_outside_quotes(working_input, '<&$')
+    if (pos > 0 .and. pos + 3 <= len_trim(working_input)) then
+      if (working_input(pos+3:pos+3) == '{') then
+        ! Found <&${...} pattern
+        end_pos = index(working_input(pos+4:), '}')
+        if (end_pos > 0) then
+          end_pos = pos + 3 + end_pos  ! Adjust for full string position
+          ! Store variable expression and add redirection
+          if (cmd%num_redirections < 10) then
+            cmd%num_redirections = cmd%num_redirections + 1
+            cmd%redirections(cmd%num_redirections)%type = REDIR_DUP_IN
+            cmd%redirections(cmd%num_redirections)%fd = 0  ! Default stdin
+            cmd%redirections(cmd%num_redirections)%target_fd = -1  ! Will be resolved at runtime
+            cmd%redirections(cmd%num_redirections)%target_fd_expr = working_input(pos+2:end_pos)  ! Include ${...}
+            ! Remove from working input
+            working_input = working_input(:pos-1) // ' ' // working_input(end_pos+1:)
+          end if
+        end if
+      end if
+    end if
+
+    ! Check for general FD duplication >&n FIRST (must come before file redirections)
+    ! Use find_outside_quotes and iterate to find all patterns
+    pos = find_outside_quotes(working_input, '>&')
+    do while (pos > 0)
+      ! Debug output
+      ! write(error_unit, '(a,i0,a,a)') 'DEBUG: Found >& at pos ', pos, ' in: ', trim(working_input)
+
+      ! Check what follows >&
+      if (pos+2 <= len_trim(working_input)) then
+        ! write(error_unit, '(a,a)') 'DEBUG: Character after >& is: ', working_input(pos+2:pos+2)
+
+        if (working_input(pos+2:pos+2) >= '0' .and. working_input(pos+2:pos+2) <= '9') then
+          ! Found >&n pattern - literal FD duplication
+          read(working_input(pos+2:pos+2), *) end_pos
+          ! write(error_unit, '(a,i0)') 'DEBUG: Processing >&n where n=', end_pos
+
+          ! Check if there's a source FD before >&
+          source_fd = 1  ! Default to stdout
+          if (pos > 1 .and. working_input(pos-1:pos-1) >= '0' .and. working_input(pos-1:pos-1) <= '9') then
+            read(working_input(pos-1:pos-1), *) source_fd
+            ! write(error_unit, '(a,i0,a,i0)') 'DEBUG: Found source FD=', source_fd, ' redirecting to target FD=', end_pos
+          end if
+
+          if (cmd%num_redirections < 10) then
+            cmd%num_redirections = cmd%num_redirections + 1
+            cmd%redirections(cmd%num_redirections)%type = REDIR_DUP_OUT
+            cmd%redirections(cmd%num_redirections)%fd = source_fd
+            cmd%redirections(cmd%num_redirections)%target_fd = end_pos
+          end if
+          ! Remove from working input - also remove source FD if present
+          if (pos > 1 .and. working_input(pos-1:pos-1) >= '0' .and. working_input(pos-1:pos-1) <= '9') then
+            working_input = working_input(:pos-2) // ' ' // working_input(pos+3:)
+          else
+            working_input = working_input(:pos-1) // ' ' // working_input(pos+3:)
+          end if
+          ! write(error_unit, '(a,a)') 'DEBUG: After removal: ', trim(working_input)
+          ! Search again from beginning since we modified the string
+          pos = find_outside_quotes(working_input, '>&')
+        else
+          ! Not a digit after >&, skip this occurrence and find next
+          ! write(error_unit, '(a)') 'DEBUG: Not a digit after >&, exiting FD dup handler'
+          ! For now, just exit - we'll let the general > handler deal with it
+          exit
+        end if
+      else
+        ! write(error_unit, '(a)') 'DEBUG: No character after >&, exiting'
+        exit
+      end if
+    end do
+
+    ! if (pos == 0) then
+    !   write(error_unit, '(a)') 'DEBUG: No >& patterns found'
+    ! end if
+
+    ! Check for <&n patterns
+    pos = find_outside_quotes(working_input, '<&')
+    do while (pos > 0)
+      ! Check what follows <&
+      if (pos+2 <= len_trim(working_input)) then
+        if (working_input(pos+2:pos+2) >= '0' .and. working_input(pos+2:pos+2) <= '9') then
+          ! Found <&n pattern - literal FD duplication
+          read(working_input(pos+2:pos+2), *) end_pos
+          if (cmd%num_redirections < 10) then
+            cmd%num_redirections = cmd%num_redirections + 1
+            cmd%redirections(cmd%num_redirections)%type = REDIR_DUP_IN
+            cmd%redirections(cmd%num_redirections)%fd = 0  ! Default stdin
+            cmd%redirections(cmd%num_redirections)%target_fd = end_pos
+          end if
+          ! Remove from working input
+          working_input = working_input(:pos-1) // ' ' // working_input(pos+3:)
+          ! Search again from beginning since we modified the string
+          pos = find_outside_quotes(working_input, '<&')
+        else
+          ! Not a digit after <&, skip this occurrence and find next
+          ! For now, just exit - we'll let other handlers deal with it
+          exit
+        end if
+      else
+        exit
+      end if
+    end do
+
+    ! Now continue with other redirections
+    if (.not. (cmd%redirect_stderr_to_stdout)) then
       ! Check for &>file or &>>file (both stdout and stderr to file)
       pos = find_outside_quotes(working_input, '&>>')
       if (pos > 0) then

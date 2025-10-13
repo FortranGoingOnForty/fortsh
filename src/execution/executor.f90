@@ -835,6 +835,11 @@ contains
     integer :: fd, ret
     integer :: flags
     character(len=256), target :: c_filename
+    type(shell_state_t), pointer :: shell_ptr
+
+    ! Note: We need shell state for variable expansion in FD redirections
+    ! In child process context, we don't have direct access to shell state
+    ! So for now we'll handle literal FDs and environment variables
 
     ! Handle input redirection
     if (allocated(cmd%input_file)) then
@@ -891,10 +896,95 @@ contains
     if (cmd%redirect_stderr_to_stdout) then
       ret = c_dup2(STDOUT_FD, STDERR_FD)
     end if
-    
+
     if (cmd%redirect_stdout_to_stderr) then
       ret = c_dup2(STDERR_FD, STDOUT_FD)
     end if
+
+    ! Handle FD duplications from redirections array
+    call apply_fd_redirections(cmd)
+  end subroutine
+
+  ! Apply file descriptor redirections (including variable FD duplications)
+  subroutine apply_fd_redirections(cmd)
+    use expansion, only: get_environment_var
+    type(command_t), intent(in) :: cmd
+    character(len=:), allocatable :: expanded_value
+    character(len=256) :: target_fd_str, var_name
+    integer :: i, target_fd, ret, iostat, bracket_pos
+
+    do i = 1, cmd%num_redirections
+      select case(cmd%redirections(i)%type)
+      case(REDIR_DUP_OUT)  ! >&n
+        if (allocated(cmd%redirections(i)%target_fd_expr)) then
+          ! Variable FD expression - need to expand
+          target_fd_str = cmd%redirections(i)%target_fd_expr
+
+          ! Extract variable name from ${var} or ${var[index]} pattern
+          if (len_trim(target_fd_str) > 3) then
+            if (target_fd_str(1:2) == '${' .and. &
+                target_fd_str(len_trim(target_fd_str):len_trim(target_fd_str)) == '}') then
+              var_name = target_fd_str(3:len_trim(target_fd_str)-1)
+
+              ! Check for array syntax [index]
+              bracket_pos = index(var_name, '[')
+              if (bracket_pos > 0) then
+                ! For COPROC[1] style, try environment variable with underscore
+                ! e.g., COPROC_1 for COPROC[1]
+                var_name = var_name(:bracket_pos-1) // '_' // &
+                          var_name(bracket_pos+1:index(var_name,']')-1)
+              end if
+
+              ! Get value from environment
+              expanded_value = get_environment_var(trim(var_name))
+              if (allocated(expanded_value)) then
+                read(expanded_value, *, iostat=iostat) target_fd
+                if (iostat == 0 .and. target_fd >= 0) then
+                  ret = c_dup2(target_fd, cmd%redirections(i)%fd)
+                end if
+              end if
+            end if
+          end if
+        else if (cmd%redirections(i)%target_fd >= 0) then
+          ! Literal FD
+          ret = c_dup2(cmd%redirections(i)%target_fd, cmd%redirections(i)%fd)
+        end if
+
+      case(REDIR_DUP_IN)  ! <&n
+        if (allocated(cmd%redirections(i)%target_fd_expr)) then
+          ! Variable FD expression - need to expand
+          target_fd_str = cmd%redirections(i)%target_fd_expr
+
+          ! Extract variable name from ${var} pattern
+          if (len_trim(target_fd_str) > 3) then
+            if (target_fd_str(1:2) == '${' .and. &
+                target_fd_str(len_trim(target_fd_str):len_trim(target_fd_str)) == '}') then
+              var_name = target_fd_str(3:len_trim(target_fd_str)-1)
+
+              ! Check for array syntax [index]
+              bracket_pos = index(var_name, '[')
+              if (bracket_pos > 0) then
+                ! For COPROC[0] style, try environment variable with underscore
+                var_name = var_name(:bracket_pos-1) // '_' // &
+                          var_name(bracket_pos+1:index(var_name,']')-1)
+              end if
+
+              ! Get value from environment
+              expanded_value = get_environment_var(trim(var_name))
+              if (allocated(expanded_value)) then
+                read(expanded_value, *, iostat=iostat) target_fd
+                if (iostat == 0 .and. target_fd >= 0) then
+                  ret = c_dup2(target_fd, cmd%redirections(i)%fd)
+                end if
+              end if
+            end if
+          end if
+        else if (cmd%redirections(i)%target_fd >= 0) then
+          ! Literal FD
+          ret = c_dup2(cmd%redirections(i)%target_fd, cmd%redirections(i)%fd)
+        end if
+      end select
+    end do
   end subroutine
 
   subroutine exec_child(tokens, num_tokens)
