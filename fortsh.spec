@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        4.1.0
+Version:        4.2.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,13 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.2.0-1
+- Enhanced vi editing mode with advanced features
+- Added forward search capability in command line editing
+- Implemented case-insensitive regex support
+- Improved readline functionality and text manipulation
+- Enhanced command line editing experience
+
 * Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.1.0-1
 - NEW FEATURE: Bash-style programmable completion system
 - Implemented complete builtin for defining custom completions
