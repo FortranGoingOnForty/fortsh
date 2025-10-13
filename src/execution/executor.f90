@@ -252,14 +252,44 @@ contains
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
-    logical :: should_execute, trap_executed
+    logical :: should_execute, trap_executed, negate_exit_status
     integer(int64) :: exec_start_time
+    integer :: i
     character(len=2048) :: reconstructed_cmd
+    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
 
     ! Start performance timing
     call start_timer('execute_single', exec_start_time)
 
     if (cmd%num_tokens == 0) return
+
+    ! Handle negation operator (!)
+    negate_exit_status = .false.
+
+    ! Check if first token is the negation operator
+    if (trim(cmd%tokens(1)) == '!') then
+      negate_exit_status = .true.
+
+      ! Remove the ! from tokens and shift everything left
+      if (cmd%num_tokens > 1) then
+        allocate(temp_tokens(cmd%num_tokens - 1))
+        do i = 2, cmd%num_tokens
+          temp_tokens(i - 1) = cmd%tokens(i)
+        end do
+
+        ! Replace cmd%tokens with shifted tokens
+        deallocate(cmd%tokens)
+        allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(cmd%num_tokens - 1))
+        cmd%tokens = temp_tokens
+        cmd%num_tokens = cmd%num_tokens - 1
+        deallocate(temp_tokens)
+      else
+        ! Just "!" with no command - that's an error
+        write(error_unit, '(a)') '!: command not found'
+        shell%last_exit_status = 127
+        return
+      end if
+    end if
 
     ! Capture command if we're inside a loop body (before executing control flow)
     if (shell%control_depth > 0) then
@@ -408,6 +438,15 @@ contains
       end if
     end if
     ! === END ERROR TRAP HOOK ===
+
+    ! Handle exit status negation
+    if (negate_exit_status) then
+      if (shell%last_exit_status == 0) then
+        shell%last_exit_status = 1
+      else
+        shell%last_exit_status = 0
+      end if
+    end if
 
     ! End performance timing
     call end_timer('execute_single', exec_start_time, total_exec_time)
