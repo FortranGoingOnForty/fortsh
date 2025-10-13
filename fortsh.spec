@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        5.0.0
+Version:        5.1.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,12 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Oct 13 2024 mfw <espadon@outlook.com> - 5.1.0-1
+- Partial history completions with Ctrl-arrow keys
+- Fill in history paths one directory at a time
+- Navigate through historical command paths incrementally
+- Enhanced command line editing workflow
+
 * Sun Oct 13 2024 mfw <espadon@outlook.com> - 5.0.0-1
 - MAJOR RELEASE: Modern Interactive Shell Experience Complete
 - Unix standard keybindings (Ctrl-A, Ctrl-E, Ctrl-U, Ctrl-K, Ctrl-W, Ctrl-L, etc.)
