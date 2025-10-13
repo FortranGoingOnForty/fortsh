@@ -226,14 +226,15 @@ contains
     end if
   end function
 
-  ! Get pretty path with ~ for home directory
+  ! Get pretty path with ~ for home directory and intelligent shortening
   function get_pretty_path(path) result(pretty)
     character(len=*), intent(in) :: path
-    character(len=:), allocatable :: pretty, home_dir
+    character(len=:), allocatable :: pretty, home_dir, shortened
     integer :: home_len
 
     home_dir = get_environment_var('HOME')
 
+    ! First, replace HOME with ~
     if (allocated(home_dir) .and. len(home_dir) > 0) then
       home_len = len(home_dir)
       if (len_trim(path) >= home_len) then
@@ -243,12 +244,102 @@ contains
           else
             pretty = '~' // trim(path(home_len+1:))
           end if
+
+          ! Apply intelligent shortening if path is still long
+          shortened = shorten_path(pretty, 40)  ! Max 40 chars before shortening
+          pretty = shortened
           return
         end if
       end if
     end if
 
-    pretty = trim(path)
+    ! Apply intelligent shortening to non-home paths too
+    shortened = shorten_path(trim(path), 40)
+    pretty = shortened
+  end function
+
+  ! Intelligently shorten a path by abbreviating parent directories
+  ! Example: ~/very/long/path/to/project -> ~/v/l/p/t/project
+  function shorten_path(path, max_length) result(shortened)
+    character(len=*), intent(in) :: path
+    integer, intent(in) :: max_length
+    character(len=:), allocatable :: shortened
+    character(len=256) :: components(50)
+    integer :: num_components, i, slash_pos, start_pos
+    character(len=512) :: result
+    integer :: result_len
+
+    ! If path is already short enough, return as-is
+    if (len_trim(path) <= max_length) then
+      shortened = trim(path)
+      return
+    end if
+
+    ! Split path into components
+    num_components = 0
+    start_pos = 1
+
+    do while (start_pos <= len_trim(path))
+      slash_pos = index(path(start_pos:), '/')
+      if (slash_pos > 0) then
+        slash_pos = slash_pos + start_pos - 1
+        if (slash_pos > start_pos) then
+          num_components = num_components + 1
+          components(num_components) = path(start_pos:slash_pos-1)
+        end if
+        start_pos = slash_pos + 1
+      else
+        ! Last component
+        if (start_pos <= len_trim(path)) then
+          num_components = num_components + 1
+          components(num_components) = path(start_pos:)
+        end if
+        exit
+      end if
+    end do
+
+    ! Build shortened path
+    result = ''
+    result_len = 0
+
+    ! Handle leading ~ or /
+    if (len_trim(path) > 0 .and. path(1:1) == '~') then
+      result = '~'
+      result_len = 1
+      start_pos = 2  ! Skip the ~ component
+    else if (len_trim(path) > 0 .and. path(1:1) == '/') then
+      result = '/'
+      result_len = 1
+      start_pos = 1
+    else
+      start_pos = 1
+    end if
+
+    ! Shorten all components except the last one
+    do i = start_pos, num_components - 1
+      if (len_trim(components(i)) > 0) then
+        if (result_len > 0 .and. result(result_len:result_len) /= '/') then
+          result_len = result_len + 1
+          result(result_len:result_len) = '/'
+        end if
+        ! Use first character of each parent directory
+        result_len = result_len + 1
+        result(result_len:result_len) = components(i)(1:1)
+      end if
+    end do
+
+    ! Always show the last component in full (the current directory name)
+    if (num_components > 0) then
+      if (result_len > 0 .and. result(result_len:result_len) /= '/') then
+        result_len = result_len + 1
+        result(result_len:result_len) = '/'
+      end if
+      result(result_len+1:result_len+len_trim(components(num_components))) = &
+        trim(components(num_components))
+      result_len = result_len + len_trim(components(num_components))
+    end if
+
+    shortened = result(1:result_len)
   end function
 
   ! Get basename of path
