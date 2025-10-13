@@ -693,8 +693,9 @@ contains
     
     ! Close pipe
     i = c_pclose(pipe_ptr)
-    
-    ! Return output
+
+    ! Return output (deallocate first if already allocated, which shouldn't happen but prevents crash)
+    if (allocated(output)) deallocate(output)
     allocate(character(len=pos-1) :: output)
     output = temp_output(:pos-1)
   end function
