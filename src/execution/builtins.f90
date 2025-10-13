@@ -228,15 +228,48 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     character(len=:), allocatable :: target_dir
-    
+    character(len=MAX_PATH_LEN) :: old_cwd
+    logical :: print_dir
+
+    print_dir = .false.
+
+    ! Save current directory for OLDPWD
+    old_cwd = shell%cwd
+
     if (cmd%num_tokens == 1) then
+      ! cd with no arguments goes to HOME
       target_dir = get_environment_var('HOME')
+    else if (trim(cmd%tokens(2)) == '-') then
+      ! cd - goes to OLDPWD and prints it
+      if (len_trim(shell%oldpwd) == 0) then
+        write(error_unit, '(a)') 'cd: OLDPWD not set'
+        shell%last_exit_status = 1
+        return
+      end if
+      target_dir = trim(shell%oldpwd)
+      print_dir = .true.
     else
       target_dir = trim(cmd%tokens(2))
     end if
-    
+
     if (change_directory(target_dir)) then
+      ! Update OLDPWD before changing cwd
+      shell%oldpwd = old_cwd
       shell%cwd = get_current_directory()
+
+      ! Update PWD and OLDPWD environment variables
+      if (.not. set_environment_var('PWD', trim(shell%cwd))) then
+        ! Ignore error, not critical
+      end if
+      if (.not. set_environment_var('OLDPWD', trim(shell%oldpwd))) then
+        ! Ignore error, not critical
+      end if
+
+      ! Print new directory if cd -
+      if (print_dir) then
+        write(output_unit, '(a)') trim(shell%cwd)
+      end if
+
       shell%last_exit_status = 0
     else
       write(error_unit, '(a)') 'cd: cannot access ' // trim(target_dir) // &

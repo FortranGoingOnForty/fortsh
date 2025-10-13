@@ -32,6 +32,7 @@ module readline
   integer, parameter :: KEY_CTRL_R = 18   ! Reverse-i-search
   integer, parameter :: KEY_CTRL_S = 19   ! Forward-i-search
   integer, parameter :: KEY_CTRL_G = 7    ! Cancel (alternate to Ctrl+C)
+  integer, parameter :: KEY_CTRL_T = 20   ! Transpose characters
   integer, parameter :: KEY_ESC = 27
   integer, parameter :: KEY_UP = 65
   integer, parameter :: KEY_DOWN = 66
@@ -328,6 +329,10 @@ contains
             input_state%cursor_pos = 0
             done = .true.
           end if
+
+        case(KEY_CTRL_T)
+          ! Transpose characters (swap current char with previous)
+          call handle_transpose_chars(input_state)
 
         case(32:126)
           ! Regular printable characters
@@ -1435,9 +1440,10 @@ contains
     do while (pos > 0 .and. input_state%buffer(pos:pos) /= ' ')
       pos = pos - 1
     end do
-    
-    if (input_state%buffer(pos:pos) == ' ') pos = pos + 1
-    
+
+    ! pos is now at a space (or 0 if at beginning)
+    ! cursor_pos represents position between characters,
+    ! so space position is correct (cursor will be after space, before first char of word)
     input_state%cursor_pos = pos
     input_state%dirty = .true.
   end subroutine
@@ -2740,13 +2746,69 @@ contains
         call handle_cursor_right(input_state)
       case('D')  ! Left arrow
         call handle_cursor_left(input_state)
+      case('1', '2', '3', '4', '5', '6')
+        ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5D)
+        ! Consume the rest of the sequence
+        call consume_extended_escape_sequence()
       case default
-        ! Unknown escape sequence
+        ! Unknown escape sequence - ignore it
+        continue
+      end select
+    else
+      ! Not '[', so it's an Alt+key combination (ESC followed by character)
+      select case(ch1)
+      case('.')
+        ! Alt+. - Insert last argument from previous command
+        call handle_yank_last_arg(input_state)
+      case('b')
+        ! Alt+b - Move backward one word
+        call move_to_previous_word(input_state)
+      case('f')
+        ! Alt+f - Move forward one word
+        call move_to_next_word(input_state)
+      case('d')
+        ! Alt+d - Delete word forward
+        call handle_delete_word_forward(input_state)
+      case('u')
+        ! Alt+u - Uppercase word (from cursor to end of word)
+        call handle_uppercase_word(input_state)
+      case('l')
+        ! Alt+l - Lowercase word (from cursor to end of word)
+        call handle_lowercase_word(input_state)
+      case('c')
+        ! Alt+c - Capitalize word (uppercase first char, lowercase rest)
+        call handle_capitalize_word(input_state)
+      case(char(127))
+        ! Alt+Backspace - Delete word backward (same as Ctrl+W)
+        call handle_kill_word(input_state)
+      case default
+        ! Unknown Alt+key combination
         continue
       end select
     end if
   end subroutine
-  
+
+  ! Consume extended escape sequences like ESC[1;5D (Ctrl+Arrow)
+  subroutine consume_extended_escape_sequence()
+    character :: ch
+    logical :: success
+    integer :: count
+
+    ! Read until we hit a letter (A-Z, a-z) which terminates the sequence
+    count = 0
+    do while (count < 10)  ! Safety limit
+      success = read_single_char(ch)
+      if (.not. success) exit
+
+      ! Sequence terminates with a letter
+      if ((ch >= 'A' .and. ch <= 'Z') .or. (ch >= 'a' .and. ch <= 'z')) then
+        exit
+      end if
+
+      count = count + 1
+    end do
+  end subroutine
+
   subroutine handle_cursor_left(input_state)
     type(input_state_t), intent(inout) :: input_state
     
@@ -3313,6 +3375,258 @@ contains
     call redraw_line(prompt, input_state)
 
     input_state%dirty = .false.
+  end subroutine
+
+  ! Transpose characters (Ctrl+t) - swap char at cursor with previous char
+  subroutine handle_transpose_chars(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character :: temp
+
+    ! Need at least 2 characters
+    if (input_state%length < 2) return
+
+    ! If at end of line, transpose last two chars
+    if (input_state%cursor_pos >= input_state%length) then
+      if (input_state%length >= 2) then
+        temp = input_state%buffer(input_state%length:input_state%length)
+        input_state%buffer(input_state%length:input_state%length) = &
+          input_state%buffer(input_state%length-1:input_state%length-1)
+        input_state%buffer(input_state%length-1:input_state%length-1) = temp
+        input_state%dirty = .true.
+      end if
+    ! If at beginning, do nothing
+    else if (input_state%cursor_pos == 0) then
+      return
+    ! Normal case: swap char at cursor with previous char, move cursor forward
+    else
+      temp = input_state%buffer(input_state%cursor_pos+1:input_state%cursor_pos+1)
+      input_state%buffer(input_state%cursor_pos+1:input_state%cursor_pos+1) = &
+        input_state%buffer(input_state%cursor_pos:input_state%cursor_pos)
+      input_state%buffer(input_state%cursor_pos:input_state%cursor_pos) = temp
+      input_state%cursor_pos = input_state%cursor_pos + 1
+      input_state%dirty = .true.
+    end if
+  end subroutine
+
+  ! Yank last argument from previous command (Alt+.)
+  subroutine handle_yank_last_arg(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: last_cmd, last_arg
+    integer :: i, arg_start, arg_end
+    logical :: in_arg
+
+    ! Get last command from history
+    if (command_history%count == 0) return
+
+    last_cmd = command_history%lines(command_history%count)
+
+    ! Find last argument (last non-space word)
+    arg_end = 0
+    arg_start = 0
+    in_arg = .false.
+
+    ! Scan backwards to find last argument
+    do i = len_trim(last_cmd), 1, -1
+      if (last_cmd(i:i) /= ' ' .and. last_cmd(i:i) /= char(9)) then
+        if (.not. in_arg) then
+          arg_end = i
+          in_arg = .true.
+        end if
+      else if (in_arg) then
+        arg_start = i + 1
+        exit
+      end if
+    end do
+
+    ! If we found an arg but arg_start is still 0, it starts at position 1
+    if (in_arg .and. arg_start == 0) arg_start = 1
+
+    if (arg_start > 0 .and. arg_end >= arg_start) then
+      last_arg = last_cmd(arg_start:arg_end)
+
+      ! Insert the last argument at cursor position
+      call insert_string_at_cursor(input_state, trim(last_arg))
+    end if
+  end subroutine
+
+  ! Delete word forward (Alt+d)
+  subroutine handle_delete_word_forward(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: word_end, i
+
+    if (input_state%cursor_pos >= input_state%length) return
+
+    word_end = input_state%cursor_pos + 1
+
+    ! Skip any leading whitespace
+    do while (word_end <= input_state%length .and. &
+              input_state%buffer(word_end:word_end) == ' ')
+      word_end = word_end + 1
+    end do
+
+    ! Find end of word (non-space characters)
+    do while (word_end <= input_state%length .and. &
+              input_state%buffer(word_end:word_end) /= ' ')
+      word_end = word_end + 1
+    end do
+
+    if (word_end > input_state%cursor_pos + 1) then
+      ! Save deleted text to kill buffer
+      input_state%kill_buffer = input_state%buffer(input_state%cursor_pos+1:word_end-1)
+      input_state%kill_length = word_end - input_state%cursor_pos - 1
+
+      ! Shift remaining text left
+      do i = input_state%cursor_pos + 1, input_state%length - (word_end - input_state%cursor_pos - 1)
+        if (word_end + i - input_state%cursor_pos - 1 <= input_state%length) then
+          input_state%buffer(i:i) = &
+            input_state%buffer(word_end + i - input_state%cursor_pos - 1: &
+                              word_end + i - input_state%cursor_pos - 1)
+        else
+          input_state%buffer(i:i) = ' '
+        end if
+      end do
+
+      ! Update length
+      input_state%length = input_state%length - (word_end - input_state%cursor_pos - 1)
+      input_state%dirty = .true.
+    end if
+  end subroutine
+
+  ! Uppercase word (Alt+u) - convert from cursor to end of word to uppercase
+  subroutine handle_uppercase_word(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: pos, word_end
+    character :: ch
+
+    if (input_state%cursor_pos >= input_state%length) return
+
+    pos = input_state%cursor_pos + 1
+
+    ! Skip any leading whitespace
+    do while (pos <= input_state%length .and. &
+              input_state%buffer(pos:pos) == ' ')
+      pos = pos + 1
+    end do
+
+    ! Uppercase characters until end of word
+    do while (pos <= input_state%length .and. &
+              input_state%buffer(pos:pos) /= ' ')
+      ch = input_state%buffer(pos:pos)
+      if (ch >= 'a' .and. ch <= 'z') then
+        input_state%buffer(pos:pos) = char(ichar(ch) - 32)
+      end if
+      pos = pos + 1
+    end do
+
+    ! Move cursor to end of word
+    input_state%cursor_pos = pos - 1
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Lowercase word (Alt+l) - convert from cursor to end of word to lowercase
+  subroutine handle_lowercase_word(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: pos
+    character :: ch
+
+    if (input_state%cursor_pos >= input_state%length) return
+
+    pos = input_state%cursor_pos + 1
+
+    ! Skip any leading whitespace
+    do while (pos <= input_state%length .and. &
+              input_state%buffer(pos:pos) == ' ')
+      pos = pos + 1
+    end do
+
+    ! Lowercase characters until end of word
+    do while (pos <= input_state%length .and. &
+              input_state%buffer(pos:pos) /= ' ')
+      ch = input_state%buffer(pos:pos)
+      if (ch >= 'A' .and. ch <= 'Z') then
+        input_state%buffer(pos:pos) = char(ichar(ch) + 32)
+      end if
+      pos = pos + 1
+    end do
+
+    ! Move cursor to end of word
+    input_state%cursor_pos = pos - 1
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Capitalize word (Alt+c) - uppercase first char, lowercase rest
+  subroutine handle_capitalize_word(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: pos
+    character :: ch
+    logical :: first_char
+
+    if (input_state%cursor_pos >= input_state%length) return
+
+    pos = input_state%cursor_pos + 1
+
+    ! Skip any leading whitespace
+    do while (pos <= input_state%length .and. &
+              input_state%buffer(pos:pos) == ' ')
+      pos = pos + 1
+    end do
+
+    first_char = .true.
+
+    ! Capitalize first character, lowercase rest until end of word
+    do while (pos <= input_state%length .and. &
+              input_state%buffer(pos:pos) /= ' ')
+      ch = input_state%buffer(pos:pos)
+
+      if (first_char) then
+        ! Uppercase first character
+        if (ch >= 'a' .and. ch <= 'z') then
+          input_state%buffer(pos:pos) = char(ichar(ch) - 32)
+        end if
+        first_char = .false.
+      else
+        ! Lowercase remaining characters
+        if (ch >= 'A' .and. ch <= 'Z') then
+          input_state%buffer(pos:pos) = char(ichar(ch) + 32)
+        end if
+      end if
+
+      pos = pos + 1
+    end do
+
+    ! Move cursor to end of word
+    input_state%cursor_pos = pos - 1
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Helper: Insert string at cursor position
+  subroutine insert_string_at_cursor(input_state, str)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: str
+    integer :: i, str_len, insert_len
+
+    str_len = len_trim(str)
+    if (str_len == 0) return
+
+    insert_len = min(str_len, MAX_LINE_LEN - input_state%length)
+    if (insert_len == 0) return
+
+    ! Shift existing text right to make room
+    do i = input_state%length, input_state%cursor_pos + 1, -1
+      if (i + insert_len <= MAX_LINE_LEN) then
+        input_state%buffer(i + insert_len:i + insert_len) = input_state%buffer(i:i)
+      end if
+    end do
+
+    ! Insert string at cursor position
+    do i = 1, insert_len
+      input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = str(i:i)
+    end do
+
+    ! Update length and cursor position
+    input_state%length = input_state%length + insert_len
+    input_state%cursor_pos = input_state%cursor_pos + insert_len
+    input_state%dirty = .true.
   end subroutine
 
   ! Cursor flash effect for visual feedback
