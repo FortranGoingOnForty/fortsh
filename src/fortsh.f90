@@ -164,6 +164,27 @@ program fortran_shell
     ! Skip empty lines
     if (len_trim(input_line) == 0) cycle
 
+    ! Check for unclosed quotes and continue reading lines if needed
+    do while (has_unclosed_quote(input_line))
+      if (shell%is_interactive) then
+        ! Show PS2 continuation prompt
+        prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
+        call readline_enhanced(prompt_str, proc_subst_line, iostat)
+      else
+        ! Non-interactive: just read next line
+        read(input_unit, '(a)', iostat=iostat) proc_subst_line
+      end if
+
+      ! Check for EOF during continuation
+      if (iostat /= 0) then
+        write(output_unit, '(a)') ''
+        exit
+      end if
+
+      ! Append the continuation line with a newline character
+      input_line = trim(input_line) // char(10) // trim(proc_subst_line)
+    end do
+
     ! Expand history (!!, !n, !string, etc.) if needed
     if (needs_history_expansion(input_line)) then
       history_expanded = expand_history(input_line)
@@ -281,7 +302,7 @@ contains
   subroutine process_source_file(shell)
     use variables, only: add_function
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line, proc_subst_line
+    character(len=1024) :: input_line, proc_subst_line, continuation_line
     integer :: file_unit, iostat, i, brace_depth, func_line_count
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line, history_expanded
@@ -315,6 +336,17 @@ contains
       if (.not. in_function) then
         if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
       end if
+
+      ! Check for unclosed quotes and continue reading lines if needed
+      do while (has_unclosed_quote(input_line))
+        read(file_unit, '(a)', iostat=iostat) continuation_line
+        if (iostat /= 0) exit  ! End of file during continuation
+        ! Append the continuation line with a newline character
+        input_line = trim(input_line) // char(10) // trim(continuation_line)
+      end do
+
+      ! If EOF was reached during continuation, exit
+      if (iostat /= 0) exit
 
       ! Check if this is the start of a function definition
       if (.not. in_function .and. is_function_definition(input_line, func_name)) then

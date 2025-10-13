@@ -2121,4 +2121,39 @@ contains
     end if
   end subroutine
 
+  ! Check if a line has unclosed quotes (needs continuation)
+  function has_unclosed_quote(line) result(has_unclosed)
+    character(len=*), intent(in) :: line
+    logical :: has_unclosed
+    integer :: i
+    logical :: in_single_quote, in_double_quote
+    character :: prev_char
+
+    has_unclosed = .false.
+    in_single_quote = .false.
+    in_double_quote = .false.
+    prev_char = ' '
+
+    do i = 1, len_trim(line)
+      ! Check for escape character
+      if (prev_char == '\') then
+        ! Skip this character as it's escaped
+        prev_char = ' '  ! Reset escape
+        cycle
+      end if
+
+      ! Track quote state
+      if (line(i:i) == "'" .and. .not. in_double_quote) then
+        in_single_quote = .not. in_single_quote
+      else if (line(i:i) == '"' .and. .not. in_single_quote) then
+        in_double_quote = .not. in_double_quote
+      end if
+
+      prev_char = line(i:i)
+    end do
+
+    ! If either quote type is unclosed, we need continuation
+    has_unclosed = in_single_quote .or. in_double_quote
+  end function
+
 end module parser
