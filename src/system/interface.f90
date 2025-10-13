@@ -120,20 +120,26 @@ module system_interface
   character(len=*), parameter :: ESC_SHOW_CURSOR = char(27) // '[?25h'
 
   ! stat structure (must be defined before interface block)
+  ! x86_64 Linux layout - field order matters!
   type, bind(c) :: stat_t
-    integer(c_long) :: st_dev      ! Device
-    integer(c_long) :: st_ino      ! Inode
-    integer(c_int)  :: st_mode     ! Protection and file type
-    integer(c_long) :: st_nlink    ! Number of hard links
-    integer(c_int)  :: st_uid      ! User ID
-    integer(c_int)  :: st_gid      ! Group ID
-    integer(c_long) :: st_rdev     ! Device type
-    integer(c_long) :: st_size     ! Total size in bytes
-    integer(c_long) :: st_blksize  ! Block size
-    integer(c_long) :: st_blocks   ! Number of blocks
-    integer(c_long) :: st_atime    ! Access time
-    integer(c_long) :: st_mtime    ! Modification time
-    integer(c_long) :: st_ctime    ! Status change time
+    integer(c_long) :: st_dev      ! Device (8 bytes)
+    integer(c_long) :: st_ino      ! Inode (8 bytes)
+    integer(c_long) :: st_nlink    ! Number of hard links (8 bytes)
+    integer(c_int)  :: st_mode     ! Protection and file type (4 bytes)
+    integer(c_int)  :: st_uid      ! User ID (4 bytes)
+    integer(c_int)  :: st_gid      ! Group ID (4 bytes)
+    integer(c_int)  :: pad0        ! Padding (4 bytes)
+    integer(c_long) :: st_rdev     ! Device type (8 bytes)
+    integer(c_long) :: st_size     ! Total size in bytes (8 bytes)
+    integer(c_long) :: st_blksize  ! Block size (8 bytes)
+    integer(c_long) :: st_blocks   ! Number of blocks (8 bytes)
+    integer(c_long) :: st_atime    ! Access time (8 bytes)
+    integer(c_long) :: st_atime_nsec ! Access time nanoseconds
+    integer(c_long) :: st_mtime    ! Modification time (8 bytes)
+    integer(c_long) :: st_mtime_nsec ! Mod time nanoseconds
+    integer(c_long) :: st_ctime    ! Status change time (8 bytes)
+    integer(c_long) :: st_ctime_nsec ! Change time nanoseconds
+    integer(c_long) :: unused(3)   ! Reserved space
   end type stat_t
 
   ! timeval structure for getrusage
