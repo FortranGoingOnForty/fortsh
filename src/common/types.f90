@@ -238,9 +238,10 @@ module shell_types
     logical :: option_vi = .false.             ! set -o vi (vi editing mode)
     ! Bash-style shell options (shopt)
     logical :: shopt_nullglob = .false.        ! nullglob (empty glob matches)
-    logical :: shopt_failglob = .false.        ! failglob (error on no glob matches) 
+    logical :: shopt_failglob = .false.        ! failglob (error on no glob matches)
     logical :: shopt_globstar = .false.        ! globstar (** recursive)
     logical :: shopt_nocaseglob = .false.      ! nocaseglob (case insensitive)
+    logical :: shopt_nocasematch = .false.     ! nocasematch (case insensitive regex)
     logical :: shopt_extglob = .false.         ! extglob (extended patterns)
     logical :: shopt_dotglob = .false.         ! dotglob (include hidden files)
     ! Special process variables
