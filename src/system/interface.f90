@@ -649,7 +649,7 @@ contains
   function execute_and_capture(command) result(output)
     character(len=*), intent(in) :: command
     character(len=:), allocatable :: output
-    
+
     type(c_ptr) :: pipe_ptr
     character(kind=c_char), target :: buffer(1024)
     character(len=MAX_TOKEN_LEN*10) :: temp_output
@@ -657,11 +657,11 @@ contains
     integer :: i, pos
     character(len=256), target :: c_command
     character(len=4), target :: c_mode
-    
-    ! Convert strings to proper format  
+
+    ! Convert strings to proper format
     c_command = trim(command)//c_null_char
     c_mode = 'r'//c_null_char
-    
+
     ! Open pipe to command
     pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
     

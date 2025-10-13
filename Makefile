@@ -146,7 +146,7 @@ $(BUILDDIR)/scripting/variables.o: src/scripting/variables.f90 $(BUILDDIR)/commo
 $(BUILDDIR)/scripting/prompt_formatting.o: src/scripting/prompt_formatting.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/expansion.o: src/scripting/expansion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/expansion.o: src/scripting/expansion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/substitution.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/substitution.o: src/scripting/substitution.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
@@ -215,24 +215,70 @@ release: clean $(TARGET)
 	strip $(TARGET)
 	@echo "Release build complete! Binary size: $$(du -h $(TARGET) | cut -f1)"
 
+# Test suite targets
+test-integration: $(TARGET)
+	@echo "Running integration tests..."
+	chmod +x tests/integration_test.sh
+	./tests/integration_test.sh
+
+test-parity: $(TARGET)
+	@echo "Running bash parity tests..."
+	chmod +x tests/bash_parity_test.sh
+	FORTSH_BIN=$(TARGET) ./tests/bash_parity_test.sh
+
+test-posix: $(TARGET)
+	@echo "Running POSIX compliance tests..."
+	chmod +x tests/posix_compliance_test.sh
+	FORTSH_BIN=$(TARGET) ./tests/posix_compliance_test.sh
+
+test-features: $(TARGET)
+	@echo "Running feature test suite..."
+	chmod +x tests/feature_test_suite.sh
+	./tests/feature_test_suite.sh
+
+test-all: test-integration test-parity test-posix
+	@echo ""
+	@echo "=========================================="
+	@echo "ALL TEST SUITES COMPLETED"
+	@echo "=========================================="
+	@echo "✓ Integration tests"
+	@echo "✓ Bash parity tests"
+	@echo "✓ POSIX compliance tests"
+	@echo "=========================================="
+
 # Help target
 help:
 	@echo "Fortran Shell (Fortsh) Build System"
 	@echo "==================================="
 	@echo ""
-	@echo "Available targets:"
-	@echo "  all       - Build fortsh (default, development mode)"
-	@echo "  release   - Build optimized production binary (stripped, minimal warnings)"
-	@echo "  debug     - Build with extra debug flags and checks"
-	@echo "  clean     - Remove build artifacts"
-	@echo "  distclean - Remove all generated files"
-	@echo "  install   - Install fortsh to /usr/local/bin"
-	@echo "  test      - Run basic functionality test"
-	@echo "  help      - Show this help"
-	@echo "  dist      - Create distribution package"
-	@echo "  rpm       - Build RPM package"
-	@echo "  check     - Run comprehensive checks"
-	@echo "  smoke-test- Run basic functionality tests"
+	@echo "Build targets:"
+	@echo "  all           - Build fortsh (default, development mode)"
+	@echo "  release       - Build optimized production binary"
+	@echo "  debug         - Build with extra debug flags and checks"
+	@echo "  clean         - Remove build artifacts"
+	@echo "  distclean     - Remove all generated files"
+	@echo ""
+	@echo "Test targets:"
+	@echo "  test          - Run basic functionality test"
+	@echo "  test-all      - Run all test suites (integration, parity, POSIX)"
+	@echo "  test-integration - Run integration tests"
+	@echo "  test-parity   - Run bash parity tests"
+	@echo "  test-posix    - Run POSIX compliance tests"
+	@echo "  test-features - Run feature test suite"
+	@echo "  smoke-test    - Run quick smoke tests"
+	@echo "  check         - Run comprehensive checks"
+	@echo ""
+	@echo "Installation targets:"
+	@echo "  install       - Install fortsh to /usr/local/bin"
+	@echo "  dev-install   - Install fortsh to ~/.local/bin"
+	@echo "  uninstall     - Remove fortsh from system"
+	@echo ""
+	@echo "Package targets:"
+	@echo "  dist          - Create distribution package"
+	@echo "  rpm           - Build RPM package"
+	@echo ""
+	@echo "Other targets:"
+	@echo "  help          - Show this help"
 
 # Package information
 PACKAGE = fortsh
@@ -286,4 +332,4 @@ smoke-test: $(TARGET)
 	@echo "perf on\necho 'test'\nperf\nexit" | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
 	@echo "All smoke tests passed!"
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all
