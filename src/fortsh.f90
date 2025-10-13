@@ -33,6 +33,9 @@ program fortran_shell
   ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
 
+  ! Initialize control flow callbacks (breaks circular dependency)
+  call init_control_flow_callbacks()
+
   ! Check for command-line arguments
   num_args = command_argument_count()
   execute_command_string = .false.
