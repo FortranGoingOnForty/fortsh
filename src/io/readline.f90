@@ -92,6 +92,13 @@ module readline
     ! Autosuggestion support (fish-style)
     character(len=MAX_LINE_LEN) :: suggestion = ''  ! Current suggestion from history
     integer :: suggestion_length = 0  ! Length of suggestion
+
+    ! Menu selection support (zsh/fish-style interactive completion)
+    logical :: in_menu_select = .false.  ! Currently in menu selection mode
+    character(len=MAX_LINE_LEN) :: menu_items(50) = ''  ! Completion items for menu
+    integer :: menu_num_items = 0  ! Number of items in menu
+    integer :: menu_selection = 1  ! Currently selected item (1-based)
+    character(len=MAX_LINE_LEN) :: menu_prefix = ''  ! Command prefix before completion word
   end type input_state_t
 
   type :: history_t
@@ -192,8 +199,10 @@ contains
         
         select case(char_code)
         case(KEY_ENTER)
-          ! Enter - finish input or accept search
-          if (input_state%in_search) then
+          ! Enter - accept menu selection, finish input, or accept search
+          if (input_state%in_menu_select) then
+            call handle_menu_navigation(input_state, KEY_ENTER, done)
+          else if (input_state%in_search) then
             call accept_search(input_state, prompt)
             done = .true.
           else
@@ -237,12 +246,20 @@ contains
           end if
           
         case(KEY_TAB)
-          ! Tab completion (placeholder)
-          call handle_tab_completion(input_state)
-          
+          ! Tab completion or menu navigation
+          if (input_state%in_menu_select) then
+            call handle_menu_navigation(input_state, KEY_TAB, done)
+          else
+            call handle_tab_completion(input_state)
+          end if
+
         case(KEY_ESC)
-          ! Escape sequence - try to read more
-          call handle_escape_sequence(input_state, done)
+          ! Escape sequence - try to read more, or exit menu if in menu mode
+          if (input_state%in_menu_select) then
+            call handle_menu_navigation(input_state, KEY_ESC, done)
+          else
+            call handle_escape_sequence(input_state, done)
+          end if
           
         case(KEY_CTRL_A)
           ! Home - move to beginning of line
@@ -308,7 +325,11 @@ contains
 
         case(32:126)
           ! Regular printable characters
-          if (input_state%in_search) then
+          if (input_state%in_menu_select) then
+            ! Exit menu mode and process character normally
+            call exit_menu_select_mode(input_state)
+            call insert_char(input_state, ch)
+          else if (input_state%in_search) then
             call search_add_char(input_state, ch, prompt)
           else if (input_state%editing_mode == EDITING_MODE_VI .and. &
                    input_state%vi_mode == VI_MODE_COMMAND) then
@@ -2406,6 +2427,9 @@ contains
             input_state%last_completion_buffer = input_state%buffer(:input_state%length)
             input_state%completions_shown = .true.
             input_state%dirty = .true.
+          else
+            ! Second tab (double-tab) at common prefix - enter menu selection mode!
+            call enter_menu_select_mode(input_state, completions, num_completions, completed_line)
           end if
         end if
       else
@@ -2416,20 +2440,267 @@ contains
       ! We have completions but no single completion to apply
       ! Show the available options
       if (.not. input_state%completions_shown .or. buffer_changed) then
+        ! First tab - show completions
         write(output_unit, '()')  ! New line
         call show_completions(completions, num_completions)
         input_state%last_completion_buffer = input_state%buffer(:input_state%length)
         input_state%completions_shown = .true.
         input_state%dirty = .true.
+      else
+        ! Second tab (double-tab) - enter menu selection mode!
+        call enter_menu_select_mode(input_state, completions, num_completions, partial_input)
       end if
     end if
   end subroutine
-  
+
+  ! ===========================================================================
+  ! Menu Selection Mode (zsh/fish-style interactive completion)
+  ! ===========================================================================
+
+  subroutine enter_menu_select_mode(input_state, completions, num_completions, current_input)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN), intent(in) :: completions(50)
+    integer, intent(in) :: num_completions
+    character(len=*), intent(in) :: current_input
+    integer :: i, last_space_pos
+
+    ! Store menu items
+    input_state%in_menu_select = .true.
+    input_state%menu_num_items = num_completions
+    input_state%menu_selection = 1  ! Start with first item selected
+
+    do i = 1, num_completions
+      input_state%menu_items(i) = completions(i)
+    end do
+
+    ! Find the prefix (everything before the last word being completed)
+    last_space_pos = 0
+    do i = len_trim(current_input), 1, -1
+      if (current_input(i:i) == ' ') then
+        last_space_pos = i
+        exit
+      end if
+    end do
+
+    if (last_space_pos > 0) then
+      input_state%menu_prefix = current_input(:last_space_pos)
+    else
+      input_state%menu_prefix = ''
+    end if
+
+    ! Draw the menu with first item highlighted
+    call draw_completion_menu(input_state)
+  end subroutine
+
+  subroutine draw_completion_menu(input_state)
+    type(input_state_t), intent(in) :: input_state
+    integer :: i, cols_per_item, items_per_row, row, col, item_idx
+    integer :: term_rows, term_cols
+    logical :: success
+
+    ! Get terminal size
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80
+    end if
+
+    ! Clear any previous output and move to beginning of line
+    write(output_unit, '()')  ! New line
+
+    ! Calculate layout - try to fit multiple items per row
+    cols_per_item = 0
+    do i = 1, input_state%menu_num_items
+      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+    end do
+    cols_per_item = cols_per_item + 2  ! Add spacing
+
+    items_per_row = max(1, term_cols / cols_per_item)
+
+    ! Draw menu items
+    item_idx = 1
+    do while (item_idx <= input_state%menu_num_items)
+      ! Draw one row
+      do col = 1, items_per_row
+        if (item_idx > input_state%menu_num_items) exit
+
+        ! Highlight selected item with reverse video
+        if (item_idx == input_state%menu_selection) then
+          write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
+        end if
+
+        write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+
+        if (item_idx == input_state%menu_selection) then
+          write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+        end if
+
+        ! Add spacing between columns
+        if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
+          write(output_unit, '(a)', advance='no') '  '
+        end if
+
+        item_idx = item_idx + 1
+      end do
+      write(output_unit, '()')  ! New line after each row
+    end do
+
+    ! Mark that we need to redraw the command line
+    flush(output_unit)
+  end subroutine
+
+  subroutine handle_menu_navigation(input_state, key, done)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: key
+    logical, intent(inout) :: done
+    integer :: old_selection
+
+    if (.not. input_state%in_menu_select) return
+
+    old_selection = input_state%menu_selection
+
+    select case (key)
+    case (KEY_UP)
+      ! Move up (previous item)
+      input_state%menu_selection = input_state%menu_selection - 1
+      if (input_state%menu_selection < 1) then
+        input_state%menu_selection = input_state%menu_num_items  ! Wrap to end
+      end if
+
+    case (KEY_DOWN)
+      ! Move down (next item)
+      input_state%menu_selection = input_state%menu_selection + 1
+      if (input_state%menu_selection > input_state%menu_num_items) then
+        input_state%menu_selection = 1  ! Wrap to beginning
+      end if
+
+    case (KEY_RIGHT, KEY_TAB)
+      ! Move to next item (like Tab cycling)
+      input_state%menu_selection = input_state%menu_selection + 1
+      if (input_state%menu_selection > input_state%menu_num_items) then
+        input_state%menu_selection = 1
+      end if
+
+    case (KEY_LEFT)
+      ! Move to previous item
+      input_state%menu_selection = input_state%menu_selection - 1
+      if (input_state%menu_selection < 1) then
+        input_state%menu_selection = input_state%menu_num_items
+      end if
+
+    case (10, 13)  ! Enter (LF or CR)
+      ! Accept selection - insert into command line
+      call accept_menu_selection(input_state)
+      return
+
+    case (KEY_ESC)
+      ! Cancel menu mode
+      call exit_menu_select_mode(input_state)
+      return
+
+    case default
+      ! Any other key exits menu mode and processes normally
+      call exit_menu_select_mode(input_state)
+      return
+    end select
+
+    ! Redraw menu if selection changed
+    if (old_selection /= input_state%menu_selection) then
+      call redraw_menu(input_state)
+    end if
+  end subroutine
+
+  subroutine accept_menu_selection(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: completed_line
+
+    ! Build completed command with selected item
+    if (len_trim(input_state%menu_prefix) > 0) then
+      completed_line = trim(input_state%menu_prefix) // &
+                      trim(input_state%menu_items(input_state%menu_selection))
+    else
+      completed_line = trim(input_state%menu_items(input_state%menu_selection))
+    end if
+
+    ! Update buffer
+    input_state%buffer = completed_line
+    input_state%length = len_trim(completed_line)
+    input_state%cursor_pos = input_state%length
+
+    ! Exit menu mode
+    call exit_menu_select_mode(input_state)
+
+    ! Update autosuggestion
+    call update_autosuggestion(input_state)
+
+    ! Mark for redraw
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine exit_menu_select_mode(input_state)
+    type(input_state_t), intent(inout) :: input_state
+
+    input_state%in_menu_select = .false.
+    input_state%menu_num_items = 0
+    input_state%menu_selection = 1
+    input_state%completions_shown = .false.
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine redraw_menu(input_state)
+    type(input_state_t), intent(in) :: input_state
+    integer :: i, num_rows
+
+    ! Calculate how many rows the menu uses
+    num_rows = (input_state%menu_num_items + 7) / 8  ! Assuming 8 items per row for now
+
+    ! Move cursor up to clear previous menu
+    do i = 1, num_rows
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+    end do
+    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+    write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+
+    ! Redraw menu
+    call draw_completion_menu(input_state)
+  end subroutine
+
   subroutine handle_escape_sequence(input_state, done)
     type(input_state_t), intent(inout) :: input_state
     logical, intent(inout) :: done
     character :: ch1, ch2
     logical :: success
+
+    ! Check if we're in menu select mode - route arrow keys to menu navigation
+    if (input_state%in_menu_select) then
+      ! Try to read the next character to see if it's an arrow key
+      success = read_single_char(ch1)
+      if (.not. success) then
+        ! Just ESC by itself - exit menu
+        call handle_menu_navigation(input_state, KEY_ESC, done)
+        return
+      end if
+
+      if (ch1 == '[') then
+        ! ANSI escape sequence
+        success = read_single_char(ch2)
+        if (.not. success) return
+
+        select case(ch2)
+        case('A')  ! Up arrow
+          call handle_menu_navigation(input_state, KEY_UP, done)
+        case('B')  ! Down arrow
+          call handle_menu_navigation(input_state, KEY_DOWN, done)
+        case('C')  ! Right arrow
+          call handle_menu_navigation(input_state, KEY_RIGHT, done)
+        case('D')  ! Left arrow
+          call handle_menu_navigation(input_state, KEY_LEFT, done)
+        case default
+          ! Unknown escape sequence in menu mode
+          continue
+        end select
+      end if
+      return
+    end if
 
     ! Check if we're in Vi insert mode - ESC switches to command mode
     if (input_state%editing_mode == EDITING_MODE_VI .and. &
