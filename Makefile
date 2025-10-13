@@ -53,6 +53,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/scripting/shell_options.o \
           $(BUILDDIR)/scripting/completion.o \
           $(BUILDDIR)/execution/coprocess.o \
+          $(BUILDDIR)/execution/better_errors.o \
           $(BUILDDIR)/io/heredoc.o \
           $(BUILDDIR)/io/fd_redirection.o \
           $(BUILDDIR)/execution/builtins.o \
@@ -151,6 +152,9 @@ $(BUILDDIR)/scripting/substitution.o: src/scripting/substitution.f90 $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/coprocess.o: src/execution/coprocess.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+$(BUILDDIR)/execution/better_errors.o: src/execution/better_errors.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/config.o: src/scripting/config.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
