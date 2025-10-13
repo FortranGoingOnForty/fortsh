@@ -69,6 +69,15 @@ module readline
     character(len=MAX_LINE_LEN) :: vi_command_buffer = ''
     integer :: vi_command_count = 0
     logical :: vi_repeat_pending = .false.
+
+    ! Advanced vi mode features
+    character(len=MAX_LINE_LEN) :: vi_yank_buffer = ''  ! Vi-style yank buffer
+    integer :: vi_yank_length = 0
+    integer :: vi_marks(26) = 0  ! Mark positions for 'a'-'z' (0 = not set)
+    character(len=MAX_LINE_LEN) :: vi_search_pattern = ''
+    integer :: vi_search_length = 0
+    logical :: vi_search_forward = .true.
+    logical :: vi_in_vi_search = .false.
   end type input_state_t
 
   type :: history_t
@@ -941,7 +950,53 @@ contains
       input_state%length = len_trim(input_state%original_buffer)
       input_state%cursor_pos = min(input_state%cursor_pos, input_state%length)
       input_state%dirty = .true.
+
+    ! Yank and Put (vi-style copy/paste)
+    case (ichar('y'))
+      ! Yank (copy) - yank current line for now (simplified)
+      call handle_vi_yank(input_state)
+    case (ichar('p'))
+      ! Put (paste) after cursor
+      call handle_vi_put(input_state, .false.)
+    case (ichar('P'))
+      ! Put (paste) before cursor
+      call handle_vi_put(input_state, .true.)
+
+    ! Marks
+    case (ichar('m'))
+      ! Set mark - next character will be the mark name
+      input_state%vi_command_buffer = 'm'
+      input_state%vi_command_count = 1
+    case (ichar("'"))
+      ! Jump to mark - next character will be the mark name
+      input_state%vi_command_buffer = "'"
+      input_state%vi_command_count = 1
+
+    ! Vi search
+    case (ichar('/'))
+      ! Forward search
+      call handle_vi_search_start(input_state, .true.)
+    case (ichar('?'))
+      ! Backward search
+      call handle_vi_search_start(input_state, .false.)
+    case (ichar('n'))
+      ! Next search match
+      call handle_vi_search_next(input_state, .true.)
+    case (ichar('N'))
+      ! Previous search match
+      call handle_vi_search_next(input_state, .false.)
     end select
+
+    ! Handle two-character commands (marks)
+    if (input_state%vi_command_count == 1) then
+      if (input_state%vi_command_buffer(1:1) == 'm') then
+        ! Setting a mark - next key press will be the mark letter
+        ! This will be handled in the next call to this function
+      else if (input_state%vi_command_buffer(1:1) == "'") then
+        ! Jumping to a mark - next key press will be the mark letter
+        ! This will be handled in the next call to this function
+      end if
+    end if
   end subroutine
 
   subroutine handle_vi_delete_command(input_state)
@@ -2163,6 +2218,186 @@ contains
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
     end if
     flush(output_unit)
+  end subroutine
+
+  ! ============================================================================
+  ! Advanced Vi Mode Features
+  ! ============================================================================
+
+  ! Vi-style yank (copy)
+  subroutine handle_vi_yank(input_state)
+    type(input_state_t), intent(inout) :: input_state
+
+    ! Simplified: yank entire line (yy behavior)
+    if (input_state%length > 0) then
+      input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
+      input_state%vi_yank_length = input_state%length
+    else
+      input_state%vi_yank_buffer = ''
+      input_state%vi_yank_length = 0
+    end if
+  end subroutine
+
+  ! Vi-style put (paste)
+  subroutine handle_vi_put(input_state, before_cursor)
+    type(input_state_t), intent(inout) :: input_state
+    logical, intent(in) :: before_cursor
+    integer :: i, insert_len, insert_pos
+
+    if (input_state%vi_yank_length == 0) return
+
+    insert_len = min(input_state%vi_yank_length, MAX_LINE_LEN - input_state%length)
+    if (insert_len == 0) return
+
+    ! Determine insertion position
+    if (before_cursor) then
+      insert_pos = input_state%cursor_pos
+    else
+      ! After cursor
+      insert_pos = min(input_state%cursor_pos + 1, input_state%length)
+    end if
+
+    ! Shift existing text right to make room
+    do i = input_state%length, insert_pos + 1, -1
+      if (i + insert_len <= MAX_LINE_LEN) then
+        input_state%buffer(i + insert_len:i + insert_len) = input_state%buffer(i:i)
+      end if
+    end do
+
+    ! Insert yanked text at insertion position
+    do i = 1, insert_len
+      input_state%buffer(insert_pos + i:insert_pos + i) = input_state%vi_yank_buffer(i:i)
+    end do
+
+    ! Update length and cursor position
+    input_state%length = input_state%length + insert_len
+    input_state%cursor_pos = insert_pos + insert_len - 1
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Set a vi mark
+  subroutine handle_vi_mark_set(input_state, mark_char)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: mark_char
+    integer :: mark_index
+
+    ! Convert character to mark index (a-z = 1-26)
+    if (mark_char >= 'a' .and. mark_char <= 'z') then
+      mark_index = iachar(mark_char) - iachar('a') + 1
+      input_state%vi_marks(mark_index) = input_state%cursor_pos
+    end if
+
+    ! Clear command buffer
+    input_state%vi_command_buffer = ''
+    input_state%vi_command_count = 0
+  end subroutine
+
+  ! Jump to a vi mark
+  subroutine handle_vi_mark_jump(input_state, mark_char)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: mark_char
+    integer :: mark_index, mark_pos
+
+    ! Convert character to mark index (a-z = 1-26)
+    if (mark_char >= 'a' .and. mark_char <= 'z') then
+      mark_index = iachar(mark_char) - iachar('a') + 1
+      mark_pos = input_state%vi_marks(mark_index)
+
+      ! Jump to mark if it's set (non-zero) and valid
+      if (mark_pos > 0 .and. mark_pos <= input_state%length) then
+        input_state%cursor_pos = mark_pos
+        input_state%dirty = .true.
+      end if
+    end if
+
+    ! Clear command buffer
+    input_state%vi_command_buffer = ''
+    input_state%vi_command_count = 0
+  end subroutine
+
+  ! Start vi-style search (/ or ?)
+  subroutine handle_vi_search_start(input_state, forward)
+    type(input_state_t), intent(inout) :: input_state
+    logical, intent(in) :: forward
+
+    ! Enter vi search mode
+    input_state%vi_in_vi_search = .true.
+    input_state%vi_search_forward = forward
+    input_state%vi_search_pattern = ''
+    input_state%vi_search_length = 0
+
+    ! Visual feedback: show search prompt
+    write(output_unit, '()')  ! New line
+    if (forward) then
+      write(output_unit, '(a)', advance='no') '/'
+    else
+      write(output_unit, '(a)', advance='no') '?'
+    end if
+    flush(output_unit)
+  end subroutine
+
+  ! Find next/previous search match in vi mode
+  subroutine handle_vi_search_next(input_state, forward)
+    type(input_state_t), intent(inout) :: input_state
+    logical, intent(in) :: forward
+    integer :: i, match_pos
+    logical :: found
+
+    if (input_state%vi_search_length == 0) return
+
+    found = .false.
+
+    ! Determine search direction based on original direction and forward flag
+    if (input_state%vi_search_forward .eqv. forward) then
+      ! Search in same direction as original
+      if (input_state%vi_search_forward) then
+        ! Search forward from current position
+        match_pos = index(input_state%buffer(input_state%cursor_pos+2:input_state%length), &
+                         input_state%vi_search_pattern(:input_state%vi_search_length))
+        if (match_pos > 0) then
+          input_state%cursor_pos = input_state%cursor_pos + 1 + match_pos
+          found = .true.
+        end if
+      else
+        ! Search backward from current position
+        ! Simplified: search from beginning to current position
+        do i = input_state%cursor_pos - 1, 1, -1
+          match_pos = index(input_state%buffer(i:input_state%cursor_pos-1), &
+                           input_state%vi_search_pattern(:input_state%vi_search_length))
+          if (match_pos > 0) then
+            input_state%cursor_pos = i + match_pos - 1
+            found = .true.
+            exit
+          end if
+        end do
+      end if
+    else
+      ! Search in opposite direction
+      if (input_state%vi_search_forward) then
+        ! Original was forward, now search backward
+        do i = input_state%cursor_pos - 1, 1, -1
+          match_pos = index(input_state%buffer(i:input_state%cursor_pos-1), &
+                           input_state%vi_search_pattern(:input_state%vi_search_length))
+          if (match_pos > 0) then
+            input_state%cursor_pos = i + match_pos - 1
+            found = .true.
+            exit
+          end if
+        end do
+      else
+        ! Original was backward, now search forward
+        match_pos = index(input_state%buffer(input_state%cursor_pos+2:input_state%length), &
+                         input_state%vi_search_pattern(:input_state%vi_search_length))
+        if (match_pos > 0) then
+          input_state%cursor_pos = input_state%cursor_pos + 1 + match_pos
+          found = .true.
+        end if
+      end if
+    end if
+
+    if (found) then
+      input_state%dirty = .true.
+    end if
   end subroutine
 
 end module readline
