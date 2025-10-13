@@ -3131,7 +3131,7 @@ contains
     integer :: term_rows, term_cols, total_visual_chars
     integer :: prompt_visual_len, current_line, end_line
     integer :: cursor_visual_pos, cursor_line, cursor_col
-    integer :: i
+    integer :: i, suggestion_display_len, available_space
     logical :: success
 
     ! Get terminal size
@@ -3172,11 +3172,23 @@ contains
     end if
 
     ! Display autosuggestion in gray (dim) if available and cursor is at end
+    ! IMPORTANT: Truncate suggestion to prevent wrapping beyond terminal width
     if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
-      ! Gray color (ANSI code 90 or dim mode)
-      write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
-      write(output_unit, '(a)', advance='no') input_state%suggestion(:input_state%suggestion_length)
-      write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+      ! Calculate available space on current line
+      available_space = term_cols - mod(prompt_visual_len + input_state%length, term_cols)
+
+      ! Truncate suggestion if it would overflow the line
+      suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
+
+      if (suggestion_display_len > 0) then
+        ! Gray color (ANSI code 90 or dim mode)
+        write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
+        write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+        write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+      end if
+    else
+      ! No suggestion displayed, set display length to 0
+      suggestion_display_len = 0
     end if
 
     ! Calculate where cursor should be after redraw (accounting for line wrapping)
@@ -3203,13 +3215,13 @@ contains
 
     ! Move cursor to the correct position
     ! Calculate how many positions to move left from current position
-    ! If we drew a suggestion, cursor is at: prompt_visual_len + length + suggestion_length
+    ! If we drew a suggestion, cursor is at: prompt_visual_len + length + suggestion_display_len
     ! Otherwise, cursor is at: prompt_visual_len + length
     ! We want to be at: prompt_visual_len + cursor_pos
-    ! So we need to move: (length - cursor_pos) + suggestion_length positions to the left
-    if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
-      ! Cursor is after the suggestion, need to move back by suggestion length + distance to cursor
-      do i = 1, input_state%suggestion_length + (input_state%length - input_state%cursor_pos)
+    ! So we need to move: (length - cursor_pos) + suggestion_display_len positions to the left
+    if (suggestion_display_len > 0 .and. input_state%cursor_pos == input_state%length) then
+      ! Cursor is after the suggestion, need to move back by displayed suggestion length + distance to cursor
+      do i = 1, suggestion_display_len + (input_state%length - input_state%cursor_pos)
         write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
       end do
     else

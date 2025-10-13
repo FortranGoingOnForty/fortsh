@@ -712,6 +712,7 @@ contains
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:), split_words(:)
     character(len=MAX_TOKEN_LEN) :: word
     integer :: word_count, start_pos, pos
+    logical :: should_split, has_quotes, has_equals
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
@@ -720,9 +721,23 @@ contains
     do i = 1, cmd%num_tokens
       call expand_variables(cmd%tokens(i), expanded, shell)
 
-      ! Check if expanded result contains spaces (from brace expansion)
-      ! and is not quoted
+      ! Determine if we should split this token on spaces
+      ! Only split if:
+      ! 1. Contains spaces
+      ! 2. NOT quoted (doesn't contain quote characters)
+      ! 3. NOT an assignment (doesn't contain =, like alias ll='...' or var=value)
+      should_split = .false.
       if (index(expanded, ' ') > 0) then
+        ! Check if it contains quotes
+        has_quotes = (index(expanded, '"') > 0 .or. index(expanded, "'") > 0)
+        ! Check if it's an assignment (contains =)
+        has_equals = (index(expanded, '=') > 0)
+
+        ! Only split if no quotes and no equals sign
+        should_split = (.not. has_quotes .and. .not. has_equals)
+      end if
+
+      if (should_split) then
         ! Split the expanded string into separate tokens
         allocate(split_words(100))
         word_count = 0
