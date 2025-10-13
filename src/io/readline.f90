@@ -5,6 +5,7 @@
 module readline
   use shell_types
   use system_interface
+  use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
   implicit none
@@ -1119,18 +1120,22 @@ contains
     end if
   end subroutine
 
-  ! Enhanced tab completion with real filesystem integration
-  subroutine enhanced_tab_complete(partial_input, completions, num_completions)
+  ! Enhanced tab completion with programmable completion system integration
+  subroutine enhanced_tab_complete(partial_input, completions, num_completions, shell)
     character(len=*), intent(in) :: partial_input
     character(len=MAX_LINE_LEN), intent(out) :: completions(50)
     integer, intent(out) :: num_completions
-    
-    character(len=MAX_LINE_LEN) :: last_word, prefix_part
-    integer :: last_space_pos, i
-    logical :: is_command
-    
+    type(shell_state_t), intent(inout), optional :: shell
+
+    character(len=MAX_LINE_LEN) :: last_word, prefix_part, command_name
+    character(len=256) :: temp_completions(MAX_COMPLETIONS)
+    integer :: last_space_pos, i, first_space_pos, temp_count
+    logical :: is_command, used_programmable_completion
+    type(completion_spec_t) :: spec
+
     num_completions = 0
-    
+    used_programmable_completion = .false.
+
     ! Find the last word to complete
     last_space_pos = 0
     do i = len_trim(partial_input), 1, -1
@@ -1139,31 +1144,60 @@ contains
         exit
       end if
     end do
-    
+
     if (last_space_pos == 0) then
       last_word = trim(partial_input)
       prefix_part = ''
       is_command = .true.
+      command_name = ''
     else
       last_word = trim(partial_input(last_space_pos+1:))
       prefix_part = partial_input(:last_space_pos)
       is_command = .false.
-    end if
-    
-    if (is_command) then
-      ! Complete commands (builtins + PATH executables)
-      call complete_commands_enhanced(last_word, completions, num_completions)
-      
-      ! Add prefix back to completions
-      do i = 1, num_completions
-        completions(i) = trim(completions(i))
-      end do
-    else
-      ! Complete files and directories
-      call complete_files_enhanced(last_word, completions, num_completions)
 
-      ! Don't add prefix to completions - they are for display only
-      ! The prefix will be added when constructing the completed line
+      ! Extract command name (first word)
+      first_space_pos = index(partial_input, ' ')
+      if (first_space_pos > 0) then
+        command_name = partial_input(:first_space_pos-1)
+      else
+        command_name = trim(partial_input)
+      end if
+    end if
+
+    ! Try programmable completion first (if shell state available and not completing command)
+    if (.not. is_command .and. present(shell)) then
+      spec = get_completion_spec(trim(command_name))
+      if (spec%is_active) then
+        ! Use our programmable completion system!
+        call generate_completions(trim(command_name), trim(last_word), temp_completions, temp_count, shell)
+        if (temp_count > 0) then
+          ! Copy completions (convert from 256 to MAX_LINE_LEN)
+          do i = 1, min(temp_count, 50)
+            completions(i) = trim(temp_completions(i))
+          end do
+          num_completions = min(temp_count, 50)
+          used_programmable_completion = .true.
+        end if
+      end if
+    end if
+
+    ! Fall back to default completion if programmable completion didn't produce results
+    if (.not. used_programmable_completion) then
+      if (is_command) then
+        ! Complete commands (builtins + PATH executables)
+        call complete_commands_enhanced(last_word, completions, num_completions)
+
+        ! Add prefix back to completions
+        do i = 1, num_completions
+          completions(i) = trim(completions(i))
+        end do
+      else
+        ! Complete files and directories
+        call complete_files_enhanced(last_word, completions, num_completions)
+
+        ! Don't add prefix to completions - they are for display only
+        ! The prefix will be added when constructing the completed line
+      end if
     end if
   end subroutine
 
