@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        4.3.0
+Version:        4.4.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,18 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.4.0-1
+- MAJOR FEATURE: Fish-like interactive shell enhancements
+- NEW: Syntax highlighting in command line with color-coded commands, strings, and operators
+- NEW: Fish-style history suggestions with inline autosuggestions from command history
+- NEW: Intelligent error suggestions with Levenshtein distance for typo detection
+- NEW: Command abbreviations system for quick command expansion
+- NEW: Git-aware prompt with repository status indicators
+- NEW: Automatic prompt shortening for long directory paths
+- Improved tab completion with better visual feedback
+- Enhanced expansion handling and fixes for various edge cases
+- Better error messages with contextual suggestions
+
 * Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.3.0-1
 - NEW FEATURE: File descriptor redirection for coprocess support
 - Implemented variable FD expansion (>&${var}, <&${var})
