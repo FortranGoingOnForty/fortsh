@@ -2821,6 +2821,18 @@ contains
               input_state%suggestion_length > 0) then
             call accept_autosuggestion_word(input_state)
           end if
+        ! Check for Alt+Up arrow (modifier=3, terminator=A)
+        else if (modifier == '3' .and. terminator == 'A') then
+          ! Alt+Up - Go to parent directory (cd ..)
+          call handle_alt_up(input_state)
+        ! Check for Alt+Left arrow (modifier=3, terminator=D)
+        else if (modifier == '3' .and. terminator == 'D') then
+          ! Alt+Left - Go to previous directory (prevd)
+          call handle_alt_left(input_state)
+        ! Check for Alt+Right arrow (modifier=3, terminator=C)
+        else if (modifier == '3' .and. terminator == 'C') then
+          ! Alt+Right - Go to next directory (nextd)
+          call handle_alt_right(input_state)
         end if
         ! For other extended sequences, we just consume them
         return
@@ -3620,6 +3632,72 @@ contains
 
     ! Move cursor to end of word
     input_state%cursor_pos = pos - 1
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Alt+Up: Replace line with "cd .." (Fish-style parent directory navigation)
+  subroutine handle_alt_up(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=5) :: cmd
+
+    cmd = 'cd ..'
+
+    ! Clear current buffer
+    input_state%buffer = ''
+
+    ! Insert "cd .."
+    input_state%buffer(1:5) = cmd
+    input_state%length = 5
+    input_state%cursor_pos = 5
+
+    ! Clear suggestion since we're replacing the line
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Alt+Left: Replace line with "prevd" (Fish-style previous directory)
+  subroutine handle_alt_left(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=5) :: cmd
+
+    cmd = 'prevd'
+
+    ! Clear current buffer
+    input_state%buffer = ''
+
+    ! Insert "prevd"
+    input_state%buffer(1:5) = cmd
+    input_state%length = 5
+    input_state%cursor_pos = 5
+
+    ! Clear suggestion since we're replacing the line
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Alt+Right: Replace line with "nextd" (Fish-style next directory)
+  subroutine handle_alt_right(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=5) :: cmd
+
+    cmd = 'nextd'
+
+    ! Clear current buffer
+    input_state%buffer = ''
+
+    ! Insert "nextd"
+    input_state%buffer(1:5) = cmd
+    input_state%length = 5
+    input_state%cursor_pos = 5
+
+    ! Clear suggestion since we're replacing the line
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
     input_state%dirty = .true.
   end subroutine
 

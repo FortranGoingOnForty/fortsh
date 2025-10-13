@@ -707,13 +707,77 @@ contains
   subroutine expand_tokens(cmd, shell)
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i
+    integer :: i, j, num_words, total_tokens
     character(len=:), allocatable :: expanded
-    
+    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:), split_words(:)
+    character(len=MAX_TOKEN_LEN) :: word
+    integer :: word_count, start_pos, pos
+
+    ! Allocate temporary storage for expanded tokens
+    allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
+    total_tokens = 0
+
     do i = 1, cmd%num_tokens
       call expand_variables(cmd%tokens(i), expanded, shell)
-      cmd%tokens(i) = expanded
+
+      ! Check if expanded result contains spaces (from brace expansion)
+      ! and is not quoted
+      if (index(expanded, ' ') > 0) then
+        ! Split the expanded string into separate tokens
+        allocate(split_words(100))
+        word_count = 0
+        pos = 1
+        start_pos = 1
+
+        ! Simple space-based splitting
+        do while (pos <= len(expanded))
+          if (expanded(pos:pos) == ' ') then
+            if (pos > start_pos) then
+              word_count = word_count + 1
+              if (word_count <= 100) then
+                split_words(word_count) = expanded(start_pos:pos-1)
+              end if
+            end if
+            start_pos = pos + 1
+          end if
+          pos = pos + 1
+        end do
+
+        ! Don't forget the last word
+        if (start_pos <= len(expanded)) then
+          word_count = word_count + 1
+          if (word_count <= 100) then
+            split_words(word_count) = expanded(start_pos:)
+          end if
+        end if
+
+        ! Add all split words as separate tokens
+        do j = 1, word_count
+          total_tokens = total_tokens + 1
+          if (total_tokens <= size(temp_tokens)) then
+            temp_tokens(total_tokens) = split_words(j)
+          end if
+        end do
+
+        deallocate(split_words)
+      else
+        ! No spaces, just add as single token
+        total_tokens = total_tokens + 1
+        if (total_tokens <= size(temp_tokens)) then
+          temp_tokens(total_tokens) = expanded
+        end if
+      end if
     end do
+
+    ! Replace command tokens with expanded ones
+    if (allocated(cmd%tokens)) deallocate(cmd%tokens)
+    allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(total_tokens))
+    do i = 1, total_tokens
+      cmd%tokens(i) = temp_tokens(i)
+    end do
+    cmd%num_tokens = total_tokens
+
+    deallocate(temp_tokens)
   end subroutine
 
   subroutine execute_external(cmd, shell, original_input)
