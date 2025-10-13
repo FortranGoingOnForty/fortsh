@@ -54,6 +54,7 @@ module shell_types
     integer :: fd = -1            ! file descriptor number (-1 for default)
     integer :: target_fd = -1     ! target fd for duplication
     character(len=:), allocatable :: filename
+    character(len=:), allocatable :: target_fd_expr  ! for variable FD like >&${var}
     logical :: close_fd = .false. ! for n>&- syntax
   end type redirection_t
 
