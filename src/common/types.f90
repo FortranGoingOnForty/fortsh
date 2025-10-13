@@ -284,6 +284,10 @@ module shell_types
     ! Process substitution
     type(proc_subst_fifo_t) :: proc_subst_fifos(10)
     integer :: num_proc_subst_fifos = 0
+    ! Directory history (Fish-style prevd/nextd)
+    character(len=MAX_PATH_LEN) :: dir_history(50)  ! Circular buffer of directories
+    integer :: dir_history_size = 0                  ! Number of directories in history
+    integer :: dir_history_index = 0                 ! Current position in history
   end type shell_state_t
 
 end module shell_types

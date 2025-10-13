@@ -47,6 +47,9 @@ contains
                 trim(cmd_name) == 'pushd' .or. &
                 trim(cmd_name) == 'popd' .or. &
                 trim(cmd_name) == 'dirs' .or. &
+                trim(cmd_name) == 'prevd' .or. &
+                trim(cmd_name) == 'nextd' .or. &
+                trim(cmd_name) == 'dirh' .or. &
                 trim(cmd_name) == 'export' .or. &
                 trim(cmd_name) == 'echo' .or. &
                 trim(cmd_name) == 'jobs' .or. &
@@ -114,6 +117,12 @@ contains
       call builtin_popd(cmd, shell)
     case('dirs')
       call builtin_dirs(cmd, shell)
+    case('prevd')
+      call builtin_prevd(cmd, shell)
+    case('nextd')
+      call builtin_nextd(cmd, shell)
+    case('dirh')
+      call builtin_dirh(cmd, shell)
     case('export')
       call builtin_export(cmd, shell)
     case('echo')
@@ -264,6 +273,9 @@ contains
       if (.not. set_environment_var('OLDPWD', trim(shell%oldpwd))) then
         ! Ignore error, not critical
       end if
+
+      ! Add new directory to history (Fish-style prevd/nextd)
+      call add_to_dir_history(shell, shell%cwd)
 
       ! Print new directory if cd -
       if (print_dir) then
@@ -3383,5 +3395,115 @@ contains
       shell%last_exit_status = 1
     end if
   end subroutine builtin_compgen
+
+  ! ===========================================================================
+  ! Directory History Functions (Fish-style prevd/nextd)
+  ! ===========================================================================
+
+  ! Add directory to history
+  subroutine add_to_dir_history(shell, dir)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: dir
+    integer :: i
+
+    ! Don't add if it's the same as current position
+    if (shell%dir_history_index > 0 .and. shell%dir_history_index <= shell%dir_history_size) then
+      if (trim(shell%dir_history(shell%dir_history_index)) == trim(dir)) return
+    end if
+
+    ! If we're not at the end of history, truncate everything after current position
+    if (shell%dir_history_index < shell%dir_history_size) then
+      shell%dir_history_size = shell%dir_history_index
+    end if
+
+    ! Add new directory
+    if (shell%dir_history_size < 50) then
+      shell%dir_history_size = shell%dir_history_size + 1
+    else
+      ! Shift history left (circular buffer)
+      do i = 1, 49
+        shell%dir_history(i) = shell%dir_history(i + 1)
+      end do
+    end if
+
+    shell%dir_history(shell%dir_history_size) = trim(dir)
+    shell%dir_history_index = shell%dir_history_size
+  end subroutine add_to_dir_history
+
+  ! prevd builtin - go to previous directory in history
+  subroutine builtin_prevd(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+
+    if (shell%dir_history_index <= 1) then
+      write(error_unit, '(a)') 'prevd: no previous directory'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    shell%dir_history_index = shell%dir_history_index - 1
+
+    if (change_directory(trim(shell%dir_history(shell%dir_history_index)))) then
+      shell%oldpwd = shell%cwd
+      shell%cwd = get_current_directory()
+      write(output_unit, '(a)') trim(shell%cwd)
+      shell%last_exit_status = 0
+    else
+      write(error_unit, '(a)') 'prevd: cannot access directory'
+      shell%dir_history_index = shell%dir_history_index + 1
+      shell%last_exit_status = 1
+    end if
+  end subroutine builtin_prevd
+
+  ! nextd builtin - go to next directory in history
+  subroutine builtin_nextd(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+
+    if (shell%dir_history_index >= shell%dir_history_size) then
+      write(error_unit, '(a)') 'nextd: no next directory'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    shell%dir_history_index = shell%dir_history_index + 1
+
+    if (change_directory(trim(shell%dir_history(shell%dir_history_index)))) then
+      shell%oldpwd = shell%cwd
+      shell%cwd = get_current_directory()
+      write(output_unit, '(a)') trim(shell%cwd)
+      shell%last_exit_status = 0
+    else
+      write(error_unit, '(a)') 'nextd: cannot access directory'
+      shell%dir_history_index = shell%dir_history_index - 1
+      shell%last_exit_status = 1
+    end if
+  end subroutine builtin_nextd
+
+  ! dirh builtin - show directory history
+  subroutine builtin_dirh(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i
+
+    if (shell%dir_history_size == 0) then
+      write(output_unit, '(a)') 'Directory history is empty'
+      shell%last_exit_status = 0
+      return
+    end if
+
+    write(output_unit, '(a)') 'Directory history:'
+    do i = 1, shell%dir_history_size
+      if (i == shell%dir_history_index) then
+        ! Highlight current position
+        write(output_unit, '(i3,a,a)') i, ' * ', trim(shell%dir_history(i))
+      else
+        write(output_unit, '(i3,a,a)') i, '   ', trim(shell%dir_history(i))
+      end if
+    end do
+
+    shell%last_exit_status = 0
+  end subroutine builtin_dirh
+
 
 end module builtins

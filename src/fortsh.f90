@@ -26,6 +26,9 @@ program fortran_shell
   character(len=1024) :: arg1, command_string
   logical :: execute_command_string, execute_script_file
   character(len=:), allocatable :: script_file
+  ! Command duration tracking
+  integer :: cmd_start_time, cmd_end_time, cmd_duration_ms, clock_rate
+  real :: cmd_duration_sec
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
@@ -187,7 +190,21 @@ program fortran_shell
 
     ! Execute pipeline
     if (pipeline%num_commands > 0) then
+      ! Track command duration (Fish-style)
+      call system_clock(cmd_start_time, clock_rate)
+
       call execute_pipeline(pipeline, shell, expanded_line)
+
+      ! Calculate and display duration if > 1 second
+      call system_clock(cmd_end_time)
+      cmd_duration_ms = (cmd_end_time - cmd_start_time) * 1000 / clock_rate
+      cmd_duration_sec = real(cmd_duration_ms) / 1000.0
+
+      ! Display duration if > 1 second (Fish-style)
+      if (shell%is_interactive .and. cmd_duration_sec >= 1.0) then
+        write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
+                                         cmd_duration_sec, 's' // char(27) // '[0m'
+      end if
 
       ! Check if we need to replay loop body (only if NOT currently capturing)
       if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
