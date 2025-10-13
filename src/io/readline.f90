@@ -6,6 +6,7 @@ module readline
   use shell_types
   use system_interface
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
+  use syntax_highlight, only: highlight_command_line, init_syntax_highlighting
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
   implicit none
@@ -1998,8 +1999,8 @@ contains
       input_state%length = input_state%length + 1
       input_state%buffer(input_state%length:input_state%length) = ch
       input_state%cursor_pos = input_state%length
-      write(output_unit, '(a)', advance='no') ch
-      flush(output_unit)
+      ! Always trigger highlighting for real-time color updates
+      input_state%dirty = .true.
     else
       ! Insert in middle - shift characters right
       do i = input_state%length, input_state%cursor_pos + 1, -1
@@ -2032,8 +2033,8 @@ contains
       input_state%length = input_state%length - 1
       input_state%cursor_pos = input_state%cursor_pos - 1
       input_state%buffer(input_state%length+1:input_state%length+1) = ' '
-      write(output_unit, '(a)', advance='no') char(8) // ' ' // char(8)  ! Backspace, space, backspace
-      flush(output_unit)
+      ! Always trigger highlighting for real-time color updates
+      input_state%dirty = .true.
     else
       ! Delete in middle - shift characters left
       do i = input_state%cursor_pos, input_state%length - 1
@@ -2226,23 +2227,72 @@ contains
     character(len=*), intent(in) :: prompt
     type(input_state_t), intent(in) :: input_state
     integer :: i
-    
-    ! Move to beginning of line and clear it
-    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-    
-    ! Redraw prompt and current buffer
+    character(len=:), allocatable :: highlighted
+
+    ! Move to beginning of line (don't clear yet - reduces flashing)
+    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+
+    ! Redraw prompt and current buffer with syntax highlighting
     write(output_unit, '(a)', advance='no') prompt
     if (input_state%length > 0) then
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+      ! Apply syntax highlighting to the current buffer
+      highlighted = highlight_command_line(input_state%buffer(:input_state%length))
+      ! Don't use trim() - it would remove trailing spaces!
+      write(output_unit, '(a)', advance='no') highlighted
     end if
-    
+
+    ! Clear from here to end of line (removes any leftover characters)
+    write(output_unit, '(a)', advance='no') char(27) // '[K'
+
     ! Position cursor correctly
     do i = input_state%length, input_state%cursor_pos + 1, -1
       write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
     end do
-    
+
     flush(output_unit)
   end subroutine
+
+  ! Partial redraw - only from cursor to end (reduces flashing)
+  subroutine redraw_from_cursor(input_state)
+    use syntax_highlight, only: highlight_command_line
+    type(input_state_t), intent(in) :: input_state
+    character(len=:), allocatable :: highlighted
+    integer :: i, cursor_col
+
+    if (input_state%length == 0) return
+
+    ! Save current cursor column (we're already at the right position)
+    cursor_col = input_state%cursor_pos
+
+    ! Move to just before cursor position (account for prompt already displayed)
+    ! We need to move back to start of buffer to redraw with highlighting
+    if (cursor_col > 0) then
+      do i = 1, cursor_col
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      end do
+    end if
+
+    ! Clear from here to end of line
+    write(output_unit, '(a)', advance='no') char(27) // '[K'
+
+    ! Redraw buffer with highlighting
+    highlighted = highlight_command_line(input_state%buffer(:input_state%length))
+    write(output_unit, '(a)', advance='no') highlighted
+
+    ! Move cursor back to correct position
+    do i = input_state%length, cursor_col + 1, -1
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+    end do
+
+    flush(output_unit)
+  end subroutine
+
+  ! Helper to convert integer to string
+  function int_to_str(n) result(str)
+    integer, intent(in) :: n
+    character(len=20) :: str
+    write(str, '(i0)') n
+  end function
 
   ! Advanced line editing functions for Phase 5
   subroutine handle_home(input_state)
