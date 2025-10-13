@@ -12,31 +12,40 @@ contains
   subroutine builtin_printf(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=2048) :: format_string, output_buffer
-    integer :: arg_index, output_pos
-    
+    integer :: arg_index, prev_arg_index
+
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'printf: usage: printf FORMAT [ARGUMENTS...]'
       shell%last_exit_status = 1
       return
     end if
-    
+
     format_string = cmd%tokens(2)
     arg_index = 3
-    
-    call process_printf_format(format_string, cmd%tokens, cmd%num_tokens, arg_index, output_buffer)
-    
-    write(output_unit, '(a)', advance='no') trim(output_buffer)
+
+    ! POSIX behavior: always output format string at least once,
+    ! then repeat for any remaining arguments
+    do
+      prev_arg_index = arg_index
+      call process_printf_format(format_string, cmd%tokens, cmd%num_tokens, arg_index, output_buffer)
+      write(output_unit, '(a)', advance='no') trim(output_buffer)
+
+      ! If no arguments were consumed, we're done (format has no specifiers or no more args)
+      if (arg_index == prev_arg_index .or. arg_index > cmd%num_tokens) exit
+    end do
+
     shell%last_exit_status = 0
   end subroutine
 
   subroutine process_printf_format(format_str, args, num_args, start_arg, output)
     character(len=*), intent(in) :: format_str
     character(len=*), intent(in) :: args(:)
-    integer, intent(in) :: num_args, start_arg
+    integer, intent(in) :: num_args
+    integer, intent(inout) :: start_arg
     character(len=*), intent(out) :: output
-    
+
     integer :: pos, output_pos, arg_index
     character :: current_char, next_char
     character(len=16) :: format_spec
@@ -89,6 +98,9 @@ contains
         pos = pos + 1
       end if
     end do
+
+    ! Update start_arg to reflect how many arguments were consumed
+    start_arg = arg_index
   end subroutine
 
   subroutine parse_format_specifier(format_str, pos, format_spec)
