@@ -892,59 +892,143 @@ contains
   subroutine handle_vi_command_mode(input_state, key)
     type(input_state_t), intent(inout) :: input_state
     integer, intent(in) :: key
-    
+    character :: key_char
+    integer :: repeat_count, i
+
     if (input_state%editing_mode /= EDITING_MODE_VI .or. input_state%vi_mode /= VI_MODE_COMMAND) return
-    
+
+    key_char = char(key)
+
+    ! Handle pending two-character commands first
+    if (len_trim(input_state%vi_command_buffer) > 0) then
+      select case (input_state%vi_command_buffer(1:1))
+      case ('m')
+        ! Setting a mark
+        call handle_vi_mark_set(input_state, key_char)
+        return
+      case ("'")
+        ! Jumping to a mark
+        call handle_vi_mark_jump(input_state, key_char)
+        return
+      case ('d')
+        ! Delete with motion
+        call handle_vi_delete_with_motion(input_state, key_char)
+        return
+      case ('y')
+        ! Yank with motion
+        call handle_vi_yank_with_motion(input_state, key_char)
+        return
+      case ('c')
+        ! Change with motion
+        call handle_vi_change_with_motion(input_state, key_char)
+        return
+      case ('r')
+        ! Replace character
+        call handle_vi_replace_char(input_state, key_char)
+        return
+      end select
+    end if
+
+    ! Handle repeat counts (1-9)
+    if (key >= ichar('1') .and. key <= ichar('9') .and. .not. input_state%vi_repeat_pending) then
+      input_state%vi_repeat_pending = .true.
+      input_state%vi_command_count = key - ichar('0')
+      return
+    else if (key >= ichar('0') .and. key <= ichar('9') .and. input_state%vi_repeat_pending) then
+      input_state%vi_command_count = input_state%vi_command_count * 10 + (key - ichar('0'))
+      return
+    end if
+
+    ! Get repeat count (default to 1)
+    if (input_state%vi_repeat_pending) then
+      repeat_count = input_state%vi_command_count
+      input_state%vi_repeat_pending = .false.
+      input_state%vi_command_count = 0
+    else
+      repeat_count = 1
+    end if
+
     select case (key)
-    ! Navigation
+    ! Navigation (with repeat)
     case (ichar('h'))
       ! Move left
-      if (input_state%cursor_pos > 0) then
-        input_state%cursor_pos = input_state%cursor_pos - 1
-        input_state%dirty = .true.
-      end if
+      do i = 1, repeat_count
+        if (input_state%cursor_pos > 0) then
+          input_state%cursor_pos = input_state%cursor_pos - 1
+        end if
+      end do
+      input_state%dirty = .true.
     case (ichar('l'))
       ! Move right
-      if (input_state%cursor_pos < input_state%length - 1) then
-        input_state%cursor_pos = input_state%cursor_pos + 1
-        input_state%dirty = .true.
-      end if
+      do i = 1, repeat_count
+        if (input_state%cursor_pos < input_state%length - 1) then
+          input_state%cursor_pos = input_state%cursor_pos + 1
+        end if
+      end do
+      input_state%dirty = .true.
     case (ichar('j'))
       ! Move down (history down)
-      call handle_history_down(input_state)
+      do i = 1, repeat_count
+        call handle_history_down(input_state)
+      end do
     case (ichar('k'))
       ! Move up (history up)
-      call handle_history_up(input_state)
+      do i = 1, repeat_count
+        call handle_history_up(input_state)
+      end do
     case (ichar('0'))
-      ! Beginning of line
+      ! Beginning of line (no repeat)
       input_state%cursor_pos = 0
       input_state%dirty = .true.
     case (ichar('$'))
-      ! End of line
+      ! End of line (no repeat)
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
     case (ichar('w'))
       ! Next word
-      call move_to_next_word(input_state)
+      do i = 1, repeat_count
+        call move_to_next_word(input_state)
+      end do
     case (ichar('b'))
       ! Previous word
-      call move_to_previous_word(input_state)
-      
-    ! Deletion
+      do i = 1, repeat_count
+        call move_to_previous_word(input_state)
+      end do
+    case (ichar('e'))
+      ! End of current word
+      do i = 1, repeat_count
+        call move_to_word_end(input_state)
+      end do
+
+    ! Deletion (with repeat)
     case (ichar('x'))
       ! Delete character at cursor
-      call delete_char_at_cursor(input_state)
+      do i = 1, repeat_count
+        call delete_char_at_cursor(input_state)
+      end do
     case (ichar('X'))
       ! Delete character before cursor
-      if (input_state%cursor_pos > 0) then
-        input_state%cursor_pos = input_state%cursor_pos - 1
-        call delete_char_at_cursor(input_state)
-      end if
+      do i = 1, repeat_count
+        if (input_state%cursor_pos > 0) then
+          input_state%cursor_pos = input_state%cursor_pos - 1
+          call delete_char_at_cursor(input_state)
+        end if
+      end do
     case (ichar('d'))
-      ! Delete (simplified - would need more complex handling)
-      call handle_vi_delete_command(input_state)
-      
-    ! Undo/Redo (simplified)
+      ! Delete with motion - set up for next character
+      input_state%vi_command_buffer = 'd'
+      input_state%vi_command_count = repeat_count
+
+    ! Change (with repeat)
+    case (ichar('c'))
+      ! Change with motion - set up for next character
+      input_state%vi_command_buffer = 'c'
+      input_state%vi_command_count = repeat_count
+    case (ichar('C'))
+      ! Change to end of line
+      call handle_vi_change_to_eol(input_state)
+
+    ! Undo
     case (ichar('u'))
       ! Undo (simplified)
       input_state%buffer = input_state%original_buffer
@@ -954,14 +1038,29 @@ contains
 
     ! Yank and Put (vi-style copy/paste)
     case (ichar('y'))
-      ! Yank (copy) - yank current line for now (simplified)
-      call handle_vi_yank(input_state)
+      ! Yank with motion - set up for next character
+      input_state%vi_command_buffer = 'y'
+      input_state%vi_command_count = repeat_count
     case (ichar('p'))
       ! Put (paste) after cursor
-      call handle_vi_put(input_state, .false.)
+      do i = 1, repeat_count
+        call handle_vi_put(input_state, .false.)
+      end do
     case (ichar('P'))
       ! Put (paste) before cursor
-      call handle_vi_put(input_state, .true.)
+      do i = 1, repeat_count
+        call handle_vi_put(input_state, .true.)
+      end do
+
+    ! Replace
+    case (ichar('r'))
+      ! Replace character - wait for next character
+      input_state%vi_command_buffer = 'r'
+      input_state%vi_command_count = repeat_count
+    case (ichar('R'))
+      ! Replace mode - enter insert mode with replace behavior
+      input_state%vi_mode = VI_MODE_INSERT
+      ! TODO: Add replace mode flag for overwrite behavior
 
     ! Marks
     case (ichar('m'))
@@ -986,25 +1085,266 @@ contains
     case (ichar('N'))
       ! Previous search match
       call handle_vi_search_next(input_state, .false.)
+
+    ! Mode switches (with proper cursor positioning)
+    case (ichar('i'))
+      ! Insert at cursor
+      input_state%vi_mode = VI_MODE_INSERT
+    case (ichar('a'))
+      ! Insert after cursor
+      if (input_state%cursor_pos < input_state%length) then
+        input_state%cursor_pos = input_state%cursor_pos + 1
+      end if
+      input_state%vi_mode = VI_MODE_INSERT
+    case (ichar('I'))
+      ! Insert at beginning of line
+      input_state%cursor_pos = 0
+      input_state%vi_mode = VI_MODE_INSERT
+    case (ichar('A'))
+      ! Insert at end of line
+      input_state%cursor_pos = input_state%length
+      input_state%vi_mode = VI_MODE_INSERT
+    case (ichar('o'))
+      ! Open line below (simplified - just go to end)
+      input_state%cursor_pos = input_state%length
+      input_state%vi_mode = VI_MODE_INSERT
+    case (ichar('O'))
+      ! Open line above (simplified - just go to beginning)
+      input_state%cursor_pos = 0
+      input_state%vi_mode = VI_MODE_INSERT
+    end select
+  end subroutine
+
+  ! Motion-based delete command
+  subroutine handle_vi_delete_with_motion(input_state, motion)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: motion
+    integer :: start_pos, end_pos, delete_len, i, repeat_count
+
+    repeat_count = max(1, input_state%vi_command_count)
+
+    select case (motion)
+    case ('d')
+      ! dd - delete entire line
+      input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
+      input_state%vi_yank_length = input_state%length
+      input_state%buffer = ''
+      input_state%length = 0
+      input_state%cursor_pos = 0
+      input_state%dirty = .true.
+
+    case ('w')
+      ! dw - delete to next word
+      do i = 1, repeat_count
+        start_pos = input_state%cursor_pos + 1
+        call move_to_next_word(input_state)
+        end_pos = input_state%cursor_pos + 1
+        delete_len = end_pos - start_pos
+        if (delete_len > 0) then
+          call yank_range(input_state, start_pos, end_pos)
+          call delete_range(input_state, start_pos, end_pos)
+        end if
+      end do
+
+    case ('$')
+      ! d$ - delete to end of line
+      start_pos = input_state%cursor_pos + 1
+      end_pos = input_state%length + 1
+      call yank_range(input_state, start_pos, end_pos)
+      call delete_range(input_state, start_pos, end_pos)
+
+    case ('0')
+      ! d0 - delete to beginning of line
+      start_pos = 1
+      end_pos = input_state%cursor_pos + 1
+      call yank_range(input_state, start_pos, end_pos)
+      call delete_range(input_state, start_pos, end_pos)
+
+    case ('b')
+      ! db - delete to previous word
+      do i = 1, repeat_count
+        end_pos = input_state%cursor_pos + 1
+        call move_to_previous_word(input_state)
+        start_pos = input_state%cursor_pos + 1
+        call yank_range(input_state, start_pos, end_pos)
+        call delete_range(input_state, start_pos, end_pos)
+      end do
+
+    case ('e')
+      ! de - delete to end of word
+      do i = 1, repeat_count
+        start_pos = input_state%cursor_pos + 1
+        call move_to_word_end(input_state)
+        end_pos = input_state%cursor_pos + 2
+        call yank_range(input_state, start_pos, end_pos)
+        call delete_range(input_state, start_pos, end_pos)
+      end do
     end select
 
-    ! Handle two-character commands (marks)
-    if (input_state%vi_command_count == 1) then
-      if (input_state%vi_command_buffer(1:1) == 'm') then
-        ! Setting a mark - next key press will be the mark letter
-        ! This will be handled in the next call to this function
-      else if (input_state%vi_command_buffer(1:1) == "'") then
-        ! Jumping to a mark - next key press will be the mark letter
-        ! This will be handled in the next call to this function
+    ! Clear command buffer
+    input_state%vi_command_buffer = ''
+    input_state%vi_command_count = 0
+  end subroutine
+
+  ! Motion-based yank command
+  subroutine handle_vi_yank_with_motion(input_state, motion)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: motion
+    integer :: start_pos, end_pos, saved_cursor, repeat_count, i
+
+    repeat_count = max(1, input_state%vi_command_count)
+    saved_cursor = input_state%cursor_pos
+
+    select case (motion)
+    case ('y')
+      ! yy - yank entire line
+      input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
+      input_state%vi_yank_length = input_state%length
+
+    case ('w')
+      ! yw - yank to next word
+      start_pos = input_state%cursor_pos + 1
+      do i = 1, repeat_count
+        call move_to_next_word(input_state)
+      end do
+      end_pos = input_state%cursor_pos + 1
+      call yank_range(input_state, start_pos, end_pos)
+      input_state%cursor_pos = saved_cursor
+
+    case ('$')
+      ! y$ - yank to end of line
+      start_pos = input_state%cursor_pos + 1
+      end_pos = input_state%length + 1
+      call yank_range(input_state, start_pos, end_pos)
+
+    case ('0')
+      ! y0 - yank to beginning of line
+      start_pos = 1
+      end_pos = input_state%cursor_pos + 1
+      call yank_range(input_state, start_pos, end_pos)
+
+    case ('b')
+      ! yb - yank to previous word
+      end_pos = input_state%cursor_pos + 1
+      do i = 1, repeat_count
+        call move_to_previous_word(input_state)
+      end do
+      start_pos = input_state%cursor_pos + 1
+      call yank_range(input_state, start_pos, end_pos)
+      input_state%cursor_pos = saved_cursor
+
+    case ('e')
+      ! ye - yank to end of word
+      start_pos = input_state%cursor_pos + 1
+      do i = 1, repeat_count
+        call move_to_word_end(input_state)
+      end do
+      end_pos = input_state%cursor_pos + 2
+      call yank_range(input_state, start_pos, end_pos)
+      input_state%cursor_pos = saved_cursor
+    end select
+
+    ! Clear command buffer
+    input_state%vi_command_buffer = ''
+    input_state%vi_command_count = 0
+  end subroutine
+
+  ! Motion-based change command
+  subroutine handle_vi_change_with_motion(input_state, motion)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: motion
+
+    ! Change is like delete + insert mode
+    call handle_vi_delete_with_motion(input_state, motion)
+    input_state%vi_mode = VI_MODE_INSERT
+  end subroutine
+
+  ! Change to end of line
+  subroutine handle_vi_change_to_eol(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: start_pos, end_pos
+
+    start_pos = input_state%cursor_pos + 1
+    end_pos = input_state%length + 1
+    call yank_range(input_state, start_pos, end_pos)
+    call delete_range(input_state, start_pos, end_pos)
+    input_state%vi_mode = VI_MODE_INSERT
+  end subroutine
+
+  ! Replace single character
+  subroutine handle_vi_replace_char(input_state, replace_char)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: replace_char
+    integer :: i, repeat_count
+
+    repeat_count = max(1, input_state%vi_command_count)
+
+    ! Replace up to repeat_count characters
+    do i = 1, repeat_count
+      if (input_state%cursor_pos + i - 1 < input_state%length) then
+        input_state%buffer(input_state%cursor_pos+i:input_state%cursor_pos+i) = replace_char
+        input_state%dirty = .true.
       end if
+    end do
+
+    ! Clear command buffer
+    input_state%vi_command_buffer = ''
+    input_state%vi_command_count = 0
+  end subroutine
+
+  ! Helper: Yank a range of characters
+  subroutine yank_range(input_state, start_pos, end_pos)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: start_pos, end_pos
+    integer :: yank_len
+
+    yank_len = max(0, min(end_pos - start_pos, MAX_LINE_LEN))
+    if (yank_len > 0 .and. start_pos >= 1 .and. start_pos <= input_state%length) then
+      input_state%vi_yank_buffer = input_state%buffer(start_pos:start_pos+yank_len-1)
+      input_state%vi_yank_length = yank_len
     end if
   end subroutine
 
-  subroutine handle_vi_delete_command(input_state)
+  ! Helper: Delete a range of characters
+  subroutine delete_range(input_state, start_pos, end_pos)
     type(input_state_t), intent(inout) :: input_state
-    
-    ! Simplified delete command - just delete current character
-    call delete_char_at_cursor(input_state)
+    integer, intent(in) :: start_pos, end_pos
+    integer :: delete_len, i
+
+    delete_len = end_pos - start_pos
+    if (delete_len <= 0) return
+
+    ! Shift remaining characters left
+    do i = start_pos, input_state%length - delete_len
+      if (end_pos + i - start_pos <= input_state%length) then
+        input_state%buffer(i:i) = input_state%buffer(end_pos+i-start_pos:end_pos+i-start_pos)
+      end if
+    end do
+
+    input_state%length = input_state%length - delete_len
+    input_state%cursor_pos = max(0, min(start_pos - 1, input_state%length))
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Move to end of current word
+  subroutine move_to_word_end(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: pos
+
+    pos = input_state%cursor_pos + 1
+
+    ! If on whitespace, skip to next word
+    do while (pos <= input_state%length .and. input_state%buffer(pos:pos) == ' ')
+      pos = pos + 1
+    end do
+
+    ! Find end of word
+    do while (pos <= input_state%length .and. input_state%buffer(pos:pos) /= ' ')
+      pos = pos + 1
+    end do
+
+    input_state%cursor_pos = max(0, min(pos - 2, input_state%length - 1))
+    input_state%dirty = .true.
   end subroutine
 
   subroutine move_to_next_word(input_state)
