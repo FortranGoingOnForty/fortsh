@@ -605,9 +605,9 @@ contains
     character(len=len(input)) :: working_copy
     integer :: pos, start, token_count, i, token_len
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
-    logical :: in_quotes, in_arith, in_array_literal
+    logical :: in_quotes, in_arith, in_array_literal, in_cmd_subst
     character :: quote_char
-    integer :: arith_depth, array_depth
+    integer :: arith_depth, array_depth, cmd_depth
 
     working_copy = adjustl(input)
     ! write(error_unit, '(a,a,a)') 'DEBUG tokenize: input=[', trim(input), ']'
@@ -634,6 +634,8 @@ contains
       quote_char = ' '
       in_array_literal = .false.
       array_depth = 0
+      in_cmd_subst = .false.
+      cmd_depth = 0
 
       ! Skip to end of token (respecting quotes and arithmetic)
       ! Continue past len_trim when inside quotes to preserve trailing spaces
@@ -651,11 +653,16 @@ contains
         ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
         if (.not. in_quotes) then
           ! First, check for special patterns that start arithmetic mode
-          if (.not. in_arith) then
+          if (.not. in_arith .and. .not. in_cmd_subst) then
             if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
               in_arith = .true.
               arith_depth = 2
               pos = pos + 2  ! Skip the $(
+            else if (pos <= len_trim(working_copy) - 1 .and. working_copy(pos:pos+1) == '$(') then
+              ! $( command substitution - but NOT $((
+              in_cmd_subst = .true.
+              cmd_depth = 1
+              pos = pos + 1  ! Skip the $(
             else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
                      working_copy(pos:pos+1) == '((') then
               ! (( at start of token - arithmetic command
@@ -682,6 +689,18 @@ contains
               end if
             end if
           end if
+
+          ! Track parentheses depth if in command substitution mode
+          if (in_cmd_subst) then
+            if (working_copy(pos:pos) == '(') then
+              cmd_depth = cmd_depth + 1
+            else if (working_copy(pos:pos) == ')') then
+              cmd_depth = cmd_depth - 1
+              if (cmd_depth == 0) then
+                in_cmd_subst = .false.
+              end if
+            end if
+          end if
         end if
 
         ! Check for array literal: var=(...)
@@ -701,9 +720,9 @@ contains
           end if
         end if
 
-        ! Check for token boundary (space outside quotes/arithmetic/array)
+        ! Check for token boundary (space outside quotes/arithmetic/array/command-subst)
         if (.not. in_quotes .and. .not. in_arith .and. .not. in_array_literal .and. &
-            working_copy(pos:pos) == ' ') exit
+            .not. in_cmd_subst .and. working_copy(pos:pos) == ' ') exit
 
         pos = pos + 1
       end do
@@ -732,6 +751,8 @@ contains
       quote_char = ' '
       in_array_literal = .false.
       array_depth = 0
+      in_cmd_subst = .false.
+      cmd_depth = 0
 
       ! Find end of token (respecting quotes, arithmetic, and array literals)
       ! Continue past len_trim when inside quotes to preserve trailing spaces
@@ -749,11 +770,16 @@ contains
         ! Check for $((  )) arithmetic expansion and ((  )) arithmetic command
         if (.not. in_quotes) then
           ! First, check for special patterns that start arithmetic mode
-          if (.not. in_arith) then
+          if (.not. in_arith .and. .not. in_cmd_subst) then
             if (pos <= len_trim(working_copy) - 2 .and. working_copy(pos:pos+2) == '$((') then
               in_arith = .true.
               arith_depth = 2
               pos = pos + 2  ! Skip the $(
+            else if (pos <= len_trim(working_copy) - 1 .and. working_copy(pos:pos+1) == '$(') then
+              ! $( command substitution - but NOT $((
+              in_cmd_subst = .true.
+              cmd_depth = 1
+              pos = pos + 1  ! Skip the $(
             else if (pos == start .and. pos <= len_trim(working_copy) - 1 .and. &
                      working_copy(pos:pos+1) == '((') then
               ! (( at start of token - arithmetic command
@@ -780,6 +806,18 @@ contains
               end if
             end if
           end if
+
+          ! Track parentheses depth if in command substitution mode
+          if (in_cmd_subst) then
+            if (working_copy(pos:pos) == '(') then
+              cmd_depth = cmd_depth + 1
+            else if (working_copy(pos:pos) == ')') then
+              cmd_depth = cmd_depth - 1
+              if (cmd_depth == 0) then
+                in_cmd_subst = .false.
+              end if
+            end if
+          end if
         end if
 
         ! Check for array literal: var=(...)
@@ -799,16 +837,16 @@ contains
           end if
         end if
 
-        ! Check for token boundary (space outside quotes/arithmetic/array)
+        ! Check for token boundary (space outside quotes/arithmetic/array/command-subst)
         if (.not. in_quotes .and. .not. in_arith .and. .not. in_array_literal .and. &
-            working_copy(pos:pos) == ' ') exit
+            .not. in_cmd_subst .and. working_copy(pos:pos) == ' ') exit
 
         pos = pos + 1
       end do
 
-      ! Store token (strip outer quotes)
+      ! Store token (DON'T strip quotes yet - expand_variables needs to see them)
       token_count = token_count + 1
-      temp_tokens(token_count) = strip_outer_quotes(working_copy(start:pos-1))
+      temp_tokens(token_count) = working_copy(start:pos-1)
     end do
 
     ! Now allocate the final deferred-length character array
@@ -855,15 +893,25 @@ contains
     character(len=MAX_TOKEN_LEN) :: var_name
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
-    logical :: is_quoted
+    logical :: is_quoted, is_single_quoted
 
     ! Check if token is quoted (starts and ends with matching quotes)
     is_quoted = .false.
+    is_single_quoted = .false.
     if (len_trim(token) >= 2) then
-      if ((token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"') .or. &
-          (token(1:1) == "'" .and. token(len_trim(token):len_trim(token)) == "'")) then
+      if (token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"') then
         is_quoted = .true.
+      else if (token(1:1) == "'" .and. token(len_trim(token):len_trim(token)) == "'") then
+        is_quoted = .true.
+        is_single_quoted = .true.
       end if
+    end if
+
+    ! Single quotes preserve everything literally - no expansion at all
+    if (is_single_quoted) then
+      ! Return the token with outer quotes stripped
+      expanded = strip_outer_quotes(token)
+      return
     end if
 
     ! Apply brace expansion ONLY if token is not quoted
@@ -879,6 +927,22 @@ contains
     j = 1
 
     do while (i <= len_trim(working_token))
+      ! Check for backslash escape in double-quoted strings
+      if (is_quoted .and. .not. is_single_quoted .and. working_token(i:i) == '\' .and. &
+          i < len_trim(working_token)) then
+        ! In double quotes, backslash escapes: $ ` " \ and newline
+        if (working_token(i+1:i+1) == '$' .or. working_token(i+1:i+1) == '`' .or. &
+            working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
+          ! Skip the backslash and add the escaped character
+          i = i + 1
+          result(j:j) = working_token(i:i)
+          i = i + 1
+          j = j + 1
+          cycle
+        end if
+        ! Otherwise, keep the backslash (it's not escaping anything special)
+      end if
+
       if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ')) then
         ! Tilde expansion
         call process_tilde_expansion(working_token, i, result, j, shell)
@@ -1061,9 +1125,10 @@ contains
         j = j + 1
       end if
     end do
-    
-    expanded = trim(result)
-    
+
+    ! Strip outer quotes from result if the original token was quoted
+    expanded = strip_outer_quotes(trim(result))
+
   contains
     
     function is_alnum(ch) result(res)

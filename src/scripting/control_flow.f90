@@ -30,6 +30,7 @@ module control_flow
   integer, parameter :: FLOW_IF = 1
   integer, parameter :: FLOW_THEN = 2
   integer, parameter :: FLOW_ELSE = 3
+  integer, parameter :: FLOW_ELIF = 15
   integer, parameter :: FLOW_FI = 4
   integer, parameter :: FLOW_WHILE = 5
   integer, parameter :: FLOW_FOR = 6
@@ -62,10 +63,11 @@ contains
   function is_control_flow_keyword(word) result(is_flow)
     character(len=*), intent(in) :: word
     logical :: is_flow
-    
+
     is_flow = (trim(word) == 'if' .or. &
                trim(word) == 'then' .or. &
                trim(word) == 'else' .or. &
+               trim(word) == 'elif' .or. &
                trim(word) == 'fi' .or. &
                trim(word) == 'while' .or. &
                trim(word) == 'for' .or. &
@@ -82,7 +84,7 @@ contains
   function identify_flow_keyword(word) result(flow_type)
     character(len=*), intent(in) :: word
     integer :: flow_type
-    
+
     select case(trim(word))
     case('if')
       flow_type = FLOW_IF
@@ -90,6 +92,8 @@ contains
       flow_type = FLOW_THEN
     case('else')
       flow_type = FLOW_ELSE
+    case('elif')
+      flow_type = FLOW_ELIF
     case('fi')
       flow_type = FLOW_FI
     case('while')
@@ -170,7 +174,9 @@ contains
     case('then')
       call process_then_statement(cmd, shell, should_execute)
     case('else')
-      call process_else_statement(shell, should_execute)  
+      call process_else_statement(shell, should_execute)
+    case('elif')
+      call process_elif_statement(cmd, shell, should_execute)
     case('fi')
       call process_fi_statement(shell, should_execute)
     case('while')
@@ -302,8 +308,9 @@ contains
 
     character(len=256) :: var_name, list_part
     character(len=256) :: expanded_items(100)
-    integer :: expanded_count
-    integer :: in_pos, i, j, word_start, word_end
+    character(len=256) :: final_items(100)
+    integer :: expanded_count, final_count, start_pos, end_pos
+    integer :: in_pos, i, j, k, word_start, word_end
 
     should_execute = .false.  ! Don't execute the for command itself
 
@@ -337,19 +344,46 @@ contains
     ! Expand braces before parsing values (e.g., {1..5} -> 1 2 3 4 5)
     call expand_braces(list_part, expanded_items, expanded_count)
 
-    ! Push for block onto control stack and use expanded items directly
+    ! Now split each expanded item on spaces to get final list
+    ! (expand_braces doesn't split on spaces, so "a b c" is one item)
+    final_count = 0
+
+    do i = 1, expanded_count
+      ! Split this expanded item on spaces
+      start_pos = 1
+      do while (start_pos <= len_trim(expanded_items(i)) .and. final_count < 100)
+        ! Skip leading spaces
+        do while (start_pos <= len_trim(expanded_items(i)) .and. expanded_items(i)(start_pos:start_pos) == ' ')
+          start_pos = start_pos + 1
+        end do
+
+        if (start_pos > len_trim(expanded_items(i))) exit
+
+        ! Find end of current word
+        end_pos = start_pos
+        do while (end_pos <= len_trim(expanded_items(i)) .and. expanded_items(i)(end_pos:end_pos) /= ' ')
+          end_pos = end_pos + 1
+        end do
+
+        final_count = final_count + 1
+        final_items(final_count) = expanded_items(i)(start_pos:end_pos-1)
+        start_pos = end_pos + 1
+      end do
+    end do
+
+    ! Push for block onto control stack with final split items
     if (shell%control_depth < MAX_CONTROL_DEPTH) then
       shell%control_depth = shell%control_depth + 1
       shell%control_stack(shell%control_depth)%block_type = BLOCK_FOR
       shell%control_stack(shell%control_depth)%loop_variable = var_name
       shell%control_stack(shell%control_depth)%for_list = list_part
 
-      ! Use expanded items directly instead of parsing again
-      shell%control_stack(shell%control_depth)%for_count = expanded_count
-      if (expanded_count > 0) then
-        allocate(shell%control_stack(shell%control_depth)%for_values(expanded_count))
-        do i = 1, expanded_count
-          shell%control_stack(shell%control_depth)%for_values(i) = trim(expanded_items(i))
+      ! Use final split items
+      shell%control_stack(shell%control_depth)%for_count = final_count
+      if (final_count > 0) then
+        allocate(shell%control_stack(shell%control_depth)%for_values(final_count))
+        do i = 1, final_count
+          shell%control_stack(shell%control_depth)%for_values(i) = trim(final_items(i))
         end do
       end if
 
@@ -505,20 +539,73 @@ contains
   subroutine process_else_statement(shell, should_execute)
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
-    
+
     should_execute = .false.  ! Don't execute the "else" keyword itself
-    
+
     if (shell%control_depth == 0 .or. &
         shell%control_stack(shell%control_depth)%block_type /= BLOCK_IF) then
       write(error_unit, '(a)') 'else: no matching if'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Switch to else branch - flip the execution logic
     shell%control_stack(shell%control_depth)%in_else_branch = .true.
     shell%control_stack(shell%control_depth)%should_execute = &
       .not. shell%control_stack(shell%control_depth)%condition_met
+  end subroutine
+
+  subroutine process_elif_statement(cmd, shell, should_execute)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(out) :: should_execute
+    logical :: condition_result
+    integer :: i
+    character(len=1024) :: condition_cmd
+
+    should_execute = .false.  ! Don't execute the "elif" keyword itself
+
+    if (shell%control_depth == 0 .or. &
+        shell%control_stack(shell%control_depth)%block_type /= BLOCK_IF) then
+      write(error_unit, '(a)') 'elif: no matching if'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Parse elif condition: elif [ condition ] or elif command
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'elif: missing condition'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Build condition command from tokens (skip "elif")
+    condition_cmd = ''
+    do i = 2, cmd%num_tokens
+      if (len_trim(condition_cmd) > 0) then
+        condition_cmd = trim(condition_cmd) // ' ' // trim(cmd%tokens(i))
+      else
+        condition_cmd = trim(cmd%tokens(i))
+      end if
+    end do
+
+    ! Only evaluate elif if previous conditions were false
+    if (.not. shell%control_stack(shell%control_depth)%condition_met) then
+      ! Evaluate condition
+      if (associated(evaluate_condition)) then
+        call evaluate_condition(condition_cmd, shell, condition_result)
+      else
+        write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
+        condition_result = .false.
+      end if
+
+      ! Update control stack based on condition result
+      shell%control_stack(shell%control_depth)%condition_met = condition_result
+      shell%control_stack(shell%control_depth)%should_execute = condition_result
+    else
+      ! Previous condition was met, skip this elif
+      shell%control_stack(shell%control_depth)%should_execute = .false.
+    end if
   end subroutine
 
   subroutine process_fi_statement(shell, should_execute)

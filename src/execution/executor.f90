@@ -306,15 +306,31 @@ contains
     ! Check for control flow keywords and apply control flow state
     if (allocated(cmd%tokens) .and. cmd%num_tokens > 0) then
       if (is_control_flow_keyword(cmd%tokens(1))) then
-        call process_control_flow(cmd, shell, should_execute)
-        if (.not. should_execute) return
-
         ! Special handling for single-line if statements: if condition; then command; fi
-        ! After processing "then", check if there are extra tokens to execute
+        ! Check BEFORE processing control flow, because process_control_flow will set should_execute=false for "then"/"else"
         if (trim(cmd%tokens(1)) == 'then' .and. cmd%num_tokens > 1) then
+          call process_control_flow(cmd, shell, should_execute)
           call execute_inline_then_commands(cmd, shell)
           return
         end if
+
+        ! Special handling for single-line else: else echo command
+        if (trim(cmd%tokens(1)) == 'else' .and. cmd%num_tokens > 1) then
+          call process_control_flow(cmd, shell, should_execute)
+          call execute_inline_then_commands(cmd, shell)  ! Reuse same function since logic is identical
+          return
+        end if
+
+        ! Special handling for single-line elif: elif condition; then echo command
+        if (trim(cmd%tokens(1)) == 'elif') then
+          call process_control_flow(cmd, shell, should_execute)
+          ! If the elif condition was true and we should execute, wait for the "then" keyword
+          ! The inline command will be handled when we see "then"
+          return
+        end if
+
+        call process_control_flow(cmd, shell, should_execute)
+        if (.not. should_execute) return
       else
         ! For regular commands, check if we should execute based on control flow state
         call process_control_flow(cmd, shell, should_execute)

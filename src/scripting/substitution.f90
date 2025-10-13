@@ -109,41 +109,68 @@ contains
   subroutine execute_command_and_capture(command, output)
     character(len=*), intent(in) :: command
     character(len=*), intent(out) :: output
-    
-    integer :: unit, iostat, pos
+
+    integer :: unit, iostat, pos, exit_status
     character(len=256) :: temp_file, line
-    character(len=1024) :: full_cmd
-    
+    character(len=2048) :: full_cmd
+    logical :: file_exists
+
     output = ''
-    
+
     ! Create temporary file for output capture
     temp_file = '/tmp/fortsh_subst_' // generate_temp_suffix()
-    
-    ! Execute command with output redirection - simplified
-    output = 'mock_output'  ! Placeholder
-    
+
+    ! Build command with output redirection to temp file
+    ! Redirect both stdout and stderr to allow capturing all output
+    full_cmd = 'sh -c ' // "'" // trim(command) // "' > " // trim(temp_file) // ' 2>&1'
+
+    ! Execute command using Fortran intrinsic
+    call execute_command_line(trim(full_cmd), exitstat=exit_status, cmdstat=iostat)
+
+    ! Check if temp file was created
+    inquire(file=trim(temp_file), exist=file_exists)
+    if (.not. file_exists) then
+      ! Command failed or produced no output
+      return
+    end if
+
     ! Read captured output
-    open(newunit=unit, file=trim(temp_file), status='old', iostat=iostat)
+    open(newunit=unit, file=trim(temp_file), status='old', action='read', iostat=iostat)
     if (iostat == 0) then
       pos = 1
       do
         read(unit, '(A)', iostat=iostat) line
         if (iostat /= 0) exit
-        
-        if (pos + len_trim(line) <= len(output)) then
-          output(pos:pos+len_trim(line)-1) = trim(line)
-          pos = pos + len_trim(line)
+
+        ! Append line to output with newline
+        if (pos + len_trim(line) + 1 <= len(output)) then
+          if (len_trim(line) > 0) then
+            output(pos:pos+len_trim(line)-1) = trim(line)
+            pos = pos + len_trim(line)
+          end if
+          ! Add newline after each line (bash behavior)
           if (pos <= len(output)) then
-            output(pos:pos) = char(10)  ! newline
+            output(pos:pos) = char(10)
             pos = pos + 1
           end if
         else
+          ! Output buffer full
           exit
         end if
       end do
       close(unit)
-      
-      ! Remove temporary file - placeholder
+
+      ! Remove trailing newline (bash removes the last newline)
+      do while (pos > 1 .and. output(pos-1:pos-1) == char(10))
+        output(pos-1:pos-1) = ' '
+        pos = pos - 1
+      end do
+    end if
+
+    ! Remove temporary file
+    open(newunit=unit, file=trim(temp_file), status='old', iostat=iostat)
+    if (iostat == 0) then
+      close(unit, status='delete')
     end if
   end subroutine
 

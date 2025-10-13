@@ -114,7 +114,7 @@ program fortran_shell
     end if
 
     ! Exit with last command's exit status
-    stop
+    call c_exit(shell%last_exit_status)
   end if
 
   ! Execute script file if specified
@@ -128,7 +128,7 @@ program fortran_shell
       call print_performance_stats()
     end if
     call cleanup_performance_monitoring()
-    stop
+    call c_exit(shell%last_exit_status)
   end if
 
   ! Main REPL loop
@@ -157,7 +157,10 @@ program fortran_shell
 
     ! Check for EOF (Ctrl-D)
     if (iostat /= 0) then
-      write(output_unit, '(a)') ''
+      ! Only print newline in interactive mode for clean exit
+      if (shell%is_interactive) then
+        write(output_unit, '(a)') ''
+      end if
       exit
     end if
 
@@ -177,7 +180,10 @@ program fortran_shell
 
       ! Check for EOF during continuation
       if (iostat /= 0) then
-        write(output_unit, '(a)') ''
+        ! Only print newline in interactive mode for clean exit
+        if (shell%is_interactive) then
+          write(output_unit, '(a)') ''
+        end if
         exit
       end if
 
@@ -274,7 +280,10 @@ program fortran_shell
   ! Cleanup performance monitoring
   call cleanup_performance_monitoring()
 
-  write(output_unit, '(a)') 'Goodbye!'
+  ! Only print goodbye message in interactive mode
+  if (shell%is_interactive) then
+    write(output_unit, '(a)') 'Goodbye!'
+  end if
 
 contains
 

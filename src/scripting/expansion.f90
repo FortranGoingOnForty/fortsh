@@ -5,6 +5,7 @@
 module expansion
   use shell_types
   use variables
+  use substitution, only: execute_command_and_capture
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -1758,17 +1759,49 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=4096) :: result
     integer :: i, start_pos, end_pos, bracket_count
     character(len=256) :: var_expr
     character(len=2048) :: var_value
-    logical :: in_expansion
-    
+    logical :: in_expansion, in_single_quote, in_double_quote
+
     result = ''
     i = 1
-    
+    in_single_quote = .false.
+    in_double_quote = .false.
+
     do while (i <= len_trim(input))
+      ! Handle quote characters
+      if (input(i:i) == "'" .and. .not. in_double_quote) then
+        ! Single quote - toggle single quote mode (not escapable)
+        in_single_quote = .not. in_single_quote
+        result = trim(result) // input(i:i)
+        i = i + 1
+        cycle
+      else if (input(i:i) == '"' .and. .not. in_single_quote) then
+        ! Double quote - toggle double quote mode (check for escaping)
+        if (i > 1 .and. input(i-1:i-1) == '\') then
+          ! Escaped double quote - already added backslash, add quote
+          result(len_trim(result):len_trim(result)) = '"'
+          i = i + 1
+          cycle
+        else
+          in_double_quote = .not. in_double_quote
+          result = trim(result) // input(i:i)
+          i = i + 1
+          cycle
+        end if
+      end if
+
+      ! Skip all expansions inside single quotes
+      if (in_single_quote) then
+        result = trim(result) // input(i:i)
+        i = i + 1
+        cycle
+      end if
+
+      ! Now handle expansions (only active outside single quotes)
       if (i < len_trim(input) - 2 .and. input(i:i+2) == '$((') then
         ! Arithmetic expansion $((expr))
         start_pos = i
@@ -1786,7 +1819,28 @@ contains
           var_value = arithmetic_expansion(var_expr)
           result = trim(result) // trim(var_value)
         end if
-        
+
+      else if (i < len_trim(input) - 1 .and. input(i:i+1) == '$(' .and. &
+               (i >= len_trim(input) - 2 .or. input(i:i+2) /= '$((')) then
+        ! Command substitution $(command)
+        ! NOTE: We already checked for $(( above, so this is definitely $(
+        start_pos = i
+        bracket_count = 1
+        i = i + 2
+
+        do while (i <= len_trim(input) .and. bracket_count > 0)
+          if (input(i:i) == '(') bracket_count = bracket_count + 1
+          if (input(i:i) == ')') bracket_count = bracket_count - 1
+          i = i + 1
+        end do
+
+        if (bracket_count == 0) then
+          ! Extract command from $( ... )
+          var_expr = input(start_pos+2:i-2)  ! Skip $( and )
+          call execute_command_and_capture(trim(var_expr), var_value)
+          result = trim(result) // trim(var_value)
+        end if
+
       else if (i < len_trim(input) - 1 .and. input(i:i+1) == '${') then
         ! Parameter expansion ${var}
         start_pos = i
