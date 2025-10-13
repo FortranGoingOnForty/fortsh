@@ -22,6 +22,7 @@ module builtins
   use printf_builtin
   use read_builtin
   use iso_fortran_env, only: output_unit, error_unit
+  use completion
   use iso_c_binding
   implicit none
 
@@ -91,6 +92,8 @@ contains
                 trim(cmd_name) == 'read' .or. &
                 trim(cmd_name) == 'fc' .or. &
                 trim(cmd_name) == 'coproc' .or. &
+                trim(cmd_name) == 'complete' .or. &
+                trim(cmd_name) == 'compgen' .or. &
                 is_test_command(cmd_name))
   end function
 
@@ -199,6 +202,10 @@ contains
       call builtin_fc(cmd, shell)
     case('coproc')
       call builtin_coproc(cmd, shell)
+    case('complete')
+      call builtin_complete(cmd, shell)
+    case('compgen')
+      call builtin_compgen(cmd, shell)
     case default
       ! Should not reach here if is_builtin works correctly
       shell%last_exit_status = 1
@@ -2923,5 +2930,361 @@ contains
       close(iostat, status='delete')
     end if
   end subroutine
+
+  ! ===========================================================================
+  ! PROGRAMMABLE COMPLETION BUILTINS
+  ! ===========================================================================
+
+  subroutine builtin_complete(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, arg_idx
+    character(len=256) :: arg
+    type(completion_spec_t) :: spec
+    logical :: remove_flag, list_flag, print_flag
+    character(len=256) :: word_list_arg, function_arg, action_arg
+    character(len=256) :: option_arg, prefix_arg, suffix_arg, filter_arg
+    character(len=256) :: command_names(50)
+    integer :: num_commands
+
+    ! Initialize spec
+    spec%is_active = .false.
+    spec%command = ''
+    spec%word_list_count = 0
+    spec%function_name = ''
+    spec%filter_pattern = ''
+    spec%prefix = ''
+    spec%suffix = ''
+    spec%use_default = .false.
+    spec%use_dirnames = .false.
+    spec%use_filenames = .false.
+    spec%nospace = .false.
+    spec%plusdirs = .false.
+    spec%nosort = .false.
+    spec%builtin_alias = .false.
+    spec%builtin_command = .false.
+    spec%builtin_directory = .false.
+    spec%builtin_file = .false.
+    spec%builtin_function = .false.
+    spec%builtin_hostname = .false.
+    spec%builtin_variable = .false.
+    spec%builtin_user = .false.
+    spec%builtin_group = .false.
+    spec%builtin_service = .false.
+    spec%builtin_export = .false.
+    spec%builtin_keyword = .false.
+    spec%builtin_builtin = .false.
+
+    remove_flag = .false.
+    list_flag = .false.
+    print_flag = .false.
+    word_list_arg = ''
+    function_arg = ''
+    action_arg = ''
+    option_arg = ''
+    prefix_arg = ''
+    suffix_arg = ''
+    filter_arg = ''
+    num_commands = 0
+
+    ! Parse arguments
+    i = 2
+    do while (i <= cmd%num_tokens)
+      arg = trim(cmd%tokens(i))
+
+      if (arg == '-r') then
+        ! Remove completion spec
+        remove_flag = .true.
+        i = i + 1
+      else if (arg == '-p' .or. arg == '-l') then
+        ! List/print completion specs
+        list_flag = .true.
+        i = i + 1
+      else if (arg == '-W') then
+        ! Word list
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          word_list_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'complete: -W requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg == '-F') then
+        ! Function name
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          function_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'complete: -F requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg == '-A') then
+        ! Built-in action
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          action_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'complete: -A requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg == '-o') then
+        ! Option
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          option_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'complete: -o requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg == '-P') then
+        ! Prefix
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          prefix_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'complete: -P requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg == '-S') then
+        ! Suffix
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          suffix_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'complete: -S requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg == '-X') then
+        ! Filter pattern
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          filter_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'complete: -X requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg(1:1) /= '-') then
+        ! Command name
+        num_commands = num_commands + 1
+        if (num_commands <= 50) then
+          command_names(num_commands) = trim(arg)
+        end if
+        i = i + 1
+      else
+        write(error_unit, '(a)') 'complete: invalid option: ' // trim(arg)
+        shell%last_exit_status = 2
+        return
+      end if
+    end do
+
+    ! Handle list flag
+    if (list_flag) then
+      call list_completion_specs()
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! Handle remove flag
+    if (remove_flag) then
+      if (num_commands == 0) then
+        ! Remove all specs
+        call clear_completion_specs()
+      else
+        ! Remove specific specs
+        do i = 1, num_commands
+          if (.not. remove_completion_spec(trim(command_names(i)))) then
+            shell%last_exit_status = 1
+          end if
+        end do
+      end if
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! Build completion spec
+    if (len_trim(word_list_arg) > 0) then
+      call parse_word_list(word_list_arg, spec)
+    end if
+
+    if (len_trim(function_arg) > 0) then
+      spec%function_name = function_arg
+    end if
+
+    if (len_trim(action_arg) > 0) then
+      select case(trim(action_arg))
+      case('alias')
+        spec%builtin_alias = .true.
+      case('command')
+        spec%builtin_command = .true.
+      case('directory')
+        spec%builtin_directory = .true.
+      case('file')
+        spec%builtin_file = .true.
+      case('function')
+        spec%builtin_function = .true.
+      case('hostname')
+        spec%builtin_hostname = .true.
+      case('variable')
+        spec%builtin_variable = .true.
+      case('user')
+        spec%builtin_user = .true.
+      case('group')
+        spec%builtin_group = .true.
+      case('service')
+        spec%builtin_service = .true.
+      case('export')
+        spec%builtin_export = .true.
+      case('keyword')
+        spec%builtin_keyword = .true.
+      case('builtin')
+        spec%builtin_builtin = .true.
+      case default
+        write(error_unit, '(a)') 'complete: invalid action: ' // trim(action_arg)
+        shell%last_exit_status = 1
+        return
+      end select
+    end if
+
+    if (len_trim(option_arg) > 0) then
+      select case(trim(option_arg))
+      case('default')
+        spec%use_default = .true.
+      case('dirnames')
+        spec%use_dirnames = .true.
+      case('filenames')
+        spec%use_filenames = .true.
+      case('nospace')
+        spec%nospace = .true.
+      case('plusdirs')
+        spec%plusdirs = .true.
+      case('nosort')
+        spec%nosort = .true.
+      case default
+        write(error_unit, '(a)') 'complete: invalid option: ' // trim(option_arg)
+        shell%last_exit_status = 1
+        return
+      end select
+    end if
+
+    if (len_trim(prefix_arg) > 0) then
+      spec%prefix = prefix_arg
+    end if
+
+    if (len_trim(suffix_arg) > 0) then
+      spec%suffix = suffix_arg
+    end if
+
+    if (len_trim(filter_arg) > 0) then
+      spec%filter_pattern = filter_arg
+    end if
+
+    ! Register spec for each command
+    if (num_commands == 0) then
+      write(error_unit, '(a)') 'complete: no command names specified'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    do i = 1, num_commands
+      spec%command = trim(command_names(i))
+      if (.not. register_completion_spec(spec)) then
+        write(error_unit, '(a)') 'complete: failed to register spec for ' // trim(command_names(i))
+        shell%last_exit_status = 1
+        return
+      end if
+    end do
+
+    shell%last_exit_status = 0
+  end subroutine builtin_complete
+
+  subroutine builtin_compgen(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    character(len=256) :: word_list_arg, prefix_arg
+    integer :: i
+    character(len=256) :: arg
+    type(completion_spec_t) :: spec
+    character(len=256) :: completions(MAX_COMPLETIONS)
+    integer :: completion_count
+
+    ! compgen is used for testing completion specs
+    ! Syntax: compgen -W "word1 word2 word3" [prefix]
+
+    word_list_arg = ''
+    prefix_arg = ''
+
+    ! Parse arguments
+    i = 2
+    do while (i <= cmd%num_tokens)
+      arg = trim(cmd%tokens(i))
+
+      if (arg == '-W') then
+        ! Word list
+        if (i + 1 <= cmd%num_tokens) then
+          i = i + 1
+          word_list_arg = trim(cmd%tokens(i))
+          i = i + 1
+        else
+          write(error_unit, '(a)') 'compgen: -W requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (arg(1:1) /= '-') then
+        ! Prefix to match
+        prefix_arg = trim(arg)
+        i = i + 1
+      else
+        write(error_unit, '(a)') 'compgen: invalid option: ' // trim(arg)
+        shell%last_exit_status = 2
+        return
+      end if
+    end do
+
+    ! Build a temporary spec for testing
+    spec%is_active = .true.
+    spec%word_list_count = 0
+    spec%function_name = ''
+    spec%filter_pattern = ''
+    spec%prefix = ''
+    spec%suffix = ''
+    spec%use_default = .false.
+    spec%use_dirnames = .false.
+    spec%use_filenames = .false.
+    spec%nospace = .false.
+    spec%plusdirs = .false.
+    spec%nosort = .false.
+
+    if (len_trim(word_list_arg) > 0) then
+      call parse_word_list(word_list_arg, spec)
+    end if
+
+    ! Generate completions
+    call generate_word_list_completions(spec, prefix_arg, completions, completion_count)
+
+    ! Print completions (one per line)
+    do i = 1, completion_count
+      write(output_unit, '(a)') trim(completions(i))
+    end do
+
+    if (completion_count > 0) then
+      shell%last_exit_status = 0
+    else
+      shell%last_exit_status = 1
+    end if
+  end subroutine builtin_compgen
 
 end module builtins
