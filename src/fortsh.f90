@@ -98,6 +98,11 @@ program fortran_shell
     if (pipeline%num_commands > 0) then
       call execute_pipeline(pipeline, shell, trim(command_string))
 
+      ! Check if we need to replay loop body (for loops, while, until)
+      if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+        call replay_loop_if_needed(shell)
+      end if
+
       ! Clean up pipeline
       if (allocated(pipeline%commands)) then
         do i = 1, pipeline%num_commands
