@@ -1831,7 +1831,7 @@ contains
     integer :: i, start_val, end_val, step_val, current_val
     integer :: start_char, end_char, current_char
     integer :: last_pos, second_dot
-    logical :: is_numeric, is_alpha, has_step
+    logical :: is_numeric, is_alpha, has_step, found_comma
     character(16) :: num_str
     character(len=:), allocatable :: start_str, end_str, step_str
 
@@ -1950,6 +1950,10 @@ contains
           end do
         end if
         expanded = trim(result_buf)
+        ! Recursively expand if result still contains braces
+        if (index(expanded, '{') > 0) then
+          expanded = recursive_expand_all_braces(expanded)
+        end if
         return
       else if (is_alpha) then
         ! Alphabetic range expansion
@@ -1980,6 +1984,8 @@ contains
       end if
     else
       ! List expansion: {a,b,c} - respect nested braces when finding commas
+      ! Only expand if there's at least one comma at depth 0
+      found_comma = .false.
       last_pos = 1
       depth = 0
       do i = 1, len_trim(brace_content)
@@ -1989,6 +1995,7 @@ contains
           depth = depth - 1
         else if (brace_content(i:i) == ',' .and. depth == 0) then
           ! Found a comma at depth 0 - extract item
+          found_comma = .true.
           item = brace_content(last_pos:i-1)
           if (len_trim(result_buf) > 0) then
             result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(item) // trim(suffix)
@@ -1998,6 +2005,13 @@ contains
           last_pos = i + 1
         end if
       end do
+
+      ! Only expand if we found at least one comma
+      if (.not. found_comma) then
+        ! No comma found - not a valid brace expansion, return unchanged
+        return
+      end if
+
       ! Don't forget last item
       item = brace_content(last_pos:)
       if (len_trim(result_buf) > 0) then
@@ -2006,10 +2020,72 @@ contains
         result_buf = trim(prefix) // trim(item) // trim(suffix)
       end if
       expanded = trim(result_buf)
+      ! Recursively expand if result still contains braces
+      if (index(expanded, '{') > 0) then
+        expanded = recursive_expand_all_braces(expanded)
+      end if
       return
     end if
 
   end function expand_braces
+
+  ! Helper function to recursively expand all braces in space-separated results
+  function recursive_expand_all_braces(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable :: output
+    character(len=1024) :: words(100), temp_result
+    integer :: word_count, i, j, out_pos
+    character(len=4096) :: final_result
+
+    ! Split by spaces
+    word_count = 0
+    j = 1
+    out_pos = 1
+    do i = 1, len_trim(input)
+      if (input(i:i) == ' ') then
+        if (out_pos > 1) then
+          word_count = word_count + 1
+          if (word_count <= 100) then
+            words(word_count) = temp_result(:out_pos-1)
+          end if
+          out_pos = 1
+        end if
+      else
+        temp_result(out_pos:out_pos) = input(i:i)
+        out_pos = out_pos + 1
+      end if
+    end do
+    ! Don't forget last word
+    if (out_pos > 1) then
+      word_count = word_count + 1
+      if (word_count <= 100) then
+        words(word_count) = temp_result(:out_pos-1)
+      end if
+    end if
+
+    ! Recursively expand each word and recombine
+    final_result = ''
+    do i = 1, word_count
+      if (index(words(i), '{') > 0) then
+        ! Still has braces - recurse
+        temp_result = expand_braces(trim(words(i)))
+        if (len_trim(final_result) > 0) then
+          final_result = trim(final_result) // ' ' // trim(temp_result)
+        else
+          final_result = trim(temp_result)
+        end if
+      else
+        ! No braces - use as-is
+        if (len_trim(final_result) > 0) then
+          final_result = trim(final_result) // ' ' // trim(words(i))
+        else
+          final_result = trim(words(i))
+        end if
+      end if
+    end do
+
+    output = trim(final_result)
+  end function recursive_expand_all_braces
 
   ! Tilde expansion - expands ~ to home directory
   subroutine tilde_expansion(shell, input, output)
