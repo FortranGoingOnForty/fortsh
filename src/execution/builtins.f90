@@ -142,6 +142,8 @@ contains
       call builtin_alias(cmd, shell)
     case('unalias')
       call builtin_unalias(cmd, shell)
+    case('abbr')
+      call builtin_abbr(cmd, shell)
     case('help')
       call builtin_help(cmd, shell)
     case('perf')
@@ -970,18 +972,80 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i
-    
+
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'unalias: usage: unalias name...'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Remove each specified alias
     do i = 2, cmd%num_tokens
       call unset_alias(shell, trim(cmd%tokens(i)))
     end do
-    
+
+    shell%last_exit_status = 0
+  end subroutine
+
+  subroutine builtin_abbr(cmd, shell)
+    use abbreviations
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: eq_pos
+    character(len=256) :: short_form, expanded_form
+    character(len=64) :: abbr_short
+    character(len=256) :: abbr_expanded
+
+    if (cmd%num_tokens == 1) then
+      ! Show all abbreviations
+      call show_abbreviations()
+    else if (cmd%num_tokens >= 2) then
+      ! Check for --erase flag
+      if (trim(cmd%tokens(2)) == '--erase' .or. trim(cmd%tokens(2)) == '-e') then
+        if (cmd%num_tokens >= 3) then
+          abbr_short = trim(cmd%tokens(3))
+          call unset_abbreviation(abbr_short)
+        else
+          write(error_unit, '(a)') 'abbr: --erase requires an abbreviation name'
+          shell%last_exit_status = 1
+          return
+        end if
+      else if (trim(cmd%tokens(2)) == '--show' .or. trim(cmd%tokens(2)) == '-s') then
+        ! Show abbreviations (same as no args)
+        call show_abbreviations()
+      else
+        ! Check for short=expanded format
+        eq_pos = index(cmd%tokens(2), '=')
+        if (eq_pos > 0) then
+          short_form = cmd%tokens(2)(:eq_pos-1)
+          expanded_form = cmd%tokens(2)(eq_pos+1:)
+
+          ! Remove quotes if present
+          if (expanded_form(1:1) == '"' .and. expanded_form(len_trim(expanded_form):len_trim(expanded_form)) == '"') then
+            expanded_form = expanded_form(2:len_trim(expanded_form)-1)
+          else if (expanded_form(1:1) == "'" .and. expanded_form(len_trim(expanded_form):len_trim(expanded_form)) == "'") then
+            expanded_form = expanded_form(2:len_trim(expanded_form)-1)
+          end if
+
+          abbr_short = trim(short_form)
+          abbr_expanded = trim(expanded_form)
+          call set_abbreviation(abbr_short, abbr_expanded)
+        else
+          ! Show specific abbreviation
+          abbr_short = trim(cmd%tokens(2))
+          abbr_expanded = get_abbreviation(abbr_short)
+          if (len(abbr_expanded) > 0) then
+            write(output_unit, '(a)') 'abbr ' // trim(abbr_short) // &
+                                     '=' // "'" // trim(abbr_expanded) // "'"
+          else
+            write(error_unit, '(a)') 'abbr: ' // trim(abbr_short) // ': not found'
+            shell%last_exit_status = 1
+            return
+          end if
+        end if
+      end if
+    end if
+
     shell%last_exit_status = 0
   end subroutine
 

@@ -48,6 +48,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/scripting/substitution.o \
           $(BUILDDIR)/scripting/config.o \
           $(BUILDDIR)/scripting/aliases.o \
+          $(BUILDDIR)/scripting/abbreviations.o \
           $(BUILDDIR)/io/syntax_highlight.o \
           $(BUILDDIR)/io/readline.o \
           $(BUILDDIR)/scripting/shell_options.o \
@@ -163,6 +164,9 @@ $(BUILDDIR)/scripting/config.o: src/scripting/config.f90 $(BUILDDIR)/common/type
 $(BUILDDIR)/scripting/aliases.o: src/scripting/aliases.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
+$(BUILDDIR)/scripting/abbreviations.o: src/scripting/abbreviations.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
 $(BUILDDIR)/scripting/shell_options.o: src/scripting/shell_options.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/prompt_formatting.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
@@ -172,7 +176,7 @@ $(BUILDDIR)/scripting/completion.o: src/scripting/completion.f90 $(BUILDDIR)/com
 $(BUILDDIR)/io/syntax_highlight.o: src/io/syntax_highlight.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/io/syntax_highlight.o | $(BUILDDIR)/io
+$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/scripting/abbreviations.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
