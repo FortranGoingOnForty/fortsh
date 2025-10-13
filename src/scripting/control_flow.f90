@@ -33,6 +33,7 @@ module control_flow
   integer, parameter :: FLOW_ELIF = 15
   integer, parameter :: FLOW_FI = 4
   integer, parameter :: FLOW_WHILE = 5
+  integer, parameter :: FLOW_UNTIL = 16
   integer, parameter :: FLOW_FOR = 6
   integer, parameter :: FLOW_DO = 7
   integer, parameter :: FLOW_DONE = 8
@@ -70,6 +71,7 @@ contains
                trim(word) == 'elif' .or. &
                trim(word) == 'fi' .or. &
                trim(word) == 'while' .or. &
+               trim(word) == 'until' .or. &
                trim(word) == 'for' .or. &
                trim(word) == 'do' .or. &
                trim(word) == 'done' .or. &
@@ -98,6 +100,8 @@ contains
       flow_type = FLOW_FI
     case('while')
       flow_type = FLOW_WHILE
+    case('until')
+      flow_type = FLOW_UNTIL
     case('for')
       flow_type = FLOW_FOR
     case('do')
@@ -181,6 +185,8 @@ contains
       call process_fi_statement(shell, should_execute)
     case('while')
       call process_while_statement(cmd, shell, should_execute)
+    case('until')
+      call process_until_statement(cmd, shell, should_execute)
     case('do')
       call process_do_statement(cmd, shell, should_execute)
     case('done')
@@ -299,7 +305,50 @@ contains
     ! IMPORTANT: Store the condition command for re-evaluation at each iteration
     shell%control_stack(shell%control_depth)%condition_cmd = condition_cmd
   end subroutine
-  
+
+  subroutine process_until_statement(cmd, shell, should_execute)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical, intent(out) :: should_execute
+    logical :: condition_result
+    integer :: i
+    character(len=1024) :: condition_cmd
+
+    should_execute = .false.  ! Don't execute the until command itself
+
+    ! Parse until condition: until [ condition ] or until command
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'until: missing condition'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Build condition command from tokens (skip "until")
+    condition_cmd = ''
+    do i = 2, cmd%num_tokens
+      if (len_trim(condition_cmd) > 0) then
+        condition_cmd = trim(condition_cmd) // ' ' // trim(cmd%tokens(i))
+      else
+        condition_cmd = trim(cmd%tokens(i))
+      end if
+    end do
+
+    ! Evaluate condition
+    if (associated(evaluate_condition)) then
+      call evaluate_condition(condition_cmd, shell, condition_result)
+    else
+      write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
+      condition_result = .false.
+    end if
+
+    ! Push until block onto control stack with INVERTED condition
+    ! until loops run while condition is FALSE
+    call push_control_block(shell, BLOCK_UNTIL, .not. condition_result)
+
+    ! IMPORTANT: Store the condition command for re-evaluation at each iteration
+    shell%control_stack(shell%control_depth)%condition_cmd = condition_cmd
+  end subroutine
+
   subroutine process_for_statement(cmd, shell, should_execute)
     use substitution, only: expand_braces
     type(command_t), intent(in) :: cmd
@@ -688,9 +737,10 @@ contains
     end if
 
     if (shell%control_stack(shell%control_depth)%block_type /= BLOCK_WHILE .and. &
+        shell%control_stack(shell%control_depth)%block_type /= BLOCK_UNTIL .and. &
         shell%control_stack(shell%control_depth)%block_type /= BLOCK_FOR .and. &
         shell%control_stack(shell%control_depth)%block_type /= BLOCK_FOR_ARITH) then
-      write(error_unit, '(a)') 'done: no matching while/for'
+      write(error_unit, '(a)') 'done: no matching while/for/until'
       shell%last_exit_status = 1
       return
     end if
@@ -766,6 +816,27 @@ contains
 
         if (condition_result) then
           ! Condition is still true - executor will replay the loop body
+          return
+        end if
+      end if
+
+    else if (shell%control_stack(shell%control_depth)%block_type == BLOCK_UNTIL) then
+      ! For until loops, re-evaluate condition and replay if FALSE (inverted logic)
+      ! The condition is stored in condition_cmd
+
+      if (len_trim(shell%control_stack(shell%control_depth)%condition_cmd) > 0) then
+        ! Re-evaluate the until condition with current variable values
+        if (associated(evaluate_condition)) then
+          call evaluate_condition(shell%control_stack(shell%control_depth)%condition_cmd, &
+                                 shell, condition_result)
+        else
+          write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
+          condition_result = .false.
+        end if
+
+        ! until loops continue while condition is FALSE (opposite of while)
+        if (.not. condition_result) then
+          ! Condition is still false - executor will replay the loop body
           return
         end if
       end if
