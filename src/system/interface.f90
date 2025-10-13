@@ -34,10 +34,22 @@ module system_interface
 #ifdef __APPLE__
   ! macOS has NCCS=20 and uses 8-byte tcflag_t
   integer(c_int), parameter :: NCCS = 20
+  ! ioctl request for terminal size (macOS)
+  integer(c_long), parameter :: TIOCGWINSZ = int(z'40087468', c_long)
 #else
   ! Linux has NCCS=32 and uses 4-byte tcflag_t
   integer(c_int), parameter :: NCCS = 32
+  ! ioctl request for terminal size (Linux)
+  integer(c_long), parameter :: TIOCGWINSZ = int(z'5413', c_long)
 #endif
+
+  ! Window size structure for terminal dimensions
+  type, bind(c) :: winsize_t
+    integer(c_short) :: ws_row      ! Number of rows
+    integer(c_short) :: ws_col      ! Number of columns
+    integer(c_short) :: ws_xpixel   ! Horizontal pixels
+    integer(c_short) :: ws_ypixel   ! Vertical pixels
+  end type winsize_t
 
   ! termios structure - must match C struct termios exactly
   type, bind(c) :: termios_t
@@ -460,6 +472,14 @@ module system_interface
       type(c_ptr), value :: pathname
       integer(c_int) :: c_unlink
     end function
+
+    function c_ioctl(fd, request, argp) bind(C, name="ioctl")
+      import :: c_int, c_long, c_ptr
+      integer(c_int), value :: fd
+      integer(c_long), value :: request
+      type(c_ptr), value :: argp
+      integer(c_int) :: c_ioctl
+    end function
   end interface
 
   ! Signal handler types (initialized in module initialization)
@@ -673,8 +693,9 @@ contains
     
     ! Close pipe
     i = c_pclose(pipe_ptr)
-    
-    ! Return output
+
+    ! Return output (deallocate first if already allocated, which shouldn't happen but prevents crash)
+    if (allocated(output)) deallocate(output)
     allocate(character(len=pos-1) :: output)
     output = temp_output(:pos-1)
   end function
@@ -1045,5 +1066,27 @@ contains
     ! SIG_IGN is (void(*)())1, use transfer to convert integer to c_funptr
     SIG_IGN = transfer(1_c_intptr_t, SIG_IGN)
   end subroutine
+
+  ! Get terminal size (rows and columns)
+  function get_terminal_size(rows, cols) result(success)
+    integer, intent(out) :: rows, cols
+    logical :: success
+    type(winsize_t), target :: ws
+    integer(c_int) :: ret
+
+    ! Try to get window size using ioctl
+    ret = c_ioctl(STDOUT_FD, TIOCGWINSZ, c_loc(ws))
+
+    if (ret == 0) then
+      rows = int(ws%ws_row)
+      cols = int(ws%ws_col)
+      success = .true.
+    else
+      ! Fallback to common defaults if ioctl fails
+      rows = 24
+      cols = 80
+      success = .false.
+    end if
+  end function
 
 end module system_interface

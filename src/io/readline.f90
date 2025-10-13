@@ -6,6 +6,9 @@ module readline
   use shell_types
   use system_interface
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
+  use syntax_highlight, only: highlight_command_line, init_syntax_highlighting
+  use abbreviations, only: try_expand_abbreviation
+  use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
   implicit none
@@ -38,6 +41,10 @@ module readline
   ! History and line management
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
+
+  ! Glob expansion constants (from glob module)
+  integer, parameter :: MAX_GLOB_MATCHES = 1000
+  ! MAX_TOKEN_LEN is already defined in shell_types
   
   ! Input state management
   ! Editing mode constants
@@ -81,6 +88,10 @@ module readline
     integer :: vi_search_length = 0
     logical :: vi_search_forward = .true.
     logical :: vi_in_vi_search = .false.
+
+    ! Autosuggestion support (fish-style)
+    character(len=MAX_LINE_LEN) :: suggestion = ''  ! Current suggestion from history
+    integer :: suggestion_length = 0  ! Length of suggestion
   end type input_state_t
 
   type :: history_t
@@ -90,6 +101,12 @@ module readline
   end type history_t
 
   type(history_t), save :: command_history
+
+  ! Type to hold completion candidates with scores for fuzzy matching
+  type :: scored_completion_t
+    character(len=MAX_LINE_LEN) :: text
+    integer :: score
+  end type scored_completion_t
 
   ! Module-level HISTCONTROL setting (set by shell)
   character(len=256), save :: current_histcontrol = ''
@@ -159,6 +176,8 @@ contains
     input_state%search_match_index = 0
     input_state%editing_mode = global_editing_mode  ! Initialize from global state
     input_state%vi_mode = VI_MODE_INSERT
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
 
     if (raw_enabled) then
       ! Enhanced input processing
@@ -1537,14 +1556,132 @@ contains
           completions(i) = trim(completions(i))
         end do
       else
-        ! Complete files and directories
-        call complete_files_enhanced(last_word, completions, num_completions)
+        ! Check if last_word contains glob characters
+        if (has_glob_chars(last_word)) then
+          ! Expand glob pattern instead of regular file completion
+          call expand_glob_for_completion(last_word, completions, num_completions)
+        else
+          ! Complete files and directories normally
+          call complete_files_enhanced(last_word, completions, num_completions)
+        end if
+
+        ! Filter completions based on command type
+        ! cd, pushd, popd should only show directories
+        if (trim(command_name) == 'cd' .or. trim(command_name) == 'pushd' .or. &
+            trim(command_name) == 'popd') then
+          call filter_directories_only(completions, num_completions)
+        end if
 
         ! Don't add prefix to completions - they are for display only
         ! The prefix will be added when constructing the completed line
       end if
     end if
   end subroutine
+
+  ! Filter completions to only keep directories (entries ending with /)
+  subroutine filter_directories_only(completions, num_completions)
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
+    integer, intent(inout) :: num_completions
+
+    character(len=MAX_LINE_LEN) :: temp_completions(50)
+    integer :: i, new_count, original_count
+
+    original_count = num_completions
+    new_count = 0
+    do i = 1, num_completions
+      ! Keep only entries that end with / (directories)
+      if (len_trim(completions(i)) > 0) then
+        if (completions(i)(len_trim(completions(i)):len_trim(completions(i))) == '/') then
+          new_count = new_count + 1
+          temp_completions(new_count) = completions(i)
+        end if
+      end if
+    end do
+
+    ! Copy filtered results back
+    do i = 1, new_count
+      completions(i) = temp_completions(i)
+    end do
+    num_completions = new_count
+  end subroutine
+
+  ! Check if a string contains glob characters
+  function has_glob_chars(str) result(has_globs)
+    character(len=*), intent(in) :: str
+    logical :: has_globs
+
+    has_globs = (index(str, '*') > 0 .or. &
+                 index(str, '?') > 0 .or. &
+                 index(str, '[') > 0)
+  end function has_glob_chars
+
+  ! Expand glob pattern for tab completion using real filesystem
+  subroutine expand_glob_for_completion(pattern, completions, num_completions)
+    character(len=*), intent(in) :: pattern
+    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    integer, intent(out) :: num_completions
+
+    character(len=MAX_LINE_LEN) :: dir_path, file_pattern
+    character(len=MAX_LINE_LEN) :: ls_command, ls_output
+    character(len=MAX_LINE_LEN) :: entries(100)
+    integer :: num_entries, i, last_slash_pos
+    character(len=MAX_LINE_LEN) :: full_path
+    logical :: is_dir
+
+    num_completions = 0
+
+    ! Extract directory path and filename pattern (same logic as complete_files_enhanced)
+    last_slash_pos = 0
+    do i = len_trim(pattern), 1, -1
+      if (pattern(i:i) == '/') then
+        last_slash_pos = i
+        exit
+      end if
+    end do
+
+    if (last_slash_pos > 0) then
+      dir_path = pattern(:last_slash_pos-1)
+      file_pattern = pattern(last_slash_pos+1:)
+      if (len_trim(dir_path) == 0) dir_path = '/'
+    else
+      dir_path = '.'
+      file_pattern = trim(pattern)
+    end if
+
+    ! Use ls command to get directory listing (same as scan_directory)
+    ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
+    ls_output = execute_and_capture(ls_command)
+
+    ! Parse ls output into individual entries
+    call parse_ls_output(ls_output, entries, num_entries)
+
+    ! Match entries against glob pattern
+    do i = 1, num_entries
+      if (num_completions >= 50) exit
+
+      ! Skip . and ..
+      if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') cycle
+
+      ! Use pattern_matches from glob module to match against pattern
+      if (pattern_matches(file_pattern, trim(entries(i)))) then
+        ! Build full path
+        if (trim(dir_path) == '.') then
+          full_path = trim(entries(i))
+        else
+          full_path = trim(dir_path) // '/' // trim(entries(i))
+        end if
+
+        ! Check if it's a directory and add trailing slash
+        is_dir = is_directory(full_path)
+        num_completions = num_completions + 1
+        if (is_dir) then
+          completions(num_completions) = trim(full_path) // '/'
+        else
+          completions(num_completions) = trim(full_path)
+        end if
+      end if
+    end do
+  end subroutine expand_glob_for_completion
 
   subroutine complete_commands(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
@@ -1644,7 +1781,7 @@ contains
     character(len=*), intent(in) :: prefix
     character(len=MAX_LINE_LEN), intent(out) :: completions(50)
     integer, intent(out) :: num_completions
-    
+
     character(len=50), parameter :: builtin_commands(20) = [ &
       'cd       ', 'echo     ', 'exit     ', 'export   ', &
       'pwd      ', 'jobs     ', 'fg       ', 'bg       ', &
@@ -1652,31 +1789,44 @@ contains
       'kill     ', 'wait     ', 'trap     ', 'config   ', &
       'alias    ', 'unalias  ', 'help     ', 'rawtest  ' &
     ]
-    integer :: i, prefix_len
-    
+    type(scored_completion_t) :: scored(100)  ! Temp storage for scoring
+    integer :: i, num_scored, score
+
     num_completions = 0
-    prefix_len = len_trim(prefix)
-    
-    ! Complete builtin commands
+    num_scored = 0
+
+    ! Score builtin commands using fuzzy matching
     do i = 1, size(builtin_commands)
-      if (prefix_len == 0 .or. &
-          index(trim(builtin_commands(i)), prefix(1:prefix_len)) == 1) then
-        num_completions = num_completions + 1
-        if (num_completions <= 50) then
-          completions(num_completions) = trim(builtin_commands(i))
+      score = fuzzy_match_score(prefix, trim(builtin_commands(i)))
+      if (score >= 0) then  ! Negative score = no match
+        num_scored = num_scored + 1
+        if (num_scored <= 100) then
+          scored(num_scored)%text = trim(builtin_commands(i))
+          scored(num_scored)%score = score
         end if
       end if
     end do
-    
+
     ! Add common system commands
-    call add_system_commands(prefix, completions, num_completions)
+    call add_system_commands_fuzzy(prefix, scored, num_scored)
+
+    ! Sort by score
+    if (num_scored > 0) then
+      call sort_completions_by_score(scored, num_scored)
+    end if
+
+    ! Copy top matches to output (limit to 50)
+    num_completions = min(num_scored, 50)
+    do i = 1, num_completions
+      completions(i) = scored(i)%text
+    end do
   end subroutine
 
   subroutine add_system_commands(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
     character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
     integer, intent(inout) :: num_completions
-    
+
     character(len=50), parameter :: common_commands(15) = [ &
       'ls       ', 'cat      ', 'grep     ', 'find     ', &
       'sort     ', 'head     ', 'tail     ', 'wc       ', &
@@ -1684,9 +1834,9 @@ contains
       'rmdir    ', 'chmod    ', 'which    ' &
     ]
     integer :: i, prefix_len
-    
+
     prefix_len = len_trim(prefix)
-    
+
     do i = 1, size(common_commands)
       if (num_completions >= 50) exit
       if (prefix_len == 0 .or. &
@@ -1697,15 +1847,46 @@ contains
     end do
   end subroutine
 
+  ! Fuzzy version of add_system_commands
+  subroutine add_system_commands_fuzzy(prefix, scored, num_scored)
+    character(len=*), intent(in) :: prefix
+    type(scored_completion_t), intent(inout) :: scored(:)
+    integer, intent(inout) :: num_scored
+
+    character(len=50), parameter :: common_commands(15) = [ &
+      'ls       ', 'cat      ', 'grep     ', 'find     ', &
+      'sort     ', 'head     ', 'tail     ', 'wc       ', &
+      'cp       ', 'mv       ', 'rm       ', 'mkdir    ', &
+      'rmdir    ', 'chmod    ', 'which    ' &
+    ]
+    integer :: i, score
+
+    do i = 1, size(common_commands)
+      if (num_scored >= size(scored)) exit
+      score = fuzzy_match_score(prefix, trim(common_commands(i)))
+      if (score >= 0) then  ! Negative score = no match
+        num_scored = num_scored + 1
+        scored(num_scored)%text = trim(common_commands(i))
+        scored(num_scored)%score = score
+      end if
+    end do
+  end subroutine
+
   ! Enhanced file completion with real filesystem access
   subroutine complete_files_enhanced(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
     character(len=MAX_LINE_LEN), intent(out) :: completions(50)
     integer, intent(out) :: num_completions
-    
+
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
+    character(len=:), allocatable :: debug_mode
     integer :: last_slash_pos, i
-    
+    logical :: debug_enabled
+
+    ! Check if debug mode is enabled
+    debug_mode = get_environment_var('FORTSH_DEBUG_COMPLETION')
+    debug_enabled = (allocated(debug_mode) .and. trim(debug_mode) == '1')
+
     num_completions = 0
     
     ! Extract directory path and filename pattern
@@ -1716,7 +1897,7 @@ contains
         exit
       end if
     end do
-    
+
     if (last_slash_pos > 0) then
       dir_path = prefix(:last_slash_pos-1)
       file_pattern = prefix(last_slash_pos+1:)
@@ -1725,10 +1906,11 @@ contains
       dir_path = '.'
       file_pattern = trim(prefix)
     end if
-    
-    ! Add directory navigation options
-    if (len_trim(file_pattern) == 0 .or. file_pattern(1:1) == '.') then
-      ! Current directory
+
+    ! Add directory navigation options ONLY when explicitly requested
+    ! Don't add ./ when user is trying to complete dotfiles like .fortshrc
+    if (len_trim(file_pattern) == 0) then
+      ! Empty pattern - offer . and ..
       if (num_completions < 50) then
         num_completions = num_completions + 1
         if (trim(dir_path) == '.') then
@@ -1737,9 +1919,27 @@ contains
           completions(num_completions) = trim(dir_path) // '/./'
         end if
       end if
-      
-      ! Parent directory
-      if (len_trim(file_pattern) == 0 .or. index(file_pattern, '..') == 1) then
+
+      if (num_completions < 50) then
+        num_completions = num_completions + 1
+        if (trim(dir_path) == '.') then
+          completions(num_completions) = '../'
+        else
+          completions(num_completions) = trim(dir_path) // '/../'
+        end if
+      end if
+    else if (trim(file_pattern) == '.' .or. trim(file_pattern) == '..') then
+      ! Exact match for . or .. - complete with /
+      if (trim(file_pattern) == '.') then
+        if (num_completions < 50) then
+          num_completions = num_completions + 1
+          if (trim(dir_path) == '.') then
+            completions(num_completions) = './'
+          else
+            completions(num_completions) = trim(dir_path) // '/./'
+          end if
+        end if
+      else if (trim(file_pattern) == '..') then
         if (num_completions < 50) then
           num_completions = num_completions + 1
           if (trim(dir_path) == '.') then
@@ -1750,35 +1950,61 @@ contains
         end if
       end if
     end if
-    
+    ! Otherwise, let scan_directory handle ALL matches including dotfiles
+
     ! Get actual filesystem entries
     call scan_directory(dir_path, file_pattern, completions, num_completions)
   end subroutine
 
-  ! Scan directory for matching files and directories
+  ! Scan directory for matching files and directories (with fuzzy matching)
   subroutine scan_directory(dir_path, pattern, completions, num_completions)
     character(len=*), intent(in) :: dir_path, pattern
     character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
     integer, intent(inout) :: num_completions
 
-    character(len=MAX_LINE_LEN) :: ls_command, ls_output
+    character(len=MAX_LINE_LEN) :: ls_command, ls_output, expanded_dir
     character(len=MAX_LINE_LEN) :: entries(100)  ! Temp storage for directory entries
-    character(len=MAX_LINE_LEN) :: full_path
-    integer :: num_entries, i, pattern_len
-    logical :: is_dir
+    character(len=MAX_LINE_LEN) :: full_path, check_path
+    character(len=:), allocatable :: home_dir, debug_mode
+    type(scored_completion_t) :: scored(100)
+    integer :: num_entries, i, pattern_len, num_scored, score, j
+    logical :: is_dir, debug_enabled
+
+    ! Check if debug mode is enabled
+    debug_mode = get_environment_var('FORTSH_DEBUG_COMPLETION')
+    debug_enabled = (allocated(debug_mode) .and. trim(debug_mode) == '1')
 
     pattern_len = len_trim(pattern)
 
+    ! Expand tilde if present (shell doesn't expand ~ inside quotes)
+    expanded_dir = dir_path
+    if (len_trim(dir_path) > 0 .and. dir_path(1:1) == '~') then
+      home_dir = get_environment_var('HOME')
+      if (allocated(home_dir) .and. len(home_dir) > 0) then
+        if (len_trim(dir_path) == 1) then
+          ! Just ~
+          expanded_dir = home_dir
+        else if (dir_path(2:2) == '/') then
+          ! ~/something
+          expanded_dir = trim(home_dir) // dir_path(2:)
+        else
+          ! ~user (not supported for now, just use as-is)
+          expanded_dir = dir_path
+        end if
+      end if
+    end if
+
     ! Use ls command to get directory listing
-    ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
+    ls_command = 'ls -1a "' // trim(expanded_dir) // '" 2>/dev/null'
     ls_output = execute_and_capture(ls_command)
 
     ! Parse ls output into individual entries
     call parse_ls_output(ls_output, entries, num_entries)
 
-    ! Filter entries by pattern and add to completions
+    ! Score entries using fuzzy matching
+    num_scored = 0
     do i = 1, num_entries
-      if (num_completions >= 50) exit
+      if (num_scored >= 100) exit
 
       ! Skip . and .. unless explicitly requested
       if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
@@ -1787,25 +2013,49 @@ contains
         end if
       end if
 
-      ! Check if entry matches pattern
-      if (pattern_len == 0 .or. index(entries(i), pattern(1:pattern_len)) == 1) then
-        num_completions = num_completions + 1
-
-        ! Build full path for directory check
+      ! Calculate fuzzy match score
+      score = fuzzy_match_score(pattern, trim(entries(i)))
+      if (score >= 0) then  ! Negative score = no match
+        ! Build full path for directory check (use original dir_path to preserve ~ in display)
         if (trim(dir_path) == '.') then
           full_path = trim(entries(i))
         else
           full_path = trim(dir_path) // '/' // trim(entries(i))
         end if
 
-        ! Check if it's a directory and add trailing slash
-        is_dir = is_directory(full_path)
-        if (is_dir) then
-          completions(num_completions) = trim(full_path) // '/'
+        ! Check if it's a directory using expanded path
+        if (trim(expanded_dir) == '.') then
+          check_path = trim(entries(i))
         else
-          completions(num_completions) = trim(full_path)
+          check_path = trim(expanded_dir) // '/' // trim(entries(i))
+        end if
+        is_dir = is_directory(check_path)
+
+        num_scored = num_scored + 1
+        if (is_dir) then
+          scored(num_scored)%text = trim(full_path) // '/'
+        else
+          scored(num_scored)%text = trim(full_path)
+        end if
+        scored(num_scored)%score = score
+
+        ! Bonus for directories (make them appear first in same score bracket)
+        if (is_dir) then
+          scored(num_scored)%score = scored(num_scored)%score + 5
         end if
       end if
+    end do
+
+    ! Sort by score
+    if (num_scored > 0) then
+      call sort_completions_by_score(scored, num_scored)
+    end if
+
+    ! Copy to output (add to existing completions, limit total to 50)
+    do j = 1, num_scored
+      if (num_completions >= 50) exit
+      num_completions = num_completions + 1
+      completions(num_completions) = scored(j)%text
     end do
   end subroutine
 
@@ -1926,8 +2176,10 @@ contains
     character(len=*), intent(out) :: completed_line
     logical, intent(out) :: completed
 
-    character(len=MAX_LINE_LEN) :: common_prefix, prefix_part
-    integer :: last_space_pos, i
+    character(len=MAX_LINE_LEN) :: common_prefix, prefix_part, last_word
+    character(len=4096) :: expanded_matches
+    integer :: last_space_pos, i, pos, j
+    logical :: is_glob_pattern
 
     completed = .false.
     completed_line = partial_input
@@ -1943,9 +2195,14 @@ contains
 
     if (last_space_pos > 0) then
       prefix_part = partial_input(:last_space_pos)
+      last_word = partial_input(last_space_pos+1:)
     else
       prefix_part = ''
+      last_word = trim(partial_input)
     end if
+
+    ! Check if we're completing a glob pattern
+    is_glob_pattern = has_glob_chars(last_word)
 
     call enhanced_tab_complete(partial_input, completions, num_completions)
 
@@ -1961,16 +2218,50 @@ contains
       end if
       completed = .true.
     else
-      ! Multiple completions - try common prefix
-      common_prefix = get_common_prefix(completions, num_completions)
+      ! Multiple completions
+      if (is_glob_pattern) then
+        ! For glob patterns: expand all matches into command line (like bash)
+        ! Build space-separated list of all matches
+        expanded_matches = ''
+        pos = 1
 
-      if (len_trim(common_prefix) > 0) then
+        do j = 1, num_completions
+          if (j > 1) then
+            ! Add space separator
+            expanded_matches(pos:pos) = ' '
+            pos = pos + 1
+          end if
+
+          ! Add this match
+          expanded_matches(pos:pos+len_trim(completions(j))-1) = trim(completions(j))
+          pos = pos + len_trim(completions(j))
+        end do
+
+        ! Replace glob pattern with expanded matches
         if (last_space_pos > 0) then
-          completed_line = prefix_part(:last_space_pos) // trim(common_prefix)
+          completed_line = prefix_part(:last_space_pos) // expanded_matches(:pos-1)
         else
-          completed_line = trim(common_prefix)
+          completed_line = expanded_matches(:pos-1)
         end if
         completed = .true.
+      else
+        ! For regular completion: try common prefix
+        common_prefix = get_common_prefix(completions, num_completions)
+
+        if (len_trim(common_prefix) > len_trim(last_word)) then
+          ! We have a common prefix that extends what user typed - use it
+          if (last_space_pos > 0) then
+            completed_line = prefix_part(:last_space_pos) // trim(common_prefix)
+          else
+            completed_line = trim(common_prefix)
+          end if
+          completed = .true.
+        else
+          ! No useful common prefix - we'll show the completions list instead
+          ! Keep completed = .false. but don't treat as "no completions"
+          ! The caller will see num_completions > 0 and should show them
+          completed = .false.
+        end if
       end if
     end if
   end subroutine
@@ -1992,14 +2283,19 @@ contains
 
     ! Reset completion state when buffer changes
     input_state%completions_shown = .false.
-    
+
+    ! Check for abbreviation expansion BEFORE inserting space
+    if (ch == ' ') then
+      call try_expand_abbreviation_at_cursor(input_state)
+    end if
+
     ! If cursor is at end, simple append
     if (input_state%cursor_pos >= input_state%length) then
       input_state%length = input_state%length + 1
       input_state%buffer(input_state%length:input_state%length) = ch
       input_state%cursor_pos = input_state%length
-      write(output_unit, '(a)', advance='no') ch
-      flush(output_unit)
+      ! Always trigger highlighting for real-time color updates
+      input_state%dirty = .true.
     else
       ! Insert in middle - shift characters right
       do i = input_state%length, input_state%cursor_pos + 1, -1
@@ -2010,8 +2306,11 @@ contains
       input_state%length = input_state%length + 1
       input_state%dirty = .true.
     end if
+
+    ! Update autosuggestion after inserting character
+    call update_autosuggestion(input_state)
   end subroutine
-  
+
   subroutine handle_backspace(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i
@@ -2032,8 +2331,8 @@ contains
       input_state%length = input_state%length - 1
       input_state%cursor_pos = input_state%cursor_pos - 1
       input_state%buffer(input_state%length+1:input_state%length+1) = ' '
-      write(output_unit, '(a)', advance='no') char(8) // ' ' // char(8)  ! Backspace, space, backspace
-      flush(output_unit)
+      ! Always trigger highlighting for real-time color updates
+      input_state%dirty = .true.
     else
       ! Delete in middle - shift characters left
       do i = input_state%cursor_pos, input_state%length - 1
@@ -2044,8 +2343,11 @@ contains
       input_state%buffer(input_state%length+1:input_state%length+1) = ' '
       input_state%dirty = .true.
     end if
+
+    ! Update autosuggestion after deleting character
+    call update_autosuggestion(input_state)
   end subroutine
-  
+
   subroutine handle_tab_completion(input_state)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: partial_input
@@ -2072,7 +2374,12 @@ contains
     ! Attempt smart completion
     call smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
 
-    if (completed) then
+    if (num_completions == 0) then
+      ! No completions found - ring bell (ASCII 7)
+      write(output_unit, '(a)', advance='no') char(7)  ! Bell for audio feedback
+      flush(output_unit)
+    else if (completed) then
+      ! We have a completed line - update buffer
       ! Check if we made actual progress
       made_progress = (len_trim(completed_line) > len_trim(saved_input))
 
@@ -2081,6 +2388,10 @@ contains
       input_state%length = len_trim(completed_line)
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
+
+      ! Update autosuggestion to account for the completion
+      ! If the completed line still matches a history entry, show the rest
+      call update_autosuggestion(input_state)
 
       if (num_completions > 1) then
         if (made_progress) then
@@ -2102,9 +2413,15 @@ contains
         input_state%completions_shown = .false.
       end if
     else
-      ! No completions found - ring bell (ASCII 7)
-      write(output_unit, '(a)', advance='no') char(7)  ! Bell for audio feedback
-      flush(output_unit)
+      ! We have completions but no single completion to apply
+      ! Show the available options
+      if (.not. input_state%completions_shown .or. buffer_changed) then
+        write(output_unit, '()')  ! New line
+        call show_completions(completions, num_completions)
+        input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+        input_state%completions_shown = .true.
+        input_state%dirty = .true.
+      end if
     end if
   end subroutine
   
@@ -2158,11 +2475,14 @@ contains
   
   subroutine handle_cursor_right(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     if (input_state%cursor_pos < input_state%length) then
       input_state%cursor_pos = input_state%cursor_pos + 1
       write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
       flush(output_unit)
+    else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
+      ! At end of line with suggestion - accept it
+      call accept_autosuggestion(input_state)
     end if
   end subroutine
   
@@ -2221,28 +2541,346 @@ contains
       input_state%dirty = .true.
     end if
   end subroutine
-  
+
+  ! Calculate visual length of string (excluding ANSI escape codes)
+  function visual_length(str) result(vlen)
+    character(len=*), intent(in) :: str
+    integer :: vlen
+    integer :: i, slen
+    logical :: in_escape
+
+    vlen = 0
+    slen = len_trim(str)
+    in_escape = .false.
+
+    do i = 1, slen
+      if (in_escape) then
+        ! Inside escape sequence, skip until we find the terminator
+        if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
+          in_escape = .false.  ! Capital letter terminates escape sequence
+        else if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
+          in_escape = .false.  ! Lowercase letter terminates escape sequence
+        end if
+      else if (str(i:i) == char(27)) then
+        ! ESC character starts escape sequence
+        in_escape = .true.
+      else if (str(i:i) == char(13)) then
+        ! Carriage return - doesn't add to visual length
+        continue
+      else
+        ! Regular character
+        vlen = vlen + 1
+      end if
+    end do
+  end function
+
+  ! ===========================================================================
+  ! Fuzzy Matching Functions
+  ! ===========================================================================
+
+  ! Calculate fuzzy match score (higher = better match)
+  ! Returns -1 if no match (pattern chars not found in order)
+  ! Returns 0+ for matches with bonus points for:
+  !   - Consecutive character matches
+  !   - Matches at word boundaries
+  !   - Matches at start of string
+  function fuzzy_match_score(pattern, candidate) result(score)
+    character(len=*), intent(in) :: pattern, candidate
+    integer :: score
+
+    integer :: pattern_len, candidate_len
+    integer :: pattern_idx, candidate_idx
+    integer :: match_positions(MAX_LINE_LEN)
+    integer :: num_matches, i
+    integer :: consecutive_bonus, boundary_bonus
+    logical :: case_match, is_prefix_match
+    character :: pattern_char, candidate_char
+
+    pattern_len = len_trim(pattern)
+    candidate_len = len_trim(candidate)
+
+    ! Empty pattern matches everything with base score
+    if (pattern_len == 0) then
+      score = 100
+      return
+    end if
+
+    ! Pattern longer than candidate = no match
+    if (pattern_len > candidate_len) then
+      score = -1
+      return
+    end if
+
+    ! For short patterns (1-2 chars), require prefix match for better UX
+    ! This prevents "RE" from matching "parser_enhanced.mod"
+    if (pattern_len <= 2) then
+      is_prefix_match = .true.
+      do i = 1, pattern_len
+        if (to_lowercase(pattern(i:i)) /= to_lowercase(candidate(i:i))) then
+          is_prefix_match = .false.
+          exit
+        end if
+      end do
+      if (.not. is_prefix_match) then
+        score = -1
+        return
+      end if
+    end if
+
+    ! Find all pattern characters in order
+    pattern_idx = 1
+    num_matches = 0
+
+    do candidate_idx = 1, candidate_len
+      if (pattern_idx > pattern_len) exit
+
+      pattern_char = pattern(pattern_idx:pattern_idx)
+      candidate_char = candidate(candidate_idx:candidate_idx)
+
+      ! Case-insensitive comparison
+      if (to_lowercase(pattern_char) == to_lowercase(candidate_char)) then
+        num_matches = num_matches + 1
+        match_positions(num_matches) = candidate_idx
+        pattern_idx = pattern_idx + 1
+      end if
+    end do
+
+    ! Not all pattern characters found = no match
+    if (pattern_idx <= pattern_len) then
+      score = -1
+      return
+    end if
+
+    ! Base score: 100 points for matching
+    score = 100
+
+    ! Bonus for matching at start
+    if (match_positions(1) == 1) then
+      score = score + 50
+    end if
+
+    ! Bonus for consecutive matches
+    consecutive_bonus = 0
+    do i = 2, num_matches
+      if (match_positions(i) == match_positions(i-1) + 1) then
+        consecutive_bonus = consecutive_bonus + 10
+      end if
+    end do
+    score = score + consecutive_bonus
+
+    ! Bonus for matches at word boundaries (after space, -, _, /)
+    boundary_bonus = 0
+    do i = 1, num_matches
+      if (match_positions(i) > 1) then
+        candidate_char = candidate(match_positions(i)-1:match_positions(i)-1)
+        if (candidate_char == ' ' .or. candidate_char == '-' .or. &
+            candidate_char == '_' .or. candidate_char == '/') then
+          boundary_bonus = boundary_bonus + 15
+        end if
+      end if
+    end do
+    score = score + boundary_bonus
+
+    ! Bonus for case-sensitive match
+    case_match = .true.
+    do i = 1, num_matches
+      pattern_char = pattern(i:i)
+      candidate_char = candidate(match_positions(i):match_positions(i))
+      if (pattern_char /= candidate_char) then
+        case_match = .false.
+        exit
+      end if
+    end do
+    if (case_match) then
+      score = score + 20
+    end if
+
+    ! Penalty for longer candidates (prefer shorter matches)
+    score = score - (candidate_len - pattern_len)
+
+    ! Penalty for gaps between matches
+    do i = 2, num_matches
+      score = score - (match_positions(i) - match_positions(i-1) - 1)
+    end do
+  end function
+
+  ! Helper: convert character to lowercase
+  function to_lowercase(c) result(lower)
+    character, intent(in) :: c
+    character :: lower
+    integer :: ascii_val
+
+    ascii_val = ichar(c)
+    if (ascii_val >= ichar('A') .and. ascii_val <= ichar('Z')) then
+      lower = char(ascii_val + 32)
+    else
+      lower = c
+    end if
+  end function
+
+  ! Sort completions by fuzzy match score (bubble sort - good enough for small arrays)
+  subroutine sort_completions_by_score(scored_completions, count)
+    type(scored_completion_t), intent(inout) :: scored_completions(:)
+    integer, intent(in) :: count
+
+    type(scored_completion_t) :: temp
+    integer :: i, j
+    logical :: swapped
+
+    ! Bubble sort (descending order - highest scores first)
+    do i = 1, count - 1
+      swapped = .false.
+      do j = 1, count - i
+        if (scored_completions(j)%score < scored_completions(j+1)%score) then
+          temp = scored_completions(j)
+          scored_completions(j) = scored_completions(j+1)
+          scored_completions(j+1) = temp
+          swapped = .true.
+        end if
+      end do
+      if (.not. swapped) exit
+    end do
+  end subroutine
+
   subroutine redraw_line(prompt, input_state)
     character(len=*), intent(in) :: prompt
     type(input_state_t), intent(in) :: input_state
+    character(len=:), allocatable :: highlighted
+    integer :: term_rows, term_cols, total_visual_chars
+    integer :: prompt_visual_len, current_line, end_line
+    integer :: cursor_visual_pos, cursor_line, cursor_col
     integer :: i
-    
-    ! Move to beginning of line and clear it
-    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-    
-    ! Redraw prompt and current buffer
+    logical :: success
+
+    ! Get terminal size
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80  ! Fallback
+    end if
+
+    ! Calculate visual length of prompt (excluding ANSI codes)
+    prompt_visual_len = visual_length(prompt)
+
+    ! Calculate current cursor position in visual characters
+    cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
+
+    ! Calculate which line the cursor is currently on (0-indexed)
+    if (term_cols > 0) then
+      current_line = cursor_visual_pos / term_cols
+    else
+      current_line = 0
+    end if
+
+    ! Move cursor up to the first line (where prompt starts)
+    do i = 1, current_line
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+    end do
+
+    ! Move to beginning of that line
+    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+
+    ! Clear from cursor to end of screen (clears all wrapped lines)
+    write(output_unit, '(a)', advance='no') char(27) // '[J'
+
+    ! Redraw prompt and full buffer with syntax highlighting
     write(output_unit, '(a)', advance='no') prompt
     if (input_state%length > 0) then
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+      highlighted = highlight_command_line(input_state%buffer(:input_state%length))
+      write(output_unit, '(a)', advance='no') highlighted
     end if
-    
-    ! Position cursor correctly
-    do i = input_state%length, input_state%cursor_pos + 1, -1
-      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
-    end do
-    
+
+    ! Display autosuggestion in gray (dim) if available and cursor is at end
+    if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
+      ! Gray color (ANSI code 90 or dim mode)
+      write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
+      write(output_unit, '(a)', advance='no') input_state%suggestion(:input_state%suggestion_length)
+      write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+    end if
+
+    ! Calculate where cursor should be after redraw (accounting for line wrapping)
+    ! Cursor should be at: prompt_visual_len + cursor_pos
+    cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
+
+    ! Calculate which line and column the cursor should be on (0-indexed)
+    if (term_cols > 0) then
+      cursor_line = cursor_visual_pos / term_cols
+      cursor_col = mod(cursor_visual_pos, term_cols)
+    else
+      cursor_line = 0
+      cursor_col = cursor_visual_pos
+    end if
+
+    ! After drawing, cursor is at end of buffer
+    ! Calculate which line the end is on
+    total_visual_chars = prompt_visual_len + input_state%length
+    if (term_cols > 0) then
+      end_line = total_visual_chars / term_cols
+    else
+      end_line = 0
+    end if
+
+    ! Move cursor to the correct position
+    ! Calculate how many positions to move left from current position
+    ! If we drew a suggestion, cursor is at: prompt_visual_len + length + suggestion_length
+    ! Otherwise, cursor is at: prompt_visual_len + length
+    ! We want to be at: prompt_visual_len + cursor_pos
+    ! So we need to move: (length - cursor_pos) + suggestion_length positions to the left
+    if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
+      ! Cursor is after the suggestion, need to move back by suggestion length + distance to cursor
+      do i = 1, input_state%suggestion_length + (input_state%length - input_state%cursor_pos)
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      end do
+    else
+      ! No suggestion or cursor not at end, just move back normally
+      do i = 1, input_state%length - input_state%cursor_pos
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      end do
+    end if
+
     flush(output_unit)
   end subroutine
+
+  ! Partial redraw - only from cursor to end (reduces flashing)
+  subroutine redraw_from_cursor(input_state)
+    use syntax_highlight, only: highlight_command_line
+    type(input_state_t), intent(in) :: input_state
+    character(len=:), allocatable :: highlighted
+    integer :: i, cursor_col
+
+    if (input_state%length == 0) return
+
+    ! Save current cursor column (we're already at the right position)
+    cursor_col = input_state%cursor_pos
+
+    ! Move to just before cursor position (account for prompt already displayed)
+    ! We need to move back to start of buffer to redraw with highlighting
+    if (cursor_col > 0) then
+      do i = 1, cursor_col
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      end do
+    end if
+
+    ! Clear from here to end of line
+    write(output_unit, '(a)', advance='no') char(27) // '[K'
+
+    ! Redraw buffer with highlighting
+    highlighted = highlight_command_line(input_state%buffer(:input_state%length))
+    write(output_unit, '(a)', advance='no') highlighted
+
+    ! Move cursor back to correct position
+    do i = input_state%length, cursor_col + 1, -1
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+    end do
+
+    flush(output_unit)
+  end subroutine
+
+  ! Helper to convert integer to string
+  function int_to_str(n) result(str)
+    integer, intent(in) :: n
+    character(len=20) :: str
+    write(str, '(i0)') n
+  end function
 
   ! Advanced line editing functions for Phase 5
   subroutine handle_home(input_state)
@@ -2387,14 +3025,9 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
     flush(output_unit)
 
-    ! Immediately redraw the prompt and current line
-    write(output_unit, '(a)', advance='no') prompt
-    if (input_state%length > 0) then
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
-    end if
-    flush(output_unit)
+    ! Redraw the prompt and current line properly with highlighting
+    call redraw_line(prompt, input_state)
 
-    ! Don't need dirty flag since we just redrew
     input_state%dirty = .false.
   end subroutine
 
@@ -2626,15 +3259,12 @@ contains
     input_state%search_length = 0
     input_state%search_match_index = 0
 
-    ! Clear the search prompt and show normal prompt with result
+    ! Clear the search prompt and show normal prompt with result using proper redraw
     write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
-    write(output_unit, '(a)', advance='no') prompt
-    if (input_state%length > 0) then
-      write(output_unit, '(a)') input_state%buffer(:input_state%length)
-    else
-      write(output_unit, '()')
-    end if
     flush(output_unit)
+
+    ! Use redraw_line to properly display with syntax highlighting and cursor positioning
+    call redraw_line(prompt, input_state)
   end subroutine
 
   subroutine update_search_display(input_state, prompt)
@@ -2845,6 +3475,173 @@ contains
     if (found) then
       input_state%dirty = .true.
     end if
+  end subroutine
+
+  ! ============================================================================
+  ! Abbreviation Expansion (Fish-style)
+  ! ============================================================================
+
+  ! Try to expand an abbreviation at cursor position (called when space is typed)
+  subroutine try_expand_abbreviation_at_cursor(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: word_before_cursor
+    character(len=:), allocatable :: expanded_form
+    integer :: word_start, word_end, i, expanded_len
+
+    ! Extract word before cursor
+    word_end = input_state%cursor_pos
+    word_start = word_end
+
+    ! Find start of word (go backwards until space or beginning)
+    do while (word_start > 0)
+      if (input_state%buffer(word_start:word_start) == ' ') then
+        word_start = word_start + 1
+        exit
+      end if
+      word_start = word_start - 1
+    end do
+
+    if (word_start == 0) word_start = 1
+
+    ! Extract the word
+    if (word_end > word_start) then
+      word_before_cursor = input_state%buffer(word_start:word_end)
+    else
+      return  ! No word to expand
+    end if
+
+    ! Check if it's an abbreviation
+    expanded_form = try_expand_abbreviation(trim(word_before_cursor))
+    if (len(expanded_form) == 0) return  ! Not an abbreviation
+
+    ! Replace the word with expanded form
+    expanded_len = len(expanded_form)
+
+    ! First, remove the original word by shifting left
+    do i = word_end + 1, input_state%length
+      input_state%buffer(word_start + i - word_end - 1:word_start + i - word_end - 1) = &
+        input_state%buffer(i:i)
+    end do
+    input_state%length = input_state%length - (word_end - word_start + 1)
+    input_state%cursor_pos = word_start - 1
+
+    ! Then insert the expanded form
+    ! Make room for expanded text
+    do i = input_state%length, input_state%cursor_pos + 1, -1
+      if (i + expanded_len <= MAX_LINE_LEN) then
+        input_state%buffer(i + expanded_len:i + expanded_len) = input_state%buffer(i:i)
+      end if
+    end do
+
+    ! Insert expanded text
+    do i = 1, expanded_len
+      if (input_state%cursor_pos + i <= MAX_LINE_LEN) then
+        input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = &
+          expanded_form(i:i)
+      end if
+    end do
+
+    input_state%length = input_state%length + expanded_len
+    input_state%cursor_pos = input_state%cursor_pos + expanded_len
+    input_state%dirty = .true.
+  end subroutine try_expand_abbreviation_at_cursor
+
+  ! ============================================================================
+  ! Autosuggestion Support (Fish-style)
+  ! ============================================================================
+
+  ! Update autosuggestion based on current input
+  subroutine update_autosuggestion(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i
+    character(len=MAX_LINE_LEN) :: current_input
+
+    ! Clear suggestion if buffer is empty or in special modes
+    if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+      input_state%suggestion = ''
+      input_state%suggestion_length = 0
+      return
+    end if
+
+    ! Get current input
+    current_input = input_state%buffer(:input_state%length)
+
+    ! Search history backwards for matching command
+    do i = command_history%count, 1, -1
+      ! Check if history entry starts with current input
+      if (len_trim(command_history%lines(i)) > input_state%length) then
+        if (command_history%lines(i)(:input_state%length) == current_input(:input_state%length)) then
+          ! Found a match! Store the rest as suggestion
+          input_state%suggestion = command_history%lines(i)(input_state%length+1:)
+          input_state%suggestion_length = len_trim(command_history%lines(i)) - input_state%length
+          return
+        end if
+      end if
+    end do
+
+    ! No match found
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+  end subroutine
+
+  ! Accept the current autosuggestion
+  subroutine accept_autosuggestion(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i
+
+    if (input_state%suggestion_length == 0) return
+
+    ! Append suggestion to buffer
+    do i = 1, input_state%suggestion_length
+      if (input_state%length + i <= MAX_LINE_LEN) then
+        input_state%buffer(input_state%length + i:input_state%length + i) = &
+          input_state%suggestion(i:i)
+      end if
+    end do
+
+    input_state%length = input_state%length + input_state%suggestion_length
+    input_state%cursor_pos = input_state%length
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Accept one word from the autosuggestion (for partial acceptance)
+  subroutine accept_autosuggestion_word(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i, word_end
+
+    if (input_state%suggestion_length == 0) return
+
+    ! Find the end of the first word in the suggestion
+    word_end = 0
+    do i = 1, input_state%suggestion_length
+      if (input_state%suggestion(i:i) == ' ' .or. input_state%suggestion(i:i) == '/') then
+        word_end = i
+        exit
+      end if
+    end do
+
+    if (word_end == 0) then
+      ! No space found, accept entire suggestion
+      call accept_autosuggestion(input_state)
+      return
+    end if
+
+    ! Append first word to buffer
+    do i = 1, word_end
+      if (input_state%length + i <= MAX_LINE_LEN) then
+        input_state%buffer(input_state%length + i:input_state%length + i) = &
+          input_state%suggestion(i:i)
+      end if
+    end do
+
+    input_state%length = input_state%length + word_end
+    input_state%cursor_pos = input_state%length
+    input_state%dirty = .true.
+
+    ! Update suggestion to remove accepted part
+    call update_autosuggestion(input_state)
   end subroutine
 
 end module readline

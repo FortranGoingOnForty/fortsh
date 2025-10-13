@@ -206,6 +206,14 @@ contains
         ! Number of jobs
         write(replacement, '(i0)') shell%num_jobs
 
+      case ('g')
+        ! Git branch (if in git repo)
+        replacement = get_git_branch()
+
+      case ('G')
+        ! Git status indicator (* if dirty, + if staged, clean otherwise)
+        replacement = get_git_status_indicator()
+
       case default
         ! Unknown escape - just output the character
         replacement = escape_char
@@ -226,14 +234,15 @@ contains
     end if
   end function
 
-  ! Get pretty path with ~ for home directory
+  ! Get pretty path with ~ for home directory and intelligent shortening
   function get_pretty_path(path) result(pretty)
     character(len=*), intent(in) :: path
-    character(len=:), allocatable :: pretty, home_dir
+    character(len=:), allocatable :: pretty, home_dir, shortened
     integer :: home_len
 
     home_dir = get_environment_var('HOME')
 
+    ! First, replace HOME with ~
     if (allocated(home_dir) .and. len(home_dir) > 0) then
       home_len = len(home_dir)
       if (len_trim(path) >= home_len) then
@@ -243,12 +252,102 @@ contains
           else
             pretty = '~' // trim(path(home_len+1:))
           end if
+
+          ! Apply intelligent shortening if path is still long
+          shortened = shorten_path(pretty, 40)  ! Max 40 chars before shortening
+          pretty = shortened
           return
         end if
       end if
     end if
 
-    pretty = trim(path)
+    ! Apply intelligent shortening to non-home paths too
+    shortened = shorten_path(trim(path), 40)
+    pretty = shortened
+  end function
+
+  ! Intelligently shorten a path by abbreviating parent directories
+  ! Example: ~/very/long/path/to/project -> ~/v/l/p/t/project
+  function shorten_path(path, max_length) result(shortened)
+    character(len=*), intent(in) :: path
+    integer, intent(in) :: max_length
+    character(len=:), allocatable :: shortened
+    character(len=256) :: components(50)
+    integer :: num_components, i, slash_pos, start_pos
+    character(len=512) :: result
+    integer :: result_len
+
+    ! If path is already short enough, return as-is
+    if (len_trim(path) <= max_length) then
+      shortened = trim(path)
+      return
+    end if
+
+    ! Split path into components
+    num_components = 0
+    start_pos = 1
+
+    do while (start_pos <= len_trim(path))
+      slash_pos = index(path(start_pos:), '/')
+      if (slash_pos > 0) then
+        slash_pos = slash_pos + start_pos - 1
+        if (slash_pos > start_pos) then
+          num_components = num_components + 1
+          components(num_components) = path(start_pos:slash_pos-1)
+        end if
+        start_pos = slash_pos + 1
+      else
+        ! Last component
+        if (start_pos <= len_trim(path)) then
+          num_components = num_components + 1
+          components(num_components) = path(start_pos:)
+        end if
+        exit
+      end if
+    end do
+
+    ! Build shortened path
+    result = ''
+    result_len = 0
+
+    ! Handle leading ~ or /
+    if (len_trim(path) > 0 .and. path(1:1) == '~') then
+      result = '~'
+      result_len = 1
+      start_pos = 2  ! Skip the ~ component
+    else if (len_trim(path) > 0 .and. path(1:1) == '/') then
+      result = '/'
+      result_len = 1
+      start_pos = 1
+    else
+      start_pos = 1
+    end if
+
+    ! Shorten all components except the last one
+    do i = start_pos, num_components - 1
+      if (len_trim(components(i)) > 0) then
+        if (result_len > 0 .and. result(result_len:result_len) /= '/') then
+          result_len = result_len + 1
+          result(result_len:result_len) = '/'
+        end if
+        ! Use first character of each parent directory
+        result_len = result_len + 1
+        result(result_len:result_len) = components(i)(1:1)
+      end if
+    end do
+
+    ! Always show the last component in full (the current directory name)
+    if (num_components > 0) then
+      if (result_len > 0 .and. result(result_len:result_len) /= '/') then
+        result_len = result_len + 1
+        result(result_len:result_len) = '/'
+      end if
+      result(result_len+1:result_len+len_trim(components(num_components))) = &
+        trim(components(num_components))
+      result_len = result_len + len_trim(components(num_components))
+    end if
+
+    shortened = result(1:result_len)
   end function
 
   ! Get basename of path
@@ -278,5 +377,65 @@ contains
   subroutine increment_prompt_history()
     prompt_history_number = prompt_history_number + 1
   end subroutine
+
+  ! Get current git branch name (returns empty string if not in git repo)
+  function get_git_branch() result(branch)
+    character(len=:), allocatable :: branch
+    character(len=256) :: output
+    integer :: iostat, unit
+
+    ! Try to get branch name using git command
+    ! Use git symbolic-ref for speed (faster than git branch)
+    output = execute_and_capture('git symbolic-ref --short HEAD 2>/dev/null')
+
+    if (len_trim(output) > 0) then
+      branch = trim(output)
+    else
+      ! Not in a git repo or detached HEAD
+      branch = ''
+    end if
+  end function
+
+  ! Get git status indicator
+  ! Returns: '*' if dirty, '+' if staged changes, '✓' if clean, '' if not git repo
+  function get_git_status_indicator() result(indicator)
+    character(len=:), allocatable :: indicator
+    character(len=256) :: output
+    logical :: has_changes
+
+    ! First check if we're in a git repo
+    output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
+    if (len_trim(output) == 0) then
+      indicator = ''  ! Not in a git repo
+      return
+    end if
+
+    ! Check for uncommitted changes (both staged and unstaged)
+    ! Using git status --porcelain for machine-readable output
+    output = execute_and_capture('git status --porcelain 2>/dev/null')
+
+    if (len_trim(output) > 0) then
+      ! There are changes
+      ! Check if any are staged (lines starting with A, M, D, R, C in first column)
+      if (index(output, 'A ') > 0 .or. index(output, 'M ') > 0 .or. &
+          index(output, 'D ') > 0 .or. index(output, 'R ') > 0) then
+        indicator = '+'  ! Staged changes
+      else
+        indicator = '*'  ! Unstaged changes
+      end if
+    else
+      ! Clean working tree
+      indicator = ''  ! Clean (or use '✓' if you want to show clean status)
+    end if
+  end function
+
+  ! Check if current directory is in a git repository
+  function is_git_repo() result(in_git)
+    logical :: in_git
+    character(len=256) :: output
+
+    output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
+    in_git = (len_trim(output) > 0)
+  end function
 
 end module prompt_formatting

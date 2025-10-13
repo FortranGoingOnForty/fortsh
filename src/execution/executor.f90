@@ -13,6 +13,7 @@ module executor
   use performance
   use shell_options
   use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR
+  use better_errors
   use iso_fortran_env, only: error_unit, input_unit
   use iso_c_binding
   implicit none
@@ -753,8 +754,7 @@ contains
       
       ! Execute
       call exec_child(cmd%tokens, cmd%num_tokens)
-      write(error_unit, '(a)') 'fortsh: command not found: ' // trim(cmd%tokens(1)) // &
-                               '. Try "which ' // trim(cmd%tokens(1)) // '" or check your PATH.'
+      ! Error message is printed by exec_child if command not found
       call c_exit(127)
     else
       ! Parent process
@@ -1010,8 +1010,7 @@ contains
     ret = c_execvp(argv(1), c_loc(argv))
 
     ! If we reach here, exec failed
-    write(error_unit, '(a)') 'fortsh: command not found: ' // trim(tokens(1)) // &
-                             '. Try "which ' // trim(tokens(1)) // '" or check your PATH.'
+    call show_command_not_found_error(trim(tokens(1)))
   end subroutine
 
   subroutine execute_function(cmd, shell)
