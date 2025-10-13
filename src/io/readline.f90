@@ -2747,9 +2747,9 @@ contains
       case('D')  ! Left arrow
         call handle_cursor_left(input_state)
       case('1', '2', '3', '4', '5', '6')
-        ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5D)
-        ! Consume the rest of the sequence
-        call consume_extended_escape_sequence()
+        ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C)
+        ! Parse it to check if it's a key we care about
+        call handle_extended_escape_sequence(input_state)
       case default
         ! Unknown escape sequence - ignore it
         continue
@@ -2788,21 +2788,45 @@ contains
     end if
   end subroutine
 
-  ! Consume extended escape sequences like ESC[1;5D (Ctrl+Arrow)
-  subroutine consume_extended_escape_sequence()
-    character :: ch
+  ! Handle extended escape sequences like ESC[1;5C (Ctrl+Right Arrow)
+  subroutine handle_extended_escape_sequence(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character :: ch, modifier, terminator
     logical :: success
     integer :: count
 
-    ! Read until we hit a letter (A-Z, a-z) which terminates the sequence
+    ! Extended sequences have format: ESC[1;5C
+    ! We've already read '1' (or similar), now read rest of sequence
+    ! Format: [digit];[modifier][letter]
+
+    ! Read until we find a semicolon or letter
     count = 0
     do while (count < 10)  ! Safety limit
       success = read_single_char(ch)
-      if (.not. success) exit
+      if (.not. success) return
 
-      ! Sequence terminates with a letter
-      if ((ch >= 'A' .and. ch <= 'Z') .or. (ch >= 'a' .and. ch <= 'z')) then
-        exit
+      if (ch == ';') then
+        ! Found semicolon, next char is the modifier
+        success = read_single_char(modifier)
+        if (.not. success) return
+
+        ! Read the terminating letter
+        success = read_single_char(terminator)
+        if (.not. success) return
+
+        ! Check for Ctrl+Right arrow (modifier=5, terminator=C)
+        if (modifier == '5' .and. terminator == 'C') then
+          ! Ctrl+Right arrow - accept one word from autosuggestion
+          if (input_state%cursor_pos == input_state%length .and. &
+              input_state%suggestion_length > 0) then
+            call accept_autosuggestion_word(input_state)
+          end if
+        end if
+        ! For other extended sequences, we just consume them
+        return
+      else if ((ch >= 'A' .and. ch <= 'Z') .or. (ch >= 'a' .and. ch <= 'z')) then
+        ! Found letter terminator without semicolon, done
+        return
       end if
 
       count = count + 1
