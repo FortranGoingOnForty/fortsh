@@ -5,6 +5,7 @@
 module completion
   use shell_types
   use iso_fortran_env, only: output_unit, error_unit
+  use iso_c_binding, only: c_ptr, c_null_char, c_associated
   implicit none
 
   ! Forward declarations for optional dependencies
@@ -569,6 +570,130 @@ contains
     call get_compreply_results(shell, completions, count)
   end subroutine generate_function_completions
 
+  ! ===========================================================================
+  ! BUILT-IN COMPLETERS
+  ! ===========================================================================
+
+  ! Complete file names
+  ! For now, use a simplified implementation. Full filesystem access
+  ! will be added in a future enhancement.
+  subroutine complete_files(prefix, completions, count)
+    character(len=*), intent(in) :: prefix
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+
+    ! Simplified implementation - return empty for now
+    ! Phase 5 will integrate with readline's existing file completion
+    count = 0
+  end subroutine complete_files
+
+  ! Complete directory names only
+  ! For now, use a simplified implementation
+  subroutine complete_directories(prefix, completions, count)
+    character(len=*), intent(in) :: prefix
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+
+    ! Simplified implementation - return empty for now
+    ! Phase 5 will integrate with readline's existing directory completion
+    count = 0
+  end subroutine complete_directories
+
+  ! Complete command names from PATH
+  ! Simplified implementation for Phase 4
+  subroutine complete_commands(shell, prefix, completions, count)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: prefix
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+
+    ! Simplified implementation - return empty for now
+    ! Phase 5 will add full command completion
+    count = 0
+  end subroutine complete_commands
+
+  ! Complete variable names
+  subroutine complete_variables(shell, prefix, completions, count)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: prefix
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+    integer :: i
+    character(len=256) :: var_name
+
+    count = 0
+
+    ! Iterate through shell variables
+    do i = 1, shell%num_variables
+      if (count >= MAX_COMPLETIONS) exit
+
+      var_name = trim(shell%variables(i)%name)
+
+      ! Check if variable matches prefix
+      if (len_trim(prefix) == 0 .or. &
+          index(var_name, trim(prefix)) == 1) then
+        count = count + 1
+        completions(count) = var_name
+      end if
+    end do
+  end subroutine complete_variables
+
+  ! Complete shell keywords
+  subroutine complete_keywords(prefix, completions, count)
+    character(len=*), intent(in) :: prefix
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+    character(len=20), parameter :: keywords(20) = [ &
+      'if      ', 'then    ', 'else    ', 'elif    ', 'fi      ', &
+      'for     ', 'while   ', 'until   ', 'do      ', 'done    ', &
+      'case    ', 'esac    ', 'in      ', 'function', 'select  ', &
+      'time    ', 'coproc  ', '[[      ', '!       ', '{       ' ]
+    integer :: i
+
+    count = 0
+
+    do i = 1, size(keywords)
+      if (count >= MAX_COMPLETIONS) exit
+
+      if (len_trim(prefix) == 0 .or. &
+          index(trim(keywords(i)), trim(prefix)) == 1) then
+        count = count + 1
+        completions(count) = trim(keywords(i))
+      end if
+    end do
+  end subroutine complete_keywords
+
+  ! Complete builtin commands
+  subroutine complete_builtins(prefix, completions, count)
+    character(len=*), intent(in) :: prefix
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+    character(len=20), parameter :: builtins(50) = [ &
+      'alias     ', 'bg        ', 'bind      ', 'break     ', 'builtin   ', &
+      'cd        ', 'command   ', 'compgen   ', 'complete  ', 'continue  ', &
+      'declare   ', 'dirs      ', 'disown    ', 'echo      ', 'enable    ', &
+      'eval      ', 'exec      ', 'exit      ', 'export    ', 'fc        ', &
+      'fg        ', 'getopts   ', 'hash      ', 'help      ', 'history   ', &
+      'jobs      ', 'kill      ', 'let       ', 'local     ', 'logout    ', &
+      'popd      ', 'printf    ', 'pushd     ', 'pwd       ', 'read      ', &
+      'readonly  ', 'return    ', 'set       ', 'shift     ', 'shopt     ', &
+      'source    ', 'suspend   ', 'test      ', 'times     ', 'trap      ', &
+      'type      ', 'ulimit    ', 'umask     ', 'unalias   ', 'unset     ' ]
+    integer :: i
+
+    count = 0
+
+    do i = 1, size(builtins)
+      if (count >= MAX_COMPLETIONS) exit
+
+      if (len_trim(prefix) == 0 .or. &
+          index(trim(builtins(i)), trim(prefix)) == 1) then
+        count = count + 1
+        completions(count) = trim(builtins(i))
+      end if
+    end do
+  end subroutine complete_builtins
+
   ! Main entry point for generating completions for a command
   subroutine generate_completions(command, word_prefix, completions, count, shell)
     character(len=*), intent(in) :: command
@@ -577,6 +702,8 @@ contains
     integer, intent(out) :: count
     type(shell_state_t), intent(inout), optional :: shell
     type(completion_spec_t) :: spec
+    character(len=256) :: temp_completions(MAX_COMPLETIONS)
+    integer :: temp_count, initial_count
 
     count = 0
 
@@ -595,10 +722,76 @@ contains
       call generate_word_list_completions(spec, word_prefix, completions, count)
     end if
 
+    ! Priority 3: Built-in completers
+    initial_count = count
+
+    if (spec%builtin_file .and. count < MAX_COMPLETIONS) then
+      call complete_files(word_prefix, temp_completions, temp_count)
+      call merge_completions(completions, count, temp_completions, temp_count)
+    end if
+
+    if (spec%builtin_directory .and. count < MAX_COMPLETIONS) then
+      call complete_directories(word_prefix, temp_completions, temp_count)
+      call merge_completions(completions, count, temp_completions, temp_count)
+    end if
+
+    if (spec%builtin_command .and. present(shell) .and. count < MAX_COMPLETIONS) then
+      call complete_commands(shell, word_prefix, temp_completions, temp_count)
+      call merge_completions(completions, count, temp_completions, temp_count)
+    end if
+
+    if (spec%builtin_variable .and. present(shell) .and. count < MAX_COMPLETIONS) then
+      call complete_variables(shell, word_prefix, temp_completions, temp_count)
+      call merge_completions(completions, count, temp_completions, temp_count)
+    end if
+
+    if (spec%builtin_keyword .and. count < MAX_COMPLETIONS) then
+      call complete_keywords(word_prefix, temp_completions, temp_count)
+      call merge_completions(completions, count, temp_completions, temp_count)
+    end if
+
+    if (spec%builtin_builtin .and. count < MAX_COMPLETIONS) then
+      call complete_builtins(word_prefix, temp_completions, temp_count)
+      call merge_completions(completions, count, temp_completions, temp_count)
+    end if
+
     ! Apply filter if present
     if (len_trim(spec%filter_pattern) > 0) then
       call filter_completions(completions, count, spec%filter_pattern)
     end if
+
+    ! Sort if we added any completions and nosort is not set
+    if (count > initial_count .and. .not. spec%nosort) then
+      call sort_completions(completions, count)
+    end if
   end subroutine generate_completions
+
+  ! Merge temp completions into main list, avoiding duplicates
+  subroutine merge_completions(completions, count, temp_completions, temp_count)
+    character(len=256), intent(inout) :: completions(MAX_COMPLETIONS)
+    integer, intent(inout) :: count
+    character(len=256), intent(in) :: temp_completions(MAX_COMPLETIONS)
+    integer, intent(in) :: temp_count
+    integer :: i, j
+    logical :: is_duplicate
+
+    do i = 1, temp_count
+      if (count >= MAX_COMPLETIONS) exit
+
+      ! Check for duplicates
+      is_duplicate = .false.
+      do j = 1, count
+        if (trim(completions(j)) == trim(temp_completions(i))) then
+          is_duplicate = .true.
+          exit
+        end if
+      end do
+
+      if (.not. is_duplicate) then
+        count = count + 1
+        completions(count) = temp_completions(i)
+      end if
+    end do
+  end subroutine merge_completions
 
 end module completion
