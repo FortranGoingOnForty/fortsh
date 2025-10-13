@@ -7,6 +7,9 @@ module completion
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
+  ! Forward declarations for optional dependencies
+  ! variables module will be used in specific subroutines
+
   ! Maximum number of completion specifications
   integer, parameter :: MAX_COMPLETION_SPECS = 100
   integer, parameter :: MAX_WORD_LIST = 1000
@@ -427,12 +430,152 @@ contains
     count = write_pos - 1
   end subroutine filter_completions
 
+  ! Set up completion context for function-based completion
+  subroutine setup_completion_context(shell, comp_line, comp_point, comp_words, comp_cword)
+    use variables, only: set_shell_variable
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: comp_line
+    integer, intent(in) :: comp_point, comp_cword
+    character(len=256), intent(in) :: comp_words(:)
+    character(len=32) :: point_str, cword_str
+    integer :: i
+
+    ! Set COMP_LINE - the current command line
+    call set_shell_variable(shell, 'COMP_LINE', trim(comp_line), len_trim(comp_line))
+
+    ! Set COMP_POINT - cursor position in the line
+    write(point_str, '(i0)') comp_point
+    call set_shell_variable(shell, 'COMP_POINT', trim(point_str), len_trim(point_str))
+
+    ! Set COMP_CWORD - index of the word containing cursor
+    write(cword_str, '(i0)') comp_cword
+    call set_shell_variable(shell, 'COMP_CWORD', trim(cword_str), len_trim(cword_str))
+
+    ! Set COMP_WORDS array (bash uses indexed array)
+    ! For now, we'll set COMP_WORDS as individual variables COMP_WORDS_0, COMP_WORDS_1, etc.
+    do i = 0, comp_cword
+      if (i <= size(comp_words)) then
+        write(point_str, '(a,i0)') 'COMP_WORDS_', i
+        call set_shell_variable(shell, trim(point_str), trim(comp_words(i+1)), len_trim(comp_words(i+1)))
+      end if
+    end do
+
+    ! Initialize empty COMPREPLY array
+    call set_shell_variable(shell, 'COMPREPLY', '', 0)
+  end subroutine setup_completion_context
+
+  ! Get completions from COMPREPLY array
+  subroutine get_compreply_results(shell, completions, count)
+    use variables, only: get_shell_variable, get_array_size, get_array_element
+    type(shell_state_t), intent(inout) :: shell
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+    integer :: array_size, i
+    character(len=1024) :: element
+
+    count = 0
+
+    ! Get COMPREPLY array size
+    array_size = get_array_size(shell, 'COMPREPLY')
+
+    if (array_size > 0) then
+      ! Read array elements
+      do i = 0, min(array_size - 1, MAX_COMPLETIONS - 1)
+        element = get_array_element(shell, 'COMPREPLY', i)
+        if (len_trim(element) > 0) then
+          count = count + 1
+          completions(count) = trim(element)
+        end if
+      end do
+    else
+      ! Fallback: try reading COMPREPLY as a space-separated string
+      element = get_shell_variable(shell, 'COMPREPLY')
+      if (len_trim(element) > 0) then
+        ! Parse space-separated values
+        call parse_space_separated(element, completions, count)
+      end if
+    end if
+  end subroutine get_compreply_results
+
+  ! Parse space-separated values into array
+  subroutine parse_space_separated(input, values, count)
+    character(len=*), intent(in) :: input
+    character(len=256), intent(out) :: values(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+    integer :: i, start
+
+    count = 0
+    i = 1
+
+    do while (i <= len_trim(input) .and. count < MAX_COMPLETIONS)
+      ! Skip spaces
+      do while (i <= len_trim(input) .and. input(i:i) == ' ')
+        i = i + 1
+      end do
+      if (i > len_trim(input)) exit
+
+      ! Start of value
+      start = i
+      do while (i <= len_trim(input) .and. input(i:i) /= ' ')
+        i = i + 1
+      end do
+
+      ! Extract value
+      count = count + 1
+      values(count) = input(start:i-1)
+    end do
+  end subroutine parse_space_separated
+
+  ! Generate completions by calling a shell function
+  subroutine generate_function_completions(shell, spec, command, word_prefix, completions, count)
+    use parser, only: parse_pipeline
+    type(shell_state_t), intent(inout) :: shell
+    type(completion_spec_t), intent(in) :: spec
+    character(len=*), intent(in) :: command, word_prefix
+    character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
+    integer, intent(out) :: count
+    character(len=1024) :: function_call
+    character(len=256) :: comp_words(50)
+    integer :: comp_cword
+
+    count = 0
+
+    ! Build minimal context for now
+    ! In a real implementation, we'd parse the full command line
+    comp_words(1) = trim(command)
+    comp_words(2) = trim(word_prefix)
+    comp_cword = 1  ! Completing the second word
+
+    ! Set up completion context variables
+    call setup_completion_context(shell, trim(command) // ' ' // trim(word_prefix), &
+                                   len_trim(command) + 1 + len_trim(word_prefix), &
+                                   comp_words, comp_cword)
+
+    ! Build function call: function_name "command" "word" "prev_word"
+    ! For simplicity, we'll call with just command and word
+    function_call = trim(spec%function_name) // ' "' // trim(command) // '" "' // trim(word_prefix) // '" ""'
+
+    ! Execute the completion function
+    ! Note: This is a simplified version. In a full implementation,
+    ! we'd need to execute the function via the shell's executor
+    ! For now, we'll just set up the context and expect the function
+    ! to populate COMPREPLY
+
+    ! TODO: Actually execute the function via shell executor
+    ! For Phase 3, we'll implement a stub that returns empty results
+    ! The full integration will happen in Phase 5
+
+    ! Get results from COMPREPLY
+    call get_compreply_results(shell, completions, count)
+  end subroutine generate_function_completions
+
   ! Main entry point for generating completions for a command
-  subroutine generate_completions(command, word_prefix, completions, count)
+  subroutine generate_completions(command, word_prefix, completions, count, shell)
     character(len=*), intent(in) :: command
     character(len=*), intent(in) :: word_prefix
     character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
     integer, intent(out) :: count
+    type(shell_state_t), intent(inout), optional :: shell
     type(completion_spec_t) :: spec
 
     count = 0
@@ -441,7 +584,13 @@ contains
     spec = get_completion_spec(command)
     if (.not. spec%is_active) return
 
-    ! Generate completions from word list
+    ! Priority 1: Function-based completion
+    if (len_trim(spec%function_name) > 0 .and. present(shell)) then
+      call generate_function_completions(shell, spec, command, word_prefix, completions, count)
+      if (count > 0) return
+    end if
+
+    ! Priority 2: Generate completions from word list
     if (spec%word_list_count > 0) then
       call generate_word_list_completions(spec, word_prefix, completions, count)
     end if
