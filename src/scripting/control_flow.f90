@@ -485,14 +485,9 @@ contains
   end subroutine
 
   subroutine process_then_statement(cmd, shell, should_execute)
-    use parser, only: parse_pipeline
-    use executor, only: execute_pipeline
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
-    type(pipeline_t) :: inline_pipeline
-    character(len=1024) :: remainder_cmd
-    integer :: i
 
     should_execute = .false.  ! Don't execute the "then" keyword itself
 
@@ -503,42 +498,8 @@ contains
     end if
 
     ! "then" marks the start of the if block
-    ! Handle single-line if: if condition; then command; fi
-    ! If there are tokens after "then", execute them immediately (if condition is met)
-    if (cmd%num_tokens > 1 .and. should_execute_command(shell)) then
-      ! Build command from remaining tokens (skip "then")
-      remainder_cmd = ''
-      do i = 2, cmd%num_tokens
-        if (len_trim(remainder_cmd) > 0) then
-          remainder_cmd = trim(remainder_cmd) // ' ' // trim(cmd%tokens(i))
-        else
-          remainder_cmd = trim(cmd%tokens(i))
-        end if
-      end do
-
-      ! Execute the command immediately (only if condition was true)
-      if (len_trim(remainder_cmd) > 0) then
-        call parse_pipeline(trim(remainder_cmd), inline_pipeline)
-        if (inline_pipeline%num_commands > 0) then
-          call execute_pipeline(inline_pipeline, shell, trim(remainder_cmd))
-
-          ! Clean up pipeline
-          if (allocated(inline_pipeline%commands)) then
-            do i = 1, inline_pipeline%num_commands
-              if (allocated(inline_pipeline%commands(i)%tokens)) &
-                deallocate(inline_pipeline%commands(i)%tokens)
-              if (allocated(inline_pipeline%commands(i)%input_file)) &
-                deallocate(inline_pipeline%commands(i)%input_file)
-              if (allocated(inline_pipeline%commands(i)%output_file)) &
-                deallocate(inline_pipeline%commands(i)%output_file)
-              if (allocated(inline_pipeline%commands(i)%error_file)) &
-                deallocate(inline_pipeline%commands(i)%error_file)
-            end do
-            deallocate(inline_pipeline%commands)
-          end if
-        end if
-      end if
-    end if
+    ! For single-line if statements, the remaining tokens after "then" will be
+    ! handled as separate commands by the main execution loop
   end subroutine
 
   subroutine process_else_statement(shell, should_execute)

@@ -307,6 +307,13 @@ contains
       if (is_control_flow_keyword(cmd%tokens(1))) then
         call process_control_flow(cmd, shell, should_execute)
         if (.not. should_execute) return
+
+        ! Special handling for single-line if statements: if condition; then command; fi
+        ! After processing "then", check if there are extra tokens to execute
+        if (trim(cmd%tokens(1)) == 'then' .and. cmd%num_tokens > 1) then
+          call execute_inline_then_commands(cmd, shell)
+          return
+        end if
       else
         ! For regular commands, check if we should execute based on control flow state
         call process_control_flow(cmd, shell, should_execute)
@@ -1235,6 +1242,53 @@ contains
 
     ! Restore original exit status (traps don't affect $?)
     shell%last_exit_status = saved_status
+  end subroutine
+
+  ! Execute inline commands after "then" in single-line if statements
+  ! Example: if [ 1 -eq 1 ]; then echo "test"; fi
+  ! After parsing, the "then echo 'test'" becomes a single command with tokens ["then", "echo", "test"]
+  subroutine execute_inline_then_commands(cmd, shell)
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    character(len=1024) :: remainder_cmd
+    type(pipeline_t) :: inline_pipeline
+    integer :: i
+
+    ! Only execute if we're in a truthy if block
+    ! The control flow state has already been updated by process_control_flow
+    if (shell%control_depth == 0) return
+    if (.not. shell%control_stack(shell%control_depth)%should_execute) return
+
+    ! Build command string from tokens 2 onwards
+    remainder_cmd = ''
+    do i = 2, cmd%num_tokens
+      if (len_trim(remainder_cmd) > 0) then
+        remainder_cmd = trim(remainder_cmd) // ' ' // trim(cmd%tokens(i))
+      else
+        remainder_cmd = trim(cmd%tokens(i))
+      end if
+    end do
+
+    ! Parse and execute the inline commands
+    if (len_trim(remainder_cmd) > 0) then
+      call parse_pipeline(trim(remainder_cmd), inline_pipeline)
+      if (inline_pipeline%num_commands > 0) then
+        call execute_pipeline(inline_pipeline, shell, trim(remainder_cmd))
+
+        ! Clean up pipeline allocations
+        do i = 1, inline_pipeline%num_commands
+          if (allocated(inline_pipeline%commands(i)%tokens)) deallocate(inline_pipeline%commands(i)%tokens)
+          if (allocated(inline_pipeline%commands(i)%input_file)) deallocate(inline_pipeline%commands(i)%input_file)
+          if (allocated(inline_pipeline%commands(i)%output_file)) deallocate(inline_pipeline%commands(i)%output_file)
+          if (allocated(inline_pipeline%commands(i)%error_file)) deallocate(inline_pipeline%commands(i)%error_file)
+          if (allocated(inline_pipeline%commands(i)%heredoc_delimiter)) deallocate(inline_pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(inline_pipeline%commands(i)%heredoc_content)) deallocate(inline_pipeline%commands(i)%heredoc_content)
+          if (allocated(inline_pipeline%commands(i)%here_string)) deallocate(inline_pipeline%commands(i)%here_string)
+        end do
+
+        if (allocated(inline_pipeline%commands)) deallocate(inline_pipeline%commands)
+      end if
+    end if
   end subroutine
 
   ! Initialize control_flow's evaluate_condition procedure pointer
