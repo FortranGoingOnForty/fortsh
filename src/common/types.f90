@@ -34,6 +34,7 @@ module shell_types
   ! Control flow block types
   integer, parameter :: BLOCK_IF = 1
   integer, parameter :: BLOCK_WHILE = 2
+  integer, parameter :: BLOCK_UNTIL = 6
   integer, parameter :: BLOCK_FOR = 3
   integer, parameter :: BLOCK_FUNCTION = 4
   integer, parameter :: BLOCK_FOR_ARITH = 5
