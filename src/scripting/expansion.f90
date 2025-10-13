@@ -19,7 +19,8 @@ contains
     character(len=256) :: var_name, operation, param1, param2, pattern, replacement
     character(len=1024) :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos
-    integer :: offset, length, i, double_op_pos
+    integer :: offset, length, i, double_op_pos, at_pos
+    character :: transform_op
     logical :: replace_all, greedy
 
     ! Array expansion variables
@@ -117,6 +118,48 @@ contains
     end if
 
     ! Check for various expansion operations (need to check in right order!)
+
+    ! Check for @ transformations first: ${var@U}, ${var@L}, ${var@u}, ${var@Q}, ${var@E}
+    at_pos = index(var_name, '@')
+    if (at_pos > 0 .and. at_pos < len_trim(var_name)) then
+      ! Extract variable name and transformation operator
+      operation = var_name(:at_pos-1)
+      transform_op = var_name(at_pos+1:at_pos+1)
+      var_value = get_shell_variable(shell, trim(operation))
+
+      select case (transform_op)
+      case ('U')
+        ! ${var@U} - convert to uppercase
+        expanded = to_upper(trim(var_value))
+        return
+      case ('L')
+        ! ${var@L} - convert to lowercase
+        expanded = to_lower(trim(var_value))
+        return
+      case ('u')
+        ! ${var@u} - capitalize first character
+        if (len_trim(var_value) > 0) then
+          expanded = to_upper(var_value(1:1))
+          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+        end if
+        return
+      case ('l')
+        ! ${var@l} - lowercase first character
+        if (len_trim(var_value) > 0) then
+          expanded = to_lower(var_value(1:1))
+          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+        end if
+        return
+      case ('Q')
+        ! ${var@Q} - shell-quote value (wrap in single quotes, escape embedded quotes)
+        expanded = quote_value(trim(var_value))
+        return
+      case ('E')
+        ! ${var@E} - expand escape sequences
+        expanded = expand_escape_sequences(trim(var_value))
+        return
+      end select
+    end if
 
     ! Check for case conversion first (^, ^^, ,, ,,)
     ! Find the position of ^ or , to determine if it's case conversion
@@ -353,6 +396,103 @@ contains
         output(i:i) = char(char_code + 32)
       end if
     end do
+  end function
+
+  ! Quote value - wrap in single quotes and escape embedded single quotes
+  ! Used for ${var@Q} transformation
+  function quote_value(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable :: output
+    character(len=4096) :: temp_output
+    integer :: i, out_pos
+
+    if (len_trim(input) == 0) then
+      output = "''"
+      return
+    end if
+
+    temp_output = "'"
+    out_pos = 2
+
+    do i = 1, len_trim(input)
+      if (input(i:i) == "'") then
+        ! Escape single quote: ' becomes '\''
+        temp_output(out_pos:out_pos+3) = "'\'''"
+        out_pos = out_pos + 4
+      else
+        temp_output(out_pos:out_pos) = input(i:i)
+        out_pos = out_pos + 1
+      end if
+    end do
+
+    temp_output(out_pos:out_pos) = "'"
+    output = temp_output(1:out_pos)
+  end function
+
+  ! Expand escape sequences in string
+  ! Used for ${var@E} transformation
+  function expand_escape_sequences(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable :: output
+    character(len=4096) :: temp_output
+    integer :: i, out_pos
+
+    temp_output = ''
+    out_pos = 1
+    i = 1
+
+    do while (i <= len_trim(input))
+      if (input(i:i) == '\' .and. i < len_trim(input)) then
+        ! Escape sequence
+        i = i + 1
+        select case (input(i:i))
+        case ('n')
+          temp_output(out_pos:out_pos) = char(10)  ! newline
+          out_pos = out_pos + 1
+        case ('t')
+          temp_output(out_pos:out_pos) = char(9)   ! tab
+          out_pos = out_pos + 1
+        case ('r')
+          temp_output(out_pos:out_pos) = char(13)  ! carriage return
+          out_pos = out_pos + 1
+        case ('b')
+          temp_output(out_pos:out_pos) = char(8)   ! backspace
+          out_pos = out_pos + 1
+        case ('f')
+          temp_output(out_pos:out_pos) = char(12)  ! form feed
+          out_pos = out_pos + 1
+        case ('v')
+          temp_output(out_pos:out_pos) = char(11)  ! vertical tab
+          out_pos = out_pos + 1
+        case ('a')
+          temp_output(out_pos:out_pos) = char(7)   ! alert/bell
+          out_pos = out_pos + 1
+        case ('e')
+          temp_output(out_pos:out_pos) = char(27)  ! escape
+          out_pos = out_pos + 1
+        case ('\')
+          temp_output(out_pos:out_pos) = '\'       ! backslash
+          out_pos = out_pos + 1
+        case ('"')
+          temp_output(out_pos:out_pos) = '"'       ! double quote
+          out_pos = out_pos + 1
+        case ("'")
+          temp_output(out_pos:out_pos) = "'"       ! single quote
+          out_pos = out_pos + 1
+        case default
+          ! Unknown escape - preserve backslash and character
+          temp_output(out_pos:out_pos+1) = '\' // input(i:i)
+          out_pos = out_pos + 2
+        end select
+        i = i + 1
+      else
+        temp_output(out_pos:out_pos) = input(i:i)
+        out_pos = out_pos + 1
+        i = i + 1
+      end if
+    end do
+
+    output = temp_output(1:out_pos-1)
   end function
 
   ! Pattern replacement in string

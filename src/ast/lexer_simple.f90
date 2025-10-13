@@ -9,6 +9,7 @@ module lexer_simple
                                 TOKEN_REDIRECT_IN, TOKEN_REDIRECT_OUT, &
                                 TOKEN_REDIRECT_APPEND, TOKEN_REDIRECT_HERE, &
                                 TOKEN_REDIRECT_HERE_STRING, &
+                                TOKEN_REDIRECT_DUP_OUT, TOKEN_REDIRECT_DUP_IN, &
                                 TOKEN_PROC_SUBST_IN, TOKEN_PROC_SUBST_OUT, &
                                 TOKEN_IF, TOKEN_THEN, TOKEN_ELSE, TOKEN_ELIF, &
                                 TOKEN_FI, TOKEN_FOR, TOKEN_IN, TOKEN_DO, TOKEN_DONE, &
@@ -262,6 +263,16 @@ contains
           self%tokens(self%token_count)%column = self%column
           self%position = self%position + 2
           self%column = self%column + 2
+        ! Check for FD duplication (<&)
+        else if (self%position < self%length .and. &
+            self%input(self%position+1:self%position+1) == '&') then
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_REDIRECT_DUP_IN
+          self%tokens(self%token_count)%value = '<&'
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 2
+          self%column = self%column + 2
         ! Check for here document (<<) or here string (<<<)
         else if (self%position < self%length .and. &
             self%input(self%position+1:self%position+1) == '<') then
@@ -305,6 +316,16 @@ contains
           self%token_count = self%token_count + 1
           self%tokens(self%token_count)%type = TOKEN_PROC_SUBST_OUT
           self%tokens(self%token_count)%value = '>('
+          self%tokens(self%token_count)%line_number = self%line_number
+          self%tokens(self%token_count)%column = self%column
+          self%position = self%position + 2
+          self%column = self%column + 2
+        ! Check for FD duplication (>&)
+        else if (self%position < self%length .and. &
+            self%input(self%position+1:self%position+1) == '&') then
+          self%token_count = self%token_count + 1
+          self%tokens(self%token_count)%type = TOKEN_REDIRECT_DUP_OUT
+          self%tokens(self%token_count)%value = '>&'
           self%tokens(self%token_count)%line_number = self%line_number
           self%tokens(self%token_count)%column = self%column
           self%position = self%position + 2

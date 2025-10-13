@@ -358,7 +358,8 @@ contains
         deallocate(word)
 
       case(TOKEN_REDIRECT_IN, TOKEN_REDIRECT_OUT, TOKEN_REDIRECT_APPEND, &
-           TOKEN_REDIRECT_HERE, TOKEN_REDIRECT_HERE_STRING)
+           TOKEN_REDIRECT_HERE, TOKEN_REDIRECT_HERE_STRING, &
+           TOKEN_REDIRECT_DUP_OUT, TOKEN_REDIRECT_DUP_IN)
         redir => self%parse_redirection(token%type)
         call redir_list%append(redir)
         deallocate(redir)
@@ -1341,6 +1342,12 @@ contains
     case(TOKEN_REDIRECT_HERE_STRING)
       redir_node%redirect_type = 5  ! here string
       redir_node%fd = 0  ! stdin
+    case(TOKEN_REDIRECT_DUP_OUT)
+      redir_node%redirect_type = 6  ! FD duplication out (>&)
+      redir_node%fd = 1  ! stdout by default
+    case(TOKEN_REDIRECT_DUP_IN)
+      redir_node%redirect_type = 7  ! FD duplication in (<&)
+      redir_node%fd = 0  ! stdin by default
     end select
 
     ! Skip the redirection operator
@@ -1362,6 +1369,24 @@ contains
       if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_STRING .or. tok%type == TOKEN_VARIABLE) then
         ! Store the content directly
         redir_node%heredoc_content = tok%value
+        call self%advance()
+      end if
+    else if (redir_type == TOKEN_REDIRECT_DUP_OUT .or. redir_type == TOKEN_REDIRECT_DUP_IN) then
+      ! Parse FD duplication target - can be literal number or variable expression
+      tok = self%current_token()
+      if (tok%type == TOKEN_WORD) then
+        ! Try to parse as literal FD number
+        read(tok%value, *, iostat=redir_node%target_fd) redir_node%target_fd
+        if (redir_node%target_fd < 0) then
+          ! Not a valid number, treat as expression to be expanded later
+          redir_node%target_fd = -1
+          redir_node%target_fd_expr = tok%value
+        end if
+        call self%advance()
+      else if (tok%type == TOKEN_VARIABLE) then
+        ! Variable expression like ${COPROC[1]} - store for later expansion
+        redir_node%target_fd = -1
+        redir_node%target_fd_expr = '${' // tok%value // '}'
         call self%advance()
       end if
     else

@@ -879,6 +879,35 @@ contains
                 end if
               end if
 
+            case(6, 7)  ! FD duplication (>& or <&)
+              ! Determine target FD
+              if (r%target_fd >= 0) then
+                ! Literal FD number (e.g., >&4)
+                new_fd = int(r%target_fd, c_int)
+              else if (allocated(r%target_fd_expr)) then
+                ! Variable expression (e.g., >&${COPROC[1]})
+                ! Need to expand the expression
+                tmp = self%expand_string(r%target_fd_expr)
+                read(tmp, *, iostat=status) new_fd
+                if (status /= 0) then
+                  ! Invalid FD number from expansion
+                  cycle
+                end if
+              else
+                ! No target FD specified
+                cycle
+              end if
+
+              ! Apply FD duplication using c_dup2
+              ! r%fd is the source (default stdin/stdout), new_fd is the target
+              if (r%redirect_type == 6) then
+                ! >&n - duplicate target FD to stdout (or specified FD)
+                ret = c_dup2(int(new_fd, c_int), int(r%fd, c_int))
+              else if (r%redirect_type == 7) then
+                ! <&n - duplicate target FD to stdin (or specified FD)
+                ret = c_dup2(int(new_fd, c_int), int(r%fd, c_int))
+              end if
+
             case default
               ! Get the target filename for regular redirections
               if (allocated(r%target)) then
