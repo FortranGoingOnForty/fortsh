@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        4.0.1
+Version:        4.0.2
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,13 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.0.2-1
+- Fixed single-line if statement execution
+- Fixed infinite while loop issues
+- Resolved circular module dependency between control_flow and executor
+- Improved control flow condition evaluation
+- Enhanced variable expansion in test conditions
+
 * Sat Oct 12 2024 mfw <espadon@outlook.com> - 4.0.1-1
 - Fixed multiline function conditionals
 - Improved scripting support and control flow
