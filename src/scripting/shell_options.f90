@@ -37,6 +37,7 @@ contains
     shell%shopt_failglob = .false.
     shell%shopt_globstar = .false.
     shell%shopt_nocaseglob = .false.
+    shell%shopt_nocasematch = .false.
     shell%shopt_extglob = .false.
     shell%shopt_dotglob = .false.
   end subroutine
@@ -258,6 +259,8 @@ contains
         shell%shopt_globstar = enable
       case ('nocaseglob')
         shell%shopt_nocaseglob = enable
+      case ('nocasematch')
+        shell%shopt_nocasematch = enable
       case ('extglob')
         shell%shopt_extglob = enable
       case ('dotglob')
@@ -271,13 +274,14 @@ contains
   ! Show all shopt options
   subroutine show_shopt_options(shell)
     type(shell_state_t), intent(in) :: shell
-    
-    write(output_unit, '(a,a)') 'shopt ', merge('-s nullglob   ', '-u nullglob   ', shell%shopt_nullglob)
-    write(output_unit, '(a,a)') 'shopt ', merge('-s failglob   ', '-u failglob   ', shell%shopt_failglob)
-    write(output_unit, '(a,a)') 'shopt ', merge('-s globstar   ', '-u globstar   ', shell%shopt_globstar)
-    write(output_unit, '(a,a)') 'shopt ', merge('-s nocaseglob ', '-u nocaseglob ', shell%shopt_nocaseglob)
-    write(output_unit, '(a,a)') 'shopt ', merge('-s extglob    ', '-u extglob    ', shell%shopt_extglob)
-    write(output_unit, '(a,a)') 'shopt ', merge('-s dotglob    ', '-u dotglob    ', shell%shopt_dotglob)
+
+    write(output_unit, '(a,a)') 'shopt ', merge('-s nullglob    ', '-u nullglob    ', shell%shopt_nullglob)
+    write(output_unit, '(a,a)') 'shopt ', merge('-s failglob    ', '-u failglob    ', shell%shopt_failglob)
+    write(output_unit, '(a,a)') 'shopt ', merge('-s globstar    ', '-u globstar    ', shell%shopt_globstar)
+    write(output_unit, '(a,a)') 'shopt ', merge('-s nocaseglob  ', '-u nocaseglob  ', shell%shopt_nocaseglob)
+    write(output_unit, '(a,a)') 'shopt ', merge('-s nocasematch ', '-u nocasematch ', shell%shopt_nocasematch)
+    write(output_unit, '(a,a)') 'shopt ', merge('-s extglob     ', '-u extglob     ', shell%shopt_extglob)
+    write(output_unit, '(a,a)') 'shopt ', merge('-s dotglob     ', '-u dotglob     ', shell%shopt_dotglob)
   end subroutine
 
   ! Show shell variables (simplified version for 'set' without args)

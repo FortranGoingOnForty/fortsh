@@ -27,6 +27,7 @@ module readline
   integer, parameter :: KEY_CTRL_F = 6    ! Forward character (same as right arrow)
   integer, parameter :: KEY_CTRL_B = 2    ! Backward character (same as left arrow)
   integer, parameter :: KEY_CTRL_R = 18   ! Reverse-i-search
+  integer, parameter :: KEY_CTRL_S = 19   ! Forward-i-search
   integer, parameter :: KEY_CTRL_G = 7    ! Cancel (alternate to Ctrl+C)
   integer, parameter :: KEY_ESC = 27
   integer, parameter :: KEY_UP = 65
@@ -59,7 +60,8 @@ module readline
     logical :: completions_shown = .false. ! Have we shown completion list for current buffer?
 
     ! Reverse-i-search state
-    logical :: in_search = .false. ! Currently in reverse-i-search mode
+    logical :: in_search = .false. ! Currently in i-search mode (forward or reverse)
+    logical :: search_forward = .false. ! True = forward, False = reverse
     character(len=MAX_LINE_LEN) :: search_string = '' ! Current search query
     integer :: search_length = 0 ! Length of search string
     integer :: search_match_index = 0 ! Current history match index
@@ -261,7 +263,10 @@ contains
 
         case(KEY_CTRL_R)
           ! Reverse-i-search
-          call handle_reverse_search(input_state, prompt)
+          call handle_isearch(input_state, prompt, .false.)
+        case(KEY_CTRL_S)
+          ! Forward-i-search
+          call handle_isearch(input_state, prompt, .true.)
 
         case(KEY_CTRL_G)
           ! Cancel search if active (bash-compatible)
@@ -2422,19 +2427,23 @@ contains
   end subroutine
 
   ! Reverse-i-search implementation
-  subroutine handle_reverse_search(input_state, prompt)
+  subroutine handle_isearch(input_state, prompt, forward)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
+    logical, intent(in) :: forward
 
     ! Save current buffer if entering search for first time
     if (.not. input_state%in_search) then
       input_state%original_buffer = input_state%buffer(:input_state%length)
       input_state%in_search = .true.
+      input_state%search_forward = forward
       input_state%search_string = ''
       input_state%search_length = 0
       input_state%search_match_index = 0
     else
-      ! Ctrl+R pressed again - find next match
+      ! Ctrl+R/Ctrl+S pressed again - find next match
+      ! Allow switching direction mid-search
+      input_state%search_forward = forward
       call search_next_match(input_state)
     end if
 
@@ -2451,20 +2460,9 @@ contains
 
     search_str = input_state%search_string(:input_state%search_length)
 
-    ! Start from current match and search backwards
-    do i = input_state%search_match_index - 1, 1, -1
-      if (index(command_history%lines(i), trim(search_str)) > 0) then
-        input_state%search_match_index = i
-        input_state%buffer = command_history%lines(i)
-        input_state%length = len_trim(command_history%lines(i))
-        input_state%cursor_pos = input_state%length
-        return
-      end if
-    end do
-
-    ! Wrap around to end if no match found
-    if (input_state%search_match_index > 0) then
-      do i = command_history%count, input_state%search_match_index + 1, -1
+    if (input_state%search_forward) then
+      ! Forward search - search from current match towards newer history
+      do i = input_state%search_match_index + 1, command_history%count
         if (index(command_history%lines(i), trim(search_str)) > 0) then
           input_state%search_match_index = i
           input_state%buffer = command_history%lines(i)
@@ -2473,6 +2471,43 @@ contains
           return
         end if
       end do
+
+      ! Wrap around to beginning if no match found
+      if (input_state%search_match_index > 0) then
+        do i = 1, input_state%search_match_index - 1
+          if (index(command_history%lines(i), trim(search_str)) > 0) then
+            input_state%search_match_index = i
+            input_state%buffer = command_history%lines(i)
+            input_state%length = len_trim(command_history%lines(i))
+            input_state%cursor_pos = input_state%length
+            return
+          end if
+        end do
+      end if
+    else
+      ! Reverse search - search from current match towards older history
+      do i = input_state%search_match_index - 1, 1, -1
+        if (index(command_history%lines(i), trim(search_str)) > 0) then
+          input_state%search_match_index = i
+          input_state%buffer = command_history%lines(i)
+          input_state%length = len_trim(command_history%lines(i))
+          input_state%cursor_pos = input_state%length
+          return
+        end if
+      end do
+
+      ! Wrap around to end if no match found
+      if (input_state%search_match_index > 0) then
+        do i = command_history%count, input_state%search_match_index + 1, -1
+          if (index(command_history%lines(i), trim(search_str)) > 0) then
+            input_state%search_match_index = i
+            input_state%buffer = command_history%lines(i)
+            input_state%length = len_trim(command_history%lines(i))
+            input_state%cursor_pos = input_state%length
+            return
+          end if
+        end do
+      end if
     end if
   end subroutine
 
@@ -2488,17 +2523,32 @@ contains
       input_state%search_length = input_state%search_length + 1
       input_state%search_string(input_state%search_length:input_state%search_length) = ch
 
-      ! Search backwards through history
+      ! Search through history in the appropriate direction
       search_str = input_state%search_string(:input_state%search_length)
-      do i = command_history%count, 1, -1
-        if (index(command_history%lines(i), trim(search_str)) > 0) then
-          input_state%search_match_index = i
-          input_state%buffer = command_history%lines(i)
-          input_state%length = len_trim(command_history%lines(i))
-          input_state%cursor_pos = input_state%length
-          exit
-        end if
-      end do
+
+      if (input_state%search_forward) then
+        ! Forward search - from beginning to end
+        do i = 1, command_history%count
+          if (index(command_history%lines(i), trim(search_str)) > 0) then
+            input_state%search_match_index = i
+            input_state%buffer = command_history%lines(i)
+            input_state%length = len_trim(command_history%lines(i))
+            input_state%cursor_pos = input_state%length
+            exit
+          end if
+        end do
+      else
+        ! Reverse search - from end to beginning
+        do i = command_history%count, 1, -1
+          if (index(command_history%lines(i), trim(search_str)) > 0) then
+            input_state%search_match_index = i
+            input_state%buffer = command_history%lines(i)
+            input_state%length = len_trim(command_history%lines(i))
+            input_state%cursor_pos = input_state%length
+            exit
+          end if
+        end do
+      end if
 
       call update_search_display(input_state, prompt)
     end if
@@ -2516,15 +2566,30 @@ contains
       if (input_state%search_length > 0) then
         ! Search again with shorter string
         search_str = input_state%search_string(:input_state%search_length)
-        do i = command_history%count, 1, -1
-          if (index(command_history%lines(i), trim(search_str)) > 0) then
-            input_state%search_match_index = i
-            input_state%buffer = command_history%lines(i)
-            input_state%length = len_trim(command_history%lines(i))
-            input_state%cursor_pos = input_state%length
-            exit
-          end if
-        end do
+
+        if (input_state%search_forward) then
+          ! Forward search
+          do i = 1, command_history%count
+            if (index(command_history%lines(i), trim(search_str)) > 0) then
+              input_state%search_match_index = i
+              input_state%buffer = command_history%lines(i)
+              input_state%length = len_trim(command_history%lines(i))
+              input_state%cursor_pos = input_state%length
+              exit
+            end if
+          end do
+        else
+          ! Reverse search
+          do i = command_history%count, 1, -1
+            if (index(command_history%lines(i), trim(search_str)) > 0) then
+              input_state%search_match_index = i
+              input_state%buffer = command_history%lines(i)
+              input_state%length = len_trim(command_history%lines(i))
+              input_state%cursor_pos = input_state%length
+              exit
+            end if
+          end do
+        end if
       else
         ! Empty search - clear buffer
         input_state%buffer = ''
@@ -2576,13 +2641,21 @@ contains
     type(input_state_t), intent(in) :: input_state
     character(len=*), intent(in) :: prompt
     character(len=512) :: search_prompt
+    character(len=32) :: direction_str
+
+    ! Determine search direction string
+    if (input_state%search_forward) then
+      direction_str = '(i-search)'
+    else
+      direction_str = '(reverse-i-search)'
+    end if
 
     ! Build search prompt
     if (input_state%search_length > 0) then
-      write(search_prompt, '(a,a,a)') '(reverse-i-search)`', &
+      write(search_prompt, '(a,a,a,a)') trim(direction_str), '`', &
             input_state%search_string(:input_state%search_length), "': "
     else
-      search_prompt = '(reverse-i-search)`'': '
+      write(search_prompt, '(a,a)') trim(direction_str), '`'': '
     end if
 
     ! Clear line and redraw

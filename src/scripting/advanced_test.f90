@@ -299,8 +299,12 @@ contains
     c_pattern = trim(pattern) // c_null_char
     c_string = trim(string) // c_null_char
 
-    ! Compile the regex pattern (use extended regex)
-    comp_result = c_regcomp(regex, c_pattern, REG_EXTENDED)
+    ! Compile the regex pattern (use extended regex, add case-insensitive flag if nocasematch is enabled)
+    if (shell%shopt_nocasematch) then
+      comp_result = c_regcomp(regex, c_pattern, ior(REG_EXTENDED, REG_ICASE))
+    else
+      comp_result = c_regcomp(regex, c_pattern, REG_EXTENDED)
+    end if
 
     if (comp_result == 0) then
       ! Pattern compiled successfully - now execute it with capture groups
