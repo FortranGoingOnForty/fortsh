@@ -1497,9 +1497,6 @@ contains
     logical :: is_command, used_programmable_completion
     type(completion_spec_t) :: spec
 
-    ! Always show we're being called
-    write(error_unit, '(a,a,a)') '[DEBUG] enhanced_tab_complete: input="', trim(partial_input), '"'
-
     num_completions = 0
     used_programmable_completion = .false.
 
@@ -1606,9 +1603,6 @@ contains
       completions(i) = temp_completions(i)
     end do
     num_completions = new_count
-
-    write(error_unit, '(a,i0,a,i0,a)') '[DEBUG] filter_directories_only: ', &
-      original_count, ' -> ', new_count, ' (directories only)'
   end subroutine
 
   ! Check if a string contains glob characters
@@ -1913,11 +1907,6 @@ contains
       file_pattern = trim(prefix)
     end if
 
-    ! Always show this to diagnose issues
-    write(error_unit, '(a,a,a,a,a,a,a)') '[DEBUG] complete_files_enhanced: prefix="', &
-      trim(prefix), '" -> dir="', trim(dir_path), '", pattern="', trim(file_pattern), '"'
-    write(error_unit, '(a,a)') '[DEBUG] PWD=', trim(get_environment_var('PWD'))
-
     ! Add directory navigation options ONLY when explicitly requested
     ! Don't add ./ when user is trying to complete dotfiles like .fortshrc
     if (len_trim(file_pattern) == 0) then
@@ -1965,14 +1954,6 @@ contains
 
     ! Get actual filesystem entries
     call scan_directory(dir_path, file_pattern, completions, num_completions)
-
-    ! Always show final result
-    write(error_unit, '(a,i0,a)') '[DEBUG] complete_files_enhanced: returning ', &
-      num_completions, ' completions total'
-    do i = 1, min(num_completions, 5)
-      write(error_unit, '(a,i0,a,a,a)') '[DEBUG]   completion ', i, ': "', &
-        trim(completions(i)), '"'
-    end do
   end subroutine
 
   ! Scan directory for matching files and directories (with fuzzy matching)
@@ -2020,13 +2001,6 @@ contains
     ! Parse ls output into individual entries
     call parse_ls_output(ls_output, entries, num_entries)
 
-    ! Always show this to diagnose issues
-    write(error_unit, '(a,a,a,a,a,i0,a)') '[DEBUG] scan_directory: dir="', trim(dir_path), &
-      '", pattern="', trim(pattern), '", found ', num_entries, ' entries'
-    do i = 1, min(num_entries, 5)
-      write(error_unit, '(a,i0,a,a,a)') '[DEBUG]   entry ', i, ': "', trim(entries(i)), '"'
-    end do
-
     ! Score entries using fuzzy matching
     num_scored = 0
     do i = 1, num_entries
@@ -2041,9 +2015,6 @@ contains
 
       ! Calculate fuzzy match score
       score = fuzzy_match_score(pattern, trim(entries(i)))
-      if (score >= 0) then
-        write(error_unit, '(a,a,a,i0)') '[DEBUG]   match: "', trim(entries(i)), '" score=', score
-      end if
       if (score >= 0) then  ! Negative score = no match
         ! Build full path for directory check (use original dir_path to preserve ~ in display)
         if (trim(dir_path) == '.') then
@@ -2085,12 +2056,6 @@ contains
       if (num_completions >= 50) exit
       num_completions = num_completions + 1
       completions(num_completions) = scored(j)%text
-    end do
-
-    ! Always show final result
-    write(error_unit, '(a,i0,a)') '[DEBUG] scan_directory: returning ', num_completions, ' completions'
-    do i = 1, min(num_completions, 5)
-      write(error_unit, '(a,i0,a,a,a)') '[DEBUG]   final ', i, ': "', trim(completions(i)), '"'
     end do
   end subroutine
 
@@ -2299,9 +2264,6 @@ contains
         end if
       end if
     end if
-
-    write(error_unit, '(a,l1,a,i0)') '[DEBUG] smart_tab_complete: completed=', &
-      completed, ', num_completions=', num_completions
   end subroutine
 
   ! Helper functions for enhanced readline
@@ -2401,10 +2363,6 @@ contains
       input_state%history_pos = 0
     end if
 
-    ! Clear autosuggestion before tab completion to prevent display issues
-    input_state%suggestion = ''
-    input_state%suggestion_length = 0
-
     ! Get the current buffer content
     partial_input = input_state%buffer(:input_state%length)
     saved_input = partial_input
@@ -2430,6 +2388,10 @@ contains
       input_state%length = len_trim(completed_line)
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
+
+      ! Update autosuggestion to account for the completion
+      ! If the completed line still matches a history entry, show the rest
+      call update_autosuggestion(input_state)
 
       if (num_completions > 1) then
         if (made_progress) then
