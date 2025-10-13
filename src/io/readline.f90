@@ -2222,31 +2222,125 @@ contains
       input_state%dirty = .true.
     end if
   end subroutine
-  
+
+  ! Calculate visual length of string (excluding ANSI escape codes)
+  function visual_length(str) result(vlen)
+    character(len=*), intent(in) :: str
+    integer :: vlen
+    integer :: i, slen
+    logical :: in_escape
+
+    vlen = 0
+    slen = len_trim(str)
+    in_escape = .false.
+
+    do i = 1, slen
+      if (in_escape) then
+        ! Inside escape sequence, skip until we find the terminator
+        if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
+          in_escape = .false.  ! Capital letter terminates escape sequence
+        else if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
+          in_escape = .false.  ! Lowercase letter terminates escape sequence
+        end if
+      else if (str(i:i) == char(27)) then
+        ! ESC character starts escape sequence
+        in_escape = .true.
+      else if (str(i:i) == char(13)) then
+        ! Carriage return - doesn't add to visual length
+        continue
+      else
+        ! Regular character
+        vlen = vlen + 1
+      end if
+    end do
+  end function
+
   subroutine redraw_line(prompt, input_state)
     character(len=*), intent(in) :: prompt
     type(input_state_t), intent(in) :: input_state
-    integer :: i
     character(len=:), allocatable :: highlighted
+    integer :: term_rows, term_cols, total_visual_chars
+    integer :: prompt_visual_len, current_line, end_line
+    integer :: cursor_visual_pos, cursor_line, cursor_col
+    integer :: i
+    logical :: success
 
-    ! Move to beginning of line (don't clear yet - reduces flashing)
+    ! Get terminal size
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80  ! Fallback
+    end if
+
+    ! Calculate visual length of prompt (excluding ANSI codes)
+    prompt_visual_len = visual_length(prompt)
+
+    ! Calculate current cursor position in visual characters
+    cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
+
+    ! Calculate which line the cursor is currently on (0-indexed)
+    if (term_cols > 0) then
+      current_line = cursor_visual_pos / term_cols
+    else
+      current_line = 0
+    end if
+
+    ! Move cursor up to the first line (where prompt starts)
+    do i = 1, current_line
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+    end do
+
+    ! Move to beginning of that line
     write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
 
-    ! Redraw prompt and current buffer with syntax highlighting
+    ! Clear from cursor to end of screen (clears all wrapped lines)
+    write(output_unit, '(a)', advance='no') char(27) // '[J'
+
+    ! Redraw prompt and full buffer with syntax highlighting
     write(output_unit, '(a)', advance='no') prompt
     if (input_state%length > 0) then
-      ! Apply syntax highlighting to the current buffer
       highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-      ! Don't use trim() - it would remove trailing spaces!
       write(output_unit, '(a)', advance='no') highlighted
     end if
 
-    ! Clear from here to end of line (removes any leftover characters)
-    write(output_unit, '(a)', advance='no') char(27) // '[K'
+    ! Calculate where cursor should be after redraw (accounting for line wrapping)
+    ! Cursor should be at: prompt_visual_len + cursor_pos
+    cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
 
-    ! Position cursor correctly
-    do i = input_state%length, input_state%cursor_pos + 1, -1
-      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+    ! Calculate which line and column the cursor should be on (0-indexed)
+    if (term_cols > 0) then
+      cursor_line = cursor_visual_pos / term_cols
+      cursor_col = mod(cursor_visual_pos, term_cols)
+    else
+      cursor_line = 0
+      cursor_col = cursor_visual_pos
+    end if
+
+    ! After drawing, cursor is at end of buffer
+    ! Calculate which line the end is on
+    total_visual_chars = prompt_visual_len + input_state%length
+    if (term_cols > 0) then
+      end_line = total_visual_chars / term_cols
+    else
+      end_line = 0
+    end if
+
+    ! Move cursor to the correct position
+    ! First, go back to beginning of current line
+    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+
+    ! Move up to the first line
+    do i = 1, end_line
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up to first line
+    end do
+
+    ! Now move down to the cursor's line
+    do i = 1, cursor_line
+      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Cursor down
+    end do
+
+    ! Finally, move right to the cursor's column
+    do i = 1, cursor_col
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
     end do
 
     flush(output_unit)
