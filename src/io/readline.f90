@@ -2325,22 +2325,12 @@ contains
     end if
 
     ! Move cursor to the correct position
-    ! First, go back to beginning of current line
-    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
-
-    ! Move up to the first line
-    do i = 1, end_line
-      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up to first line
-    end do
-
-    ! Now move down to the cursor's line
-    do i = 1, cursor_line
-      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Cursor down
-    end do
-
-    ! Finally, move right to the cursor's column
-    do i = 1, cursor_col
-      write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
+    ! Calculate how many positions to move left from end
+    ! We're currently at visual position: prompt_visual_len + length
+    ! We want to be at: prompt_visual_len + cursor_pos
+    ! So we need to move: length - cursor_pos positions to the left
+    do i = 1, input_state%length - input_state%cursor_pos
+      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
     end do
 
     flush(output_unit)
@@ -2531,14 +2521,9 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
     flush(output_unit)
 
-    ! Immediately redraw the prompt and current line
-    write(output_unit, '(a)', advance='no') prompt
-    if (input_state%length > 0) then
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
-    end if
-    flush(output_unit)
+    ! Redraw the prompt and current line properly with highlighting
+    call redraw_line(prompt, input_state)
 
-    ! Don't need dirty flag since we just redrew
     input_state%dirty = .false.
   end subroutine
 
@@ -2770,15 +2755,12 @@ contains
     input_state%search_length = 0
     input_state%search_match_index = 0
 
-    ! Clear the search prompt and show normal prompt with result
+    ! Clear the search prompt and show normal prompt with result using proper redraw
     write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
-    write(output_unit, '(a)', advance='no') prompt
-    if (input_state%length > 0) then
-      write(output_unit, '(a)') input_state%buffer(:input_state%length)
-    else
-      write(output_unit, '()')
-    end if
     flush(output_unit)
+
+    ! Use redraw_line to properly display with syntax highlighting and cursor positioning
+    call redraw_line(prompt, input_state)
   end subroutine
 
   subroutine update_search_display(input_state, prompt)
