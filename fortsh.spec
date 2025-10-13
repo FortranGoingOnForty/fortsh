@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        4.2.0
+Version:        4.3.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,14 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.3.0-1
+- NEW FEATURE: File descriptor redirection for coprocess support
+- Implemented variable FD expansion (>&${var}, <&${var})
+- Support for array-style FD variables (COPROC[0], COPROC[1])
+- Fixed nested brace expansion issues
+- Improved expansion handling and parser migration
+- Enhanced coprocess communication capabilities
+
 * Sun Oct 13 2024 mfw <espadon@outlook.com> - 4.2.0-1
 - Enhanced vi editing mode with advanced features
 - Added forward search capability in command line editing
