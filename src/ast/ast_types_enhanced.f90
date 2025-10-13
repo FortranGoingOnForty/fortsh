@@ -53,6 +53,8 @@ module ast_types_enhanced
   integer, parameter :: TOKEN_RBRACKET_DOUBLE = 43
   integer, parameter :: TOKEN_PROC_SUBST_IN = 44   ! <(...)
   integer, parameter :: TOKEN_PROC_SUBST_OUT = 45  ! >(...)
+  integer, parameter :: TOKEN_REDIRECT_DUP_OUT = 46  ! >&
+  integer, parameter :: TOKEN_REDIRECT_DUP_IN = 47   ! <&
 
   ! AST Node types
   integer, parameter :: NODE_SCRIPT = 100
@@ -193,9 +195,11 @@ module ast_types_enhanced
 
   ! Redirection node
   type, extends(ast_node_t) :: redirection_node_t
-    integer :: redirect_type = 0  ! 1=input(<), 2=output(>), 3=append(>>), 4=heredoc(<<), 5=herestring(<<<)
+    integer :: redirect_type = 0  ! 1=input(<), 2=output(>), 3=append(>>), 4=heredoc(<<), 5=herestring(<<<), 6=dup_out(>&), 7=dup_in(<&)
     integer :: fd = -1  ! File descriptor (-1 means default: 0 for <, 1 for >, >>)
     class(ast_node_t), allocatable :: target  ! Target file (word_node_t)
+    integer :: target_fd = -1  ! Target FD for duplication (literal number like >&4)
+    character(:), allocatable :: target_fd_expr  ! Target FD expression for duplication (variable like >&${COPROC[1]})
     character(:), allocatable :: heredoc_delimiter  ! Delimiter for here documents
     character(:), allocatable :: heredoc_content  ! Content for here documents
     logical :: heredoc_strip_tabs = .false.  ! True for <<- (strip leading tabs)
@@ -542,8 +546,12 @@ contains
     typed_clone%column = self%column
     typed_clone%redirect_type = self%redirect_type
     typed_clone%fd = self%fd
+    typed_clone%target_fd = self%target_fd
     if (allocated(self%target)) then
       allocate(typed_clone%target, source=self%target)
+    end if
+    if (allocated(self%target_fd_expr)) then
+      typed_clone%target_fd_expr = self%target_fd_expr
     end if
     if (allocated(self%heredoc_delimiter)) then
       typed_clone%heredoc_delimiter = self%heredoc_delimiter

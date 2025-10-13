@@ -1229,6 +1229,105 @@ contains
     ! Initialize result
     result_value = ''
 
+    ! Check for @ transformations first: ${var@U}, ${var@L}, ${var@u}, ${var@Q}, ${var@E}
+    op_pos = index(param_expr, '@')
+    if (op_pos > 1 .and. op_pos < len_trim(param_expr)) then
+      ! Extract variable name and transformation operator
+      var_name = param_expr(:op_pos-1)
+      operation = param_expr(op_pos+1:op_pos+1)
+      current_value = get_shell_variable(shell, trim(var_name))
+
+      select case (trim(operation))
+      case ('U')
+        ! ${var@U} - convert to uppercase
+        result_value = to_uppercase(trim(current_value))
+        return
+      case ('L')
+        ! ${var@L} - convert to lowercase
+        result_value = to_lowercase(trim(current_value))
+        return
+      case ('u')
+        ! ${var@u} - capitalize first character
+        if (len_trim(current_value) > 0) then
+          char_code = iachar(current_value(1:1))
+          if (char_code >= iachar('a') .and. char_code <= iachar('z')) then
+            result_value = achar(char_code - 32) // current_value(2:)
+          else
+            result_value = current_value
+          end if
+        end if
+        return
+      case ('l')
+        ! ${var@l} - lowercase first character
+        if (len_trim(current_value) > 0) then
+          char_code = iachar(current_value(1:1))
+          if (char_code >= iachar('A') .and. char_code <= iachar('Z')) then
+            result_value = achar(char_code + 32) // current_value(2:)
+          else
+            result_value = current_value
+          end if
+        end if
+        return
+      case ('Q')
+        ! ${var@Q} - shell-quote value (wrap in single quotes, escape embedded quotes)
+        if (len_trim(current_value) > 0) then
+          ! Use buffer to build the quoted string
+          var_name = "'"  ! Start with opening quote
+          op_pos = 2
+          do key_idx = 1, len_trim(current_value)
+            if (current_value(key_idx:key_idx) == "'") then
+              ! Escape embedded single quote as '\''
+              var_name(op_pos:op_pos+3) = "'\'''"
+              op_pos = op_pos + 4
+            else
+              var_name(op_pos:op_pos) = current_value(key_idx:key_idx)
+              op_pos = op_pos + 1
+            end if
+          end do
+          var_name(op_pos:op_pos) = "'"  ! Add closing quote
+          result_value = var_name(1:op_pos)
+        else
+          result_value = "''"
+        end if
+        return
+      case ('E')
+        ! ${var@E} - expand escape sequences
+        ! Use buffer to build the expanded string
+        var_name = ''
+        op_pos = 1
+        key_idx = 1
+        do while (key_idx <= len_trim(current_value))
+          if (current_value(key_idx:key_idx) == '\' .and. key_idx < len_trim(current_value)) then
+            key_idx = key_idx + 1
+            select case (current_value(key_idx:key_idx))
+            case ('n')
+              var_name(op_pos:op_pos) = char(10)
+              op_pos = op_pos + 1
+            case ('t')
+              var_name(op_pos:op_pos) = char(9)
+              op_pos = op_pos + 1
+            case ('r')
+              var_name(op_pos:op_pos) = char(13)
+              op_pos = op_pos + 1
+            case ('\')
+              var_name(op_pos:op_pos) = '\'
+              op_pos = op_pos + 1
+            case default
+              var_name(op_pos:op_pos) = '\'
+              var_name(op_pos+1:op_pos+1) = current_value(key_idx:key_idx)
+              op_pos = op_pos + 2
+            end select
+          else
+            var_name(op_pos:op_pos) = current_value(key_idx:key_idx)
+            op_pos = op_pos + 1
+          end if
+          key_idx = key_idx + 1
+        end do
+        result_value = var_name(1:op_pos-1)
+        return
+      end select
+    end if
+
     ! Check for keys expansion ${!arr[@]}
     get_keys = .false.
     is_length = .false.
