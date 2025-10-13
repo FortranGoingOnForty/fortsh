@@ -206,6 +206,14 @@ contains
         ! Number of jobs
         write(replacement, '(i0)') shell%num_jobs
 
+      case ('g')
+        ! Git branch (if in git repo)
+        replacement = get_git_branch()
+
+      case ('G')
+        ! Git status indicator (* if dirty, + if staged, clean otherwise)
+        replacement = get_git_status_indicator()
+
       case default
         ! Unknown escape - just output the character
         replacement = escape_char
@@ -369,5 +377,65 @@ contains
   subroutine increment_prompt_history()
     prompt_history_number = prompt_history_number + 1
   end subroutine
+
+  ! Get current git branch name (returns empty string if not in git repo)
+  function get_git_branch() result(branch)
+    character(len=:), allocatable :: branch
+    character(len=256) :: output
+    integer :: iostat, unit
+
+    ! Try to get branch name using git command
+    ! Use git symbolic-ref for speed (faster than git branch)
+    output = execute_and_capture('git symbolic-ref --short HEAD 2>/dev/null')
+
+    if (len_trim(output) > 0) then
+      branch = trim(output)
+    else
+      ! Not in a git repo or detached HEAD
+      branch = ''
+    end if
+  end function
+
+  ! Get git status indicator
+  ! Returns: '*' if dirty, '+' if staged changes, '✓' if clean, '' if not git repo
+  function get_git_status_indicator() result(indicator)
+    character(len=:), allocatable :: indicator
+    character(len=256) :: output
+    logical :: has_changes
+
+    ! First check if we're in a git repo
+    output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
+    if (len_trim(output) == 0) then
+      indicator = ''  ! Not in a git repo
+      return
+    end if
+
+    ! Check for uncommitted changes (both staged and unstaged)
+    ! Using git status --porcelain for machine-readable output
+    output = execute_and_capture('git status --porcelain 2>/dev/null')
+
+    if (len_trim(output) > 0) then
+      ! There are changes
+      ! Check if any are staged (lines starting with A, M, D, R, C in first column)
+      if (index(output, 'A ') > 0 .or. index(output, 'M ') > 0 .or. &
+          index(output, 'D ') > 0 .or. index(output, 'R ') > 0) then
+        indicator = '+'  ! Staged changes
+      else
+        indicator = '*'  ! Unstaged changes
+      end if
+    else
+      ! Clean working tree
+      indicator = ''  ! Clean (or use '✓' if you want to show clean status)
+    end if
+  end function
+
+  ! Check if current directory is in a git repository
+  function is_git_repo() result(in_git)
+    logical :: in_git
+    character(len=256) :: output
+
+    output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
+    in_git = (len_trim(output) > 0)
+  end function
 
 end module prompt_formatting
