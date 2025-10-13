@@ -8,6 +8,7 @@ module readline
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
   use syntax_highlight, only: highlight_command_line, init_syntax_highlighting
   use abbreviations, only: try_expand_abbreviation
+  use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
   implicit none
@@ -40,6 +41,10 @@ module readline
   ! History and line management
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
+
+  ! Glob expansion constants (from glob module)
+  integer, parameter :: MAX_GLOB_MATCHES = 1000
+  ! MAX_TOKEN_LEN is already defined in shell_types
   
   ! Input state management
   ! Editing mode constants
@@ -1492,6 +1497,9 @@ contains
     logical :: is_command, used_programmable_completion
     type(completion_spec_t) :: spec
 
+    ! Always show we're being called
+    write(error_unit, '(a,a,a)') '[DEBUG] enhanced_tab_complete: input="', trim(partial_input), '"'
+
     num_completions = 0
     used_programmable_completion = .false.
 
@@ -1551,14 +1559,135 @@ contains
           completions(i) = trim(completions(i))
         end do
       else
-        ! Complete files and directories
-        call complete_files_enhanced(last_word, completions, num_completions)
+        ! Check if last_word contains glob characters
+        if (has_glob_chars(last_word)) then
+          ! Expand glob pattern instead of regular file completion
+          call expand_glob_for_completion(last_word, completions, num_completions)
+        else
+          ! Complete files and directories normally
+          call complete_files_enhanced(last_word, completions, num_completions)
+        end if
+
+        ! Filter completions based on command type
+        ! cd, pushd, popd should only show directories
+        if (trim(command_name) == 'cd' .or. trim(command_name) == 'pushd' .or. &
+            trim(command_name) == 'popd') then
+          call filter_directories_only(completions, num_completions)
+        end if
 
         ! Don't add prefix to completions - they are for display only
         ! The prefix will be added when constructing the completed line
       end if
     end if
   end subroutine
+
+  ! Filter completions to only keep directories (entries ending with /)
+  subroutine filter_directories_only(completions, num_completions)
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
+    integer, intent(inout) :: num_completions
+
+    character(len=MAX_LINE_LEN) :: temp_completions(50)
+    integer :: i, new_count, original_count
+
+    original_count = num_completions
+    new_count = 0
+    do i = 1, num_completions
+      ! Keep only entries that end with / (directories)
+      if (len_trim(completions(i)) > 0) then
+        if (completions(i)(len_trim(completions(i)):len_trim(completions(i))) == '/') then
+          new_count = new_count + 1
+          temp_completions(new_count) = completions(i)
+        end if
+      end if
+    end do
+
+    ! Copy filtered results back
+    do i = 1, new_count
+      completions(i) = temp_completions(i)
+    end do
+    num_completions = new_count
+
+    write(error_unit, '(a,i0,a,i0,a)') '[DEBUG] filter_directories_only: ', &
+      original_count, ' -> ', new_count, ' (directories only)'
+  end subroutine
+
+  ! Check if a string contains glob characters
+  function has_glob_chars(str) result(has_globs)
+    character(len=*), intent(in) :: str
+    logical :: has_globs
+
+    has_globs = (index(str, '*') > 0 .or. &
+                 index(str, '?') > 0 .or. &
+                 index(str, '[') > 0)
+  end function has_glob_chars
+
+  ! Expand glob pattern for tab completion using real filesystem
+  subroutine expand_glob_for_completion(pattern, completions, num_completions)
+    character(len=*), intent(in) :: pattern
+    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    integer, intent(out) :: num_completions
+
+    character(len=MAX_LINE_LEN) :: dir_path, file_pattern
+    character(len=MAX_LINE_LEN) :: ls_command, ls_output
+    character(len=MAX_LINE_LEN) :: entries(100)
+    integer :: num_entries, i, last_slash_pos
+    character(len=MAX_LINE_LEN) :: full_path
+    logical :: is_dir
+
+    num_completions = 0
+
+    ! Extract directory path and filename pattern (same logic as complete_files_enhanced)
+    last_slash_pos = 0
+    do i = len_trim(pattern), 1, -1
+      if (pattern(i:i) == '/') then
+        last_slash_pos = i
+        exit
+      end if
+    end do
+
+    if (last_slash_pos > 0) then
+      dir_path = pattern(:last_slash_pos-1)
+      file_pattern = pattern(last_slash_pos+1:)
+      if (len_trim(dir_path) == 0) dir_path = '/'
+    else
+      dir_path = '.'
+      file_pattern = trim(pattern)
+    end if
+
+    ! Use ls command to get directory listing (same as scan_directory)
+    ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
+    ls_output = execute_and_capture(ls_command)
+
+    ! Parse ls output into individual entries
+    call parse_ls_output(ls_output, entries, num_entries)
+
+    ! Match entries against glob pattern
+    do i = 1, num_entries
+      if (num_completions >= 50) exit
+
+      ! Skip . and ..
+      if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') cycle
+
+      ! Use pattern_matches from glob module to match against pattern
+      if (pattern_matches(file_pattern, trim(entries(i)))) then
+        ! Build full path
+        if (trim(dir_path) == '.') then
+          full_path = trim(entries(i))
+        else
+          full_path = trim(dir_path) // '/' // trim(entries(i))
+        end if
+
+        ! Check if it's a directory and add trailing slash
+        is_dir = is_directory(full_path)
+        num_completions = num_completions + 1
+        if (is_dir) then
+          completions(num_completions) = trim(full_path) // '/'
+        else
+          completions(num_completions) = trim(full_path)
+        end if
+      end if
+    end do
+  end subroutine expand_glob_for_completion
 
   subroutine complete_commands(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
@@ -1754,10 +1883,16 @@ contains
     character(len=*), intent(in) :: prefix
     character(len=MAX_LINE_LEN), intent(out) :: completions(50)
     integer, intent(out) :: num_completions
-    
+
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
+    character(len=:), allocatable :: debug_mode
     integer :: last_slash_pos, i
-    
+    logical :: debug_enabled
+
+    ! Check if debug mode is enabled
+    debug_mode = get_environment_var('FORTSH_DEBUG_COMPLETION')
+    debug_enabled = (allocated(debug_mode) .and. trim(debug_mode) == '1')
+
     num_completions = 0
     
     ! Extract directory path and filename pattern
@@ -1768,7 +1903,7 @@ contains
         exit
       end if
     end do
-    
+
     if (last_slash_pos > 0) then
       dir_path = prefix(:last_slash_pos-1)
       file_pattern = prefix(last_slash_pos+1:)
@@ -1777,10 +1912,16 @@ contains
       dir_path = '.'
       file_pattern = trim(prefix)
     end if
-    
-    ! Add directory navigation options
-    if (len_trim(file_pattern) == 0 .or. file_pattern(1:1) == '.') then
-      ! Current directory
+
+    ! Always show this to diagnose issues
+    write(error_unit, '(a,a,a,a,a,a,a)') '[DEBUG] complete_files_enhanced: prefix="', &
+      trim(prefix), '" -> dir="', trim(dir_path), '", pattern="', trim(file_pattern), '"'
+    write(error_unit, '(a,a)') '[DEBUG] PWD=', trim(get_environment_var('PWD'))
+
+    ! Add directory navigation options ONLY when explicitly requested
+    ! Don't add ./ when user is trying to complete dotfiles like .fortshrc
+    if (len_trim(file_pattern) == 0) then
+      ! Empty pattern - offer . and ..
       if (num_completions < 50) then
         num_completions = num_completions + 1
         if (trim(dir_path) == '.') then
@@ -1789,9 +1930,27 @@ contains
           completions(num_completions) = trim(dir_path) // '/./'
         end if
       end if
-      
-      ! Parent directory
-      if (len_trim(file_pattern) == 0 .or. index(file_pattern, '..') == 1) then
+
+      if (num_completions < 50) then
+        num_completions = num_completions + 1
+        if (trim(dir_path) == '.') then
+          completions(num_completions) = '../'
+        else
+          completions(num_completions) = trim(dir_path) // '/../'
+        end if
+      end if
+    else if (trim(file_pattern) == '.' .or. trim(file_pattern) == '..') then
+      ! Exact match for . or .. - complete with /
+      if (trim(file_pattern) == '.') then
+        if (num_completions < 50) then
+          num_completions = num_completions + 1
+          if (trim(dir_path) == '.') then
+            completions(num_completions) = './'
+          else
+            completions(num_completions) = trim(dir_path) // '/./'
+          end if
+        end if
+      else if (trim(file_pattern) == '..') then
         if (num_completions < 50) then
           num_completions = num_completions + 1
           if (trim(dir_path) == '.') then
@@ -1802,9 +1961,18 @@ contains
         end if
       end if
     end if
-    
+    ! Otherwise, let scan_directory handle ALL matches including dotfiles
+
     ! Get actual filesystem entries
     call scan_directory(dir_path, file_pattern, completions, num_completions)
+
+    ! Always show final result
+    write(error_unit, '(a,i0,a)') '[DEBUG] complete_files_enhanced: returning ', &
+      num_completions, ' completions total'
+    do i = 1, min(num_completions, 5)
+      write(error_unit, '(a,i0,a,a,a)') '[DEBUG]   completion ', i, ': "', &
+        trim(completions(i)), '"'
+    end do
   end subroutine
 
   ! Scan directory for matching files and directories (with fuzzy matching)
@@ -1813,21 +1981,51 @@ contains
     character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
     integer, intent(inout) :: num_completions
 
-    character(len=MAX_LINE_LEN) :: ls_command, ls_output
+    character(len=MAX_LINE_LEN) :: ls_command, ls_output, expanded_dir
     character(len=MAX_LINE_LEN) :: entries(100)  ! Temp storage for directory entries
-    character(len=MAX_LINE_LEN) :: full_path
+    character(len=MAX_LINE_LEN) :: full_path, check_path
+    character(len=:), allocatable :: home_dir, debug_mode
     type(scored_completion_t) :: scored(100)
     integer :: num_entries, i, pattern_len, num_scored, score, j
-    logical :: is_dir
+    logical :: is_dir, debug_enabled
+
+    ! Check if debug mode is enabled
+    debug_mode = get_environment_var('FORTSH_DEBUG_COMPLETION')
+    debug_enabled = (allocated(debug_mode) .and. trim(debug_mode) == '1')
 
     pattern_len = len_trim(pattern)
 
+    ! Expand tilde if present (shell doesn't expand ~ inside quotes)
+    expanded_dir = dir_path
+    if (len_trim(dir_path) > 0 .and. dir_path(1:1) == '~') then
+      home_dir = get_environment_var('HOME')
+      if (allocated(home_dir) .and. len(home_dir) > 0) then
+        if (len_trim(dir_path) == 1) then
+          ! Just ~
+          expanded_dir = home_dir
+        else if (dir_path(2:2) == '/') then
+          ! ~/something
+          expanded_dir = trim(home_dir) // dir_path(2:)
+        else
+          ! ~user (not supported for now, just use as-is)
+          expanded_dir = dir_path
+        end if
+      end if
+    end if
+
     ! Use ls command to get directory listing
-    ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
+    ls_command = 'ls -1a "' // trim(expanded_dir) // '" 2>/dev/null'
     ls_output = execute_and_capture(ls_command)
 
     ! Parse ls output into individual entries
     call parse_ls_output(ls_output, entries, num_entries)
+
+    ! Always show this to diagnose issues
+    write(error_unit, '(a,a,a,a,a,i0,a)') '[DEBUG] scan_directory: dir="', trim(dir_path), &
+      '", pattern="', trim(pattern), '", found ', num_entries, ' entries'
+    do i = 1, min(num_entries, 5)
+      write(error_unit, '(a,i0,a,a,a)') '[DEBUG]   entry ', i, ': "', trim(entries(i)), '"'
+    end do
 
     ! Score entries using fuzzy matching
     num_scored = 0
@@ -1843,16 +2041,25 @@ contains
 
       ! Calculate fuzzy match score
       score = fuzzy_match_score(pattern, trim(entries(i)))
+      if (score >= 0) then
+        write(error_unit, '(a,a,a,i0)') '[DEBUG]   match: "', trim(entries(i)), '" score=', score
+      end if
       if (score >= 0) then  ! Negative score = no match
-        ! Build full path for directory check
+        ! Build full path for directory check (use original dir_path to preserve ~ in display)
         if (trim(dir_path) == '.') then
           full_path = trim(entries(i))
         else
           full_path = trim(dir_path) // '/' // trim(entries(i))
         end if
 
-        ! Check if it's a directory and add trailing slash
-        is_dir = is_directory(full_path)
+        ! Check if it's a directory using expanded path
+        if (trim(expanded_dir) == '.') then
+          check_path = trim(entries(i))
+        else
+          check_path = trim(expanded_dir) // '/' // trim(entries(i))
+        end if
+        is_dir = is_directory(check_path)
+
         num_scored = num_scored + 1
         if (is_dir) then
           scored(num_scored)%text = trim(full_path) // '/'
@@ -1878,6 +2085,12 @@ contains
       if (num_completions >= 50) exit
       num_completions = num_completions + 1
       completions(num_completions) = scored(j)%text
+    end do
+
+    ! Always show final result
+    write(error_unit, '(a,i0,a)') '[DEBUG] scan_directory: returning ', num_completions, ' completions'
+    do i = 1, min(num_completions, 5)
+      write(error_unit, '(a,i0,a,a,a)') '[DEBUG]   final ', i, ': "', trim(completions(i)), '"'
     end do
   end subroutine
 
@@ -1998,8 +2211,10 @@ contains
     character(len=*), intent(out) :: completed_line
     logical, intent(out) :: completed
 
-    character(len=MAX_LINE_LEN) :: common_prefix, prefix_part
-    integer :: last_space_pos, i
+    character(len=MAX_LINE_LEN) :: common_prefix, prefix_part, last_word
+    character(len=4096) :: expanded_matches
+    integer :: last_space_pos, i, pos, j
+    logical :: is_glob_pattern
 
     completed = .false.
     completed_line = partial_input
@@ -2015,9 +2230,14 @@ contains
 
     if (last_space_pos > 0) then
       prefix_part = partial_input(:last_space_pos)
+      last_word = partial_input(last_space_pos+1:)
     else
       prefix_part = ''
+      last_word = trim(partial_input)
     end if
+
+    ! Check if we're completing a glob pattern
+    is_glob_pattern = has_glob_chars(last_word)
 
     call enhanced_tab_complete(partial_input, completions, num_completions)
 
@@ -2033,18 +2253,55 @@ contains
       end if
       completed = .true.
     else
-      ! Multiple completions - try common prefix
-      common_prefix = get_common_prefix(completions, num_completions)
+      ! Multiple completions
+      if (is_glob_pattern) then
+        ! For glob patterns: expand all matches into command line (like bash)
+        ! Build space-separated list of all matches
+        expanded_matches = ''
+        pos = 1
 
-      if (len_trim(common_prefix) > 0) then
+        do j = 1, num_completions
+          if (j > 1) then
+            ! Add space separator
+            expanded_matches(pos:pos) = ' '
+            pos = pos + 1
+          end if
+
+          ! Add this match
+          expanded_matches(pos:pos+len_trim(completions(j))-1) = trim(completions(j))
+          pos = pos + len_trim(completions(j))
+        end do
+
+        ! Replace glob pattern with expanded matches
         if (last_space_pos > 0) then
-          completed_line = prefix_part(:last_space_pos) // trim(common_prefix)
+          completed_line = prefix_part(:last_space_pos) // expanded_matches(:pos-1)
         else
-          completed_line = trim(common_prefix)
+          completed_line = expanded_matches(:pos-1)
         end if
         completed = .true.
+      else
+        ! For regular completion: try common prefix
+        common_prefix = get_common_prefix(completions, num_completions)
+
+        if (len_trim(common_prefix) > len_trim(last_word)) then
+          ! We have a common prefix that extends what user typed - use it
+          if (last_space_pos > 0) then
+            completed_line = prefix_part(:last_space_pos) // trim(common_prefix)
+          else
+            completed_line = trim(common_prefix)
+          end if
+          completed = .true.
+        else
+          ! No useful common prefix - we'll show the completions list instead
+          ! Keep completed = .false. but don't treat as "no completions"
+          ! The caller will see num_completions > 0 and should show them
+          completed = .false.
+        end if
       end if
     end if
+
+    write(error_unit, '(a,l1,a,i0)') '[DEBUG] smart_tab_complete: completed=', &
+      completed, ', num_completions=', num_completions
   end subroutine
 
   ! Helper functions for enhanced readline
@@ -2144,6 +2401,10 @@ contains
       input_state%history_pos = 0
     end if
 
+    ! Clear autosuggestion before tab completion to prevent display issues
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
     ! Get the current buffer content
     partial_input = input_state%buffer(:input_state%length)
     saved_input = partial_input
@@ -2155,7 +2416,12 @@ contains
     ! Attempt smart completion
     call smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
 
-    if (completed) then
+    if (num_completions == 0) then
+      ! No completions found - ring bell (ASCII 7)
+      write(output_unit, '(a)', advance='no') char(7)  ! Bell for audio feedback
+      flush(output_unit)
+    else if (completed) then
+      ! We have a completed line - update buffer
       ! Check if we made actual progress
       made_progress = (len_trim(completed_line) > len_trim(saved_input))
 
@@ -2185,9 +2451,15 @@ contains
         input_state%completions_shown = .false.
       end if
     else
-      ! No completions found - ring bell (ASCII 7)
-      write(output_unit, '(a)', advance='no') char(7)  ! Bell for audio feedback
-      flush(output_unit)
+      ! We have completions but no single completion to apply
+      ! Show the available options
+      if (.not. input_state%completions_shown .or. buffer_changed) then
+        write(output_unit, '()')  ! New line
+        call show_completions(completions, num_completions)
+        input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+        input_state%completions_shown = .true.
+        input_state%dirty = .true.
+      end if
     end if
   end subroutine
   
@@ -2359,7 +2631,7 @@ contains
     integer :: match_positions(MAX_LINE_LEN)
     integer :: num_matches, i
     integer :: consecutive_bonus, boundary_bonus
-    logical :: case_match
+    logical :: case_match, is_prefix_match
     character :: pattern_char, candidate_char
 
     pattern_len = len_trim(pattern)
@@ -2375,6 +2647,22 @@ contains
     if (pattern_len > candidate_len) then
       score = -1
       return
+    end if
+
+    ! For short patterns (1-2 chars), require prefix match for better UX
+    ! This prevents "RE" from matching "parser_enhanced.mod"
+    if (pattern_len <= 2) then
+      is_prefix_match = .true.
+      do i = 1, pattern_len
+        if (to_lowercase(pattern(i:i)) /= to_lowercase(candidate(i:i))) then
+          is_prefix_match = .false.
+          exit
+        end if
+      end do
+      if (.not. is_prefix_match) then
+        score = -1
+        return
+      end if
     end if
 
     ! Find all pattern characters in order
