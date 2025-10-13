@@ -99,6 +99,7 @@ module readline
     integer :: menu_num_items = 0  ! Number of items in menu
     integer :: menu_selection = 1  ! Currently selected item (1-based)
     character(len=MAX_LINE_LEN) :: menu_prefix = ''  ! Command prefix before completion word
+    integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
   end type input_state_t
 
   type :: history_t
@@ -254,12 +255,8 @@ contains
           end if
 
         case(KEY_ESC)
-          ! Escape sequence - try to read more, or exit menu if in menu mode
-          if (input_state%in_menu_select) then
-            call handle_menu_navigation(input_state, KEY_ESC, done)
-          else
-            call handle_escape_sequence(input_state, done)
-          end if
+          ! Escape sequence - parse it (will route to menu if needed)
+          call handle_escape_sequence(input_state, done)
           
         case(KEY_CTRL_A)
           ! Home - move to beginning of line
@@ -278,15 +275,24 @@ contains
           call handle_cursor_left(input_state)
           
         case(KEY_CTRL_K)
-          ! Kill to end of line
+          ! Kill to end of line (exit menu mode first if active)
+          if (input_state%in_menu_select) then
+            call exit_menu_select_mode(input_state)
+          end if
           call handle_kill_to_end(input_state)
-          
+
         case(KEY_CTRL_U)
-          ! Kill entire line
+          ! Kill entire line (exit menu mode first if active)
+          if (input_state%in_menu_select) then
+            call exit_menu_select_mode(input_state)
+          end if
           call handle_kill_line(input_state)
           
         case(KEY_CTRL_W)
-          ! Kill previous word
+          ! Kill previous word (exit menu mode first if active)
+          if (input_state%in_menu_select) then
+            call exit_menu_select_mode(input_state)
+          end if
           call handle_kill_word(input_state)
           
         case(KEY_CTRL_Y)
@@ -2484,16 +2490,19 @@ contains
 
     if (last_space_pos > 0) then
       input_state%menu_prefix = current_input(:last_space_pos)
+      input_state%menu_prefix_len = last_space_pos  ! Store length WITH the space
     else
       input_state%menu_prefix = ''
+      input_state%menu_prefix_len = 0
     end if
 
     ! Draw the menu with first item highlighted
-    call draw_completion_menu(input_state)
+    call draw_completion_menu(input_state, .true.)
   end subroutine
 
-  subroutine draw_completion_menu(input_state)
+  subroutine draw_completion_menu(input_state, initial_draw)
     type(input_state_t), intent(in) :: input_state
+    logical, intent(in) :: initial_draw
     integer :: i, cols_per_item, items_per_row, row, col, item_idx
     integer :: term_rows, term_cols
     logical :: success
@@ -2504,8 +2513,10 @@ contains
       term_cols = 80
     end if
 
-    ! Clear any previous output and move to beginning of line
-    write(output_unit, '()')  ! New line
+    ! Add newline only on initial draw, not on redraw
+    if (initial_draw) then
+      write(output_unit, '()')  ! New line
+    end if
 
     ! Calculate layout - try to fit multiple items per row
     cols_per_item = 0
@@ -2614,8 +2625,9 @@ contains
     character(len=MAX_LINE_LEN) :: completed_line
 
     ! Build completed command with selected item
-    if (len_trim(input_state%menu_prefix) > 0) then
-      completed_line = trim(input_state%menu_prefix) // &
+    if (input_state%menu_prefix_len > 0) then
+      ! Use stored prefix_len which includes the trailing space
+      completed_line = input_state%menu_prefix(:input_state%menu_prefix_len) // &
                       trim(input_state%menu_items(input_state%menu_selection))
     else
       completed_line = trim(input_state%menu_items(input_state%menu_selection))
@@ -2642,6 +2654,7 @@ contains
     input_state%in_menu_select = .false.
     input_state%menu_num_items = 0
     input_state%menu_selection = 1
+    input_state%menu_prefix_len = 0
     input_state%completions_shown = .false.
     input_state%dirty = .true.
   end subroutine
@@ -2660,8 +2673,8 @@ contains
     write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
     write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
 
-    ! Redraw menu
-    call draw_completion_menu(input_state)
+    ! Redraw menu (without adding extra newline)
+    call draw_completion_menu(input_state, .false.)
   end subroutine
 
   subroutine handle_escape_sequence(input_state, done)
