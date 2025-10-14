@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        5.1.0
+Version:        5.2.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,20 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Mon Oct 14 2024 mfw <espadon@outlook.com> - 5.2.0-1
+- Major POSIX compliance improvements
+- Fixed heredoc handling and processing
+- Custom IFS (Internal Field Separator) handling
+- Backtick command substitution support
+- Parameter expansion with walrus assignment operator
+- Escaped glob characters and escaped spaces handling
+- Enhanced printf with proper escape sequence handling
+- Fixed backslash escape issues
+- Negation operator (!) support
+- Until loop implementation
+- POSIX-compliant test command improvements
+- Added comprehensive POSIX compliance test suite
+
 * Sun Oct 13 2024 mfw <espadon@outlook.com> - 5.1.0-1
 - Partial history completions with Ctrl-arrow keys
 - Fill in history paths one directory at a time
