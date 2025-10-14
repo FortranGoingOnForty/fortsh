@@ -4265,8 +4265,9 @@ contains
   ! Update autosuggestion based on current input
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i
+    integer :: i, newline_pos, j
     character(len=MAX_LINE_LEN) :: current_input
+    character(len=MAX_LINE_LEN) :: suggestion_candidate
 
     ! Clear suggestion if buffer is empty or in special modes
     if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
@@ -4284,8 +4285,27 @@ contains
       if (len_trim(command_history%lines(i)) > input_state%length) then
         if (command_history%lines(i)(:input_state%length) == current_input(:input_state%length)) then
           ! Found a match! Store the rest as suggestion
-          input_state%suggestion = command_history%lines(i)(input_state%length+1:)
-          input_state%suggestion_length = len_trim(command_history%lines(i)) - input_state%length
+          ! CRITICAL FIX: Stop at first newline to avoid multi-line suggestions (heredocs, etc.)
+          suggestion_candidate = command_history%lines(i)(input_state%length+1:)
+
+          ! Find first newline character
+          newline_pos = 0
+          do j = 1, len_trim(suggestion_candidate)
+            if (suggestion_candidate(j:j) == char(10) .or. suggestion_candidate(j:j) == char(13)) then
+              newline_pos = j - 1
+              exit
+            end if
+          end do
+
+          if (newline_pos > 0) then
+            ! Truncate at newline
+            input_state%suggestion = suggestion_candidate(:newline_pos)
+            input_state%suggestion_length = newline_pos
+          else
+            ! No newline found, use full suggestion
+            input_state%suggestion = suggestion_candidate
+            input_state%suggestion_length = len_trim(suggestion_candidate)
+          end if
           return
         end if
       end if
