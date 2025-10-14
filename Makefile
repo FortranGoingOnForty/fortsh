@@ -282,7 +282,7 @@ help:
 
 # Package information
 PACKAGE = fortsh
-VERSION = 5.2.3
+VERSION = 5.2.4
 
 # Distribution and packaging targets
 dist: clean
