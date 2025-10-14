@@ -148,9 +148,12 @@ contains
         
         ! Expand variables and execute
         call expand_tokens(pipeline%commands(i), shell)
-        
+
         ! Expand glob patterns
         call expand_command_globs(pipeline%commands(i))
+
+        ! Process backslash escapes AFTER glob expansion
+        call process_command_escapes(pipeline%commands(i))
 
         ! Handle eval builtin directly (to avoid circular dependency)
         if (trim(pipeline%commands(i)%tokens(1)) == 'eval') then
@@ -368,9 +371,33 @@ contains
       end if
     end if
 
+    ! Handle case pattern: skip first token if flag is set
+    if (shell%case_pattern_skip_first_token .and. cmd%num_tokens > 1) then
+      ! Shift tokens left to skip the pattern token
+      allocate(temp_tokens(cmd%num_tokens - 1))
+      do i = 2, cmd%num_tokens
+        temp_tokens(i - 1) = cmd%tokens(i)
+      end do
+      deallocate(cmd%tokens)
+      allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(cmd%num_tokens - 1))
+      cmd%tokens = temp_tokens
+      cmd%num_tokens = cmd%num_tokens - 1
+      deallocate(temp_tokens)
+      ! Reset the flag
+      shell%case_pattern_skip_first_token = .false.
+    end if
+
     ! Handle here document input
     if (allocated(cmd%heredoc_delimiter)) then
       call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content)
+    end if
+
+    ! Check if this is a function definition BEFORE expanding variables
+    ! (so $1, $2, etc. remain literal in the function body)
+    if (is_function_definition_command(cmd, shell)) then
+      ! Function was registered, don't execute anything
+      shell%last_exit_status = 0
+      return
     end if
 
     ! Expand variables in all tokens (except for defun, which needs raw body)
@@ -388,6 +415,11 @@ contains
     ! Expand glob patterns (except for defun)
     if (trim(cmd%tokens(1)) /= 'defun') then
       call expand_command_globs(cmd)
+    end if
+
+    ! Process backslash escapes AFTER glob expansion
+    if (trim(cmd%tokens(1)) /= 'defun') then
+      call process_command_escapes(cmd)
     end if
 
     ! === DEBUGGING & TRACING HOOKS ===
@@ -759,6 +791,25 @@ contains
     end do
   end subroutine
 
+  ! Check if a string contains escaped spaces (backslash before space)
+  function has_escaped_spaces(str) result(has_escaped)
+    character(len=*), intent(in) :: str
+    logical :: has_escaped
+    integer :: i, len_str
+    character(len=1) :: backslash
+
+    has_escaped = .false.
+    len_str = len_trim(str)
+    backslash = char(92)  ! ASCII code for backslash
+
+    do i = 1, len_str - 1
+      if (str(i:i) == backslash .and. str(i+1:i+1) == ' ') then
+        has_escaped = .true.
+        return
+      end if
+    end do
+  end function
+
   subroutine expand_tokens(cmd, shell)
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
@@ -767,7 +818,7 @@ contains
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:), split_words(:)
     character(len=MAX_TOKEN_LEN) :: word
     integer :: word_count, start_pos, pos
-    logical :: should_split, has_quotes, has_equals
+    logical :: should_split, has_quotes, has_equals, has_escaped
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
@@ -781,15 +832,18 @@ contains
       ! 1. Contains spaces
       ! 2. NOT quoted (doesn't contain quote characters)
       ! 3. NOT an assignment (doesn't contain =, like alias ll='...' or var=value)
+      ! 4. NOT escaped (doesn't contain \<space>)
       should_split = .false.
       if (index(expanded, ' ') > 0) then
-        ! Check if it contains quotes
-        has_quotes = (index(expanded, '"') > 0 .or. index(expanded, "'") > 0)
+        ! Check if ORIGINAL token had quotes (not expanded, since expand_variables strips them)
+        has_quotes = (index(cmd%tokens(i), '"') > 0 .or. index(cmd%tokens(i), "'") > 0)
         ! Check if it's an assignment (contains =)
         has_equals = (index(expanded, '=') > 0)
+        ! Check if spaces are escaped with backslash in ORIGINAL token
+        has_escaped = has_escaped_spaces(cmd%tokens(i))
 
-        ! Only split if no quotes and no equals sign
-        should_split = (.not. has_quotes .and. .not. has_equals)
+        ! Only split if no quotes, no equals sign, and no escaped spaces
+        should_split = (.not. has_quotes .and. .not. has_equals .and. .not. has_escaped)
       end if
 
       if (should_split) then
@@ -1641,6 +1695,131 @@ contains
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
 
     result = (shell%last_exit_status == 0)
+  end subroutine
+
+  ! Check if command is a function definition and register it
+  function is_function_definition_command(cmd, shell) result(is_func_def)
+    use variables, only: add_function
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    logical :: is_func_def
+
+    character(len=256) :: func_name
+    character(len=2048) :: reconstructed
+    character(len=1024) :: func_body(100)
+    integer :: body_count, brace_start, brace_end, paren_pos
+
+    is_func_def = .false.
+
+    ! Check if we have enough tokens
+    if (cmd%num_tokens < 1) return
+
+    ! Reconstruct the full command to analyze it
+    call reconstruct_command_from_tokens(cmd, reconstructed)
+
+    ! Check for pattern: name() { body }
+    ! Look for () followed by {
+    paren_pos = index(reconstructed, '()')
+    if (paren_pos == 0) return
+
+    ! Extract function name (everything before ())
+    func_name = adjustl(reconstructed(1:paren_pos-1))
+    if (len_trim(func_name) == 0) return
+
+    ! Check if there's a { after the ()
+    brace_start = index(reconstructed(paren_pos:), '{')
+    if (brace_start == 0) return
+    brace_start = paren_pos + brace_start - 1
+
+    ! Find matching }
+    brace_end = index(reconstructed(brace_start:), '}')
+    if (brace_end == 0) return
+    brace_end = brace_start + brace_end - 1
+
+    ! Extract function body (between { and })
+    if (brace_end > brace_start + 1) then
+      body_count = 1
+      func_body(1) = trim(adjustl(reconstructed(brace_start+1:brace_end-1)))
+    else
+      body_count = 0
+    end if
+
+    ! Register the function
+    call add_function(shell, trim(func_name), func_body, body_count)
+
+    is_func_def = .true.
+  end function
+
+  ! Process backslash escapes in all command tokens
+  ! This should be called AFTER glob expansion
+  subroutine process_command_escapes(cmd)
+    type(command_t), intent(inout) :: cmd
+    integer :: i, j, k, token_len
+    character(len=MAX_TOKEN_LEN) :: result
+    logical :: in_quotes
+    character(len=1) :: quote_char, backslash
+
+    backslash = char(92)  ! ASCII for backslash
+
+    do i = 1, cmd%num_tokens
+      token_len = len_trim(cmd%tokens(i))
+      result = ''
+      k = 0  ! Count of characters written to result
+      j = 1
+      in_quotes = .false.
+      quote_char = ' '
+
+      do while (j <= token_len)
+        ! Track quote state
+        if (.not. in_quotes .and. (cmd%tokens(i)(j:j) == '"' .or. cmd%tokens(i)(j:j) == "'")) then
+          in_quotes = .true.
+          quote_char = cmd%tokens(i)(j:j)
+          k = k + 1
+          result(k:k) = cmd%tokens(i)(j:j)
+          j = j + 1
+        else if (in_quotes .and. cmd%tokens(i)(j:j) == quote_char) then
+          in_quotes = .false.
+          k = k + 1
+          result(k:k) = cmd%tokens(i)(j:j)
+          j = j + 1
+        else if (.not. in_quotes .and. cmd%tokens(i)(j:j) == backslash .and. j < token_len) then
+          ! Check what character follows the backslash
+          ! Only process structural escapes (space, glob characters)
+          if (cmd%tokens(i)(j+1:j+1) == ' ' .or. &
+              cmd%tokens(i)(j+1:j+1) == '*' .or. &
+              cmd%tokens(i)(j+1:j+1) == '?' .or. &
+              cmd%tokens(i)(j+1:j+1) == '[') then
+            ! Structural escape - skip backslash, keep next char
+            j = j + 1
+            k = k + 1
+            result(k:k) = cmd%tokens(i)(j:j)
+            j = j + 1
+          else
+            ! Non-structural escape (like \n, \t) - keep both backslash and next char
+            k = k + 1
+            result(k:k) = backslash
+            j = j + 1
+            if (j <= token_len) then
+              k = k + 1
+              result(k:k) = cmd%tokens(i)(j:j)
+              j = j + 1
+            end if
+          end if
+        else
+          ! Regular character
+          k = k + 1
+          result(k:k) = cmd%tokens(i)(j:j)
+          j = j + 1
+        end if
+      end do
+
+      ! Only copy the actual content (k characters)
+      if (k > 0) then
+        cmd%tokens(i) = result(1:k)
+      else
+        cmd%tokens(i) = ''
+      end if
+    end do
   end subroutine
 
 end module executor

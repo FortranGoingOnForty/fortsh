@@ -23,9 +23,9 @@ contains
     integer :: pos, start, cmd_count
     integer :: i, comment_pos
     type(command_t), allocatable :: temp_commands(:)
-    logical :: background, in_quotes, in_param_expansion, in_for_arith
+    logical :: background, in_quotes, in_param_expansion, in_for_arith, after_case_in
     character(len=1) :: quote_char
-    integer :: paren_depth
+    integer :: paren_depth, brace_depth, case_depth
 
     integer(int64) :: parse_start_time
 
@@ -95,6 +95,9 @@ contains
     quote_char = ' '
     in_for_arith = .false.
     paren_depth = 0
+    brace_depth = 0
+    case_depth = 0
+    after_case_in = .false.
     do while (i <= len_trim(working_input))
       ! Track quote state
       if (.not. in_quotes) then
@@ -136,6 +139,80 @@ contains
           end if
         end if
 
+        ! Track brace depth for function definitions
+        if (working_input(i:i) == '{') then
+          brace_depth = brace_depth + 1
+        else if (working_input(i:i) == '}') then
+          brace_depth = brace_depth - 1
+        end if
+
+        ! Track case statement depth (case...esac)
+        ! Check for 'case' keyword at word boundary
+        if (i <= len_trim(working_input) - 3) then
+          if (working_input(i:i+3) == 'case') then
+            ! Verify it's a word boundary (space or start of command before it)
+            if (i == 1 .or. working_input(i-1:i-1) == ' ' .or. working_input(i-1:i-1) == ';') then
+              ! Verify word boundary after (space or special char)
+              if (i+4 > len_trim(working_input) .or. working_input(i+4:i+4) == ' ' .or. &
+                  working_input(i+4:i+4) == ';') then
+                case_depth = case_depth + 1
+                after_case_in = .false.  ! Reset when we see 'case'
+              end if
+            end if
+          end if
+        end if
+
+        ! Check for ' in ' keyword inside case statement (split after it)
+        if (case_depth > 0 .and. .not. after_case_in) then
+          if (i <= len_trim(working_input) - 2) then
+            if (working_input(i:i+1) == 'in') then
+              ! Verify word boundary before (space)
+              if (i > 1 .and. working_input(i-1:i-1) == ' ') then
+                ! Verify word boundary after (space or end)
+                if (i+2 > len_trim(working_input) .or. working_input(i+2:i+2) == ' ') then
+                  ! Split after ' in '
+                  ! Find the end of 'in' plus any trailing space
+                  if (i+2 <= len_trim(working_input) .and. working_input(i+2:i+2) == ' ') then
+                    cmd_count = cmd_count + 1
+                    if (cmd_count <= MAX_PIPELINE) then
+                      call parse_single_command(working_input(start:i+1), temp_commands(cmd_count))
+                      temp_commands(cmd_count)%separator = SEP_SEMICOLON
+                    end if
+                    start = i + 3  ! Skip 'in '
+                    after_case_in = .true.
+                  else
+                    cmd_count = cmd_count + 1
+                    if (cmd_count <= MAX_PIPELINE) then
+                      call parse_single_command(working_input(start:i+1), temp_commands(cmd_count))
+                      temp_commands(cmd_count)%separator = SEP_SEMICOLON
+                    end if
+                    start = i + 2  ! Skip 'in'
+                    after_case_in = .true.
+                  end if
+                  i = start - 1  ! Will be incremented at end of loop
+                  cycle
+                end if
+              end if
+            end if
+          end if
+        end if
+
+        ! Check for 'esac' keyword at word boundary
+        if (i <= len_trim(working_input) - 3) then
+          if (working_input(i:i+3) == 'esac') then
+            ! Verify it's a word boundary (space or start before it)
+            if (i == 1 .or. working_input(i-1:i-1) == ' ' .or. working_input(i-1:i-1) == ';') then
+              ! Verify word boundary after (space, semicolon, or end)
+              if (i+4 > len_trim(working_input) .or. working_input(i+4:i+4) == ' ' .or. &
+                  working_input(i+4:i+4) == ';') then
+                case_depth = case_depth - 1
+                if (case_depth < 0) case_depth = 0  ! Prevent negative
+                after_case_in = .false.  ! Reset after esac
+              end if
+            end if
+          end if
+        end if
+
         ! Check for operators
         if (i <= len_trim(working_input) - 1) then
           if (working_input(i:i+1) == '&&') then
@@ -162,12 +239,15 @@ contains
         if (working_input(i:i) == '|' .and. &
             (i == 1 .or. working_input(i-1:i-1) /= '|') .and. &
             (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '|')) then
-          cmd_count = cmd_count + 1
-          if (cmd_count <= MAX_PIPELINE) then
-            call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-            temp_commands(cmd_count)%separator = SEP_PIPE
+          ! Don't split on | if we're in a case pattern (after 'case...in')
+          if (.not. after_case_in) then
+            cmd_count = cmd_count + 1
+            if (cmd_count <= MAX_PIPELINE) then
+              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+              temp_commands(cmd_count)%separator = SEP_PIPE
+            end if
+            start = i + 1
           end if
-          start = i + 1
         else if (working_input(i:i) == '&') then
           ! Check it's not part of && (which is already handled above)
           ! Also check it's not part of >& or <& (FD redirection)
@@ -185,9 +265,21 @@ contains
             start = i + 1
           end if
         else if (working_input(i:i) == ';') then
-          if (in_for_arith) then
+          ! Check for ;; (double semicolon) which is used in case statements
+          if (i < len_trim(working_input) .and. working_input(i+1:i+1) == ';') then
+            ! This is ;; - always split on it (even inside case statements)
+            cmd_count = cmd_count + 1
+            if (cmd_count <= MAX_PIPELINE) then
+              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+              temp_commands(cmd_count)%separator = SEP_SEMICOLON
+            end if
+            start = i + 2  ! Skip both semicolons
+            i = i + 1  ! Will be incremented again at end of loop
+            after_case_in = .false.  ! Reset after ;;, ready for next pattern
+          ! Only split on single semicolon if not inside for (( ... )), function braces, or case statement
+          else if (in_for_arith .or. brace_depth > 0 .or. case_depth > 0) then
+            ! Skip - we're inside for (( ... )), function { ... }, or case...esac
           else
-            ! Only split on semicolon if not inside for (( ... ))
             cmd_count = cmd_count + 1
             if (cmd_count <= MAX_PIPELINE) then
               call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
@@ -610,7 +702,6 @@ contains
     integer :: arith_depth, array_depth, cmd_depth
 
     working_copy = adjustl(input)
-    ! write(error_unit, '(a,a,a)') 'DEBUG tokenize: input=[', trim(input), ']'
     if (len_trim(working_copy) == 0) then
       num_tokens = 0
       return
@@ -867,9 +958,9 @@ contains
       end do
 
       ! Store token (DON'T strip quotes yet - expand_variables needs to see them)
-      ! But DO process backslash escapes
+      ! DON'T process backslash escapes yet - glob expansion needs to see them
       token_count = token_count + 1
-      temp_tokens(token_count) = process_escapes(working_copy(start:pos-1))
+      temp_tokens(token_count) = working_copy(start:pos-1)
     end do
 
     ! Now allocate the final deferred-length character array

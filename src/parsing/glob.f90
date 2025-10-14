@@ -15,6 +15,34 @@ module glob
 
 contains
 
+  ! Check if string contains unescaped glob characters
+  function has_unescaped_glob_chars(str) result(has_unescaped)
+    character(len=*), intent(in) :: str
+    logical :: has_unescaped
+    integer :: i, len_str
+    logical :: escaped
+    character(len=1) :: backslash
+
+    has_unescaped = .false.
+    len_str = len_trim(str)
+    escaped = .false.
+    backslash = char(92)  ! ASCII code for backslash
+
+    do i = 1, len_str
+      if (escaped) then
+        ! Previous char was backslash, so this char is escaped
+        escaped = .false.
+      else if (str(i:i) == backslash) then
+        ! This is an escape character
+        escaped = .true.
+      else if (str(i:i) == '*' .or. str(i:i) == '?' .or. str(i:i) == '[') then
+        ! Found unescaped glob character
+        has_unescaped = .true.
+        return
+      end if
+    end do
+  end function
+
   ! Main glob expansion function
   subroutine expand_glob_patterns(tokens, num_tokens, expanded_tokens, expanded_count)
     character(len=*), intent(in) :: tokens(:)
@@ -34,11 +62,9 @@ contains
     total_count = 0
     
     do i = 1, num_tokens
-      ! Check if token contains glob characters
-      has_glob_chars = (index(tokens(i), '*') > 0 .or. &
-                       index(tokens(i), '?') > 0 .or. &
-                       index(tokens(i), '[') > 0)
-      
+      ! Check if token contains unescaped glob characters
+      has_glob_chars = has_unescaped_glob_chars(tokens(i))
+
       if (has_glob_chars) then
         ! Expand the glob pattern
         call glob_match(tokens(i), matches, match_count)
@@ -175,68 +201,126 @@ contains
     ! In a production shell, this would use opendir/readdir system calls
     ! or execute 'ls' and parse output
     
-    ! Try to read actual directory via ls command (simplified approach)
+    ! Try to read actual directory via ls command
     call read_directory_with_ls(dir_path, files, count)
-    
-    ! Fallback to simulation if ls fails
-    if (count == 0) then
-      if (trim(dir_path) == '.' .or. trim(dir_path) == '') then
-        count = 12
-        files(1) = 'test.txt'
-        files(2) = 'data.log'
-        files(3) = 'config.conf'
-        files(4) = 'README.md'
-        files(5) = 'script.sh'
-        files(6) = 'file1.dat'
-        files(7) = 'file2.dat'
-        files(8) = 'backup.tar.gz'
-        files(9) = 'notes.txt'
-        files(10) = 'temp.tmp'
-        files(11) = 'archive.zip'
-        files(12) = 'document.pdf'
-      else if (trim(dir_path) == '/etc') then
-        count = 5
-        files(1) = 'passwd'
-        files(2) = 'shadow'
-        files(3) = 'hosts'
-        files(4) = 'hostname'
-        files(5) = 'resolv.conf'
-      else
-        count = 3
-        files(1) = 'file1.txt'
-        files(2) = 'file2.txt'
-        files(3) = 'data.log'
-      end if
-    end if
+
+    ! No fallback simulation - if ls returns nothing, return nothing
   end subroutine
 
-  ! Simplified directory reading using system ls command
+  ! Read directory contents using ls command
   subroutine read_directory_with_ls(dir_path, files, count)
     character(len=*), intent(in) :: dir_path
     character(len=MAX_FILENAME_LEN), intent(out) :: files(:)
     integer, intent(out) :: count
-    
-    character(len=256) :: command
-    character(len=1024) :: line
-    integer :: unit, iostat, i
-    
+
+    character(len=512) :: command
+    integer(c_pid_t) :: pid
+    integer(c_int), target :: status, pipefd(2)
+    integer :: ret, i, line_start
+    character(len=4096) :: buffer
+    integer(c_size_t) :: bytes_read
+    character(kind=c_char), target :: c_buffer(4096)
+
     count = 0
-    
-    ! Construct ls command
+
+    ! Construct ls command (-A excludes . and .., -1 means one per line)
     if (trim(dir_path) == '.' .or. trim(dir_path) == '') then
-      command = 'ls -1a 2>/dev/null'
+      command = 'ls -A1 2>/dev/null'
     else
-      command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
+      command = 'ls -A1 ' // trim(dir_path) // ' 2>/dev/null'
     end if
-    
-    ! Execute command and read output
-    ! Note: This is a simplified approach - production shells would use proper system calls
-    open(newunit=unit, file='/tmp/fortsh_glob_temp', status='unknown', iostat=iostat)
-    if (iostat /= 0) return
-    
-    ! For now, just return 0 count to use fallback simulation
-    ! A full implementation would execute the command and parse results
-    close(unit)
+
+    ! Create pipe for reading output
+    ret = c_pipe(c_loc(pipefd))
+    if (ret /= 0) return
+
+    ! Fork to execute ls
+    pid = c_fork()
+
+    if (pid == 0) then
+      ! Child: redirect stdout to pipe and execute ls
+      ret = c_close(pipefd(1))  ! Close read end
+      ret = c_dup2(pipefd(2), STDOUT_FD)
+      ret = c_close(pipefd(2))  ! Close original write end
+
+      ! Execute ls via shell
+      call execute_ls_command(trim(command))
+      call c_exit(127)
+    else if (pid > 0) then
+      ! Parent: read from pipe
+      ret = c_close(pipefd(2))  ! Close write end
+
+      ! Read output from pipe
+      bytes_read = c_read(pipefd(1), c_loc(c_buffer), int(4096, c_size_t))
+
+      ! Convert C buffer to Fortran string
+      buffer = ''
+      do i = 1, min(int(bytes_read), 4096)
+        if (c_buffer(i) == c_null_char) exit
+        buffer(i:i) = c_buffer(i)
+      end do
+
+      ! Parse lines from buffer
+      line_start = 1
+      do i = 1, len_trim(buffer)
+        if (buffer(i:i) == char(10)) then  ! Newline
+          if (i > line_start .and. count < size(files)) then
+            count = count + 1
+            files(count) = buffer(line_start:i-1)
+          end if
+          line_start = i + 1
+        end if
+      end do
+
+      ! Handle last line if no trailing newline
+      if (line_start <= len_trim(buffer) .and. count < size(files)) then
+        count = count + 1
+        files(count) = buffer(line_start:len_trim(buffer))
+      end if
+
+      ret = c_close(pipefd(1))
+      ret = c_waitpid(pid, c_loc(status), 0)
+    end if
+  end subroutine
+
+  ! Execute ls command via shell
+  subroutine execute_ls_command(command)
+    character(len=*), intent(in) :: command
+    character(kind=c_char), target :: shell_path(10)
+    character(kind=c_char), target :: c_flag(3)
+    character(kind=c_char), target :: c_command(512)
+    type(c_ptr), target :: argv(4)
+    integer :: i, ret
+
+    ! Prepare /bin/sh
+    shell_path(1) = '/'
+    shell_path(2) = 'b'
+    shell_path(3) = 'i'
+    shell_path(4) = 'n'
+    shell_path(5) = '/'
+    shell_path(6) = 's'
+    shell_path(7) = 'h'
+    shell_path(8) = c_null_char
+
+    ! Prepare -c flag
+    c_flag(1) = '-'
+    c_flag(2) = 'c'
+    c_flag(3) = c_null_char
+
+    ! Prepare command string
+    do i = 1, min(len_trim(command), 500)
+      c_command(i) = command(i:i)
+    end do
+    c_command(min(len_trim(command), 500) + 1) = c_null_char
+
+    ! Setup argv: ["/bin/sh", "-c", command, NULL]
+    argv(1) = c_loc(shell_path)    ! /bin/sh
+    argv(2) = c_loc(c_flag)        ! -c
+    argv(3) = c_loc(c_command)     ! command
+    argv(4) = c_null_ptr
+
+    ! Execute
+    ret = c_execvp(argv(1), c_loc(argv))
   end subroutine
 
   ! Check if a filename matches a glob pattern
@@ -389,10 +473,10 @@ contains
   subroutine sort_matches(matches, count)
     character(len=*), intent(inout) :: matches(:)
     integer, intent(in) :: count
-    
+
     integer :: i, j
     character(len=len(matches)) :: temp
-    
+
     do i = 1, count - 1
       do j = i + 1, count
         if (matches(i) > matches(j)) then

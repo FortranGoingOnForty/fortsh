@@ -210,8 +210,15 @@ contains
           shell%control_stack(shell%control_depth)%case_in_match = .false.
           shell%control_stack(shell%control_depth)%condition_met = .false.
           should_execute = .false.  ! Don't execute ';;'
-        else if (index(cmd%tokens(cmd%num_tokens), ')') > 0) then
-          ! This is a pattern line
+        else if (index(cmd%tokens(1), ')') > 0 .and. cmd%num_tokens > 1) then
+          ! This is a pattern line (pattern is in first token)
+          ! with commands following it (e.g., "2) echo two")
+          call handle_case_pattern(cmd, shell)
+          ! Execute remaining tokens as command if pattern matched
+          should_execute = shell%control_stack(shell%control_depth)%case_in_match
+          shell%case_pattern_skip_first_token = should_execute  ! Skip pattern token if executing
+        else if (index(cmd%tokens(1), ')') > 0) then
+          ! Pattern line with no following commands
           call handle_case_pattern(cmd, shell)
           should_execute = .false.
         else
@@ -1133,7 +1140,7 @@ contains
   subroutine handle_case_statement(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=256) :: case_variable, expanded_value
 
     if (cmd%num_tokens < 3) then
@@ -1149,10 +1156,10 @@ contains
     end if
 
     case_variable = trim(cmd%tokens(2))
-    
+
     ! Expand the variable to get its value
     call expand_case_variable(shell, case_variable, expanded_value)
-    
+
     ! Initialize case block
     if (shell%control_depth < MAX_CONTROL_DEPTH) then
       shell%control_depth = shell%control_depth + 1
@@ -1171,23 +1178,23 @@ contains
   subroutine handle_case_pattern(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=256) :: pattern, case_value
     logical :: pattern_matches
     integer :: i
-    
+
     if (shell%control_depth == 0) then
       write(error_unit, '(a)') 'case pattern outside case statement'
       shell%last_exit_status = 1
       return
     end if
-    
+
     if (shell%control_stack(shell%control_depth)%block_type /= BLOCK_CASE) then
       write(error_unit, '(a)') 'case pattern in wrong context'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! If we've already found a match, skip all subsequent patterns
     if (shell%control_stack(shell%control_depth)%case_found_match) then
       shell%control_stack(shell%control_depth)%condition_met = .false.
@@ -1208,9 +1215,11 @@ contains
           pattern = pattern(1:len_trim(pattern)-1)
         end if
 
-        ! Check for match (simplified pattern matching)
-        if (case_pattern_match(case_value, pattern)) then
-          pattern_matches = .true.
+        ! Check for multi-pattern (e.g., a|b|c)
+        ! Split on | and check each sub-pattern
+        call check_multi_pattern(case_value, pattern, pattern_matches)
+
+        if (pattern_matches) then
           exit
         end if
       end if
@@ -1273,7 +1282,7 @@ contains
   function case_pattern_match(value, pattern) result(matches)
     character(len=*), intent(in) :: value, pattern
     logical :: matches
-    
+
     ! Simple pattern matching - supports * and exact matches
     if (trim(pattern) == '*') then
       matches = .true.
@@ -1291,6 +1300,52 @@ contains
       matches = (trim(value) == trim(pattern))
     end if
   end function
+
+  ! Check multi-pattern (e.g., a|b|c) - split on | and check each
+  subroutine check_multi_pattern(value, pattern_str, matches)
+    character(len=*), intent(in) :: value, pattern_str
+    logical, intent(out) :: matches
+
+    character(len=256) :: sub_patterns(20)
+    integer :: num_patterns, i, start_pos, pipe_pos
+    character(len=256) :: remaining
+
+    matches = .false.
+
+    ! Check if pattern contains | (multi-pattern)
+    if (index(pattern_str, '|') == 0) then
+      ! Single pattern, just match directly
+      matches = case_pattern_match(value, pattern_str)
+      return
+    end if
+
+    ! Split on | to get individual patterns
+    num_patterns = 0
+    remaining = trim(pattern_str)
+
+    do while (len_trim(remaining) > 0 .and. num_patterns < 20)
+      pipe_pos = index(remaining, '|')
+      if (pipe_pos > 0) then
+        ! Found a |, extract pattern before it
+        num_patterns = num_patterns + 1
+        sub_patterns(num_patterns) = remaining(1:pipe_pos-1)
+        remaining = remaining(pipe_pos+1:)
+      else
+        ! No more |, this is the last pattern
+        num_patterns = num_patterns + 1
+        sub_patterns(num_patterns) = remaining
+        exit
+      end if
+    end do
+
+    ! Check each sub-pattern
+    do i = 1, num_patterns
+      if (case_pattern_match(value, trim(sub_patterns(i)))) then
+        matches = .true.
+        return
+      end if
+    end do
+  end subroutine
 
   ! Capture a command into the loop body buffer
   subroutine capture_loop_command(shell, command_line)
