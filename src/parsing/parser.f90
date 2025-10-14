@@ -1298,14 +1298,14 @@ contains
             end if
             i = i + 1
           end do
-          
+
           var_name = working_token(var_start:i-2)
-          
+
           ! Process parameter expansion
           call process_parameter_expansion(var_name, var_value, shell)
           if (allocated(var_value) .and. len(var_value) > 0) then
-            result(j:j+len(var_value)-1) = var_value
-            j = j + len(var_value)
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
           end if
         else
           ! Simple $VAR syntax
@@ -1348,8 +1348,8 @@ contains
           ! Execute command substitution
           call execute_command_substitution(trim(var_name), var_value, shell)
           if (allocated(var_value) .and. len(var_value) > 0) then
-            result(j:j+len(var_value)-1) = var_value
-            j = j + len(var_value)
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
           end if
         else
           ! Unmatched backtick, treat as literal
