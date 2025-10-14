@@ -222,6 +222,7 @@ module shell_types
     ! Control flow state
     type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)
     integer :: control_depth = 0
+    logical :: case_pattern_skip_first_token = .false.  ! Skip first token in case pattern execution
     ! Function call stack for local variables
     type(shell_var_t) :: local_vars(MAX_CONTROL_DEPTH, 20)  ! stack of local variable scopes
     integer :: local_var_counts(MAX_CONTROL_DEPTH) = 0
