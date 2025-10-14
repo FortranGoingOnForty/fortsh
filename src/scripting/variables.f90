@@ -461,7 +461,7 @@ contains
   subroutine simple_expand_variables(input, expanded, shell)
     character(len=*), intent(in) :: input
     character(len=:), allocatable, intent(out) :: expanded
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     
     character(len=2048) :: result
     integer :: i, j, var_start, brace_end
@@ -930,7 +930,7 @@ contains
   subroutine expand_parameter(param_expr, result, shell)
     character(len=*), intent(in) :: param_expr
     character(len=*), intent(out) :: result
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     
     character(len=256) :: param_name, default_value, var_value
     integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
@@ -1000,7 +1000,7 @@ contains
       if (has_colon) then
         ! ${parameter:=word} - assign default if unset or null
         if (len_trim(var_value) == 0) then
-          ! TODO: Need to modify shell state to assign variable
+          call set_shell_variable(shell, trim(param_name), trim(default_value))
           result = trim(default_value)
         else
           result = trim(var_value)
@@ -1008,7 +1008,7 @@ contains
       else
         ! ${parameter=word} - assign default if unset only
         if (len_trim(var_value) == 0 .and. .not. variable_exists(shell, trim(param_name))) then
-          ! TODO: Need to modify shell state to assign variable
+          call set_shell_variable(shell, trim(param_name), trim(default_value))
           result = trim(default_value)
         else
           result = trim(var_value)

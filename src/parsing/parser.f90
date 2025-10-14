@@ -88,7 +88,11 @@ contains
         working_input = working_input(:len_trim(working_input)-1)
       end if
     end if
-    
+
+    ! Convert backticks to $() format BEFORE tokenization
+    ! This ensures complete backtick expressions are converted together
+    working_input = convert_backticks_to_dollar_paren(working_input)
+
     ! Parse commands and separators (track quotes to avoid splitting inside them)
     i = 1
     in_quotes = .false.
@@ -1373,6 +1377,62 @@ contains
     if (allocated(original_tokens)) deallocate(original_tokens)
   end subroutine
 
+  ! Convert backtick command substitution to $() format
+  function convert_backticks_to_dollar_paren(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable :: output
+    character(len=len(input)*2) :: temp_result
+    integer :: i, j, backtick_start
+    logical :: in_backticks, in_single_quote, in_double_quote
+    character(len=1) :: backslash
+
+    backslash = char(92)
+    temp_result = ''
+    i = 1
+    j = 1
+    in_backticks = .false.
+    in_single_quote = .false.
+    in_double_quote = .false.
+    backtick_start = 0
+
+    do while (i <= len_trim(input))
+      ! Track quote state (but not inside backticks)
+      if (.not. in_backticks) then
+        if (input(i:i) == "'" .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
+          in_single_quote = .not. in_single_quote
+        else if (input(i:i) == '"' .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
+          in_double_quote = .not. in_double_quote
+        end if
+      end if
+
+      ! Process backticks (not inside single quotes)
+      if (input(i:i) == '`' .and. .not. in_single_quote .and. &
+          (i == 1 .or. input(i-1:i-1) /= backslash)) then
+        if (.not. in_backticks) then
+          ! Start of backtick command substitution
+          in_backticks = .true.
+          backtick_start = i
+          temp_result(j:j+1) = '$('
+          j = j + 2
+        else
+          ! End of backtick command substitution
+          in_backticks = .false.
+          temp_result(j:j) = ')'
+          j = j + 1
+        end if
+        i = i + 1
+      else
+        ! Regular character
+        temp_result(j:j) = input(i:i)
+        i = i + 1
+        j = j + 1
+      end if
+    end do
+
+    allocate(character(len=j-1) :: output)
+    output = temp_result(1:j-1)
+  end function
+
   subroutine execute_command_substitution(command, output, shell)
     character(len=*), intent(in) :: command
     character(len=:), allocatable, intent(out) :: output
@@ -1557,7 +1617,8 @@ contains
 
   subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
-                         is_associative_array, get_assoc_array_value, get_assoc_array_keys
+                         is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
+                         set_shell_variable
     character(len=*), intent(in) :: param_expr
     character(len=:), allocatable, intent(out) :: result_value
     type(shell_state_t), intent(inout) :: shell
@@ -2132,7 +2193,8 @@ contains
         result_value = current_value
       else
         result_value = trim(default_value)
-        ! Note: In a full implementation, we'd also set the variable here
+        ! Set the variable to the default value
+        call set_shell_variable(shell, trim(var_name), trim(default_value))
       end if
     else if (trim(operation) == ':+') then
       ! Use alternate value if variable is set
