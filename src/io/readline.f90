@@ -4315,6 +4315,7 @@ contains
     character(len=MAX_LINE_LEN) :: current_input
     character(len=MAX_LINE_LEN) :: suggestion_candidate
 
+
     ! Clear suggestion if buffer is empty or in special modes
     if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
       input_state%suggestion = ''
