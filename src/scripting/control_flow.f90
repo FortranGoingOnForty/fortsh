@@ -260,12 +260,7 @@ contains
     end do
     
     ! Evaluate condition
-    if (associated(evaluate_condition)) then
-      call evaluate_condition(condition_cmd, shell, condition_result)
-    else
-      write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
-      condition_result = .false.
-    end if
+    call evaluate_condition(condition_cmd, shell, condition_result)
 
     ! Push if block onto control stack
     call push_control_block(shell, BLOCK_IF, condition_result)
@@ -299,12 +294,7 @@ contains
     end do
     
     ! Evaluate condition
-    if (associated(evaluate_condition)) then
-      call evaluate_condition(condition_cmd, shell, condition_result)
-    else
-      write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
-      condition_result = .false.
-    end if
+    call evaluate_condition(condition_cmd, shell, condition_result)
 
     ! Push while block onto control stack
     call push_control_block(shell, BLOCK_WHILE, condition_result)
@@ -341,12 +331,7 @@ contains
     end do
 
     ! Evaluate condition
-    if (associated(evaluate_condition)) then
-      call evaluate_condition(condition_cmd, shell, condition_result)
-    else
-      write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
-      condition_result = .false.
-    end if
+    call evaluate_condition(condition_cmd, shell, condition_result)
 
     ! Push until block onto control stack with INVERTED condition
     ! until loops run while condition is FALSE
@@ -648,12 +633,7 @@ contains
     ! Only evaluate elif if previous conditions were false
     if (.not. shell%control_stack(shell%control_depth)%condition_met) then
       ! Evaluate condition
-      if (associated(evaluate_condition)) then
-        call evaluate_condition(condition_cmd, shell, condition_result)
-      else
-        write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
-        condition_result = .false.
-      end if
+      call evaluate_condition(condition_cmd, shell, condition_result)
 
       ! Update control stack based on condition result
       shell%control_stack(shell%control_depth)%condition_met = condition_result
@@ -813,13 +793,8 @@ contains
 
       if (len_trim(shell%control_stack(shell%control_depth)%condition_cmd) > 0) then
         ! Re-evaluate the while condition with current variable values
-        if (associated(evaluate_condition)) then
-          call evaluate_condition(shell%control_stack(shell%control_depth)%condition_cmd, &
-                                 shell, condition_result)
-        else
-          write(error_unit, '(a)') 'ERROR: evaluate_condition is not initialized!'
-          condition_result = .false.
-        end if
+        call evaluate_condition(shell%control_stack(shell%control_depth)%condition_cmd, &
+                               shell, condition_result)
 
         if (condition_result) then
           ! Condition is still true - executor will replay the loop body
