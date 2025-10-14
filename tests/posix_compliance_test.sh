@@ -123,10 +123,23 @@ compare_posix_output "undefined variable" "echo \$UNDEFINED_VAR_XYZ_987"
 
 section "3. POSIX PARAMETER EXPANSION"
 
+# Basic parameter expansion
 compare_posix_output "default value" 'echo "${UNSET:-default}"'
 compare_posix_output "assign default" 'UNSET=; echo "${UNSET:=assigned}"; echo $UNSET'
 compare_posix_output "error if unset" 'echo "${VAR:+alternative}"'
 compare_posix_output "string length" 'VAR=hello; echo "${#VAR}"'
+
+# Prefix removal (# and ##)
+compare_posix_output "remove shortest prefix" 'VAR=foo.bar.baz; echo "${VAR#*.}"'
+compare_posix_output "remove longest prefix" 'VAR=foo.bar.baz; echo "${VAR##*.}"'
+compare_posix_output "prefix no match" 'VAR=hello; echo "${VAR#x*}"'
+compare_posix_output "prefix remove slash" 'VAR=/usr/local/bin; echo "${VAR#/*/}"'
+
+# Suffix removal (% and %%)
+compare_posix_output "remove shortest suffix" 'VAR=foo.bar.baz; echo "${VAR%.*}"'
+compare_posix_output "remove longest suffix" 'VAR=foo.bar.baz; echo "${VAR%%.*}"'
+compare_posix_output "suffix no match" 'VAR=hello; echo "${VAR%x*}"'
+compare_posix_output "suffix remove extension" 'VAR=file.tar.gz; echo "${VAR%.gz}"'
 
 section "4. POSIX COMMAND SUBSTITUTION"
 
