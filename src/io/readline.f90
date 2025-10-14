@@ -4297,10 +4297,16 @@ contains
             end if
           end do
 
-          if (newline_pos > 0) then
-            ! Truncate at newline
-            input_state%suggestion = suggestion_candidate(:newline_pos)
-            input_state%suggestion_length = newline_pos
+          if (newline_pos >= 0 .and. newline_pos < len_trim(suggestion_candidate)) then
+            ! Found newline - truncate before it (or clear if newline is first char)
+            if (newline_pos > 0) then
+              input_state%suggestion = suggestion_candidate(:newline_pos)
+              input_state%suggestion_length = newline_pos
+            else
+              ! Newline is first character - no suggestion
+              input_state%suggestion = ''
+              input_state%suggestion_length = 0
+            end if
           else
             ! No newline found, use full suggestion
             input_state%suggestion = suggestion_candidate
