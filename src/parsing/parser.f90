@@ -2458,7 +2458,8 @@ contains
 
     do while (i <= len_trim(input))
       ! Check for <( or >(
-      if (i < len_trim(input) .and. &
+      ! IMPORTANT: Must check i+1 doesn't exceed string bounds
+      if (i+1 <= len_trim(input) .and. &
           (input(i:i+1) == '<(' .or. input(i:i+1) == '>(')) then
 
         subst_type = input(i:i)
