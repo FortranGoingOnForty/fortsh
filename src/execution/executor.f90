@@ -170,6 +170,29 @@ contains
           call c_exit(int(shell%last_exit_status, c_int))
         end if
 
+        ! Handle subshells ( cmd1; cmd2 )
+        if (pipeline%commands(i)%is_subshell .and. allocated(pipeline%commands(i)%subshell_content)) then
+          ! Parse the subshell content as a pipeline and execute it
+          call parse_pipeline(pipeline%commands(i)%subshell_content, group_pipeline)
+          if (group_pipeline%num_commands > 0) then
+            call execute_pipeline(group_pipeline, shell, pipeline%commands(i)%subshell_content)
+            ! Clean up
+            do k = 1, group_pipeline%num_commands
+              if (allocated(group_pipeline%commands(k)%tokens)) deallocate(group_pipeline%commands(k)%tokens)
+              if (allocated(group_pipeline%commands(k)%input_file)) deallocate(group_pipeline%commands(k)%input_file)
+              if (allocated(group_pipeline%commands(k)%output_file)) deallocate(group_pipeline%commands(k)%output_file)
+              if (allocated(group_pipeline%commands(k)%error_file)) deallocate(group_pipeline%commands(k)%error_file)
+              if (allocated(group_pipeline%commands(k)%heredoc_delimiter)) deallocate(group_pipeline%commands(k)%heredoc_delimiter)
+              if (allocated(group_pipeline%commands(k)%heredoc_content)) deallocate(group_pipeline%commands(k)%heredoc_content)
+              if (allocated(group_pipeline%commands(k)%here_string)) deallocate(group_pipeline%commands(k)%here_string)
+              if (allocated(group_pipeline%commands(k)%group_content)) deallocate(group_pipeline%commands(k)%group_content)
+              if (allocated(group_pipeline%commands(k)%subshell_content)) deallocate(group_pipeline%commands(k)%subshell_content)
+            end do
+            if (allocated(group_pipeline%commands)) deallocate(group_pipeline%commands)
+          end if
+          call c_exit(int(shell%last_exit_status, c_int))
+        end if
+
         ! Check if we have tokens to process
         if (pipeline%commands(i)%num_tokens == 0) then
           ! No tokens (shouldn't happen after command group handling)
@@ -295,6 +318,15 @@ contains
 
     ! Start performance timing
     call start_timer('execute_single', exec_start_time)
+
+    ! Handle subshells ( cmd1; cmd2 )
+    if (cmd%is_subshell .and. allocated(cmd%subshell_content)) then
+      ! Fork a subshell and execute commands in it
+      call execute_subshell(cmd%subshell_content, shell, original_input)
+      ! End performance timing
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      return
+    end if
 
     ! Handle command groups { cmd1; cmd2; }
     if (cmd%is_command_group .and. allocated(cmd%group_content)) then
@@ -1936,6 +1968,46 @@ contains
         cmd%tokens(i) = ''
       end if
     end do
+  end subroutine
+
+  ! Execute subshell ( cmd1; cmd2 )
+  ! Forks a child process and executes commands in isolated environment
+  subroutine execute_subshell(content, shell, original_input)
+    character(len=*), intent(in) :: content
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: original_input
+
+    integer(c_pid_t) :: pid
+    integer(c_int), target :: wait_status
+    integer :: ret
+    type(pipeline_t) :: subshell_pipeline
+    integer :: i
+
+    pid = c_fork()
+
+    if (pid < 0) then
+      write(error_unit, '(a)') 'Error: fork failed for subshell'
+      shell%last_exit_status = 1
+    else if (pid == 0) then
+      ! Child process (subshell)
+      ! Parse and execute the subshell content
+      call parse_pipeline(content, subshell_pipeline)
+      if (subshell_pipeline%num_commands > 0) then
+        call execute_pipeline(subshell_pipeline, shell, content)
+      end if
+      ! Exit with the last command's exit status
+      call c_exit(int(shell%last_exit_status, c_int))
+    else
+      ! Parent process - wait for subshell
+      shell%last_pid = pid
+      ret = c_waitpid(pid, c_loc(wait_status), 0)
+
+      if (WIFEXITED(wait_status)) then
+        shell%last_exit_status = WEXITSTATUS(wait_status)
+      else
+        shell%last_exit_status = 1
+      end if
+    end if
   end subroutine
 
 end module executor

@@ -79,6 +79,9 @@ module shell_types
     ! Command grouping support
     logical :: is_command_group = .false.        ! { cmd1; cmd2; }
     character(len=:), allocatable :: group_content  ! content between { }
+    ! Subshell grouping support
+    logical :: is_subshell = .false.             ! ( cmd1; cmd2 )
+    character(len=:), allocatable :: subshell_content  ! content between ( )
     ! Enhanced POSIX file descriptor redirection
     type(redirection_t) :: redirections(10)
     integer :: num_redirections = 0
