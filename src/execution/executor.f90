@@ -388,7 +388,8 @@ contains
     end if
 
     ! Handle here document input
-    if (allocated(cmd%heredoc_delimiter)) then
+    ! Only read from stdin if content wasn't already extracted from input string
+    if (allocated(cmd%heredoc_delimiter) .and. .not. allocated(cmd%heredoc_content)) then
       call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content)
     end if
 
