@@ -68,7 +68,7 @@ contains
     integer, intent(in) :: start_idx
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
-    
+
     integer :: i, j, pipe_count, end_idx
     integer(c_int), allocatable :: pipefd(:,:)
     integer(c_pid_t), allocatable :: pids(:)
@@ -77,6 +77,8 @@ contains
     integer :: ret, job_id
     logical :: foreground
     type(c_funptr) :: old_handler
+    type(pipeline_t) :: group_pipeline
+    integer :: k
     
     ! Count pipes in chain
     pipe_count = 0
@@ -144,8 +146,37 @@ contains
         end do
         
         ! Handle here document
-        call handle_heredoc(pipeline%commands(i))
-        
+        call handle_heredoc(pipeline%commands(i), shell)
+
+        ! Handle command groups { cmd1; cmd2; }
+        if (pipeline%commands(i)%is_command_group .and. allocated(pipeline%commands(i)%group_content)) then
+          ! Parse the group content as a pipeline and execute it
+          call parse_pipeline(pipeline%commands(i)%group_content, group_pipeline)
+          if (group_pipeline%num_commands > 0) then
+            call execute_pipeline(group_pipeline, shell, pipeline%commands(i)%group_content)
+            ! Clean up
+            do k = 1, group_pipeline%num_commands
+              if (allocated(group_pipeline%commands(k)%tokens)) deallocate(group_pipeline%commands(k)%tokens)
+              if (allocated(group_pipeline%commands(k)%input_file)) deallocate(group_pipeline%commands(k)%input_file)
+              if (allocated(group_pipeline%commands(k)%output_file)) deallocate(group_pipeline%commands(k)%output_file)
+              if (allocated(group_pipeline%commands(k)%error_file)) deallocate(group_pipeline%commands(k)%error_file)
+              if (allocated(group_pipeline%commands(k)%heredoc_delimiter)) deallocate(group_pipeline%commands(k)%heredoc_delimiter)
+              if (allocated(group_pipeline%commands(k)%heredoc_content)) deallocate(group_pipeline%commands(k)%heredoc_content)
+              if (allocated(group_pipeline%commands(k)%here_string)) deallocate(group_pipeline%commands(k)%here_string)
+              if (allocated(group_pipeline%commands(k)%group_content)) deallocate(group_pipeline%commands(k)%group_content)
+            end do
+            if (allocated(group_pipeline%commands)) deallocate(group_pipeline%commands)
+          end if
+          call c_exit(int(shell%last_exit_status, c_int))
+        end if
+
+        ! Check if we have tokens to process
+        if (pipeline%commands(i)%num_tokens == 0) then
+          ! No tokens (shouldn't happen after command group handling)
+          write(error_unit, '(a)') 'Error: command has no tokens'
+          call c_exit(1)
+        end if
+
         ! Expand variables and execute
         call expand_tokens(pipeline%commands(i), shell)
 
@@ -260,9 +291,34 @@ contains
     integer :: i
     character(len=2048) :: reconstructed_cmd
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
+    type(pipeline_t) :: pipeline
 
     ! Start performance timing
     call start_timer('execute_single', exec_start_time)
+
+    ! Handle command groups { cmd1; cmd2; }
+    if (cmd%is_command_group .and. allocated(cmd%group_content)) then
+      ! Parse the group content as a pipeline and execute it
+      call parse_pipeline(cmd%group_content, pipeline)
+      if (pipeline%num_commands > 0) then
+        call execute_pipeline(pipeline, shell, cmd%group_content)
+        ! Clean up
+        do i = 1, pipeline%num_commands
+          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+          if (allocated(pipeline%commands(i)%group_content)) deallocate(pipeline%commands(i)%group_content)
+        end do
+        if (allocated(pipeline%commands)) deallocate(pipeline%commands)
+      end if
+      ! End performance timing
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      return
+    end if
 
     if (cmd%num_tokens == 0) return
 
@@ -981,8 +1037,8 @@ contains
       old_handler = c_signal(SIGTTOU, c_null_funptr)
       
       ! Handle here document
-      call handle_heredoc(cmd)
-      
+      call handle_heredoc(cmd, shell)
+
       ! Set up redirections
       call setup_redirections(cmd)
       
@@ -1026,20 +1082,34 @@ contains
     end if
   end subroutine
 
-  subroutine handle_heredoc(cmd)
+  subroutine handle_heredoc(cmd, shell)
     type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
     integer, target :: pipefd(2)
     integer :: ret
     integer(c_size_t) :: bytes_written
     character(kind=c_char), target :: c_content(MAX_HEREDOC_LEN)
     integer :: i
     character(len=:), allocatable :: content_to_write
-    
+    character(len=:), allocatable :: expanded_content
+
     ! Handle here-string (<<<)
     if (allocated(cmd%here_string)) then
       content_to_write = cmd%here_string // char(10)  ! Add newline
     else if (allocated(cmd%heredoc_content)) then
-      content_to_write = cmd%heredoc_content
+      ! Check if we should expand variables (unquoted delimiter)
+      if (.not. cmd%heredoc_quoted) then
+        ! Expand variables in heredoc content
+        call expand_variables(cmd%heredoc_content, expanded_content, shell)
+        if (allocated(expanded_content)) then
+          content_to_write = expanded_content
+        else
+          content_to_write = cmd%heredoc_content
+        end if
+      else
+        ! Quoted delimiter - use content as-is
+        content_to_write = cmd%heredoc_content
+      end if
     else
       return
     end if
