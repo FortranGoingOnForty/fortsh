@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        5.2.0
+Version:        5.2.1
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,10 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Mon Oct 14 2024 mfw <espadon@outlook.com> - 5.2.1-1
+- Fixed segfault when heredocs are present in command history
+- Improved history handling and memory safety
+
 * Mon Oct 14 2024 mfw <espadon@outlook.com> - 5.2.0-1
 - Major POSIX compliance improvements
 - Fixed heredoc handling and processing
