@@ -3140,25 +3140,43 @@ contains
       term_cols = 80  ! Fallback
     end if
 
+    ! Additional safety check
+    if (term_cols < 20) then
+      term_cols = 80  ! Ensure reasonable minimum
+    end if
+
     ! Calculate visual length of prompt (excluding ANSI codes)
     prompt_visual_len = visual_length(prompt)
+
+    ! Safety check for prompt length
+    if (prompt_visual_len < 0) then
+      prompt_visual_len = 0
+    end if
 
     ! Calculate current cursor position in visual characters
     cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
 
     ! Calculate which line the cursor is currently on (0-indexed)
+    ! Extra safety: ensure term_cols is positive before division
     if (term_cols > 0) then
       current_line = cursor_visual_pos / term_cols
     else
       current_line = 0
     end if
 
-    ! Move cursor up to the first line (where prompt starts)
-    do i = 1, current_line
-      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
-    end do
+    ! Safety check: limit current_line to reasonable value
+    if (current_line < 0) current_line = 0
+    if (current_line > 100) current_line = 0  ! Probably an error
 
-    ! Move to beginning of that line
+    ! Move cursor up to the first line (where prompt starts)
+    ! IMPORTANT: Only move up if we're not already at top (avoid negative positioning)
+    if (current_line > 0) then
+      do i = 1, current_line
+        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+      end do
+    end if
+
+    ! Move to beginning of current line
     write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
 
     ! Clear from cursor to end of screen (clears all wrapped lines)
@@ -3171,42 +3189,45 @@ contains
       write(output_unit, '(a)', advance='no') highlighted
     end if
 
-    ! Move cursor to correct position BEFORE displaying suggestion
-    ! This ensures cursor is at the right place even if suggestion display fails
-    if (input_state%cursor_pos < input_state%length) then
-      ! Cursor not at end - move back to correct position
-      do i = 1, input_state%length - input_state%cursor_pos
-        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
-      end do
-    end if
-
-    ! Save cursor position (standard VT100: ESC 7)
-    ! We're now at the correct cursor position for the actual input
-    write(output_unit, '(a)', advance='no') char(27) // '7'
-
-    ! If cursor is at end, display autosuggestion after saving cursor position
+    ! Display autosuggestion if cursor is at end
     ! IMPORTANT: Truncate suggestion to prevent wrapping beyond terminal width
     if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
       ! Calculate available space on current line
       available_space = term_cols - mod(prompt_visual_len + input_state%length, term_cols)
+
+      ! Safety check: ensure available_space is positive
+      if (available_space < 0) available_space = 0
 
       ! Ensure we have enough space (need at least 2 chars: 1 for suggestion + 1 for cursor)
       if (available_space > 2) then
         ! Truncate suggestion if it would overflow the line
         suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
 
+        ! Additional safety check
+        if (suggestion_display_len < 0) suggestion_display_len = 0
+        if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
+
         if (suggestion_display_len > 0) then
           ! Gray color (ANSI code 90 or dim mode)
           write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
           write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+
+          ! Move cursor back to where it should be (after suggestion)
+          do i = 1, suggestion_display_len
+            write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+          end do
         end if
       end if
     end if
 
-    ! Restore cursor position (standard VT100: ESC 8)
-    ! This moves cursor back to the saved position (where actual cursor should be)
-    write(output_unit, '(a)', advance='no') char(27) // '8'
+    ! Position cursor correctly (if not at end of input)
+    if (input_state%cursor_pos < input_state%length) then
+      ! Cursor not at end - move back to correct position
+      do i = 1, input_state%length - input_state%cursor_pos
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      end do
+    end if
 
     flush(output_unit)
   end subroutine
@@ -3391,14 +3412,62 @@ contains
   subroutine handle_clear_screen(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
+    character(len=:), allocatable :: highlighted
+    integer :: i, term_rows, term_cols, available_space, suggestion_display_len
+    logical :: success
 
-    ! Clear screen with ANSI escape sequence
+    ! Clear screen and move cursor to home position (0,0)
     write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
+
+    ! Since we're now at home position, just redraw everything from scratch
+    ! No need to calculate cursor movement - we know we're at top left
+
+    ! Draw prompt
+    write(output_unit, '(a)', advance='no') prompt
+
+    ! Draw the current buffer with syntax highlighting
+    if (input_state%length > 0) then
+      highlighted = highlight_command_line(input_state%buffer(:input_state%length))
+      write(output_unit, '(a)', advance='no') highlighted
+    end if
+
+    ! Position cursor correctly
+    if (input_state%cursor_pos < input_state%length) then
+      ! Need to move cursor back from end of line
+      do i = 1, input_state%length - input_state%cursor_pos
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      end do
+    end if
+
+    ! Handle autosuggestion if cursor is at end
+    if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
+      ! Get terminal width for suggestion truncation
+      success = get_terminal_size(term_rows, term_cols)
+      if (.not. success .or. term_cols <= 0) then
+        term_cols = 80
+      end if
+
+      ! Calculate available space
+      available_space = term_cols - mod(visual_length(prompt) + input_state%length, term_cols)
+
+      if (available_space > 2) then
+        suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
+
+        if (suggestion_display_len > 0) then
+          ! Display suggestion in gray
+          write(output_unit, '(a)', advance='no') char(27) // '[2m'
+          write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+          write(output_unit, '(a)', advance='no') char(27) // '[0m'
+
+          ! Move cursor back to correct position after suggestion
+          do i = 1, suggestion_display_len
+            write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+          end do
+        end if
+      end if
+    end if
+
     flush(output_unit)
-
-    ! Redraw the prompt and current line properly with highlighting
-    call redraw_line(prompt, input_state)
-
     input_state%dirty = .false.
   end subroutine
 
