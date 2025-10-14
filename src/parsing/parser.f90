@@ -130,14 +130,18 @@ contains
           end if
         end if
 
-        ! Track parentheses depth inside for (( ... ))
-        if (in_for_arith) then
-          if (working_input(i:i) == '(') then
+        ! Track parentheses depth (for subshells and for ((..)))
+        ! Skip tracking for $( which is command substitution
+        if (working_input(i:i) == '(') then
+          ! Check if this is $( command substitution - if so, skip tracking
+          if (i == 1 .or. working_input(i-1:i-1) /= '$') then
             paren_depth = paren_depth + 1
-          else if (working_input(i:i) == ')') then
+          end if
+        else if (working_input(i:i) == ')') then
+          if (paren_depth > 0) then
             paren_depth = paren_depth - 1
             ! Exit for (( when we've closed all parens
-            if (paren_depth == 0) then
+            if (in_for_arith .and. paren_depth == 0) then
               in_for_arith = .false.
             end if
           end if
@@ -217,8 +221,8 @@ contains
           end if
         end if
 
-        ! Check for operators
-        if (i <= len_trim(working_input) - 1) then
+        ! Check for operators (but skip if inside parentheses/subshell)
+        if (i <= len_trim(working_input) - 1 .and. paren_depth == 0) then
           if (working_input(i:i+1) == '&&') then
             cmd_count = cmd_count + 1
             if (cmd_count <= MAX_PIPELINE) then
@@ -243,8 +247,8 @@ contains
         if (working_input(i:i) == '|' .and. &
             (i == 1 .or. working_input(i-1:i-1) /= '|') .and. &
             (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '|')) then
-          ! Don't split on | if we're in a case pattern (after 'case...in')
-          if (.not. after_case_in) then
+          ! Don't split on | if we're in a case pattern (after 'case...in') or inside parentheses (subshell)
+          if (.not. after_case_in .and. paren_depth == 0) then
             cmd_count = cmd_count + 1
             if (cmd_count <= MAX_PIPELINE) then
               call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
@@ -280,9 +284,9 @@ contains
             start = i + 2  ! Skip both semicolons
             i = i + 1  ! Will be incremented again at end of loop
             after_case_in = .false.  ! Reset after ;;, ready for next pattern
-          ! Only split on single semicolon if not inside for (( ... )), function braces, or case statement
-          else if (in_for_arith .or. brace_depth > 0 .or. case_depth > 0) then
-            ! Skip - we're inside for (( ... )), function { ... }, or case...esac
+          ! Only split on single semicolon if not inside for (( ... )), function braces, subshells, or case statement
+          else if (in_for_arith .or. brace_depth > 0 .or. paren_depth > 0 .or. case_depth > 0) then
+            ! Skip - we're inside for (( ... )), function { ... }, subshell ( ... ), or case...esac
           else
             cmd_count = cmd_count + 1
             if (cmd_count <= MAX_PIPELINE) then
@@ -325,6 +329,8 @@ contains
         pipeline%commands(i)%redirect_both_to_file = temp_commands(i)%redirect_both_to_file
         pipeline%commands(i)%background = temp_commands(i)%background
         pipeline%commands(i)%separator = temp_commands(i)%separator
+        pipeline%commands(i)%is_command_group = temp_commands(i)%is_command_group
+        pipeline%commands(i)%is_subshell = temp_commands(i)%is_subshell
 
         ! Copy redirection array
         pipeline%commands(i)%num_redirections = temp_commands(i)%num_redirections
@@ -357,6 +363,12 @@ contains
         if (allocated(temp_commands(i)%here_string)) then
           pipeline%commands(i)%here_string = temp_commands(i)%here_string
         end if
+        if (allocated(temp_commands(i)%group_content)) then
+          pipeline%commands(i)%group_content = temp_commands(i)%group_content
+        end if
+        if (allocated(temp_commands(i)%subshell_content)) then
+          pipeline%commands(i)%subshell_content = temp_commands(i)%subshell_content
+        end if
       end do
     end if
     
@@ -384,6 +396,23 @@ contains
 
     working_input = adjustl(input)
     ! write(error_unit, '(a,a)') 'DEBUG parse_single_command input: ', trim(working_input)
+
+    ! Handle subshell grouping ( ... )
+    ! Check if input starts with ( and ends with )
+    if (len_trim(working_input) >= 3) then
+      if (working_input(1:1) == '(') then
+        ! Find the position of the closing )
+        pos = len_trim(working_input)
+        if (working_input(pos:pos) == ')') then
+          ! This is a subshell - mark it and store the inner content
+          cmd%is_subshell = .true.
+          cmd%subshell_content = adjustl(working_input(2:pos-1))
+          ! Don't tokenize the content - it will be re-parsed during execution
+          cmd%num_tokens = 0
+          return
+        end if
+      end if
+    end if
 
     ! Handle command grouping { ... }
     ! Check if input starts with { and ends with }
