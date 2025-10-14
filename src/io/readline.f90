@@ -3171,65 +3171,42 @@ contains
       write(output_unit, '(a)', advance='no') highlighted
     end if
 
-    ! Display autosuggestion in gray (dim) if available and cursor is at end
+    ! Move cursor to correct position BEFORE displaying suggestion
+    ! This ensures cursor is at the right place even if suggestion display fails
+    if (input_state%cursor_pos < input_state%length) then
+      ! Cursor not at end - move back to correct position
+      do i = 1, input_state%length - input_state%cursor_pos
+        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+      end do
+    end if
+
+    ! Save cursor position (standard VT100: ESC 7)
+    ! We're now at the correct cursor position for the actual input
+    write(output_unit, '(a)', advance='no') char(27) // '7'
+
+    ! If cursor is at end, display autosuggestion after saving cursor position
     ! IMPORTANT: Truncate suggestion to prevent wrapping beyond terminal width
     if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
       ! Calculate available space on current line
       available_space = term_cols - mod(prompt_visual_len + input_state%length, term_cols)
 
-      ! Truncate suggestion if it would overflow the line
-      suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
+      ! Ensure we have enough space (need at least 2 chars: 1 for suggestion + 1 for cursor)
+      if (available_space > 2) then
+        ! Truncate suggestion if it would overflow the line
+        suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
 
-      if (suggestion_display_len > 0) then
-        ! Gray color (ANSI code 90 or dim mode)
-        write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
-        write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
-        write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+        if (suggestion_display_len > 0) then
+          ! Gray color (ANSI code 90 or dim mode)
+          write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
+          write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+          write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+        end if
       end if
-    else
-      ! No suggestion displayed, set display length to 0
-      suggestion_display_len = 0
     end if
 
-    ! Calculate where cursor should be after redraw (accounting for line wrapping)
-    ! Cursor should be at: prompt_visual_len + cursor_pos
-    cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
-
-    ! Calculate which line and column the cursor should be on (0-indexed)
-    if (term_cols > 0) then
-      cursor_line = cursor_visual_pos / term_cols
-      cursor_col = mod(cursor_visual_pos, term_cols)
-    else
-      cursor_line = 0
-      cursor_col = cursor_visual_pos
-    end if
-
-    ! After drawing, cursor is at end of buffer
-    ! Calculate which line the end is on
-    total_visual_chars = prompt_visual_len + input_state%length
-    if (term_cols > 0) then
-      end_line = total_visual_chars / term_cols
-    else
-      end_line = 0
-    end if
-
-    ! Move cursor to the correct position
-    ! Calculate how many positions to move left from current position
-    ! If we drew a suggestion, cursor is at: prompt_visual_len + length + suggestion_display_len
-    ! Otherwise, cursor is at: prompt_visual_len + length
-    ! We want to be at: prompt_visual_len + cursor_pos
-    ! So we need to move: (length - cursor_pos) + suggestion_display_len positions to the left
-    if (suggestion_display_len > 0 .and. input_state%cursor_pos == input_state%length) then
-      ! Cursor is after the suggestion, need to move back by displayed suggestion length + distance to cursor
-      do i = 1, suggestion_display_len + (input_state%length - input_state%cursor_pos)
-        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
-      end do
-    else
-      ! No suggestion or cursor not at end, just move back normally
-      do i = 1, input_state%length - input_state%cursor_pos
-        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
-      end do
-    end if
+    ! Restore cursor position (standard VT100: ESC 8)
+    ! This moves cursor back to the saved position (where actual cursor should be)
+    write(output_unit, '(a)', advance='no') char(27) // '8'
 
     flush(output_unit)
   end subroutine
