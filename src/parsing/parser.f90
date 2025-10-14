@@ -415,7 +415,11 @@ contains
       pos = find_outside_quotes(working_input, '<<')
       if (pos > 0) then
         call extract_word(working_input(pos+2:), temp_str)
+        ! Strip quotes from delimiter if present
         cmd%heredoc_delimiter = trim(temp_str)
+        call strip_heredoc_delimiter_quotes(cmd%heredoc_delimiter)
+        ! Try to extract heredoc content from input if it contains newlines
+        call extract_heredoc_from_input(input, trim(cmd%heredoc_delimiter), cmd%heredoc_content)
         working_input = working_input(:pos-1)
       end if
     end if
@@ -654,7 +658,7 @@ contains
     word = adjustl(input)
 
     do i = 1, len_trim(word)
-      if (word(i:i) == ' ' .or. word(i:i) == char(9) .or. &
+      if (word(i:i) == ' ' .or. word(i:i) == char(9) .or. word(i:i) == char(10) .or. &
           word(i:i) == '<' .or. word(i:i) == '>' .or. &
           word(i:i) == '|' .or. word(i:i) == '&' .or. &
           word(i:i) == ';') then
@@ -662,6 +666,26 @@ contains
         exit
       end if
     end do
+  end subroutine
+
+  ! Strip quotes from heredoc delimiter ('EOF' -> EOF, "EOF" -> EOF)
+  subroutine strip_heredoc_delimiter_quotes(delimiter)
+    character(len=*), intent(inout) :: delimiter
+    integer :: len_delim
+    character(len=1) :: first_char, last_char
+
+    len_delim = len_trim(delimiter)
+    if (len_delim < 2) return
+
+    first_char = delimiter(1:1)
+    last_char = delimiter(len_delim:len_delim)
+
+    ! Check if surrounded by matching quotes
+    if ((first_char == "'" .and. last_char == "'") .or. &
+        (first_char == '"' .and. last_char == '"')) then
+      ! Remove surrounding quotes
+      delimiter = delimiter(2:len_delim-1)
+    end if
   end subroutine
 
   ! Find position of character outside quotes
@@ -1334,6 +1358,107 @@ contains
     
     allocate(character(len=pos-1) :: content)
     content = buffer(:pos-1)
+  end subroutine
+
+  ! Extract heredoc content from input string (for -c mode)
+  subroutine extract_heredoc_from_input(input, delimiter, content)
+    character(len=*), intent(in) :: input, delimiter
+    character(len=:), allocatable, intent(out) :: content
+
+    integer :: i, line_start, line_end, content_start
+    integer :: newline_pos, delim_line_start
+    character(len=len(input)) :: current_line
+    character(len=MAX_HEREDOC_LEN) :: buffer
+    integer :: buffer_pos
+    logical :: found_start, found_end
+
+    ! Check if input contains newlines (heredoc marker)
+    newline_pos = index(input, char(10))
+    if (newline_pos == 0) then
+      ! No newlines, can't extract heredoc content
+      return
+    end if
+
+    ! Find where heredoc content starts (after first newline following <<DELIM)
+    content_start = 0
+    do i = 1, len(input)
+      if (input(i:i) == '<' .and. i < len(input) - 1) then
+        if (input(i+1:i+1) == '<') then
+          ! Found <<, look for newline after delimiter
+          do newline_pos = i+2, len(input)
+            if (input(newline_pos:newline_pos) == char(10)) then
+              content_start = newline_pos + 1
+              exit
+            end if
+          end do
+          if (content_start > 0) exit
+        end if
+      end if
+    end do
+
+    if (content_start == 0 .or. content_start > len(input)) then
+      ! No content after heredoc marker
+      return
+    end if
+
+    ! Extract lines until we find the delimiter
+    buffer = ''
+    buffer_pos = 1
+    line_start = content_start
+    found_end = .false.
+
+    do while (line_start <= len(input) .and. .not. found_end)
+      ! Find end of current line (newline or end of string)
+      line_end = line_start
+      do while (line_end <= len(input) .and. input(line_end:line_end) /= char(10))
+        line_end = line_end + 1
+      end do
+
+      ! Extract current line (handle case where line_end went past end of input)
+      if (line_end > len(input)) then
+        ! No newline found, extract to end of input
+        if (line_start <= len(input)) then
+          current_line = input(line_start:len(input))
+        else
+          current_line = ''
+        end if
+      else if (line_end > line_start) then
+        ! Newline found, extract up to (but not including) the newline
+        current_line = input(line_start:line_end-1)
+      else
+        current_line = ''
+      end if
+
+      ! Check if this line matches the delimiter
+      if (trim(current_line) == trim(delimiter)) then
+        found_end = .true.
+        exit
+      end if
+
+      ! Add line to buffer
+      if (buffer_pos > 1) then
+        ! Add newline before this line
+        buffer(buffer_pos:buffer_pos) = char(10)
+        buffer_pos = buffer_pos + 1
+      end if
+
+      if (len_trim(current_line) > 0) then
+        buffer(buffer_pos:buffer_pos+len_trim(current_line)-1) = trim(current_line)
+        buffer_pos = buffer_pos + len_trim(current_line)
+      end if
+
+      ! Move to next line
+      line_start = line_end + 1
+    end do
+
+    ! Allocate and return content (with trailing newline to match POSIX)
+    if (buffer_pos > 1) then
+      ! Add trailing newline
+      buffer(buffer_pos:buffer_pos) = char(10)
+      buffer_pos = buffer_pos + 1
+      allocate(character(len=buffer_pos-1) :: content)
+      content = buffer(:buffer_pos-1)
+    end if
   end subroutine
 
   ! Expand glob patterns in command tokens
