@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        5.2.4
+Version:        5.2.5
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,11 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Mon Oct 14 2024 mfw <espadon@outlook.com> - 5.2.5-1
+- Final macOS segfault resolution
+- Stability improvements for macOS platform
+- Verified working macOS build
+
 * Mon Oct 14 2024 mfw <espadon@outlook.com> - 5.2.4-1
 - Additional macOS segfault fixes
 - Continued improvements to macOS stability
