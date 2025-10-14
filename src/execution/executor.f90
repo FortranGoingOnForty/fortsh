@@ -736,7 +736,11 @@ contains
       else
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
       end if
-      shell%last_exit_status = 0
+      ! Set exit status to 0 for successful assignments
+      ! Don't overwrite error codes like 127 (readonly violation)
+      if (shell%last_exit_status /= 127) then
+        shell%last_exit_status = 0
+      end if
     end if
   end subroutine
 
@@ -810,31 +814,98 @@ contains
     end do
   end function
 
+  ! Interpret escape sequences in IFS string (\t -> tab, \n -> newline)
+  subroutine interpret_ifs_escapes(input, output)
+    character(len=*), intent(in) :: input
+    character(len=*), intent(out) :: output
+    integer :: i, j, input_len
+    character(len=1) :: backslash
+
+    backslash = char(92)  ! ASCII code for backslash
+    input_len = len_trim(input)
+    j = 1
+    i = 1
+    output = ''
+
+    do while (i <= input_len)
+      if (input(i:i) == backslash .and. i < input_len) then
+        ! Check for escape sequences
+        if (input(i+1:i+1) == 't') then
+          ! \t -> tab
+          output(j:j) = char(9)
+          j = j + 1
+          i = i + 2
+        else if (input(i+1:i+1) == 'n') then
+          ! \n -> newline
+          output(j:j) = char(10)
+          j = j + 1
+          i = i + 2
+        else if (input(i+1:i+1) == backslash) then
+          ! \\ -> backslash
+          output(j:j) = backslash
+          j = j + 1
+          i = i + 2
+        else
+          ! Unknown escape, keep backslash and next char
+          output(j:j) = input(i:i)
+          j = j + 1
+          i = i + 1
+        end if
+      else
+        ! Regular character
+        output(j:j) = input(i:i)
+        j = j + 1
+        i = i + 1
+      end if
+    end do
+  end subroutine
+
   subroutine expand_tokens(cmd, shell)
+    use expansion, only: field_split
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, num_words, total_tokens
     character(len=:), allocatable :: expanded
-    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:), split_words(:)
+    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
+    character(len=1024) :: split_words(100)
     character(len=MAX_TOKEN_LEN) :: word
-    integer :: word_count, start_pos, pos
-    logical :: should_split, has_quotes, has_equals, has_escaped
+    character(len=256) :: ifs_to_use
+    integer :: word_count, start_pos, pos, k
+    logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
     total_tokens = 0
 
+    ! Determine IFS characters to use
+    ! Interpret escape sequences in IFS (\t -> tab, \n -> newline)
+    if (len_trim(shell%ifs) > 0) then
+      call interpret_ifs_escapes(trim(shell%ifs), ifs_to_use)
+    else
+      ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline (default IFS)
+    end if
+
     do i = 1, cmd%num_tokens
       call expand_variables(cmd%tokens(i), expanded, shell)
 
-      ! Determine if we should split this token on spaces
+      ! Determine if we should split this token on IFS characters
       ! Only split if:
-      ! 1. Contains spaces
+      ! 1. Contains IFS characters
       ! 2. NOT quoted (doesn't contain quote characters)
       ! 3. NOT an assignment (doesn't contain =, like alias ll='...' or var=value)
-      ! 4. NOT escaped (doesn't contain \<space>)
+      ! 4. NOT escaped (doesn't contain escaped IFS chars)
       should_split = .false.
-      if (index(expanded, ' ') > 0) then
+
+      ! Check if expanded string contains any IFS character
+      has_ifs_char = .false.
+      do k = 1, len(expanded)
+        if (index(ifs_to_use, expanded(k:k)) > 0) then
+          has_ifs_char = .true.
+          exit
+        end if
+      end do
+
+      if (has_ifs_char) then
         ! Check if ORIGINAL token had quotes (not expanded, since expand_variables strips them)
         has_quotes = (index(cmd%tokens(i), '"') > 0 .or. index(cmd%tokens(i), "'") > 0)
         ! Check if it's an assignment (contains =)
@@ -847,33 +918,9 @@ contains
       end if
 
       if (should_split) then
-        ! Split the expanded string into separate tokens
-        allocate(split_words(100))
+        ! Split the expanded string using IFS characters
         word_count = 0
-        pos = 1
-        start_pos = 1
-
-        ! Simple space-based splitting
-        do while (pos <= len(expanded))
-          if (expanded(pos:pos) == ' ') then
-            if (pos > start_pos) then
-              word_count = word_count + 1
-              if (word_count <= 100) then
-                split_words(word_count) = expanded(start_pos:pos-1)
-              end if
-            end if
-            start_pos = pos + 1
-          end if
-          pos = pos + 1
-        end do
-
-        ! Don't forget the last word
-        if (start_pos <= len(expanded)) then
-          word_count = word_count + 1
-          if (word_count <= 100) then
-            split_words(word_count) = expanded(start_pos:)
-          end if
-        end if
+        call field_split(expanded, trim(ifs_to_use), split_words, word_count)
 
         ! Add all split words as separate tokens
         do j = 1, word_count
@@ -882,10 +929,8 @@ contains
             temp_tokens(total_tokens) = split_words(j)
           end if
         end do
-
-        deallocate(split_words)
       else
-        ! No spaces, just add as single token
+        ! No IFS chars or shouldn't split, just add as single token
         total_tokens = total_tokens + 1
         if (total_tokens <= size(temp_tokens)) then
           temp_tokens(total_tokens) = expanded

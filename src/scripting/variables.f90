@@ -70,7 +70,7 @@ contains
         ! Check if variable is readonly
         if (shell%variables(i)%readonly) then
           write(error_unit, '(a)') trim(name) // ': readonly variable'
-          shell%last_exit_status = 1
+          shell%last_exit_status = 127
           return
         end if
         shell%variables(i)%value = value
@@ -393,7 +393,11 @@ contains
           call set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
         end if
       end if
-      shell%last_exit_status = 0
+      ! Set exit status to 0 for successful assignments
+      ! Don't overwrite error codes like 127 (readonly violation)
+      if (shell%last_exit_status /= 127) then
+        shell%last_exit_status = 0
+      end if
     else
       shell%last_exit_status = 1
     end if
