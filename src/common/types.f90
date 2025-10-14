@@ -67,6 +67,7 @@ module shell_types
     character(len=:), allocatable :: error_file
     character(len=:), allocatable :: heredoc_delimiter
     character(len=:), allocatable :: heredoc_content
+    logical :: heredoc_quoted = .false.  ! delimiter was quoted (suppress variable expansion)
     logical :: append_output = .false.
     logical :: append_error = .false.
     logical :: redirect_stderr_to_stdout = .false.
@@ -75,6 +76,9 @@ module shell_types
     character(len=:), allocatable :: here_string  ! <<< redirection
     logical :: background = .false.
     integer :: separator = SEP_NONE
+    ! Command grouping support
+    logical :: is_command_group = .false.        ! { cmd1; cmd2; }
+    character(len=:), allocatable :: group_content  ! content between { }
     ! Enhanced POSIX file descriptor redirection
     type(redirection_t) :: redirections(10)
     integer :: num_redirections = 0

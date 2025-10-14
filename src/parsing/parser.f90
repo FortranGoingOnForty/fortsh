@@ -351,7 +351,9 @@ contains
         if (allocated(temp_commands(i)%heredoc_content)) then
           pipeline%commands(i)%heredoc_content = temp_commands(i)%heredoc_content
         end if
-        
+        ! Copy heredoc quoted flag
+        pipeline%commands(i)%heredoc_quoted = temp_commands(i)%heredoc_quoted
+
         if (allocated(temp_commands(i)%here_string)) then
           pipeline%commands(i)%here_string = temp_commands(i)%here_string
         end if
@@ -382,6 +384,23 @@ contains
 
     working_input = adjustl(input)
     ! write(error_unit, '(a,a)') 'DEBUG parse_single_command input: ', trim(working_input)
+
+    ! Handle command grouping { ... }
+    ! Check if input starts with { and ends with }
+    if (len_trim(working_input) >= 3) then
+      if (working_input(1:1) == '{') then
+        ! Find the position of the closing }
+        pos = len_trim(working_input)
+        if (working_input(pos:pos) == '}') then
+          ! This is a command group - mark it and store the inner content
+          cmd%is_command_group = .true.
+          cmd%group_content = adjustl(working_input(2:pos-1))
+          ! Don't tokenize the content - it will be re-parsed during execution
+          cmd%num_tokens = 0
+          return
+        end if
+      end if
+    end if
 
     ! Skip redirection processing for arithmetic commands ((expression)) and for (( loops
     if (len_trim(working_input) >= 2 .and. working_input(1:2) == '((') then
@@ -415,9 +434,9 @@ contains
       pos = find_outside_quotes(working_input, '<<')
       if (pos > 0) then
         call extract_word(working_input(pos+2:), temp_str)
-        ! Strip quotes from delimiter if present
+        ! Strip quotes from delimiter if present and track if it was quoted
         cmd%heredoc_delimiter = trim(temp_str)
-        call strip_heredoc_delimiter_quotes(cmd%heredoc_delimiter)
+        cmd%heredoc_quoted = strip_heredoc_delimiter_quotes(cmd%heredoc_delimiter)
         ! Try to extract heredoc content from input if it contains newlines
         call extract_heredoc_from_input(input, trim(cmd%heredoc_delimiter), cmd%heredoc_content)
         working_input = working_input(:pos-1)
@@ -669,11 +688,14 @@ contains
   end subroutine
 
   ! Strip quotes from heredoc delimiter ('EOF' -> EOF, "EOF" -> EOF)
-  subroutine strip_heredoc_delimiter_quotes(delimiter)
+  ! Returns .true. if quotes were found and removed
+  function strip_heredoc_delimiter_quotes(delimiter) result(was_quoted)
     character(len=*), intent(inout) :: delimiter
+    logical :: was_quoted
     integer :: len_delim
     character(len=1) :: first_char, last_char
 
+    was_quoted = .false.
     len_delim = len_trim(delimiter)
     if (len_delim < 2) return
 
@@ -685,8 +707,9 @@ contains
         (first_char == '"' .and. last_char == '"')) then
       ! Remove surrounding quotes
       delimiter = delimiter(2:len_delim-1)
+      was_quoted = .true.
     end if
-  end subroutine
+  end function
 
   ! Find position of character outside quotes
   function find_outside_quotes(str, char) result(pos)
