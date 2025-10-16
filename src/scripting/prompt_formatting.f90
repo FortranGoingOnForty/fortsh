@@ -238,7 +238,19 @@ contains
   function get_pretty_path(path) result(pretty)
     character(len=*), intent(in) :: path
     character(len=:), allocatable :: pretty, home_dir, shortened
-    integer :: home_len
+    integer :: home_len, term_rows, term_cols, max_path_len
+    logical :: success
+
+    ! Get terminal width to determine available space
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80
+    end if
+
+    ! Calculate max path length: use 25% of terminal width or 30 chars, whichever is smaller
+    ! This leaves plenty of room for username, hostname, git branch, and other prompt elements
+    max_path_len = min(term_cols / 4, 30)
+    if (max_path_len < 15) max_path_len = 15  ! Ensure minimum readability
 
     home_dir = get_environment_var('HOME')
 
@@ -254,7 +266,7 @@ contains
           end if
 
           ! Apply intelligent shortening if path is still long
-          shortened = shorten_path(pretty, 40)  ! Max 40 chars before shortening
+          shortened = shorten_path(pretty, max_path_len)
           pretty = shortened
           return
         end if
@@ -262,7 +274,7 @@ contains
     end if
 
     ! Apply intelligent shortening to non-home paths too
-    shortened = shorten_path(trim(path), 40)
+    shortened = shorten_path(trim(path), max_path_len)
     pretty = shortened
   end function
 

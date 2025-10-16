@@ -395,10 +395,48 @@ contains
         if (input_state%dirty) then
           block
             character(len=:), allocatable :: highlighted
-            integer :: i_redraw
+            integer :: i_redraw, term_cols, term_rows
+            integer :: prompt_visual_len, cursor_visual_pos, current_line
+            integer :: suggestion_display_len, available_space
+            logical :: success
 
+            ! Get terminal size for multiline handling
+            success = get_terminal_size(term_rows, term_cols)
+            if (.not. success .or. term_cols <= 0) then
+              term_cols = 80
+            end if
+            if (term_cols < 20) then
+              term_cols = 80
+            end if
+
+            ! Calculate visual length of prompt (excluding ANSI codes)
+            prompt_visual_len = visual_length(prompt)
+            if (prompt_visual_len < 0) then
+              prompt_visual_len = 0
+            end if
+
+            ! Calculate current cursor position and line
+            cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
+            if (term_cols > 0) then
+              current_line = cursor_visual_pos / term_cols
+            else
+              current_line = 0
+            end if
+            if (current_line < 0) current_line = 0
+            if (current_line > 100) current_line = 0
+
+            ! Move cursor up to the first line if we're on a wrapped line
+            if (current_line > 0) then
+              do i_redraw = 1, current_line
+                write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+              end do
+            end if
+
+            ! Move to beginning of line and clear from cursor to end of screen
             write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
-            write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear to end of line
+            write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+
+            ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
             if (input_state%length > 0) then
               ! Apply syntax highlighting (safe - doesn't take input_state)
@@ -408,14 +446,27 @@ contains
               ! Display autosuggestion if present (only when cursor is at end)
               if (input_state%suggestion_length > 0 .and. &
                   input_state%cursor_pos == input_state%length) then
-                write(output_unit, '(a)', advance='no') char(27) // '[90m'  ! Gray color
-                write(output_unit, '(a)', advance='no') input_state%suggestion(:input_state%suggestion_length)
-                write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
+                ! Calculate available space on current line
+                available_space = term_cols - mod(prompt_visual_len + input_state%length, term_cols)
+                if (available_space < 0) available_space = 0
 
-                ! Move cursor back to correct position (after suggestion)
-                do i_redraw = 1, input_state%suggestion_length
-                  write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
-                end do
+                ! Truncate suggestion to fit
+                if (available_space > 2) then
+                  suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
+                  if (suggestion_display_len < 0) suggestion_display_len = 0
+                  if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
+
+                  if (suggestion_display_len > 0) then
+                    write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
+                    write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+                    write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
+
+                    ! Move cursor back to correct position (after suggestion)
+                    do i_redraw = 1, suggestion_display_len
+                      write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+                    end do
+                  end if
+                end if
               end if
             end if
 
@@ -2869,9 +2920,9 @@ contains
       return
     end select
 
-    ! Redraw menu if selection changed
+    ! Update menu highlighting if selection changed (in-place update)
     if (old_selection /= input_state%menu_selection) then
-      call redraw_menu(input_state)
+      call update_menu_selection(input_state, old_selection)
     end if
   end subroutine
 
@@ -2939,22 +2990,94 @@ contains
     input_state%dirty = .true.
   end subroutine
 
-  subroutine redraw_menu(input_state)
+  subroutine update_menu_selection(input_state, old_selection)
     type(input_state_t), intent(in) :: input_state
-    integer :: i, num_rows
+    integer, intent(in) :: old_selection
+    integer :: term_rows, term_cols, cols_per_item, items_per_row, i
+    integer :: old_row, old_col, new_row, new_col, col_offset
+    integer :: menu_start_row, cursor_save_row
+    logical :: success
+    character(len=10) :: row_str, col_str
 
-    ! Calculate how many rows the menu uses
-    num_rows = (input_state%menu_num_items + 7) / 8  ! Assuming 8 items per row for now
+    ! Get terminal size
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80
+    end if
 
-    ! Move cursor up to clear previous menu
-    do i = 1, num_rows
+    ! Calculate layout - same as draw_completion_menu
+    cols_per_item = 0
+    do i = 1, input_state%menu_num_items
+      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+    end do
+    cols_per_item = cols_per_item + 2  ! Add spacing
+
+    items_per_row = max(1, term_cols / cols_per_item)
+
+    ! Calculate positions of old and new selections (1-indexed)
+    ! Row number (which row of the menu grid)
+    old_row = (old_selection - 1) / items_per_row + 1
+    new_row = (input_state%menu_selection - 1) / items_per_row + 1
+
+    ! Column within that row
+    old_col = mod(old_selection - 1, items_per_row) + 1
+    new_col = mod(input_state%menu_selection - 1, items_per_row) + 1
+
+    ! Save cursor position (we're currently at the command line)
+    write(output_unit, '(a)', advance='no') char(27) // '7'  ! Save cursor
+
+    ! Update old selection (remove highlighting)
+    if (old_selection > 0 .and. old_selection <= input_state%menu_num_items) then
+      ! Move to old item's position
+      ! Menu starts 1 line below the command line
+      write(row_str, '(I0)') old_row
+      col_offset = (old_col - 1) * cols_per_item + 1
+      write(col_str, '(I0)') col_offset
+
+      ! Use relative positioning - move up to menu, then position within menu
+      do i = 1, (input_state%menu_num_items + items_per_row - 1) / items_per_row - old_row + 1
+        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+      end do
+      write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+      if (col_offset > 1) then
+        write(col_str, '(I0)') col_offset - 1
+        write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str) // 'C'  ! Move right
+      end if
+
+      ! Write item without highlighting
+      write(output_unit, '(a)', advance='no') trim(input_state%menu_items(old_selection))
+    end if
+
+    ! Restore cursor to command line
+    write(output_unit, '(a)', advance='no') char(27) // '8'  ! Restore cursor
+
+    ! Save again for new item
+    write(output_unit, '(a)', advance='no') char(27) // '7'  ! Save cursor
+
+    ! Update new selection (add highlighting)
+    write(row_str, '(I0)') new_row
+    col_offset = (new_col - 1) * cols_per_item + 1
+    write(col_str, '(I0)') col_offset
+
+    ! Move to new item's position
+    do i = 1, (input_state%menu_num_items + items_per_row - 1) / items_per_row - new_row + 1
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
     end do
     write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
-    write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+    if (col_offset > 1) then
+      write(col_str, '(I0)') col_offset - 1
+      write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str) // 'C'  ! Move right
+    end if
 
-    ! Redraw menu (without adding extra newline)
-    call draw_completion_menu(input_state, .false.)
+    ! Write item with highlighting
+    write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
+    write(output_unit, '(a)', advance='no') trim(input_state%menu_items(input_state%menu_selection))
+    write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+
+    ! Restore cursor to command line
+    write(output_unit, '(a)', advance='no') char(27) // '8'  ! Restore cursor
+
+    flush(output_unit)
   end subroutine
 
   subroutine handle_escape_sequence(input_state, done)
