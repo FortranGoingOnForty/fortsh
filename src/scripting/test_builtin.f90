@@ -71,7 +71,7 @@ contains
         test_result = file_is_regular(trim(right_operand))
       case('-d')
         test_result = file_is_directory(trim(right_operand))
-      case('-L')
+      case('-L', '-h')
         test_result = file_is_symlink(trim(right_operand))
       case('-b')
         test_result = file_is_block_device(trim(right_operand))

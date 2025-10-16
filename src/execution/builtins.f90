@@ -57,6 +57,7 @@ contains
                 trim(cmd_name) == 'bg' .or. &
                 trim(cmd_name) == 'source' .or. &
                 trim(cmd_name) == '.' .or. &
+                trim(cmd_name) == ':' .or. &
                 trim(cmd_name) == 'history' .or. &
                 trim(cmd_name) == 'kill' .or. &
                 trim(cmd_name) == 'wait' .or. &
@@ -135,6 +136,9 @@ contains
       call builtin_bg(cmd, shell)
     case('source', '.')
       call builtin_source(cmd, shell)
+    case(':')
+      ! Colon builtin - null command, always returns success
+      shell%last_exit_status = 0
     case('history')
       call builtin_history(cmd, shell)
     case('kill')
