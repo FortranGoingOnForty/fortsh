@@ -41,6 +41,8 @@ Requires:
 - POSIX system (Linux, BSD, macOS)
 - Realistic expectations
 
+**macOS ARM64 Warning**: gfortran has a stack frame corruption bug on Apple Silicon that breaks menu selection mode. Tab completion still works, you just can't use arrow keys to navigate. Blame the compiler, not us.
+
 ```bash
 git clone https://github.com/FortranGoingOnForty/fortsh.git
 cd fortsh
@@ -400,6 +402,7 @@ Because why not.
 
 ## Known Issues
 
+- **macOS ARM64**: Tab completion menu mode disabled due to gfortran compiler bug. Tab still completes, but you can't arrow through options. Press Tab twice and it'll tell you why. Works fine on Linux and x86 Macs.
 - Slower than bash for large scripts (it's Fortran, not a miracle worker)
 - Some regex patterns with spaces need escaping (affects ~0.1% of use cases)
 - Unicode support varies by system locale
