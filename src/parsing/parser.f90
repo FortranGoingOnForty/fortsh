@@ -745,15 +745,39 @@ contains
     character(len=*), intent(in) :: str, char
     integer :: pos
     integer :: i
-    logical :: in_quotes
+    logical :: in_quotes, in_arith
     character(len=1) :: quote_char
+    integer :: arith_depth
 
     pos = 0
     in_quotes = .false.
+    in_arith = .false.
     quote_char = ' '
+    arith_depth = 0
 
     do i = 1, len_trim(str)
-      if (.not. in_quotes) then
+      ! Check for arithmetic expansion start: $((
+      if (.not. in_quotes .and. i <= len_trim(str) - 2) then
+        if (str(i:i+2) == '$((') then
+          in_arith = .true.
+          arith_depth = arith_depth + 2
+          cycle
+        end if
+      end if
+
+      ! Track parentheses inside arithmetic expressions
+      if (in_arith .and. .not. in_quotes) then
+        if (str(i:i) == '(') then
+          arith_depth = arith_depth + 1
+        else if (str(i:i) == ')') then
+          arith_depth = arith_depth - 1
+          if (arith_depth == 0) then
+            in_arith = .false.
+          end if
+        end if
+      end if
+
+      if (.not. in_quotes .and. .not. in_arith) then
         if (str(i:i) == '"' .or. str(i:i) == "'") then
           in_quotes = .true.
           quote_char = str(i:i)
@@ -761,7 +785,7 @@ contains
           pos = i
           return
         end if
-      else
+      else if (in_quotes) then
         if (str(i:i) == quote_char) then
           in_quotes = .false.
         end if
