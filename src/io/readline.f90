@@ -2855,6 +2855,7 @@ contains
     case (10, 13)  ! Enter (LF or CR)
       ! Accept selection - insert into command line
       call accept_menu_selection(input_state)
+      done = .true.
       return
 
     case (KEY_ESC)
@@ -2904,6 +2905,31 @@ contains
 
   subroutine exit_menu_select_mode(input_state)
     type(input_state_t), intent(inout) :: input_state
+    integer :: i, num_rows, term_rows, term_cols, cols_per_item, items_per_row
+    logical :: success
+
+    ! Clear the menu from screen before exiting
+    if (input_state%menu_num_items > 0) then
+      ! Calculate how many rows the menu uses
+      success = get_terminal_size(term_rows, term_cols)
+      if (.not. success .or. term_cols <= 0) then
+        term_cols = 80
+      end if
+
+      ! Calculate layout to determine number of rows used
+      cols_per_item = 0
+      do i = 1, input_state%menu_num_items
+        cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+      end do
+      cols_per_item = cols_per_item + 2
+
+      items_per_row = max(1, term_cols / cols_per_item)
+      num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+
+      ! Move cursor down past the menu, then clear everything above
+      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+      write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+    end if
 
     input_state%in_menu_select = .false.
     input_state%menu_num_items = 0
