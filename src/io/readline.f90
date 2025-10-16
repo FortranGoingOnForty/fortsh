@@ -234,6 +234,10 @@ contains
           ! Enter - accept menu selection, finish input, or accept search
           if (input_state%in_menu_select) then
             call handle_menu_navigation(input_state, KEY_ENTER, done)
+            ! If menu selection was accepted, output newline
+            if (done) then
+              write(output_unit, '()')  ! New line
+            end if
           else if (input_state%in_search) then
             call accept_search(input_state, prompt)
             done = .true.
@@ -1894,28 +1898,8 @@ contains
       file_pattern = trim(prefix)
     end if
     
-    ! Add common directory completions
-    if (len_trim(file_pattern) == 0 .or. file_pattern(1:1) == '.') then
-      if (num_completions < 50) then
-        num_completions = num_completions + 1
-        if (trim(dir_path) == '.') then
-          completions(num_completions) = './'
-        else
-          completions(num_completions) = trim(dir_path) // '/./'
-        end if
-      end if
-      
-      if (len_trim(file_pattern) == 0 .or. index(file_pattern, '..') == 1) then
-        if (num_completions < 50) then
-          num_completions = num_completions + 1
-          if (trim(dir_path) == '.') then
-            completions(num_completions) = '../'
-          else
-            completions(num_completions) = trim(dir_path) // '/../'
-          end if
-        end if
-      end if
-    end if
+    ! Don't add ./ and ../ automatically - they're not based on user input
+    ! Let scan_directory find all matches naturally
     
     ! Add some common file extensions for demonstration
     if (len_trim(file_pattern) == 0) then
@@ -2072,35 +2056,7 @@ contains
         end if
       end if
 
-      if (num_completions < 50) then
-        num_completions = num_completions + 1
-        if (trim(dir_path) == '.') then
-          completions(num_completions) = '../'
-        else
-          completions(num_completions) = trim(dir_path) // '/../'
-        end if
-      end if
-    else if (trim(file_pattern) == '.' .or. trim(file_pattern) == '..') then
-      ! Exact match for . or .. - complete with /
-      if (trim(file_pattern) == '.') then
-        if (num_completions < 50) then
-          num_completions = num_completions + 1
-          if (trim(dir_path) == '.') then
-            completions(num_completions) = './'
-          else
-            completions(num_completions) = trim(dir_path) // '/./'
-          end if
-        end if
-      else if (trim(file_pattern) == '..') then
-        if (num_completions < 50) then
-          num_completions = num_completions + 1
-          if (trim(dir_path) == '.') then
-            completions(num_completions) = '../'
-          else
-            completions(num_completions) = trim(dir_path) // '/../'
-          end if
-        end if
-      end if
+      ! Don't add ../ - not based on user input
     end if
     ! Otherwise, let scan_directory handle ALL matches including dotfiles
 
@@ -2547,8 +2503,13 @@ contains
           input_state%completions_shown = .false.
         else
           if (.not. input_state%completions_shown .or. tab_buffer_changed) then
-            write(output_unit, '()')
-            call show_completions(tab_completions, tab_num_completions)
+            ! First tab - store completions and draw grid menu
+            input_state%menu_num_items = tab_num_completions
+            do i = 1, tab_num_completions
+              input_state%menu_items(i) = tab_completions(i)
+            end do
+            input_state%menu_selection = 1
+            call draw_completion_menu(input_state, .true.)
             input_state%last_completion_buffer = input_state%buffer(:input_state%length)
             input_state%completions_shown = .true.
             input_state%dirty = .true.
@@ -2565,15 +2526,8 @@ contains
               call show_completions(tab_completions, tab_num_completions)
               input_state%dirty = .true.
             else
-              ! Normal platforms: Enter menu mode
+              ! Normal platforms: Activate menu mode (items already stored and displayed)
               input_state%in_menu_select = .true.
-              input_state%menu_num_items = tab_num_completions
-              input_state%menu_selection = 1
-
-              ! Copy menu items
-              do i = 1, tab_num_completions
-                input_state%menu_items(i) = tab_completions(i)
-              end do
 
               ! Store menu prefix
               last_space_pos = 0
@@ -2592,8 +2546,8 @@ contains
                 input_state%menu_prefix_len = 0
               end if
 
-              ! Draw the menu with selection
-              call draw_completion_menu(input_state, .true.)
+              ! Don't redraw - menu is already displayed from first tab
+              flush(output_unit)
             end if
           end if
         end if
@@ -2602,12 +2556,16 @@ contains
       ! We have completions but no single completion to apply
       ! Show the available options
       if (.not. input_state%completions_shown .or. tab_buffer_changed) then
-        ! First tab - show completions
-        write(output_unit, '()')
-        call show_completions(tab_completions, tab_num_completions)
+        ! First tab - store completions and draw grid menu
+        input_state%menu_num_items = tab_num_completions
+        do i = 1, tab_num_completions
+          input_state%menu_items(i) = tab_completions(i)
+        end do
+        input_state%menu_selection = 1
+        call draw_completion_menu(input_state, .true.)
         input_state%last_completion_buffer = input_state%buffer(:input_state%length)
         input_state%completions_shown = .true.
-        input_state%dirty = .true.
+        ! Don't set dirty - command line is already displayed above menu
       else
         ! Second tab - enter menu selection mode
         call detect_macos()
@@ -2620,15 +2578,8 @@ contains
           call show_completions(tab_completions, tab_num_completions)
           input_state%dirty = .true.
         else
-          ! Normal platforms: Enter menu mode
+          ! Normal platforms: Activate menu mode (items already stored and displayed)
           input_state%in_menu_select = .true.
-          input_state%menu_num_items = tab_num_completions
-          input_state%menu_selection = 1
-
-          ! Copy menu items
-          do i = 1, tab_num_completions
-            input_state%menu_items(i) = tab_completions(i)
-          end do
 
           ! Store menu prefix
           last_space_pos = 0
@@ -2647,8 +2598,8 @@ contains
             input_state%menu_prefix_len = 0
           end if
 
-          ! Draw the menu with selection
-          call draw_completion_menu(input_state, .true.)
+          ! Don't redraw - menu is already displayed from first tab
+          flush(output_unit)
         end if
       end if
     end if
@@ -2660,7 +2611,7 @@ contains
     character(len=MAX_LINE_LEN) :: completions(50)
     character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_LINE_LEN) :: saved_input
-    integer :: num_completions
+    integer :: num_completions, i
     logical :: completed, made_progress, buffer_changed
 
     ! Exit history mode if we're browsing
@@ -2707,11 +2658,16 @@ contains
         else
           ! At common prefix already - show available options only if not already shown
           if (.not. input_state%completions_shown .or. buffer_changed) then
-            write(output_unit, '()')  ! New line
-            call show_completions(completions, num_completions)
+            ! Store completions for menu mode and draw once
+            input_state%menu_num_items = num_completions
+            do i = 1, num_completions
+              input_state%menu_items(i) = completions(i)
+            end do
+            input_state%menu_selection = 1
+            call draw_completion_menu(input_state, .true.)
             input_state%last_completion_buffer = input_state%buffer(:input_state%length)
             input_state%completions_shown = .true.
-            input_state%dirty = .true.
+            ! Don't set dirty - command line is already displayed above menu
           else
             ! Second tab (double-tab) at common prefix - enter menu selection mode!
             call enter_menu_select_mode(input_state, completions, num_completions, completed_line)
@@ -2725,12 +2681,16 @@ contains
       ! We have completions but no single completion to apply
       ! Show the available options
       if (.not. input_state%completions_shown .or. buffer_changed) then
-        ! First tab - show completions
-        write(output_unit, '()')  ! New line
-        call show_completions(completions, num_completions)
+        ! First tab - store completions and draw menu
+        input_state%menu_num_items = num_completions
+        do i = 1, num_completions
+          input_state%menu_items(i) = completions(i)
+        end do
+        input_state%menu_selection = 1
+        call draw_completion_menu(input_state, .true.)
         input_state%last_completion_buffer = input_state%buffer(:input_state%length)
         input_state%completions_shown = .true.
-        input_state%dirty = .true.
+        ! Don't set dirty - command line is already displayed above menu
       else
         ! Second tab (double-tab) - enter menu selection mode!
         call enter_menu_select_mode(input_state, completions, num_completions, partial_input)
@@ -2801,8 +2761,10 @@ contains
       input_state%menu_prefix_len = 0
     end if
 
-    ! Draw the menu with first item highlighted
-    call draw_completion_menu(input_state, .true.)
+    ! Don't redraw the menu - it was already shown by the first tab
+    ! Just activate menu mode silently and wait for navigation keys
+    ! The menu will stay static on screen from the first tab display
+    flush(output_unit)
   end subroutine
 
   subroutine draw_completion_menu(input_state, initial_draw)
@@ -2904,9 +2866,9 @@ contains
       end if
 
     case (10, 13)  ! Enter (LF or CR)
-      ! Accept selection - insert into command line
+      ! Accept selection - insert into command line and continue editing
       call accept_menu_selection(input_state)
-      done = .true.
+      ! Don't set done = .true. - let user continue editing
       return
 
     case (KEY_ESC)
@@ -2944,14 +2906,15 @@ contains
     input_state%length = len_trim(completed_line)
     input_state%cursor_pos = input_state%length
 
-    ! Exit menu mode
+    ! Exit menu mode (clears menu from screen)
     call exit_menu_select_mode(input_state)
 
-    ! Update autosuggestion
-    call update_autosuggestion(input_state)
-
-    ! Mark for redraw
+    ! Don't redraw here - the main loop will handle it
+    ! Just mark as dirty so it gets redrawn after we return
     input_state%dirty = .true.
+
+    ! Update autosuggestion for future use
+    call update_autosuggestion(input_state)
   end subroutine
 
   subroutine exit_menu_select_mode(input_state)
@@ -2977,7 +2940,12 @@ contains
       items_per_row = max(1, term_cols / cols_per_item)
       num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
-      ! Move cursor down past the menu, then clear everything above
+      ! Move cursor up to where the command line was (before the menu)
+      do i = 1, num_rows
+        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+      end do
+
+      ! Move to beginning of line and clear everything from here down (including menu)
       write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
       write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
     end if
@@ -2993,89 +2961,51 @@ contains
   subroutine update_menu_selection(input_state, old_selection)
     type(input_state_t), intent(in) :: input_state
     integer, intent(in) :: old_selection
-    integer :: term_rows, term_cols, cols_per_item, items_per_row, i
-    integer :: old_row, old_col, new_row, new_col, col_offset
-    integer :: menu_start_row, cursor_save_row
+    integer :: term_rows, term_cols, items_per_row, i, num_menu_rows
+    integer :: cols_per_item
     logical :: success
-    character(len=10) :: row_str, col_str
 
-    ! Get terminal size
+    ! Calculate number of rows the menu occupies
     success = get_terminal_size(term_rows, term_cols)
     if (.not. success .or. term_cols <= 0) then
       term_cols = 80
     end if
 
-    ! Calculate layout - same as draw_completion_menu
+    ! Calculate how many items fit per row (same logic as draw_completion_menu)
     cols_per_item = 0
     do i = 1, input_state%menu_num_items
       cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
     end do
     cols_per_item = cols_per_item + 2  ! Add spacing
-
     items_per_row = max(1, term_cols / cols_per_item)
+    num_menu_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
-    ! Calculate positions of old and new selections (1-indexed)
-    ! Row number (which row of the menu grid)
-    old_row = (old_selection - 1) / items_per_row + 1
-    new_row = (input_state%menu_selection - 1) / items_per_row + 1
-
-    ! Column within that row
-    old_col = mod(old_selection - 1, items_per_row) + 1
-    new_col = mod(input_state%menu_selection - 1, items_per_row) + 1
-
-    ! Save cursor position (we're currently at the command line)
-    write(output_unit, '(a)', advance='no') char(27) // '7'  ! Save cursor
-
-    ! Update old selection (remove highlighting)
-    if (old_selection > 0 .and. old_selection <= input_state%menu_num_items) then
-      ! Move to old item's position
-      ! Menu starts 1 line below the command line
-      write(row_str, '(I0)') old_row
-      col_offset = (old_col - 1) * cols_per_item + 1
-      write(col_str, '(I0)') col_offset
-
-      ! Use relative positioning - move up to menu, then position within menu
-      do i = 1, (input_state%menu_num_items + items_per_row - 1) / items_per_row - old_row + 1
-        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
-      end do
-      write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
-      if (col_offset > 1) then
-        write(col_str, '(I0)') col_offset - 1
-        write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str) // 'C'  ! Move right
-      end if
-
-      ! Write item without highlighting
-      write(output_unit, '(a)', advance='no') trim(input_state%menu_items(old_selection))
-    end if
-
-    ! Restore cursor to command line
-    write(output_unit, '(a)', advance='no') char(27) // '8'  ! Restore cursor
-
-    ! Save again for new item
-    write(output_unit, '(a)', advance='no') char(27) // '7'  ! Save cursor
-
-    ! Update new selection (add highlighting)
-    write(row_str, '(I0)') new_row
-    col_offset = (new_col - 1) * cols_per_item + 1
-    write(col_str, '(I0)') col_offset
-
-    ! Move to new item's position
-    do i = 1, (input_state%menu_num_items + items_per_row - 1) / items_per_row - new_row + 1
+    ! Move cursor up to the beginning of the menu
+    do i = 1, num_menu_rows
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
     end do
-    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
-    if (col_offset > 1) then
-      write(col_str, '(I0)') col_offset - 1
-      write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str) // 'C'  ! Move right
+    write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+
+    ! Clear the menu area (clear num_menu_rows lines)
+    do i = 1, num_menu_rows
+      write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear line
+      if (i < num_menu_rows) then
+        write(output_unit, '()')  ! Move to next line
+      end if
+    end do
+
+    ! Move back up to start of menu
+    if (num_menu_rows > 1) then
+      do i = 1, num_menu_rows - 1
+        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+      end do
+      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+    else
+      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
     end if
 
-    ! Write item with highlighting
-    write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
-    write(output_unit, '(a)', advance='no') trim(input_state%menu_items(input_state%menu_selection))
-    write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
-
-    ! Restore cursor to command line
-    write(output_unit, '(a)', advance='no') char(27) // '8'  ! Restore cursor
+    ! Redraw the menu with the new selection highlighted
+    call draw_completion_menu(input_state, .false.)
 
     flush(output_unit)
   end subroutine
