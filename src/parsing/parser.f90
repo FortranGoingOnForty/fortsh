@@ -1819,7 +1819,7 @@ contains
   subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
-                         set_shell_variable
+                         set_shell_variable, is_shell_variable_set
     character(len=*), intent(in) :: param_expr
     character(len=:), allocatable, intent(out) :: result_value
     type(shell_state_t), intent(inout) :: shell
@@ -1832,7 +1832,7 @@ contains
     integer :: colon_pos, offset, str_length, second_colon, iostat_val, char_code
     character(len=:), allocatable :: current_value
     character(len=20) :: length_str
-    logical :: is_array_access, get_keys, get_all, is_length
+    logical :: is_array_access, get_keys, get_all, is_length, var_is_set
 
     ! Initialize result
     result_value = ''
@@ -2332,27 +2332,62 @@ contains
       return
     end if
 
-    ! Look for parameter expansion operators (:-, :=, :+)
+    ! Look for parameter expansion operators (:-, :=, :+, :?, -, =, +, ?)
     op_pos = 0
     op_len = 0
 
-    ! Check for :- (default value)
+    ! Check for :- (default value if unset or null)
     op_pos = index(param_expr, ':-')
     if (op_pos > 0) then
       op_len = 2
       operation = ':-'
     else
-      ! Check for := (assign default)
+      ! Check for := (assign default if unset or null)
       op_pos = index(param_expr, ':=')
       if (op_pos > 0) then
         op_len = 2
         operation = ':='
       else
-        ! Check for :+ (alternate value)
+        ! Check for :+ (alternate value if set and not null)
         op_pos = index(param_expr, ':+')
         if (op_pos > 0) then
           op_len = 2
           operation = ':+'
+        else
+          ! Check for :? (error if unset or null)
+          op_pos = index(param_expr, ':?')
+          if (op_pos > 0) then
+            op_len = 2
+            operation = ':?'
+          else
+            ! Check for - (default value if unset only)
+            op_pos = index(param_expr, '-')
+            if (op_pos > 0) then
+              op_len = 1
+              operation = '-'
+            else
+              ! Check for = (assign default if unset only)
+              op_pos = index(param_expr, '=')
+              if (op_pos > 0) then
+                op_len = 1
+                operation = '='
+              else
+                ! Check for + (alternate value if set)
+                op_pos = index(param_expr, '+')
+                if (op_pos > 0) then
+                  op_len = 1
+                  operation = '+'
+                else
+                  ! Check for ? (error if unset)
+                  op_pos = index(param_expr, '?')
+                  if (op_pos > 0) then
+                    op_len = 1
+                    operation = '?'
+                  end if
+                end if
+              end if
+            end if
+          end if
         end if
       end if
     end if
@@ -2367,12 +2402,16 @@ contains
       default_value = ''
     end if
     
-    ! Get current variable value
+    ! Get current variable value and check if set
+    var_is_set = is_shell_variable_set(shell, trim(var_name))
     current_value = get_shell_variable(shell, trim(var_name))
     if (len_trim(current_value) == 0) then
       current_value = get_environment_var(trim(var_name))
+      if (allocated(current_value) .and. len_trim(current_value) > 0) then
+        var_is_set = .true.
+      end if
     end if
-    
+
     ! Apply parameter expansion logic
     if (op_pos == 0) then
       ! Simple expansion ${VAR}
@@ -2388,6 +2427,17 @@ contains
       else
         result_value = trim(default_value)
       end if
+    else if (trim(operation) == '-') then
+      ! Use default value if variable is unset (but not if just empty)
+      if (var_is_set) then
+        if (allocated(current_value)) then
+          result_value = current_value
+        else
+          result_value = ''
+        end if
+      else
+        result_value = trim(default_value)
+      end if
     else if (trim(operation) == ':=') then
       ! Assign default if variable is unset or empty
       if (allocated(current_value) .and. len(current_value) > 0) then
@@ -2397,12 +2447,60 @@ contains
         ! Set the variable to the default value
         call set_shell_variable(shell, trim(var_name), trim(default_value))
       end if
+    else if (trim(operation) == '=') then
+      ! Assign default if variable is unset (but not if just empty)
+      if (var_is_set) then
+        if (allocated(current_value)) then
+          result_value = current_value
+        else
+          result_value = ''
+        end if
+      else
+        result_value = trim(default_value)
+        call set_shell_variable(shell, trim(var_name), trim(default_value))
+      end if
     else if (trim(operation) == ':+') then
-      ! Use alternate value if variable is set
+      ! Use alternate value if variable is set and not empty
       if (allocated(current_value) .and. len(current_value) > 0) then
         result_value = trim(default_value)
       else
         result_value = ''
+      end if
+    else if (trim(operation) == '+') then
+      ! Use alternate value if variable is set (even if empty)
+      if (var_is_set) then
+        result_value = trim(default_value)
+      else
+        result_value = ''
+      end if
+    else if (trim(operation) == ':?') then
+      ! Error if variable is unset or empty
+      if (.not. allocated(current_value) .or. len(current_value) == 0) then
+        write(error_unit, '(A,A,A,A,A)') 'fortsh: ', trim(var_name), ': ', &
+              trim(default_value), ' (parameter null or not set)'
+        result_value = ''
+        shell%last_exit_status = 127
+        return
+      else
+        result_value = current_value
+      end if
+    else if (trim(operation) == '?') then
+      ! Error if variable is unset
+      if (.not. var_is_set) then
+        if (len_trim(default_value) > 0) then
+          write(error_unit, '(A,A,A,A)') 'fortsh: ', trim(var_name), ': ', trim(default_value)
+        else
+          write(error_unit, '(A,A,A)') 'fortsh: ', trim(var_name), ': parameter not set'
+        end if
+        result_value = ''
+        shell%last_exit_status = 127
+        return
+      else
+        if (allocated(current_value)) then
+          result_value = current_value
+        else
+          result_value = ''
+        end if
       end if
     end if
   end subroutine

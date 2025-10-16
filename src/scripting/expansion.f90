@@ -19,10 +19,10 @@ contains
 
     character(len=256) :: var_name, operation, param1, param2, pattern, replacement
     character(len=1024) :: var_value
-    integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos
+    integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos, equals_pos, question_pos
     integer :: offset, length, i, double_op_pos, at_pos
     character :: transform_op
-    logical :: replace_all, greedy
+    logical :: replace_all, greedy, has_colon, var_is_set, var_is_null
 
     ! Array expansion variables
     integer :: bracket_pos, bracket_end, j, num_keys
@@ -35,6 +35,7 @@ contains
     ! Remove ${ and }
     if (len_trim(expression) < 4) return
     var_name = expression(3:len_trim(expression)-1)
+    write(error_unit, '(A,A,A)') 'DEBUG START: var_name=[', trim(var_name), ']'
 
     ! ========================================================================
     ! Check for array bracket syntax FIRST: ${array[key]}, ${!array[@]}, ${#array[@]}
@@ -207,9 +208,12 @@ contains
     colon_pos = index(var_name, ':')
     dash_pos = index(var_name, '-')
     plus_pos = index(var_name, '+')
+    equals_pos = index(var_name, '=')
+    question_pos = index(var_name, '?')
     percent_pos = index(var_name, '%')
     hash_pos = index(var_name, '#')
     slash_pos = index(var_name, '/')
+    write(error_unit, '(A,A,A,I0)') 'DEBUG AFTER OPS: var_name=[', trim(var_name), '] dash_pos=', dash_pos
 
     ! Pattern replacement: ${var/pattern/replacement} or ${var//pattern/replacement}
     if (slash_pos > 0) then
@@ -281,52 +285,196 @@ contains
       return
     end if
 
+    ! Check if colon is for substring expansion (followed by digit) or parameter expansion (followed by operator)
     if (colon_pos > 0) then
-      ! ${var:offset:length} substring expansion
-      call parse_substring_expansion(var_name, operation, param1, param2)
-      var_value = get_shell_variable(shell, trim(operation))
-      
-      if (len_trim(param1) > 0) then
-        read(param1, *) offset
-        if (len_trim(param2) > 0) then
-          read(param2, *) length
-          if (offset >= 0 .and. offset < len_trim(var_value)) then
-            i = min(length, len_trim(var_value) - offset)
-            expanded = var_value(offset+1:offset+i)
+      ! Check what follows the colon
+      if (colon_pos < len_trim(var_name)) then
+        ! If followed by an operator (-+?=), it's parameter expansion, not substring
+        if (var_name(colon_pos+1:colon_pos+1) == '-' .or. &
+            var_name(colon_pos+1:colon_pos+1) == '+' .or. &
+            var_name(colon_pos+1:colon_pos+1) == '?' .or. &
+            var_name(colon_pos+1:colon_pos+1) == '=') then
+          ! This is parameter expansion like ${var:-word}, handle it below
+        else
+          ! This is substring expansion ${var:offset:length}
+          call parse_substring_expansion(var_name, operation, param1, param2)
+          var_value = get_shell_variable(shell, trim(operation))
+
+          if (len_trim(param1) > 0) then
+            read(param1, *) offset
+            if (len_trim(param2) > 0) then
+              read(param2, *) length
+              if (offset >= 0 .and. offset < len_trim(var_value)) then
+                i = min(length, len_trim(var_value) - offset)
+                expanded = var_value(offset+1:offset+i)
+              end if
+            else
+              if (offset >= 0 .and. offset < len_trim(var_value)) then
+                expanded = var_value(offset+1:)
+              end if
+            end if
+          else
+            expanded = var_value
+          end if
+          return
+        end if
+      end if
+    end if
+
+    if (dash_pos > 0 .or. plus_pos > 0 .or. equals_pos > 0 .or. question_pos > 0) then
+      ! ${var-word}, ${var:-word}, ${var+word}, ${var:+word}, ${var=word}, ${var:=word}, ${var?word}, ${var:?word}
+      write(error_unit, '(A,I0,A,I0,A,I0,A,I0)') 'DEBUG: dash=', dash_pos, &
+           ' plus=', plus_pos, ' eq=', equals_pos, ' q=', question_pos
+
+      ! Determine which operator we have
+      if (dash_pos > 0 .and. (plus_pos == 0 .or. dash_pos < plus_pos) .and. &
+          (equals_pos == 0 .or. dash_pos < equals_pos) .and. (question_pos == 0 .or. dash_pos < question_pos)) then
+        ! Dash operator
+        write(error_unit, '(A)') 'DEBUG: Entering dash operator handler'
+        has_colon = (dash_pos > 1 .and. var_name(dash_pos-1:dash_pos-1) == ':')
+        if (has_colon) then
+          operation = var_name(:dash_pos-2)
+          param1 = var_name(dash_pos+1:)
+        else
+          operation = var_name(:dash_pos-1)
+          param1 = var_name(dash_pos+1:)
+        end if
+
+        write(error_unit, '(A,L1,A,A,A,A,A)') 'DEBUG: has_colon=', has_colon, &
+             ' op=', trim(operation), ' param1=', trim(param1)
+        var_is_set = is_shell_variable_set(shell, trim(operation))
+        var_value = get_shell_variable(shell, trim(operation))
+        var_is_null = (len_trim(var_value) == 0)
+        write(error_unit, '(A,L1,A,A,A,L1)') 'DEBUG: var_is_set=', var_is_set, &
+             ' val=', trim(var_value), ' null=', var_is_null
+
+        ! ${var-word}: use word if var is unset
+        ! ${var:-word}: use word if var is unset or null
+        if (has_colon) then
+          if (.not. var_is_set .or. var_is_null) then
+            expanded = trim(param1)
+          else
+            expanded = trim(var_value)
           end if
         else
-          if (offset >= 0 .and. offset < len_trim(var_value)) then
-            expanded = var_value(offset+1:)
+          if (.not. var_is_set) then
+            expanded = trim(param1)
+          else
+            expanded = trim(var_value)
           end if
         end if
-      else
-        expanded = var_value
+        write(error_unit, '(A,A,A)') 'DEBUG: expanded=', trim(expanded), '|'
+
+      else if (plus_pos > 0 .and. (equals_pos == 0 .or. plus_pos < equals_pos) .and. &
+               (question_pos == 0 .or. plus_pos < question_pos)) then
+        ! Plus operator
+        has_colon = (plus_pos > 1 .and. var_name(plus_pos-1:plus_pos-1) == ':')
+        if (has_colon) then
+          operation = var_name(:plus_pos-2)
+          param1 = var_name(plus_pos+1:)
+        else
+          operation = var_name(:plus_pos-1)
+          param1 = var_name(plus_pos+1:)
+        end if
+
+        var_is_set = is_shell_variable_set(shell, trim(operation))
+        var_value = get_shell_variable(shell, trim(operation))
+        var_is_null = (len_trim(var_value) == 0)
+
+        ! ${var+word}: use word if var is set (even if null)
+        ! ${var:+word}: use word if var is set and not null
+        if (has_colon) then
+          if (var_is_set .and. .not. var_is_null) then
+            expanded = trim(param1)
+          else
+            expanded = ''
+          end if
+        else
+          if (var_is_set) then
+            expanded = trim(param1)
+          else
+            expanded = ''
+          end if
+        end if
+
+      else if (equals_pos > 0 .and. (question_pos == 0 .or. equals_pos < question_pos)) then
+        ! Equals operator (assign and expand)
+        has_colon = (equals_pos > 1 .and. var_name(equals_pos-1:equals_pos-1) == ':')
+        if (has_colon) then
+          operation = var_name(:equals_pos-2)
+          param1 = var_name(equals_pos+1:)
+        else
+          operation = var_name(:equals_pos-1)
+          param1 = var_name(equals_pos+1:)
+        end if
+
+        var_is_set = is_shell_variable_set(shell, trim(operation))
+        var_value = get_shell_variable(shell, trim(operation))
+        var_is_null = (len_trim(var_value) == 0)
+
+        ! ${var=word}: assign word if var is unset, then expand to var
+        ! ${var:=word}: assign word if var is unset or null, then expand to var
+        if (has_colon) then
+          if (.not. var_is_set .or. var_is_null) then
+            call set_shell_variable(shell, trim(operation), trim(param1))
+            expanded = trim(param1)
+          else
+            expanded = trim(var_value)
+          end if
+        else
+          if (.not. var_is_set) then
+            call set_shell_variable(shell, trim(operation), trim(param1))
+            expanded = trim(param1)
+          else
+            expanded = trim(var_value)
+          end if
+        end if
+
+      else if (question_pos > 0) then
+        ! Question operator (error if unset)
+        has_colon = (question_pos > 1 .and. var_name(question_pos-1:question_pos-1) == ':')
+        if (has_colon) then
+          operation = var_name(:question_pos-2)
+          param1 = var_name(question_pos+1:)
+        else
+          operation = var_name(:question_pos-1)
+          param1 = var_name(question_pos+1:)
+        end if
+
+        var_is_set = is_shell_variable_set(shell, trim(operation))
+        var_value = get_shell_variable(shell, trim(operation))
+        var_is_null = (len_trim(var_value) == 0)
+
+        ! ${var?word}: error if var is unset
+        ! ${var:?word}: error if var is unset or null
+        if (has_colon) then
+          if (.not. var_is_set .or. var_is_null) then
+            if (len_trim(param1) > 0) then
+              write(error_unit, '(A)') trim(operation) // ': ' // trim(param1)
+            else
+              write(error_unit, '(A)') trim(operation) // ': parameter null or not set'
+            end if
+            shell%last_exit_status = 127
+            expanded = ''
+          else
+            expanded = trim(var_value)
+          end if
+        else
+          if (.not. var_is_set) then
+            if (len_trim(param1) > 0) then
+              write(error_unit, '(A)') trim(operation) // ': ' // trim(param1)
+            else
+              write(error_unit, '(A)') trim(operation) // ': parameter not set'
+            end if
+            shell%last_exit_status = 127
+            expanded = ''
+          else
+            expanded = trim(var_value)
+          end if
+        end if
       end if
-      
-    else if (dash_pos > 0) then
-      ! ${var:-default} default value expansion
-      operation = var_name(:dash_pos-1)
-      param1 = var_name(dash_pos+2:)  ! Skip :-
-      var_value = get_shell_variable(shell, trim(operation))
-      
-      if (len_trim(var_value) > 0) then
-        expanded = trim(var_value)
-      else
-        expanded = trim(param1)
-      end if
-      
-    else if (plus_pos > 0) then
-      ! ${var:+alternative} alternative value expansion  
-      operation = var_name(:plus_pos-1)
-      param1 = var_name(plus_pos+2:)  ! Skip :+
-      var_value = get_shell_variable(shell, trim(operation))
-      
-      if (len_trim(var_value) > 0) then
-        expanded = trim(param1)
-      else
-        expanded = ''
-      end if
-      
+      return
+
     else if (hash_pos > 0) then
       ! ${#var} length expansion
       operation = var_name(hash_pos+1:)
@@ -1855,7 +2003,9 @@ contains
 
         if (bracket_count == 0) then
           var_expr = input(start_pos:i-1)
+          write(error_unit, '(A,A,A)') 'DEBUG BEFORE CALL: var_expr=[', trim(var_expr), ']'
           var_value = parameter_expansion(shell, var_expr)
+          write(error_unit, '(A,A,A)') 'DEBUG AFTER CALL: var_value=[', trim(var_value), ']'
           result = trim(result) // trim(var_value)
         end if
         
