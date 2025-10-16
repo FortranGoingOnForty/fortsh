@@ -30,8 +30,8 @@ contains
     character(len=256) :: left_operand, right_operand
     logical :: left_result, right_result
     character(len=256) :: log_op, op2, arg2
-    type(command_t) :: sub_cmd
-    integer :: i, test_exit_status
+    type(command_t) :: sub_cmd, left_cmd, right_cmd
+    integer :: i, j, test_exit_status, logical_op_pos
 
     ! Check if this is [[ ]] (advanced test) - use advanced_test module
     if (trim(cmd%tokens(1)) == '[[') then
@@ -156,48 +156,53 @@ contains
         test_result = .false.
       end select
 
-    else if (cmd%num_tokens == 5) then
-      ! Logical operators: test ARG1 OP ARG2 LOG_OP ARG3
-      ! OR: test ! OP ARG
-      left_operand = cmd%tokens(2)
-      operator = cmd%tokens(3)
-      right_operand = cmd%tokens(4)
+    else if (cmd%num_tokens >= 5) then
+      ! Check for logical operators -a (AND) or -o (OR)
+      ! Search for the logical operator in the token stream
 
-      ! Check if this is a logical AND or OR
-      if (trim(cmd%tokens(4)) == '-a' .or. trim(cmd%tokens(4)) == '-o') then
-        ! Pattern: test ARG1 OP ARG2 {-a|-o} ...
-        ! For simplicity, only handle: test OP1 ARG1 -a OP2 ARG2
+      logical_op_pos = 0
+      do i = 2, cmd%num_tokens
+        if (trim(cmd%tokens(i)) == '-a' .or. trim(cmd%tokens(i)) == '-o') then
+          logical_op_pos = i
+          exit
+        end if
+      end do
 
-        ! Evaluate left side (OP1 ARG1)
-        select case(trim(left_operand))
-        case('-z')
-          left_result = (len_trim(operator) == 0)
-        case('-n')
-          left_result = (len_trim(operator) > 0)
-        case('-f')
-          left_result = file_is_regular(trim(operator))
-        case('-d')
-          left_result = file_is_directory(trim(operator))
-        case('-e')
-          left_result = file_exists(trim(operator))
-        case default
-          left_result = .false.
-        end select
+      if (logical_op_pos > 0) then
+        ! Found a logical operator - split and recursively evaluate
 
-        log_op = cmd%tokens(4)
-        op2 = cmd%tokens(5)
+        ! Initialize left sub-command
+        left_cmd = cmd  ! Copy all fields first
+        left_cmd%tokens(1) = 'test'
+        left_cmd%num_tokens = logical_op_pos - 1
+        do j = 2, left_cmd%num_tokens
+          left_cmd%tokens(j) = cmd%tokens(j)
+        end do
 
-        ! For now, assume op2 is a string for simple test
-        ! This is simplified - full implementation would need recursive parsing
-        right_result = (len_trim(op2) > 0)
+        ! Initialize right sub-command
+        right_cmd = cmd  ! Copy all fields first
+        right_cmd%tokens(1) = 'test'
+        right_cmd%num_tokens = cmd%num_tokens - logical_op_pos + 1
+        do j = 2, right_cmd%num_tokens
+          right_cmd%tokens(j) = cmd%tokens(j + logical_op_pos - 1)
+        end do
 
-        if (trim(log_op) == '-a') then
+        ! Recursively evaluate left side
+        call execute_test_command(left_cmd, shell)
+        left_result = (shell%last_exit_status == 0)
+
+        ! Recursively evaluate right side
+        call execute_test_command(right_cmd, shell)
+        right_result = (shell%last_exit_status == 0)
+
+        ! Combine results with logical operator
+        if (trim(cmd%tokens(logical_op_pos)) == '-a') then
           test_result = left_result .and. right_result
         else  ! -o
           test_result = left_result .or. right_result
         end if
       else
-        ! Not a logical operator pattern we recognize
+        ! No logical operator found - unknown pattern
         test_result = .false.
       end if
 
