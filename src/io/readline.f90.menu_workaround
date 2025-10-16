@@ -123,10 +123,6 @@ module readline
   ! Module-level editing mode (set by shell via option_vi)
   integer, save :: global_editing_mode = EDITING_MODE_EMACS
 
-  ! Detect macOS to work around menu mode crashes
-  logical, save :: is_macos_system = .false.
-  logical, save :: macos_detected = .false.
-
 contains
 
   ! Set the HISTCONTROL setting for history management
@@ -142,32 +138,6 @@ contains
       global_editing_mode = EDITING_MODE_VI
     else
       global_editing_mode = EDITING_MODE_EMACS
-    end if
-  end subroutine
-
-  ! Check if we're on macOS (called once at startup)
-  subroutine detect_macos()
-    character(len=256) :: sysname
-    integer :: status
-
-    if (.not. macos_detected) then
-      ! First try OSTYPE environment variable
-      call get_environment_variable("OSTYPE", sysname, status=status)
-      if (status == 0) then
-        is_macos_system = (index(sysname, "darwin") > 0)
-      else
-        ! Try checking for macOS-specific environment variables
-        call get_environment_variable("__CF_USER_TEXT_ENCODING", sysname, status=status)
-        if (status == 0) then
-          ! This env var is macOS-specific
-          is_macos_system = .true.
-        else
-          ! Check for another Apple-specific env variable
-          call get_environment_variable("Apple_PubSub_Socket_Render", sysname, status=status)
-          is_macos_system = (status == 0)
-        end if
-      end if
-      macos_detected = .true.
     end if
   end subroutine
 
@@ -282,9 +252,7 @@ contains
           if (input_state%in_menu_select) then
             call handle_menu_navigation(input_state, KEY_TAB, done)
           else
-            ! Call separate subroutine to work around macOS ARM64 crash
-            call handle_tab_key_separate(input_state)
-            ! All completion logic is now handled in the separate subroutine
+            call handle_tab_completion(input_state)
           end if
 
         case(KEY_ESC)
@@ -391,44 +359,8 @@ contains
         end select
         
         ! Redraw line if needed
-        ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         if (input_state%dirty) then
-          block
-            character(len=:), allocatable :: highlighted
-            integer :: i_redraw
-
-            write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
-            write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear to end of line
-            write(output_unit, '(a)', advance='no') prompt
-            if (input_state%length > 0) then
-              ! Apply syntax highlighting (safe - doesn't take input_state)
-              highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-              write(output_unit, '(a)', advance='no') highlighted
-
-              ! Display autosuggestion if present (only when cursor is at end)
-              if (input_state%suggestion_length > 0 .and. &
-                  input_state%cursor_pos == input_state%length) then
-                write(output_unit, '(a)', advance='no') char(27) // '[90m'  ! Gray color
-                write(output_unit, '(a)', advance='no') input_state%suggestion(:input_state%suggestion_length)
-                write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
-
-                ! Move cursor back to correct position (after suggestion)
-                do i_redraw = 1, input_state%suggestion_length
-                  write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
-                end do
-              end if
-            end if
-
-            ! Position cursor correctly (if not at end of input)
-            if (input_state%cursor_pos < input_state%length) then
-              ! Cursor not at end - move back to correct position
-              do i_redraw = 1, input_state%length - input_state%cursor_pos
-                write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
-              end do
-            end if
-
-            flush(output_unit)
-          end block
+          call redraw_line(prompt, input_state)
           input_state%dirty = .false.
         end if
       end do
@@ -2448,160 +2380,6 @@ contains
     ! Update autosuggestion after deleting character
     call update_autosuggestion(input_state)
   end subroutine
-
-  ! Separate tab completion handler to work around macOS ARM64 crash
-  ! This modifies the SAVE'd input_state directly without problematic returns
-  subroutine handle_tab_key_separate(input_state)
-    type(input_state_t), intent(inout) :: input_state
-    integer :: tab_num_completions, i, last_space_pos
-    logical :: tab_completed, tab_made_progress, tab_buffer_changed
-    character(len=MAX_LINE_LEN) :: tab_completions(50)
-    character(len=MAX_LINE_LEN) :: tab_partial_input
-    character(len=MAX_LINE_LEN) :: tab_completed_line
-    character(len=MAX_LINE_LEN) :: tab_saved_input
-
-    ! Exit history mode if we're browsing
-    if (input_state%in_history) then
-      input_state%in_history = .false.
-      input_state%history_pos = 0
-    end if
-
-    ! Get the current buffer content
-    tab_partial_input = input_state%buffer(:input_state%length)
-    tab_saved_input = tab_partial_input
-
-    ! Check if buffer has changed since we last showed completions
-    tab_buffer_changed = (trim(input_state%buffer(:input_state%length)) /= &
-                     trim(input_state%last_completion_buffer))
-
-    ! Attempt smart completion
-    call smart_tab_complete(tab_partial_input, tab_completions, &
-                           tab_num_completions, tab_completed_line, tab_completed)
-
-    if (tab_num_completions == 0) then
-      ! No completions found - ring bell
-      write(output_unit, '(a)', advance='no') char(7)
-      flush(output_unit)
-    else if (tab_completed) then
-      ! We have a completed line - update buffer
-      tab_made_progress = (len_trim(tab_completed_line) > len_trim(tab_saved_input))
-
-      input_state%buffer = tab_completed_line
-      input_state%length = len_trim(tab_completed_line)
-      input_state%cursor_pos = input_state%length
-      input_state%dirty = .true.
-
-      if (tab_num_completions > 1) then
-        if (tab_made_progress) then
-          input_state%completions_shown = .false.
-        else
-          if (.not. input_state%completions_shown .or. tab_buffer_changed) then
-            write(output_unit, '()')
-            call show_completions(tab_completions, tab_num_completions)
-            input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-            input_state%completions_shown = .true.
-            input_state%dirty = .true.
-          else
-            ! Second tab - enter menu selection mode
-            ! Detect macOS once
-            call detect_macos()
-
-            if (is_macos_system) then
-              ! macOS: Just show completions again, don't enter menu mode
-              write(output_unit, '()')
-              write(output_unit, '(a)') "Note: Menu selection disabled on macOS (compiler bug workaround)"
-              write(output_unit, '(a)') "Tab completion works - continue typing to filter"
-              call show_completions(tab_completions, tab_num_completions)
-              input_state%dirty = .true.
-            else
-              ! Normal platforms: Enter menu mode
-              input_state%in_menu_select = .true.
-              input_state%menu_num_items = tab_num_completions
-              input_state%menu_selection = 1
-
-              ! Copy menu items
-              do i = 1, tab_num_completions
-                input_state%menu_items(i) = tab_completions(i)
-              end do
-
-              ! Store menu prefix
-              last_space_pos = 0
-              do i = len_trim(tab_partial_input), 1, -1
-                if (tab_partial_input(i:i) == ' ') then
-                  last_space_pos = i
-                  exit
-                end if
-              end do
-
-              if (last_space_pos > 0) then
-                input_state%menu_prefix = tab_partial_input(:last_space_pos)
-                input_state%menu_prefix_len = last_space_pos
-              else
-                input_state%menu_prefix = ''
-                input_state%menu_prefix_len = 0
-              end if
-
-              ! Draw the menu with selection
-              call draw_completion_menu(input_state, .true.)
-            end if
-          end if
-        end if
-      end if
-    else
-      ! We have completions but no single completion to apply
-      ! Show the available options
-      if (.not. input_state%completions_shown .or. tab_buffer_changed) then
-        ! First tab - show completions
-        write(output_unit, '()')
-        call show_completions(tab_completions, tab_num_completions)
-        input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-        input_state%completions_shown = .true.
-        input_state%dirty = .true.
-      else
-        ! Second tab - enter menu selection mode
-        call detect_macos()
-
-        if (is_macos_system) then
-          ! macOS: Just show completions again, don't enter menu mode
-          write(output_unit, '()')
-          write(output_unit, '(a)') "Note: Menu selection disabled on macOS (compiler bug workaround)"
-          write(output_unit, '(a)') "Tab completion works - continue typing to filter"
-          call show_completions(tab_completions, tab_num_completions)
-          input_state%dirty = .true.
-        else
-          ! Normal platforms: Enter menu mode
-          input_state%in_menu_select = .true.
-          input_state%menu_num_items = tab_num_completions
-          input_state%menu_selection = 1
-
-          ! Copy menu items
-          do i = 1, tab_num_completions
-            input_state%menu_items(i) = tab_completions(i)
-          end do
-
-          ! Store menu prefix
-          last_space_pos = 0
-          do i = len_trim(tab_partial_input), 1, -1
-            if (tab_partial_input(i:i) == ' ') then
-              last_space_pos = i
-              exit
-            end if
-          end do
-
-          if (last_space_pos > 0) then
-            input_state%menu_prefix = tab_partial_input(:last_space_pos)
-            input_state%menu_prefix_len = last_space_pos
-          else
-            input_state%menu_prefix = ''
-            input_state%menu_prefix_len = 0
-          end if
-
-          ! Draw the menu with selection
-          call draw_completion_menu(input_state, .true.)
-        end if
-      end if
-    end if
-  end subroutine handle_tab_key_separate
 
   subroutine handle_tab_completion(input_state)
     type(input_state_t), intent(inout) :: input_state

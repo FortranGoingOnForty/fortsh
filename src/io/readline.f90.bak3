@@ -54,6 +54,16 @@ module readline
   integer, parameter :: VI_MODE_INSERT = 1
   integer, parameter :: VI_MODE_COMMAND = 2
 
+  ! Module-level tab completion variables to avoid stack issues on macOS
+  character(len=MAX_LINE_LEN), save :: module_tab_completions(50)
+  character(len=MAX_LINE_LEN), save :: module_tab_partial_input
+  character(len=MAX_LINE_LEN), save :: module_tab_completed_line
+  character(len=MAX_LINE_LEN), save :: module_tab_saved_input
+
+  ! Global return value to bypass return mechanism (macOS ARM64 compiler bug workaround)
+  character(len=MAX_LINE_LEN), save :: global_return_line
+  integer, save :: global_return_iostat
+
   type :: input_state_t
     character(len=MAX_LINE_LEN) :: buffer = ''
     character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
@@ -123,10 +133,6 @@ module readline
   ! Module-level editing mode (set by shell via option_vi)
   integer, save :: global_editing_mode = EDITING_MODE_EMACS
 
-  ! Detect macOS to work around menu mode crashes
-  logical, save :: is_macos_system = .false.
-  logical, save :: macos_detected = .false.
-
 contains
 
   ! Set the HISTCONTROL setting for history management
@@ -145,30 +151,76 @@ contains
     end if
   end subroutine
 
-  ! Check if we're on macOS (called once at startup)
-  subroutine detect_macos()
-    character(len=256) :: sysname
-    integer :: status
+  ! Separate tab completion handler to work around macOS ARM64 crash
+  ! This modifies the SAVE'd input_state directly without problematic returns
+  subroutine handle_tab_key_separate(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: tab_num_completions
+    logical :: tab_completed, tab_made_progress, tab_buffer_changed
 
-    if (.not. macos_detected) then
-      ! First try OSTYPE environment variable
-      call get_environment_variable("OSTYPE", sysname, status=status)
-      if (status == 0) then
-        is_macos_system = (index(sysname, "darwin") > 0)
-      else
-        ! Try checking for macOS-specific environment variables
-        call get_environment_variable("__CF_USER_TEXT_ENCODING", sysname, status=status)
-        if (status == 0) then
-          ! This env var is macOS-specific
-          is_macos_system = .true.
+    ! Debug output removed 'DEBUG: handle_tab_key_separate called'
+
+    ! Exit history mode if we're browsing
+    if (input_state%in_history) then
+      input_state%in_history = .false.
+      input_state%history_pos = 0
+    end if
+
+
+    ! Get the current buffer content
+    module_tab_partial_input = input_state%buffer(:input_state%length)
+    module_tab_saved_input = module_tab_partial_input
+
+    ! Debug output removed 'DEBUG: Buffer copied'
+
+    ! Check if buffer has changed since we last showed completions
+    tab_buffer_changed = (trim(input_state%buffer(:input_state%length)) /= &
+                     trim(input_state%last_completion_buffer))
+
+
+    ! Attempt smart completion
+    ! Debug output removed 'DEBUG: Calling smart_tab_complete'
+    call smart_tab_complete(module_tab_partial_input, module_tab_completions, &
+                           tab_num_completions, module_tab_completed_line, tab_completed)
+
+    if (tab_num_completions == 0) then
+      ! No completions found - ring bell
+      write(output_unit, '(a)', advance='no') char(7)
+      flush(output_unit)
+    else if (tab_completed) then
+      ! We have a completed line - update buffer
+      tab_made_progress = (len_trim(module_tab_completed_line) > len_trim(module_tab_saved_input))
+
+      input_state%buffer = module_tab_completed_line
+      input_state%length = len_trim(module_tab_completed_line)
+      input_state%cursor_pos = input_state%length
+      input_state%dirty = .true.
+
+      if (tab_num_completions > 1) then
+        if (tab_made_progress) then
+          input_state%completions_shown = .false.
         else
-          ! Check for another Apple-specific env variable
-          call get_environment_variable("Apple_PubSub_Socket_Render", sysname, status=status)
-          is_macos_system = (status == 0)
+          if (.not. input_state%completions_shown .or. tab_buffer_changed) then
+            write(output_unit, '()')
+            call show_completions(module_tab_completions, tab_num_completions)
+            input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+            input_state%completions_shown = .true.
+            input_state%dirty = .true.
+          end if
         end if
       end if
-      macos_detected = .true.
+    else
+      ! Multiple completions but no single completion
+      if (.not. input_state%completions_shown .or. tab_buffer_changed) then
+        write(output_unit, '()')
+        call show_completions(module_tab_completions, tab_num_completions)
+        input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+        input_state%completions_shown = .true.
+        input_state%dirty = .true.
+      end if
     end if
+
+    ! Debug output removed 'DEBUG: handle_tab_key_separate returning'
   end subroutine
 
   ! Enhanced readline with character-by-character input processing
@@ -176,12 +228,16 @@ contains
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
-    
-    type(input_state_t) :: input_state
+
+    type(input_state_t), save :: input_state  ! SAVE to avoid stack issues on macOS
     type(termios_t) :: original_termios
     character :: ch
     logical :: success, done, raw_enabled
     integer :: char_code
+
+    ! Tab completion variables - using module-level arrays to avoid stack issues
+    integer :: tab_num_completions
+    logical :: tab_completed, tab_made_progress, tab_buffer_changed
     
     iostat = 0
     done = .false.
@@ -197,7 +253,7 @@ contains
     write(output_unit, '(a)', advance='no') prompt
     flush(output_unit)
     
-    ! Initialize input state
+    ! Initialize input state - CRITICAL: Clear ALL state since input_state has SAVE attribute
     input_state%buffer = ''
     input_state%original_buffer = ''
     input_state%kill_buffer = ''
@@ -217,6 +273,13 @@ contains
     input_state%vi_mode = VI_MODE_INSERT
     input_state%suggestion = ''
     input_state%suggestion_length = 0
+    ! Clear menu state (important with SAVE attribute!)
+    input_state%in_menu_select = .false.
+    input_state%menu_items = ''
+    input_state%menu_num_items = 0
+    input_state%menu_selection = 1
+    input_state%menu_prefix = ''
+    input_state%menu_prefix_len = 0
 
     if (raw_enabled) then
       ! Enhanced input processing
@@ -232,15 +295,28 @@ contains
         select case(char_code)
         case(KEY_ENTER)
           ! Enter - accept menu selection, finish input, or accept search
-          if (input_state%in_menu_select) then
-            call handle_menu_navigation(input_state, KEY_ENTER, done)
-          else if (input_state%in_search) then
-            call accept_search(input_state, prompt)
+          ! Debug output removed 'DEBUG: Enter key pressed'
+                ! TESTING: Skip menu handling completely - just treat as normal Enter
+          if (input_state%in_search) then
+            ! Debug output removed 'DEBUG: Accepting search'
+                    ! INLINE accept_search to avoid gfortran bug on macOS
+            input_state%in_search = .false.
+            input_state%search_string = ''
+            input_state%search_length = 0
+            input_state%search_match_index = 0
+            write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
+            flush(output_unit)
+            ! Skip the redraw_line call - it takes input_state parameter
+            ! Just mark dirty and let main loop handle it
+            input_state%dirty = .true.
             done = .true.
-          else
-            write(output_unit, '()')  ! New line
+            ! Debug output removed 'DEBUG: Search accepted'
+                  else
+            ! Debug output removed 'DEBUG: Normal Enter - setting done=true'
+                    write(output_unit, '()')  ! New line
             done = .true.
-          end if
+            ! Debug output removed 'DEBUG: done flag set'
+                  end if
 
         case(KEY_CTRL_D)
           ! Ctrl+D - EOF
@@ -280,16 +356,216 @@ contains
         case(KEY_TAB)
           ! Tab completion or menu navigation
           if (input_state%in_menu_select) then
-            call handle_menu_navigation(input_state, KEY_TAB, done)
+            ! TESTING: Skip menu navigation completely - just ring bell
+            write(output_unit, '(a)', advance='no') char(7)  ! Bell
+            flush(output_unit)
+          else if (.false.) then  ! Dead code - skip the block
+            block
+              integer :: old_selection, i, cols_per_item, items_per_row, col, item_idx
+              integer :: term_rows, term_cols, num_rows
+              logical :: success
+
+              old_selection = input_state%menu_selection
+
+              ! Move to next item (like Tab cycling)
+              input_state%menu_selection = input_state%menu_selection + 1
+              if (input_state%menu_selection > input_state%menu_num_items) then
+                input_state%menu_selection = 1
+              end if
+
+              ! Redraw menu if selection changed
+              if (old_selection /= input_state%menu_selection) then
+                ! INLINE redraw_menu logic
+                ! Get terminal size first
+                success = get_terminal_size(term_rows, term_cols)
+                if (.not. success .or. term_cols <= 0) then
+                  term_cols = 80
+                end if
+
+                ! Calculate layout - try to fit multiple items per row
+                cols_per_item = 0
+                do i = 1, input_state%menu_num_items
+                  cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+                end do
+                cols_per_item = cols_per_item + 2  ! Add spacing
+
+                items_per_row = max(1, term_cols / cols_per_item)
+
+                ! Calculate how many rows the menu uses
+                num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+
+                ! Move cursor up to clear previous menu
+                do i = 1, num_rows
+                  write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+                end do
+                write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+                write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+
+                ! INLINE draw_completion_menu logic (initial_draw = .false.)
+
+                ! Draw menu items
+                item_idx = 1
+                do while (item_idx <= input_state%menu_num_items)
+                  ! Draw one row
+                  do col = 1, items_per_row
+                    if (item_idx > input_state%menu_num_items) exit
+
+                    ! Highlight selected item with reverse video
+                    if (item_idx == input_state%menu_selection) then
+                      write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
+                    end if
+
+                    write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+
+                    if (item_idx == input_state%menu_selection) then
+                      write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
+                    end if
+
+                    ! Add spacing between columns
+                    if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
+                      write(output_unit, '(a)', advance='no') '  '
+                    end if
+
+                    item_idx = item_idx + 1
+                  end do
+                  write(output_unit, '()')  ! New line after each row
+                end do
+
+                ! Flush output
+                flush(output_unit)
+              end if
+            end block
           else
             ! Call separate subroutine to work around macOS ARM64 crash
-            call handle_tab_key_separate(input_state)
+            ! Debug output removed 'DEBUG: Calling handle_tab_key_separate'
+                    call handle_tab_key_separate(input_state)
+            ! Debug output removed 'DEBUG: Returned from handle_tab_key_separate'
+        
             ! All completion logic is now handled in the separate subroutine
           end if
-
         case(KEY_ESC)
           ! Escape sequence - parse it (will route to menu if needed)
-          call handle_escape_sequence(input_state, done)
+          ! TESTING: Skip menu mode escape handling completely
+          if (input_state%in_menu_select) then
+            ! Just ring bell - no navigation
+            write(output_unit, '(a)', advance='no') char(7)  ! Bell
+            flush(output_unit)
+          else if (.false.) then  ! Dead code - skip the block
+            block
+              character :: ch1, ch2
+              logical :: success, need_redraw
+              integer :: old_selection, i, cols_per_item, items_per_row, col, item_idx
+              integer :: term_rows, term_cols, num_rows
+
+              ! Try to read the next character
+              success = read_single_char(ch1)
+              if (.not. success) then
+                ! Just ESC by itself - exit menu mode
+                input_state%in_menu_select = .false.
+                input_state%menu_num_items = 0
+                input_state%menu_selection = 1
+                input_state%menu_prefix_len = 0
+                input_state%completions_shown = .false.
+                input_state%dirty = .true.
+              else if (ch1 == '[') then
+                ! ANSI escape sequence - read the next character
+                success = read_single_char(ch2)
+                if (success) then
+                  old_selection = input_state%menu_selection
+                  need_redraw = .false.
+
+                  select case(ch2)
+                  case('A')  ! Up arrow
+                    input_state%menu_selection = input_state%menu_selection - 1
+                    if (input_state%menu_selection < 1) then
+                      input_state%menu_selection = input_state%menu_num_items
+                    end if
+                    need_redraw = .true.
+
+                  case('B')  ! Down arrow
+                    input_state%menu_selection = input_state%menu_selection + 1
+                    if (input_state%menu_selection > input_state%menu_num_items) then
+                      input_state%menu_selection = 1
+                    end if
+                    need_redraw = .true.
+
+                  case('C')  ! Right arrow
+                    input_state%menu_selection = input_state%menu_selection + 1
+                    if (input_state%menu_selection > input_state%menu_num_items) then
+                      input_state%menu_selection = 1
+                    end if
+                    need_redraw = .true.
+
+                  case('D')  ! Left arrow
+                    input_state%menu_selection = input_state%menu_selection - 1
+                    if (input_state%menu_selection < 1) then
+                      input_state%menu_selection = input_state%menu_num_items
+                    end if
+                    need_redraw = .true.
+                  end select
+
+                  ! Redraw menu if selection changed
+                  if (need_redraw .and. old_selection /= input_state%menu_selection) then
+                    ! INLINE redraw_menu logic
+                    ! Get terminal size first
+                    success = get_terminal_size(term_rows, term_cols)
+                    if (.not. success .or. term_cols <= 0) then
+                      term_cols = 80
+                    end if
+
+                    cols_per_item = 0
+                    do i = 1, input_state%menu_num_items
+                      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+                    end do
+                    cols_per_item = cols_per_item + 2
+
+                    items_per_row = max(1, term_cols / cols_per_item)
+
+                    ! Calculate how many rows the menu uses
+                    num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+
+                    ! Move cursor up to clear previous menu
+                    do i = 1, num_rows
+                      write(output_unit, '(a)', advance='no') char(27) // '[A'
+                    end do
+                    write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+                    write(output_unit, '(a)', advance='no') char(27) // '[J'
+
+                    ! INLINE draw_completion_menu logic
+
+                    item_idx = 1
+                    do while (item_idx <= input_state%menu_num_items)
+                      do col = 1, items_per_row
+                        if (item_idx > input_state%menu_num_items) exit
+
+                        if (item_idx == input_state%menu_selection) then
+                          write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                        end if
+
+                        write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+
+                        if (item_idx == input_state%menu_selection) then
+                          write(output_unit, '(a)', advance='no') char(27) // '[0m'
+                        end if
+
+                        if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
+                          write(output_unit, '(a)', advance='no') '  '
+                        end if
+
+                        item_idx = item_idx + 1
+                      end do
+                      write(output_unit, '()')
+                    end do
+
+                    flush(output_unit)
+                  end if
+                end if
+              end if
+            end block
+          else
+            ! Not in menu mode - use regular escape sequence handler
+            call handle_escape_sequence(input_state, done)
+          end if
           
         case(KEY_CTRL_A)
           ! Home - move to beginning of line
@@ -310,21 +586,39 @@ contains
         case(KEY_CTRL_K)
           ! Kill to end of line (exit menu mode first if active)
           if (input_state%in_menu_select) then
-            call exit_menu_select_mode(input_state)
+            ! INLINE exit_menu_select_mode
+            input_state%in_menu_select = .false.
+            input_state%menu_num_items = 0
+            input_state%menu_selection = 1
+            input_state%menu_prefix_len = 0
+            input_state%completions_shown = .false.
+            input_state%dirty = .true.
           end if
           call handle_kill_to_end(input_state)
 
         case(KEY_CTRL_U)
           ! Kill entire line (exit menu mode first if active)
           if (input_state%in_menu_select) then
-            call exit_menu_select_mode(input_state)
+            ! INLINE exit_menu_select_mode
+            input_state%in_menu_select = .false.
+            input_state%menu_num_items = 0
+            input_state%menu_selection = 1
+            input_state%menu_prefix_len = 0
+            input_state%completions_shown = .false.
+            input_state%dirty = .true.
           end if
           call handle_kill_line(input_state)
-          
+
         case(KEY_CTRL_W)
           ! Kill previous word (exit menu mode first if active)
           if (input_state%in_menu_select) then
-            call exit_menu_select_mode(input_state)
+            ! INLINE exit_menu_select_mode
+            input_state%in_menu_select = .false.
+            input_state%menu_num_items = 0
+            input_state%menu_selection = 1
+            input_state%menu_prefix_len = 0
+            input_state%completions_shown = .false.
+            input_state%dirty = .true.
           end if
           call handle_kill_word(input_state)
           
@@ -334,7 +628,58 @@ contains
           
         case(KEY_CTRL_L)
           ! Clear screen and redraw
-          call handle_clear_screen(input_state, prompt)
+          ! INLINE handle_clear_screen to avoid gfortran bug on macOS
+          block
+            character(len=:), allocatable :: highlighted
+            integer :: i, term_rows, term_cols, available_space, suggestion_display_len
+            logical :: success
+
+            ! Clear screen and move cursor to home position
+            write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
+
+            ! Draw prompt
+            write(output_unit, '(a)', advance='no') prompt
+
+            ! Draw buffer with syntax highlighting
+            if (input_state%length > 0) then
+              highlighted = highlight_command_line(input_state%buffer(:input_state%length))
+              write(output_unit, '(a)', advance='no') highlighted
+            end if
+
+            ! Position cursor correctly
+            if (input_state%cursor_pos < input_state%length) then
+              do i = 1, input_state%length - input_state%cursor_pos
+                write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+              end do
+            end if
+
+            ! Handle autosuggestion if cursor is at end
+            if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
+              success = get_terminal_size(term_rows, term_cols)
+              if (.not. success .or. term_cols <= 0) then
+                term_cols = 80
+              end if
+
+              available_space = term_cols - mod(visual_length(prompt) + input_state%length, term_cols)
+
+              if (available_space > 2) then
+                suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
+
+                if (suggestion_display_len > 0) then
+                  write(output_unit, '(a)', advance='no') char(27) // '[2m'
+                  write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+                  write(output_unit, '(a)', advance='no') char(27) // '[0m'
+
+                  do i = 1, suggestion_display_len
+                    write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
+                  end do
+                end if
+              end if
+            end if
+
+            flush(output_unit)
+            input_state%dirty = .false.
+          end block
 
         case(KEY_CTRL_R)
           ! Reverse-i-search
@@ -370,7 +715,13 @@ contains
           ! Regular printable characters
           if (input_state%in_menu_select) then
             ! Exit menu mode and process character normally
-            call exit_menu_select_mode(input_state)
+            ! INLINE exit_menu_select_mode
+            input_state%in_menu_select = .false.
+            input_state%menu_num_items = 0
+            input_state%menu_selection = 1
+            input_state%menu_prefix_len = 0
+            input_state%completions_shown = .false.
+            input_state%dirty = .true.
             call insert_char(input_state, ch)
           else if (input_state%in_search) then
             call search_add_char(input_state, ch, prompt)
@@ -432,25 +783,41 @@ contains
           input_state%dirty = .false.
         end if
       end do
-      
+      ! Debug output removed 'DEBUG: Main loop exited'
+  
       ! Restore terminal
-      if (.not. restore_terminal(original_termios)) then
+      ! Debug output removed 'DEBUG: Restoring terminal'
+        if (.not. restore_terminal(original_termios)) then
         ! Warning but don't fail
       end if
-    else
+      ! Debug output removed 'DEBUG: Terminal restored'
+      else
       ! Fallback to line-based input
       read(input_unit, '(a)', iostat=iostat) input_state%buffer
       if (iostat == 0) input_state%length = len_trim(input_state%buffer)
     end if
-    
-    ! Return the result
+
+    ! Set global variables to bypass return mechanism (macOS ARM64 workaround)
+    global_return_iostat = iostat
     if (iostat == 0) then
-      line = input_state%buffer(:input_state%length)
-      ! Note: History addition is now handled in the main loop AFTER expansion
-      ! This prevents history expansion commands like !! from referencing themselves
+      ! Debug output removed 'DEBUG: Copying buffer to global'
+        if (input_state%length > 0 .and. input_state%length <= MAX_LINE_LEN) then
+        global_return_line = input_state%buffer(:input_state%length)
+          else
+        global_return_line = ''
+        ! Debug output removed 'DEBUG: Global line set to empty'
+          end if
     else
-      line = ''
-    end if
+      global_return_line = ''
+      ! Debug output removed 'DEBUG: Global line set to empty due to iostat error'
+      end if
+
+    ! Now copy from global to output parameters
+    ! Debug output removed 'DEBUG: Copying from global to output'
+    line = global_return_line
+    iostat = global_return_iostat
+
+    ! Debug output removed 'DEBUG: readline function exiting'
   end subroutine
 
   ! Simple fallback readline - uses standard input for now
@@ -2409,7 +2776,63 @@ contains
     end if
 
     ! Update autosuggestion after inserting character
-    call update_autosuggestion(input_state)
+    ! INLINE update_autosuggestion to avoid gfortran bug on macOS
+    block
+      integer :: i_auto, newline_pos, j_auto
+      character(len=MAX_LINE_LEN) :: current_input, suggestion_candidate
+
+      ! Clear suggestion if buffer is empty or in special modes
+      if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+        input_state%suggestion = ''
+        input_state%suggestion_length = 0
+      else
+        ! Get current input
+        current_input = input_state%buffer(:input_state%length)
+
+        ! Search history backwards for matching command
+        do i_auto = command_history%count, 1, -1
+          ! Check if history entry starts with current input
+          if (len_trim(command_history%lines(i_auto)) > input_state%length) then
+            if (command_history%lines(i_auto)(:input_state%length) == current_input(:input_state%length)) then
+              ! Found a match! Store the rest as suggestion
+              suggestion_candidate = command_history%lines(i_auto)(input_state%length+1:)
+
+              ! Find first newline character
+              newline_pos = 0
+              do j_auto = 1, len_trim(suggestion_candidate)
+                if (suggestion_candidate(j_auto:j_auto) == char(10) .or. &
+                    suggestion_candidate(j_auto:j_auto) == char(13)) then
+                  newline_pos = j_auto - 1
+                  exit
+                end if
+              end do
+
+              if (newline_pos >= 0 .and. newline_pos < len_trim(suggestion_candidate)) then
+                ! Found newline - truncate before it
+                if (newline_pos > 0) then
+                  input_state%suggestion = suggestion_candidate(:newline_pos)
+                  input_state%suggestion_length = newline_pos
+                else
+                  input_state%suggestion = ''
+                  input_state%suggestion_length = 0
+                end if
+              else
+                ! No newline found, use full suggestion
+                input_state%suggestion = suggestion_candidate
+                input_state%suggestion_length = len_trim(suggestion_candidate)
+              end if
+              exit  ! Found match, exit loop
+            end if
+          end if
+        end do
+
+        ! If no match found in loop, clear suggestion
+        if (i_auto == 0) then
+          input_state%suggestion = ''
+          input_state%suggestion_length = 0
+        end if
+      end if
+    end block
   end subroutine
 
   subroutine handle_backspace(input_state)
@@ -2446,162 +2869,64 @@ contains
     end if
 
     ! Update autosuggestion after deleting character
-    call update_autosuggestion(input_state)
-  end subroutine
+    ! INLINE update_autosuggestion to avoid gfortran bug on macOS
+    block
+      integer :: i_auto, newline_pos, j_auto
+      character(len=MAX_LINE_LEN) :: current_input, suggestion_candidate
 
-  ! Separate tab completion handler to work around macOS ARM64 crash
-  ! This modifies the SAVE'd input_state directly without problematic returns
-  subroutine handle_tab_key_separate(input_state)
-    type(input_state_t), intent(inout) :: input_state
-    integer :: tab_num_completions, i, last_space_pos
-    logical :: tab_completed, tab_made_progress, tab_buffer_changed
-    character(len=MAX_LINE_LEN) :: tab_completions(50)
-    character(len=MAX_LINE_LEN) :: tab_partial_input
-    character(len=MAX_LINE_LEN) :: tab_completed_line
-    character(len=MAX_LINE_LEN) :: tab_saved_input
+      ! Clear suggestion if buffer is empty or in special modes
+      if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+        input_state%suggestion = ''
+        input_state%suggestion_length = 0
+      else
+        ! Get current input
+        current_input = input_state%buffer(:input_state%length)
 
-    ! Exit history mode if we're browsing
-    if (input_state%in_history) then
-      input_state%in_history = .false.
-      input_state%history_pos = 0
-    end if
+        ! Search history backwards for matching command
+        do i_auto = command_history%count, 1, -1
+          ! Check if history entry starts with current input
+          if (len_trim(command_history%lines(i_auto)) > input_state%length) then
+            if (command_history%lines(i_auto)(:input_state%length) == current_input(:input_state%length)) then
+              ! Found a match! Store the rest as suggestion
+              suggestion_candidate = command_history%lines(i_auto)(input_state%length+1:)
 
-    ! Get the current buffer content
-    tab_partial_input = input_state%buffer(:input_state%length)
-    tab_saved_input = tab_partial_input
-
-    ! Check if buffer has changed since we last showed completions
-    tab_buffer_changed = (trim(input_state%buffer(:input_state%length)) /= &
-                     trim(input_state%last_completion_buffer))
-
-    ! Attempt smart completion
-    call smart_tab_complete(tab_partial_input, tab_completions, &
-                           tab_num_completions, tab_completed_line, tab_completed)
-
-    if (tab_num_completions == 0) then
-      ! No completions found - ring bell
-      write(output_unit, '(a)', advance='no') char(7)
-      flush(output_unit)
-    else if (tab_completed) then
-      ! We have a completed line - update buffer
-      tab_made_progress = (len_trim(tab_completed_line) > len_trim(tab_saved_input))
-
-      input_state%buffer = tab_completed_line
-      input_state%length = len_trim(tab_completed_line)
-      input_state%cursor_pos = input_state%length
-      input_state%dirty = .true.
-
-      if (tab_num_completions > 1) then
-        if (tab_made_progress) then
-          input_state%completions_shown = .false.
-        else
-          if (.not. input_state%completions_shown .or. tab_buffer_changed) then
-            write(output_unit, '()')
-            call show_completions(tab_completions, tab_num_completions)
-            input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-            input_state%completions_shown = .true.
-            input_state%dirty = .true.
-          else
-            ! Second tab - enter menu selection mode
-            ! Detect macOS once
-            call detect_macos()
-
-            if (is_macos_system) then
-              ! macOS: Just show completions again, don't enter menu mode
-              write(output_unit, '()')
-              write(output_unit, '(a)') "Note: Menu selection disabled on macOS (compiler bug workaround)"
-              write(output_unit, '(a)') "Tab completion works - continue typing to filter"
-              call show_completions(tab_completions, tab_num_completions)
-              input_state%dirty = .true.
-            else
-              ! Normal platforms: Enter menu mode
-              input_state%in_menu_select = .true.
-              input_state%menu_num_items = tab_num_completions
-              input_state%menu_selection = 1
-
-              ! Copy menu items
-              do i = 1, tab_num_completions
-                input_state%menu_items(i) = tab_completions(i)
-              end do
-
-              ! Store menu prefix
-              last_space_pos = 0
-              do i = len_trim(tab_partial_input), 1, -1
-                if (tab_partial_input(i:i) == ' ') then
-                  last_space_pos = i
+              ! Find first newline character
+              newline_pos = 0
+              do j_auto = 1, len_trim(suggestion_candidate)
+                if (suggestion_candidate(j_auto:j_auto) == char(10) .or. &
+                    suggestion_candidate(j_auto:j_auto) == char(13)) then
+                  newline_pos = j_auto - 1
                   exit
                 end if
               end do
 
-              if (last_space_pos > 0) then
-                input_state%menu_prefix = tab_partial_input(:last_space_pos)
-                input_state%menu_prefix_len = last_space_pos
+              if (newline_pos >= 0 .and. newline_pos < len_trim(suggestion_candidate)) then
+                ! Found newline - truncate before it
+                if (newline_pos > 0) then
+                  input_state%suggestion = suggestion_candidate(:newline_pos)
+                  input_state%suggestion_length = newline_pos
+                else
+                  input_state%suggestion = ''
+                  input_state%suggestion_length = 0
+                end if
               else
-                input_state%menu_prefix = ''
-                input_state%menu_prefix_len = 0
+                ! No newline found, use full suggestion
+                input_state%suggestion = suggestion_candidate
+                input_state%suggestion_length = len_trim(suggestion_candidate)
               end if
-
-              ! Draw the menu with selection
-              call draw_completion_menu(input_state, .true.)
+              exit  ! Found match, exit loop
             end if
           end if
+        end do
+
+        ! If no match found in loop, clear suggestion
+        if (i_auto == 0) then
+          input_state%suggestion = ''
+          input_state%suggestion_length = 0
         end if
       end if
-    else
-      ! We have completions but no single completion to apply
-      ! Show the available options
-      if (.not. input_state%completions_shown .or. tab_buffer_changed) then
-        ! First tab - show completions
-        write(output_unit, '()')
-        call show_completions(tab_completions, tab_num_completions)
-        input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-        input_state%completions_shown = .true.
-        input_state%dirty = .true.
-      else
-        ! Second tab - enter menu selection mode
-        call detect_macos()
-
-        if (is_macos_system) then
-          ! macOS: Just show completions again, don't enter menu mode
-          write(output_unit, '()')
-          write(output_unit, '(a)') "Note: Menu selection disabled on macOS (compiler bug workaround)"
-          write(output_unit, '(a)') "Tab completion works - continue typing to filter"
-          call show_completions(tab_completions, tab_num_completions)
-          input_state%dirty = .true.
-        else
-          ! Normal platforms: Enter menu mode
-          input_state%in_menu_select = .true.
-          input_state%menu_num_items = tab_num_completions
-          input_state%menu_selection = 1
-
-          ! Copy menu items
-          do i = 1, tab_num_completions
-            input_state%menu_items(i) = tab_completions(i)
-          end do
-
-          ! Store menu prefix
-          last_space_pos = 0
-          do i = len_trim(tab_partial_input), 1, -1
-            if (tab_partial_input(i:i) == ' ') then
-              last_space_pos = i
-              exit
-            end if
-          end do
-
-          if (last_space_pos > 0) then
-            input_state%menu_prefix = tab_partial_input(:last_space_pos)
-            input_state%menu_prefix_len = last_space_pos
-          else
-            input_state%menu_prefix = ''
-            input_state%menu_prefix_len = 0
-          end if
-
-          ! Draw the menu with selection
-          call draw_completion_menu(input_state, .true.)
-        end if
-      end if
-    end if
-  end subroutine handle_tab_key_separate
+    end block
+  end subroutine
 
   subroutine handle_tab_completion(input_state)
     type(input_state_t), intent(inout) :: input_state
@@ -2646,7 +2971,63 @@ contains
 
       ! Update autosuggestion to account for the completion
       ! If the completed line still matches a history entry, show the rest
-      call update_autosuggestion(input_state)
+      ! INLINE update_autosuggestion to avoid gfortran bug on macOS
+      block
+        integer :: i_auto, newline_pos, j_auto
+        character(len=MAX_LINE_LEN) :: current_input, suggestion_candidate
+
+        ! Clear suggestion if buffer is empty or in special modes
+        if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+          input_state%suggestion = ''
+          input_state%suggestion_length = 0
+        else
+          ! Get current input
+          current_input = input_state%buffer(:input_state%length)
+
+          ! Search history backwards for matching command
+          do i_auto = command_history%count, 1, -1
+            ! Check if history entry starts with current input
+            if (len_trim(command_history%lines(i_auto)) > input_state%length) then
+              if (command_history%lines(i_auto)(:input_state%length) == current_input(:input_state%length)) then
+                ! Found a match! Store the rest as suggestion
+                suggestion_candidate = command_history%lines(i_auto)(input_state%length+1:)
+
+                ! Find first newline character
+                newline_pos = 0
+                do j_auto = 1, len_trim(suggestion_candidate)
+                  if (suggestion_candidate(j_auto:j_auto) == char(10) .or. &
+                      suggestion_candidate(j_auto:j_auto) == char(13)) then
+                    newline_pos = j_auto - 1
+                    exit
+                  end if
+                end do
+
+                if (newline_pos >= 0 .and. newline_pos < len_trim(suggestion_candidate)) then
+                  ! Found newline - truncate before it
+                  if (newline_pos > 0) then
+                    input_state%suggestion = suggestion_candidate(:newline_pos)
+                    input_state%suggestion_length = newline_pos
+                  else
+                    input_state%suggestion = ''
+                    input_state%suggestion_length = 0
+                  end if
+                else
+                  ! No newline found, use full suggestion
+                  input_state%suggestion = suggestion_candidate
+                  input_state%suggestion_length = len_trim(suggestion_candidate)
+                end if
+                exit  ! Found match, exit loop
+              end if
+            end if
+          end do
+
+          ! If no match found in loop, clear suggestion
+          if (i_auto == 0) then
+            input_state%suggestion = ''
+            input_state%suggestion_length = 0
+          end if
+        end if
+      end block
 
       if (num_completions > 1) then
         if (made_progress) then
@@ -2663,7 +3044,80 @@ contains
             input_state%dirty = .true.
           else
             ! Second tab (double-tab) at common prefix - enter menu selection mode!
-            call enter_menu_select_mode(input_state, completions, num_completions, completed_line)
+            ! INLINE enter_menu_select_mode + draw_completion_menu to avoid gfortran bug
+            block
+              integer :: i, last_space_pos, cols_per_item, items_per_row, col, item_idx
+              integer :: term_rows, term_cols
+              logical :: success
+
+              ! Store menu items
+              input_state%in_menu_select = .true.
+              input_state%menu_num_items = num_completions
+              input_state%menu_selection = 1
+
+              do i = 1, num_completions
+                input_state%menu_items(i) = completions(i)
+              end do
+
+              ! Find the prefix
+              last_space_pos = 0
+              do i = len_trim(completed_line), 1, -1
+                if (completed_line(i:i) == ' ') then
+                  last_space_pos = i
+                  exit
+                end if
+              end do
+
+              if (last_space_pos > 0) then
+                input_state%menu_prefix = completed_line(:last_space_pos)
+                input_state%menu_prefix_len = last_space_pos
+              else
+                input_state%menu_prefix = ''
+                input_state%menu_prefix_len = 0
+              end if
+
+              ! INLINE draw_completion_menu (initial_draw = .true.)
+              success = get_terminal_size(term_rows, term_cols)
+              if (.not. success .or. term_cols <= 0) then
+                term_cols = 80
+              end if
+
+              write(output_unit, '()')  ! New line
+
+              cols_per_item = 0
+              do i = 1, input_state%menu_num_items
+                cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+              end do
+              cols_per_item = cols_per_item + 2
+
+              items_per_row = max(1, term_cols / cols_per_item)
+
+              item_idx = 1
+              do while (item_idx <= input_state%menu_num_items)
+                do col = 1, items_per_row
+                  if (item_idx > input_state%menu_num_items) exit
+
+                  if (item_idx == input_state%menu_selection) then
+                    write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                  end if
+
+                  write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+
+                  if (item_idx == input_state%menu_selection) then
+                    write(output_unit, '(a)', advance='no') char(27) // '[0m'
+                  end if
+
+                  if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
+                    write(output_unit, '(a)', advance='no') '  '
+                  end if
+
+                  item_idx = item_idx + 1
+                end do
+                write(output_unit, '()')
+              end do
+
+              flush(output_unit)
+            end block
           end if
         end if
       else
@@ -2682,7 +3136,80 @@ contains
         input_state%dirty = .true.
       else
         ! Second tab (double-tab) - enter menu selection mode!
-        call enter_menu_select_mode(input_state, completions, num_completions, partial_input)
+        ! INLINE enter_menu_select_mode + draw_completion_menu to avoid gfortran bug
+        block
+          integer :: i, last_space_pos, cols_per_item, items_per_row, col, item_idx
+          integer :: term_rows, term_cols
+          logical :: success
+
+          ! Store menu items
+          input_state%in_menu_select = .true.
+          input_state%menu_num_items = num_completions
+          input_state%menu_selection = 1
+
+          do i = 1, num_completions
+            input_state%menu_items(i) = completions(i)
+          end do
+
+          ! Find the prefix
+          last_space_pos = 0
+          do i = len_trim(partial_input), 1, -1
+            if (partial_input(i:i) == ' ') then
+              last_space_pos = i
+              exit
+            end if
+          end do
+
+          if (last_space_pos > 0) then
+            input_state%menu_prefix = partial_input(:last_space_pos)
+            input_state%menu_prefix_len = last_space_pos
+          else
+            input_state%menu_prefix = ''
+            input_state%menu_prefix_len = 0
+          end if
+
+          ! INLINE draw_completion_menu (initial_draw = .true.)
+          success = get_terminal_size(term_rows, term_cols)
+          if (.not. success .or. term_cols <= 0) then
+            term_cols = 80
+          end if
+
+          write(output_unit, '()')  ! New line
+
+          cols_per_item = 0
+          do i = 1, input_state%menu_num_items
+            cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+          end do
+          cols_per_item = cols_per_item + 2
+
+          items_per_row = max(1, term_cols / cols_per_item)
+
+          item_idx = 1
+          do while (item_idx <= input_state%menu_num_items)
+            do col = 1, items_per_row
+              if (item_idx > input_state%menu_num_items) exit
+
+              if (item_idx == input_state%menu_selection) then
+                write(output_unit, '(a)', advance='no') char(27) // '[7m'
+              end if
+
+              write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+
+              if (item_idx == input_state%menu_selection) then
+                write(output_unit, '(a)', advance='no') char(27) // '[0m'
+              end if
+
+              if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
+                write(output_unit, '(a)', advance='no') '  '
+              end if
+
+              item_idx = item_idx + 1
+            end do
+            write(output_unit, '()')
+          end do
+
+          flush(output_unit)
+        end block
       end if
     end if
   end subroutine
@@ -2697,32 +3224,6 @@ contains
     integer, intent(in) :: num_completions
     character(len=*), intent(in) :: current_input
     integer :: i, last_space_pos
-
-    ! macOS workaround: Don't enter menu mode due to gfortran bug
-    block
-      character(len=256) :: ostype
-      integer :: status
-      logical :: is_macos
-
-      ! Check if we're on macOS at runtime
-      call get_environment_variable("OSTYPE", ostype, status=status)
-      if (status == 0) then
-        is_macos = (index(ostype, "darwin") > 0)
-      else
-        ! Alternative check using uname
-        call execute_command_line("uname -s | grep -q Darwin", wait=.true., exitstat=status)
-        is_macos = (status == 0)
-      end if
-
-      if (is_macos) then
-        write(output_unit, '()')
-        write(output_unit, '(a)') "Note: Menu selection disabled on macOS (gfortran bug workaround)"
-        call show_completions(completions, num_completions)
-        input_state%completions_shown = .true.
-        input_state%dirty = .true.
-        return
-      end if
-    end block
 
     ! Store menu items
     input_state%in_menu_select = .true.
@@ -2896,7 +3397,63 @@ contains
     call exit_menu_select_mode(input_state)
 
     ! Update autosuggestion
-    call update_autosuggestion(input_state)
+    ! INLINE update_autosuggestion to avoid gfortran bug on macOS
+    block
+      integer :: i_auto, newline_pos, j_auto
+      character(len=MAX_LINE_LEN) :: current_input, suggestion_candidate
+
+      ! Clear suggestion if buffer is empty or in special modes
+      if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+        input_state%suggestion = ''
+        input_state%suggestion_length = 0
+      else
+        ! Get current input
+        current_input = input_state%buffer(:input_state%length)
+
+        ! Search history backwards for matching command
+        do i_auto = command_history%count, 1, -1
+          ! Check if history entry starts with current input
+          if (len_trim(command_history%lines(i_auto)) > input_state%length) then
+            if (command_history%lines(i_auto)(:input_state%length) == current_input(:input_state%length)) then
+              ! Found a match! Store the rest as suggestion
+              suggestion_candidate = command_history%lines(i_auto)(input_state%length+1:)
+
+              ! Find first newline character
+              newline_pos = 0
+              do j_auto = 1, len_trim(suggestion_candidate)
+                if (suggestion_candidate(j_auto:j_auto) == char(10) .or. &
+                    suggestion_candidate(j_auto:j_auto) == char(13)) then
+                  newline_pos = j_auto - 1
+                  exit
+                end if
+              end do
+
+              if (newline_pos >= 0 .and. newline_pos < len_trim(suggestion_candidate)) then
+                ! Found newline - truncate before it
+                if (newline_pos > 0) then
+                  input_state%suggestion = suggestion_candidate(:newline_pos)
+                  input_state%suggestion_length = newline_pos
+                else
+                  input_state%suggestion = ''
+                  input_state%suggestion_length = 0
+                end if
+              else
+                ! No newline found, use full suggestion
+                input_state%suggestion = suggestion_candidate
+                input_state%suggestion_length = len_trim(suggestion_candidate)
+              end if
+              exit  ! Found match, exit loop
+            end if
+          end if
+        end do
+
+        ! If no match found in loop, clear suggestion
+        if (i_auto == 0) then
+          input_state%suggestion = ''
+          input_state%suggestion_length = 0
+        end if
+      end if
+    end block
 
     ! Mark for redraw
     input_state%dirty = .true.
@@ -2914,11 +3471,29 @@ contains
   end subroutine
 
   subroutine redraw_menu(input_state)
+    ! NOTE: This function is UNUSED - inlined everywhere to avoid gfortran bug on macOS
+    ! Kept for reference only. DO NOT CALL - takes input_state_t which crashes on macOS!
     type(input_state_t), intent(in) :: input_state
-    integer :: i, num_rows
+    integer :: i, num_rows, term_rows, term_cols, cols_per_item, items_per_row
+    logical :: success
+
+    ! Get terminal size
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80
+    end if
+
+    ! Calculate layout
+    cols_per_item = 0
+    do i = 1, input_state%menu_num_items
+      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+    end do
+    cols_per_item = cols_per_item + 2
+
+    items_per_row = max(1, term_cols / cols_per_item)
 
     ! Calculate how many rows the menu uses
-    num_rows = (input_state%menu_num_items + 7) / 8  ! Assuming 8 items per row for now
+    num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
     ! Move cursor up to clear previous menu
     do i = 1, num_rows
@@ -2942,8 +3517,13 @@ contains
       ! Try to read the next character to see if it's an arrow key
       success = read_single_char(ch1)
       if (.not. success) then
-        ! Just ESC by itself - exit menu
-        call handle_menu_navigation(input_state, KEY_ESC, done)
+        ! Just ESC by itself - INLINE exit menu mode
+        input_state%in_menu_select = .false.
+        input_state%menu_num_items = 0
+        input_state%menu_selection = 1
+        input_state%menu_prefix_len = 0
+        input_state%completions_shown = .false.
+        input_state%dirty = .true.
         return
       end if
 
@@ -2952,19 +3532,108 @@ contains
         success = read_single_char(ch2)
         if (.not. success) return
 
-        select case(ch2)
-        case('A')  ! Up arrow
-          call handle_menu_navigation(input_state, KEY_UP, done)
-        case('B')  ! Down arrow
-          call handle_menu_navigation(input_state, KEY_DOWN, done)
-        case('C')  ! Right arrow
-          call handle_menu_navigation(input_state, KEY_RIGHT, done)
-        case('D')  ! Left arrow
-          call handle_menu_navigation(input_state, KEY_LEFT, done)
-        case default
-          ! Unknown escape sequence in menu mode
-          continue
-        end select
+        ! INLINE menu navigation for arrow keys to avoid gfortran bug on macOS
+        block
+          integer :: old_selection, i, cols_per_item, items_per_row, col, item_idx
+          integer :: term_rows, term_cols, num_rows
+          logical :: need_redraw
+
+          old_selection = input_state%menu_selection
+          need_redraw = .false.
+
+          select case(ch2)
+          case('A')  ! Up arrow
+            input_state%menu_selection = input_state%menu_selection - 1
+            if (input_state%menu_selection < 1) then
+              input_state%menu_selection = input_state%menu_num_items  ! Wrap to end
+            end if
+            need_redraw = .true.
+
+          case('B')  ! Down arrow
+            input_state%menu_selection = input_state%menu_selection + 1
+            if (input_state%menu_selection > input_state%menu_num_items) then
+              input_state%menu_selection = 1  ! Wrap to beginning
+            end if
+            need_redraw = .true.
+
+          case('C')  ! Right arrow
+            input_state%menu_selection = input_state%menu_selection + 1
+            if (input_state%menu_selection > input_state%menu_num_items) then
+              input_state%menu_selection = 1
+            end if
+            need_redraw = .true.
+
+          case('D')  ! Left arrow
+            input_state%menu_selection = input_state%menu_selection - 1
+            if (input_state%menu_selection < 1) then
+              input_state%menu_selection = input_state%menu_num_items
+            end if
+            need_redraw = .true.
+
+          case default
+            ! Unknown escape sequence in menu mode
+            need_redraw = .false.
+          end select
+
+          ! Redraw menu if selection changed
+          if (need_redraw .and. old_selection /= input_state%menu_selection) then
+            ! INLINE redraw_menu logic
+            ! Get terminal size first
+            success = get_terminal_size(term_rows, term_cols)
+            if (.not. success .or. term_cols <= 0) then
+              term_cols = 80
+            end if
+
+            ! Calculate layout
+            cols_per_item = 0
+            do i = 1, input_state%menu_num_items
+              cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+            end do
+            cols_per_item = cols_per_item + 2
+
+            items_per_row = max(1, term_cols / cols_per_item)
+
+            ! Calculate how many rows the menu uses
+            num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+
+            ! Move cursor up to clear previous menu
+            do i = 1, num_rows
+              write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+            end do
+            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL
+            write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+
+            ! INLINE draw_completion_menu logic (initial_draw = .false.)
+
+            ! Draw menu items
+            item_idx = 1
+            do while (item_idx <= input_state%menu_num_items)
+              do col = 1, items_per_row
+                if (item_idx > input_state%menu_num_items) exit
+
+                ! Highlight selected item
+                if (item_idx == input_state%menu_selection) then
+                  write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                end if
+
+                write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+
+                if (item_idx == input_state%menu_selection) then
+                  write(output_unit, '(a)', advance='no') char(27) // '[0m'
+                end if
+
+                if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
+                  write(output_unit, '(a)', advance='no') '  '
+                end if
+
+                item_idx = item_idx + 1
+              end do
+              write(output_unit, '()')
+            end do
+
+            flush(output_unit)
+          end if
+        end block
       end if
       return
     end if
@@ -4674,7 +5343,63 @@ contains
     input_state%dirty = .true.
 
     ! Update suggestion to remove accepted part
-    call update_autosuggestion(input_state)
+    ! INLINE update_autosuggestion to avoid gfortran bug on macOS
+    block
+      integer :: i_auto, newline_pos, j_auto
+      character(len=MAX_LINE_LEN) :: current_input, suggestion_candidate
+
+      ! Clear suggestion if buffer is empty or in special modes
+      if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+        input_state%suggestion = ''
+        input_state%suggestion_length = 0
+      else
+        ! Get current input
+        current_input = input_state%buffer(:input_state%length)
+
+        ! Search history backwards for matching command
+        do i_auto = command_history%count, 1, -1
+          ! Check if history entry starts with current input
+          if (len_trim(command_history%lines(i_auto)) > input_state%length) then
+            if (command_history%lines(i_auto)(:input_state%length) == current_input(:input_state%length)) then
+              ! Found a match! Store the rest as suggestion
+              suggestion_candidate = command_history%lines(i_auto)(input_state%length+1:)
+
+              ! Find first newline character
+              newline_pos = 0
+              do j_auto = 1, len_trim(suggestion_candidate)
+                if (suggestion_candidate(j_auto:j_auto) == char(10) .or. &
+                    suggestion_candidate(j_auto:j_auto) == char(13)) then
+                  newline_pos = j_auto - 1
+                  exit
+                end if
+              end do
+
+              if (newline_pos >= 0 .and. newline_pos < len_trim(suggestion_candidate)) then
+                ! Found newline - truncate before it
+                if (newline_pos > 0) then
+                  input_state%suggestion = suggestion_candidate(:newline_pos)
+                  input_state%suggestion_length = newline_pos
+                else
+                  input_state%suggestion = ''
+                  input_state%suggestion_length = 0
+                end if
+              else
+                ! No newline found, use full suggestion
+                input_state%suggestion = suggestion_candidate
+                input_state%suggestion_length = len_trim(suggestion_candidate)
+              end if
+              exit  ! Found match, exit loop
+            end if
+          end if
+        end do
+
+        ! If no match found in loop, clear suggestion
+        if (i_auto == 0) then
+          input_state%suggestion = ''
+          input_state%suggestion_length = 0
+        end if
+      end if
+    end block
   end subroutine
 
 end module readline
