@@ -455,6 +455,7 @@ contains
               write(error_unit, '(A)') trim(operation) // ': parameter null or not set'
             end if
             shell%last_exit_status = 127
+            shell%fatal_expansion_error = .true.  ! Signal to abort execution
             expanded = ''
           else
             expanded = trim(var_value)
@@ -467,6 +468,7 @@ contains
               write(error_unit, '(A)') trim(operation) // ': parameter not set'
             end if
             shell%last_exit_status = 127
+            shell%fatal_expansion_error = .true.  ! Signal to abort execution
             expanded = ''
           else
             expanded = trim(var_value)

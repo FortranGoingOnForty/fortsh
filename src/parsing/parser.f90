@@ -2481,6 +2481,7 @@ contains
               trim(default_value), ' (parameter null or not set)'
         result_value = ''
         shell%last_exit_status = 127
+        shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else
         result_value = current_value
@@ -2495,6 +2496,7 @@ contains
         end if
         result_value = ''
         shell%last_exit_status = 127
+        shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else
         if (allocated(current_value)) then

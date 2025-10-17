@@ -36,28 +36,36 @@ contains
       case(SEP_PIPE)
         call execute_pipe_chain(pipeline, i, shell, original_input)
         call check_errexit(shell, shell%last_exit_status)
+        ! Check if shell should exit (e.g., due to ${VAR?error})
+        if (.not. shell%running) exit
         do while (i <= pipeline%num_commands)
           if (pipeline%commands(i)%separator /= SEP_PIPE) exit
           i = i + 1
         end do
         ! Skip the last command in the pipeline (it has non-PIPE separator)
         i = i + 1
-        
+
       case(SEP_SEMICOLON, SEP_NONE)
         call execute_single(pipeline%commands(i), shell, original_input)
         call check_errexit(shell, shell%last_exit_status)
+        ! Check if shell should exit (e.g., due to ${VAR?error})
+        if (.not. shell%running) exit
         i = i + 1
-        
+
       case(SEP_AND)
         call execute_single(pipeline%commands(i), shell, original_input)
         should_continue = (shell%last_exit_status == 0)
         call check_errexit(shell, shell%last_exit_status)
+        ! Check if shell should exit (e.g., due to ${VAR?error})
+        if (.not. shell%running) exit
         i = i + 1
-        
+
       case(SEP_OR)
         call execute_single(pipeline%commands(i), shell, original_input)
         should_continue = (shell%last_exit_status /= 0)
         call check_errexit(shell, shell%last_exit_status)
+        ! Check if shell should exit (e.g., due to ${VAR?error})
+        if (.not. shell%running) exit
         i = i + 1
       end select
     end do
@@ -493,6 +501,18 @@ contains
     ! Do this BEFORE checking for assignment so ${var##pattern} gets expanded
     if (trim(cmd%tokens(1)) /= 'defun') then
       call expand_tokens(cmd, shell)
+    end if
+
+    ! Check if parameter expansion error occurred (${VAR?error})
+    if (shell%fatal_expansion_error) then
+      shell%fatal_expansion_error = .false.  ! Reset flag
+      ! End performance timing
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      ! POSIX: In non-interactive shells, exit the shell entirely
+      if (.not. shell%is_interactive) then
+        shell%running = .false.
+      end if
+      return  ! Abort command execution
     end if
 
     ! Check for variable assignment (after expansion so ${...} is processed)
