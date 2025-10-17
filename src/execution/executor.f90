@@ -55,7 +55,7 @@ contains
       case(SEP_AND)
         call execute_single(pipeline%commands(i), shell, original_input)
         should_continue = (shell%last_exit_status == 0)
-        call check_errexit(shell, shell%last_exit_status)
+        ! POSIX: errexit should be ignored in AND-OR lists
         ! Check if shell should exit (e.g., due to ${VAR?error})
         if (.not. shell%running) exit
         i = i + 1
@@ -63,7 +63,7 @@ contains
       case(SEP_OR)
         call execute_single(pipeline%commands(i), shell, original_input)
         should_continue = (shell%last_exit_status /= 0)
-        call check_errexit(shell, shell%last_exit_status)
+        ! POSIX: errexit should be ignored in AND-OR lists
         ! Check if shell should exit (e.g., due to ${VAR?error})
         if (.not. shell%running) exit
         i = i + 1
@@ -1769,6 +1769,9 @@ contains
     character(len=256) :: tokens(50)
     integer :: num_tokens, i
 
+    ! POSIX: Suppress errexit during condition evaluation (if/while/until test expressions)
+    shell%evaluating_condition = .true.
+
     ! Check if it's a test command (starts with [ or test)
     if (index(trim(condition_cmd), '[') == 1 .or. &
         index(trim(condition_cmd), 'test ') == 1) then
@@ -1798,6 +1801,9 @@ contains
         result = .false.
       end if
     end if
+
+    ! Re-enable errexit checking
+    shell%evaluating_condition = .false.
   end subroutine
 
   ! Simple tokenization by spaces

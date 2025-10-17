@@ -227,6 +227,7 @@ module shell_types
     character(len=1024) :: pending_trap_command = ''
     integer :: pending_trap_signal = 0
     logical :: executing_trap = .false.  ! Prevent recursive trap execution
+    logical :: evaluating_condition = .false.  ! Suppress errexit during if/while/until condition evaluation
     ! Command hash table
     type(command_hash_entry_t) :: command_hash(50)
     integer :: num_hashed_commands = 0
