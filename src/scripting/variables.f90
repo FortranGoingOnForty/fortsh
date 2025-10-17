@@ -1517,4 +1517,17 @@ contains
     end if
   end subroutine
 
+  ! Check if nounset option is enabled and handle undefined variable
+  ! Moved from shell_options to break circular dependency
+  function check_nounset(shell, var_name) result(should_error)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: var_name
+    logical :: should_error
+
+    should_error = shell%option_nounset
+    if (should_error) then
+      write(error_unit, '(a)') 'fortsh: ' // trim(var_name) // ': unbound variable'
+    end if
+  end function
+
 end module variables

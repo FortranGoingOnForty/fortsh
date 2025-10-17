@@ -4,9 +4,8 @@
 ! ==============================================================================
 module expansion
   use shell_types
-  use variables
+  use variables  ! includes check_nounset
   use substitution, only: execute_command_and_capture
-  use shell_options, only: check_nounset
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 

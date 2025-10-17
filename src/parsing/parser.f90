@@ -5,12 +5,11 @@
 module parser
   use shell_types
   use system_interface
-  use variables
+  use variables  ! includes check_nounset
   use expansion
   use glob
   use error_handling
   use performance
-  use shell_options, only: check_nounset
   use iso_fortran_env, only: error_unit, input_unit
   implicit none
 

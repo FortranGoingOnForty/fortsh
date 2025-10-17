@@ -230,7 +230,16 @@ contains
   subroutine builtin_exit(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+    logical :: trap_executed
+
+    ! Execute EXIT trap if set
+    trap_executed = execute_trap(shell, TRAP_EXIT)
+
+    ! If a trap command was queued, execute it now
+    if (len_trim(shell%pending_trap_command) > 0) then
+      call execute_exit_trap_inline(shell)
+    end if
+
     shell%running = .false.
     if (cmd%num_tokens > 1) then
       read(cmd%tokens(2), *, iostat=shell%last_exit_status) shell%last_exit_status
@@ -3508,6 +3517,55 @@ contains
 
     shell%last_exit_status = 0
   end subroutine builtin_dirh
+
+  ! Execute EXIT trap inline (to avoid circular dependency with executor module)
+  subroutine execute_exit_trap_inline(shell)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=1024) :: trap_cmd
+    integer :: saved_status
+    type(pipeline_t) :: trap_pipeline
+    integer :: i
+
+    ! Save trap command and clear
+    trap_cmd = shell%pending_trap_command
+    shell%pending_trap_command = ''
+    shell%pending_trap_signal = 0
+
+    ! Save exit status (traps don't affect $?)
+    saved_status = shell%last_exit_status
+
+    ! Set flag to prevent recursive traps
+    shell%executing_trap = .true.
+
+    ! Parse trap command
+    call parse_pipeline(trim(trap_cmd), trap_pipeline)
+
+    ! Execute it in current shell context (inline execution using c_system)
+    ! We use c_system instead of execute_pipeline to avoid circular dependency
+    if (len_trim(trap_cmd) > 0) then
+      i = c_system(trim(trap_cmd) // c_null_char)
+    end if
+
+    ! Clean up pipeline allocations
+    if (allocated(trap_pipeline%commands)) then
+      do i = 1, trap_pipeline%num_commands
+        if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
+        if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
+        if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
+        if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
+        if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
+        if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
+        if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
+      end do
+      deallocate(trap_pipeline%commands)
+    end if
+
+    ! Clear flag
+    shell%executing_trap = .false.
+
+    ! Restore exit status (traps don't affect $?)
+    shell%last_exit_status = saved_status
+  end subroutine execute_exit_trap_inline
 
 
 end module builtins
