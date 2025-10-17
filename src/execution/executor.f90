@@ -313,7 +313,7 @@ contains
     integer(int64) :: exec_start_time
     integer :: i
     character(len=2048) :: reconstructed_cmd
-    character(len=1024), allocatable :: temp_tokens(:)  ! Must match potential expanded length
+    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     type(pipeline_t) :: pipeline
 
     ! Start performance timing
@@ -956,7 +956,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, num_words, total_tokens
     character(len=:), allocatable :: expanded
-    character(len=1024), allocatable :: temp_tokens(:)  ! Must match split_words length
+    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
     character(len=1024) :: split_words(30)
     character(len=MAX_TOKEN_LEN) :: word
@@ -1031,7 +1031,7 @@ contains
 
     ! Replace command tokens with expanded ones
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    allocate(character(len=1024) :: cmd%tokens(total_tokens))  ! Match temp_tokens length to avoid truncation
+    allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(total_tokens))
     do i = 1, total_tokens
       cmd%tokens(i) = temp_tokens(i)
     end do
