@@ -204,6 +204,7 @@ module shell_types
     integer :: shell_terminal = 0
     logical :: is_interactive = .false.
     logical :: running = .true.
+    logical :: fatal_expansion_error = .false.  ! Set by ${VAR?error} to abort execution
     type(job_t) :: jobs(MAX_JOBS)
     integer :: num_jobs = 0
     integer :: next_job_id = 1
