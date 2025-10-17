@@ -3372,6 +3372,9 @@ contains
     logical :: case_match, is_prefix_match
     character :: pattern_char, candidate_char
 
+    ! Initialize match_positions to avoid uninitialized warning
+    match_positions = 0
+
     pattern_len = len_trim(pattern)
     candidate_len = len_trim(candidate)
 
