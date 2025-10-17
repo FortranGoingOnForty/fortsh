@@ -315,7 +315,12 @@ contains
   subroutine check_errexit(shell, exit_status)
     type(shell_state_t), intent(inout) :: shell
     integer, intent(in) :: exit_status
-    
+
+    ! POSIX: Don't trigger errexit in these contexts:
+    ! - During if/while/until condition evaluation (evaluating_condition flag)
+    ! - In AND-OR lists (&&, ||) - handled by not calling this in those cases
+    if (shell%evaluating_condition) return
+
     if (shell%option_errexit .and. exit_status /= 0) then
       if (shell%option_verbose) then
         write(error_unit, '(a,i0)') 'fortsh: errexit: exiting due to command failure (status: ', exit_status
