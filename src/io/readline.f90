@@ -453,7 +453,10 @@ contains
             write(output_unit, '(a)', advance='no') prompt
             if (input_state%length > 0) then
               ! Apply syntax highlighting (safe - doesn't take input_state)
+              write(error_unit, '(A,I0,A,A)') '[DEBUG] About to highlight, length=', input_state%length, &
+                  ' buffer=', trim(input_state%buffer(:input_state%length))
               highlighted = highlight_command_line(input_state%buffer(:input_state%length))
+              write(error_unit, '(A)') '[DEBUG] Highlighting done'
               write(output_unit, '(a)', advance='no') highlighted
 
               ! Display autosuggestion if present (only when cursor is at end)
@@ -3036,17 +3039,17 @@ contains
       num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
       ! Move cursor up to where the command line was (before the menu)
-      do i = 1, num_rows
+      ! Need to account for: initial newline (1) + menu rows (num_rows) + final newline (1)
+      ! Since we're on the line after the final newline, we're (num_rows + 1) lines down
+      do i = 1, num_rows + 1
         write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
       end do
 
-      ! Move to beginning of line, move down one line (to first menu row), then clear menu
-      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
-      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Cursor down one line
-      write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down (menu only)
-
-      ! Move cursor back up to command line
-      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+      ! Now at command line - clear from next line down to remove menu
+      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return (start of command line)
+      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Move down to first menu line
+      write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down (all menu)
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Move back up to command line
       write(output_unit, '(a)', advance='no') char(13)  ! Back to start of command line
     end if
 
@@ -3291,7 +3294,9 @@ contains
       flush(output_unit)
     else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
       ! At end of line with suggestion - accept it
+      write(error_unit, '(A)') '[DEBUG] Accepting autosuggestion...'
       call accept_autosuggestion(input_state)
+      write(error_unit, '(A)') '[DEBUG] Autosuggestion accepted, returning'
     end if
   end subroutine
   
@@ -4817,10 +4822,23 @@ contains
   ! Accept the current autosuggestion
   subroutine accept_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i
+    integer :: i, new_length
 
+    write(error_unit, '(A,I0,A,I0)') '[DEBUG] accept_autosuggestion called, suggestion_length=', &
+        input_state%suggestion_length, ' current length=', input_state%length
     if (input_state%suggestion_length == 0) return
 
+    ! Safety check: ensure we won't overflow
+    new_length = input_state%length + input_state%suggestion_length
+    if (new_length > MAX_LINE_LEN) then
+      write(error_unit, '(A,I0,A,I0)') '[ERROR] Would overflow buffer! new_length=', new_length, &
+          ' MAX_LINE_LEN=', MAX_LINE_LEN
+      input_state%suggestion_length = MAX_LINE_LEN - input_state%length
+      if (input_state%suggestion_length < 0) input_state%suggestion_length = 0
+      new_length = input_state%length + input_state%suggestion_length
+    end if
+
+    write(error_unit, '(A)') '[DEBUG] Appending suggestion to buffer...'
     ! Append suggestion to buffer
     do i = 1, input_state%suggestion_length
       if (input_state%length + i <= MAX_LINE_LEN) then
@@ -4829,11 +4847,13 @@ contains
       end if
     end do
 
-    input_state%length = input_state%length + input_state%suggestion_length
+    write(error_unit, '(A)') '[DEBUG] Updating state...'
+    input_state%length = new_length
     input_state%cursor_pos = input_state%length
     input_state%suggestion = ''
     input_state%suggestion_length = 0
     input_state%dirty = .true.
+    write(error_unit, '(A,I0)') '[DEBUG] accept_autosuggestion done, new length=', input_state%length
   end subroutine
 
   ! Accept one word from the autosuggestion (for partial acceptance)

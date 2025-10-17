@@ -100,6 +100,7 @@ contains
 
   ! Main function: Highlight a command line
   function highlight_command_line(input) result(highlighted)
+    use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: highlighted
 
@@ -113,7 +114,9 @@ contains
     end if
 
     ! Tokenize input
+    write(error_unit, '(A,I0)') '[DEBUG highlight_command_line] Tokenizing, input length=', len(input)
     call tokenize_for_highlighting(input, tokens, num_tokens)
+    write(error_unit, '(A,I0)') '[DEBUG highlight_command_line] Tokenized, num_tokens=', num_tokens
 
     if (num_tokens == 0) then
       highlighted = input
@@ -121,11 +124,14 @@ contains
     end if
 
     ! Determine color for each token
+    write(error_unit, '(A)') '[DEBUG highlight_command_line] Colorizing tokens...'
     allocate(character(len=32) :: token_colors(num_tokens))
     call colorize_tokens(tokens, num_tokens, token_colors)
+    write(error_unit, '(A)') '[DEBUG highlight_command_line] Building highlighted string...'
 
     ! Build highlighted string
     call build_highlighted_string(input, tokens, num_tokens, token_colors, highlighted)
+    write(error_unit, '(A)') '[DEBUG highlight_command_line] Done building'
 
     ! Don't trim! We need to preserve trailing spaces for correct display
 
@@ -215,6 +221,18 @@ contains
       ! Start of token
       token_start = i
       in_quotes = .false.
+
+      ! Check if this is an operator character - treat as single-char token
+      if (working(i:i) == ';' .or. working(i:i) == '|' .or. &
+          working(i:i) == '&' .or. working(i:i) == '>' .or. working(i:i) == '<') then
+        ! Operator - add as single character token
+        num_tokens = num_tokens + 1
+        if (num_tokens <= max_tokens) then
+          temp_tokens(num_tokens) = working(i:i)
+        end if
+        i = i + 1
+        cycle  ! Continue to next iteration
+      end if
 
       ! Find end of token
       do while (i <= len_trim(working))
@@ -347,6 +365,9 @@ contains
       do i = 1, num_tokens
         token_trimmed = trim(tokens(i))
         token_len = len_trim(token_trimmed)
+
+        ! Skip empty tokens to avoid infinite loop
+        if (token_len == 0) cycle
 
         ! Try to match token at current position
         if (input_pos + token_len - 1 <= len(input)) then
