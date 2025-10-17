@@ -32,6 +32,8 @@ contains
     character(len=256) :: log_op, op2, arg2
     type(command_t) :: sub_cmd, left_cmd, right_cmd
     integer :: i, j, test_exit_status, logical_op_pos
+    integer :: paren_depth, check_pos
+    logical :: outer_parens_wrap_all
 
     ! Check if this is [[ ]] (advanced test) - use advanced_test module
     if (trim(cmd%tokens(1)) == '[[') then
@@ -160,9 +162,30 @@ contains
       ! First, check if the entire expression is wrapped in parentheses
       ! If so, strip them and re-evaluate
       if (trim(cmd%tokens(2)) == '\(' .or. trim(cmd%tokens(2)) == '(') then
-        ! Check if there's a matching closing parenthesis
-        if (trim(cmd%tokens(cmd%num_tokens)) == '\)' .or. trim(cmd%tokens(cmd%num_tokens)) == ')') then
-          ! Strip parentheses and recursively evaluate
+        ! Check if this opening paren has its matching closing paren at the end
+        ! by counting paren depth
+        paren_depth = 1
+        outer_parens_wrap_all = .false.
+
+        do check_pos = 3, cmd%num_tokens
+          if (trim(cmd%tokens(check_pos)) == '\(' .or. trim(cmd%tokens(check_pos)) == '(') then
+            paren_depth = paren_depth + 1
+          else if (trim(cmd%tokens(check_pos)) == '\)' .or. trim(cmd%tokens(check_pos)) == ')') then
+            paren_depth = paren_depth - 1
+            if (paren_depth == 0) then
+              ! The opening paren at position 2 closes here
+              if (check_pos == cmd%num_tokens) then
+                ! It closes at the last position - outer parens wrap all
+                outer_parens_wrap_all = .true.
+              end if
+              ! Exit the loop - we found where the opening paren closes
+              exit
+            end if
+          end if
+        end do
+
+        if (outer_parens_wrap_all) then
+          ! Strip outer parentheses and recursively evaluate
           sub_cmd = cmd  ! Copy all fields
           sub_cmd%tokens(1) = 'test'
           sub_cmd%num_tokens = cmd%num_tokens - 2
