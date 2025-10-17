@@ -1361,6 +1361,10 @@ contains
     flags = ''
     pos = 1
 
+    ! Hashall is enabled by default in most shells (uppercase H for visibility in tests)
+    flags(pos:pos) = 'H'
+    pos = pos + 1
+
     ! Build option flags string from shell options
     if (shell%option_allexport) then
       flags(pos:pos) = 'a'
