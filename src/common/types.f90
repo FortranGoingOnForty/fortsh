@@ -85,6 +85,9 @@ module shell_types
     ! Enhanced POSIX file descriptor redirection
     type(redirection_t) :: redirections(10)
     integer :: num_redirections = 0
+    ! Prefix assignments (VAR=value command)
+    character(len=256) :: prefix_assignments(10) = ''  ! VAR=value pairs
+    integer :: num_prefix_assignments = 0
   end type command_t
 
   type :: pipeline_t

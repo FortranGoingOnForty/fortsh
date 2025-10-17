@@ -497,9 +497,11 @@ contains
       return
     end if
 
-    ! Expand variables in all tokens (except for defun, which needs raw body)
-    ! Do this BEFORE checking for assignment so ${var##pattern} gets expanded
-    if (trim(cmd%tokens(1)) /= 'defun') then
+    ! Expand variables in all tokens (except for defun and assignments)
+    ! Skip expansion for assignments because execute_assignment needs to handle
+    ! quote-aware expansion properly (e.g., CMD="echo \$X" should store "echo $X")
+    if (trim(cmd%tokens(1)) /= 'defun' .and. &
+        .not. (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1)) then
       call expand_tokens(cmd, shell)
     end if
 
@@ -516,10 +518,13 @@ contains
     end if
 
     ! Check for variable assignment (after expansion so ${...} is processed)
-    if (cmd%num_tokens == 1 .and. is_assignment(cmd%tokens(1))) then
-      call handle_assignment(shell, cmd%tokens(1))
-      return
-    end if
+    ! DISABLED: Now that we skip expand_tokens for assignments (line 503-506),
+    ! all assignments should go through execute_assignment which properly handles
+    ! backslash escapes in double-quoted strings.
+    ! if (cmd%num_tokens == 1 .and. is_assignment(cmd%tokens(1))) then
+    !   call handle_assignment(shell, cmd%tokens(1))
+    !   return
+    ! end if
 
     ! Expand glob patterns (except for defun)
     if (trim(cmd%tokens(1)) /= 'defun') then
@@ -810,31 +815,10 @@ contains
       ! Simple assignment: var=value
       var_value = token(eq_pos+1:)
 
-      ! Calculate actual content length BEFORE stripping quotes (to preserve trailing spaces)
-      actual_value_len = len_trim(var_value)
-      if (actual_value_len >= 2) then
-        if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
-          ! Find closing quote position by searching backwards
-          quote_char_temp = var_value(1:1)
-          do i = actual_value_len, 2, -1
-            if (var_value(i:i) == quote_char_temp) then
-              ! Content length is closing_quote_pos - 2
-              actual_value_len = i - 2
-              exit
-            end if
-          end do
-        else
-          ! No quotes, use len_trim
-          actual_value_len = len_trim(var_value)
-        end if
-      else
-        actual_value_len = len_trim(var_value)
-      end if
-
-      ! Strip surrounding quotes from value (single or double quotes)
-      call strip_quotes_local(var_value)
-
       ! Expand variables in the value (including parameter expansions like ${var##pattern})
+      ! IMPORTANT: Call expand_variables BEFORE stripping quotes, so it can apply
+      ! correct backslash escape handling for double-quoted strings
+      ! expand_variables will strip outer quotes automatically
       if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
         call expand_variables(var_value, expanded_value, shell)
         if (allocated(expanded_value)) then
@@ -844,6 +828,30 @@ contains
           call var_set_shell_variable(shell, trim(var_name), '', 0)
         end if
       else
+        ! No variable expansion needed
+        ! Calculate actual content length BEFORE stripping quotes (to preserve trailing spaces)
+        actual_value_len = len_trim(var_value)
+        if (actual_value_len >= 2) then
+          if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
+            ! Find closing quote position by searching backwards
+            quote_char_temp = var_value(1:1)
+            do i = actual_value_len, 2, -1
+              if (var_value(i:i) == quote_char_temp) then
+                ! Content length is closing_quote_pos - 2
+                actual_value_len = i - 2
+                exit
+              end if
+            end do
+          else
+            ! No quotes, use len_trim
+            actual_value_len = len_trim(var_value)
+          end if
+        else
+          actual_value_len = len_trim(var_value)
+        end if
+
+        ! Strip surrounding quotes from value (single or double quotes)
+        call strip_quotes_local(var_value)
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
       end if
       ! Set exit status to 0 for successful assignments
@@ -1093,9 +1101,12 @@ contains
       ! Handle here document
       call handle_heredoc(cmd, shell)
 
+      ! Apply prefix assignments to environment (VAR=value command)
+      call apply_prefix_assignments(cmd)
+
       ! Set up redirections
       call setup_redirections(cmd)
-      
+
       ! Execute
       call exec_child(cmd%tokens, cmd%num_tokens)
       ! Error message is printed by exec_child if command not found
@@ -2031,6 +2042,37 @@ contains
         shell%last_exit_status = 1
       end if
     end if
+  end subroutine
+
+  ! Apply prefix assignments to environment (VAR=value command)
+  ! Called in child process before exec to set environment variables
+  ! scoped to the command execution
+  subroutine apply_prefix_assignments(cmd)
+    type(command_t), intent(in) :: cmd
+    integer :: i, eq_pos, ret
+    character(len=256) :: var_name, var_value
+    character(len=256), target :: c_var_name, c_var_value
+
+    ! Iterate through all prefix assignments
+    do i = 1, cmd%num_prefix_assignments
+      ! Find the '=' separator
+      eq_pos = index(cmd%prefix_assignments(i), '=')
+
+      if (eq_pos > 1) then
+        ! Extract variable name and value
+        var_name = cmd%prefix_assignments(i)(:eq_pos-1)
+        var_value = cmd%prefix_assignments(i)(eq_pos+1:)
+
+        ! Convert to C strings with null terminator
+        c_var_name = trim(var_name)//c_null_char
+        c_var_value = trim(var_value)//c_null_char
+
+        ! Set environment variable (overwrite=1 to replace existing values)
+        ret = c_setenv(c_loc(c_var_name), c_loc(c_var_value), 1_c_int)
+        ! Note: We ignore the return value here since we're in a child process
+        ! and any errors will be reflected in the command's execution
+      end if
+    end do
   end subroutine
 
 end module executor

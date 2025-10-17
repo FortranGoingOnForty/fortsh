@@ -157,6 +157,23 @@ contains
       end select
 
     else if (cmd%num_tokens >= 5) then
+      ! First, check if the entire expression is wrapped in parentheses
+      ! If so, strip them and re-evaluate
+      if (trim(cmd%tokens(2)) == '\(' .or. trim(cmd%tokens(2)) == '(') then
+        ! Check if there's a matching closing parenthesis
+        if (trim(cmd%tokens(cmd%num_tokens)) == '\)' .or. trim(cmd%tokens(cmd%num_tokens)) == ')') then
+          ! Strip parentheses and recursively evaluate
+          sub_cmd = cmd  ! Copy all fields
+          sub_cmd%tokens(1) = 'test'
+          sub_cmd%num_tokens = cmd%num_tokens - 2
+          do i = 2, sub_cmd%num_tokens
+            sub_cmd%tokens(i) = cmd%tokens(i + 1)
+          end do
+          call execute_test_command(sub_cmd, shell)
+          return
+        end if
+      end if
+
       ! Check for logical operators -a (AND) or -o (OR)
       ! Search for the logical operator in the token stream
 

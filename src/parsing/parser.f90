@@ -336,6 +336,10 @@ contains
         pipeline%commands(i)%num_redirections = temp_commands(i)%num_redirections
         pipeline%commands(i)%redirections = temp_commands(i)%redirections
 
+        ! Copy prefix assignments (VAR=value command)
+        pipeline%commands(i)%num_prefix_assignments = temp_commands(i)%num_prefix_assignments
+        pipeline%commands(i)%prefix_assignments = temp_commands(i)%prefix_assignments
+
         ! Copy allocatable components explicitly
         if (allocated(temp_commands(i)%tokens)) then
           allocate(character(len=MAX_TOKEN_LEN) :: pipeline%commands(i)%tokens(temp_commands(i)%num_tokens))
@@ -680,7 +684,10 @@ contains
     
     ! Tokenize the remaining command
     call tokenize_with_substitution(trim(working_input), cmd%tokens, cmd%num_tokens)
-    
+
+    ! Extract prefix assignments (VAR=value command)
+    call extract_prefix_assignments(cmd)
+
   end subroutine
 
   subroutine extract_filename(input, filename)
@@ -1245,6 +1252,22 @@ contains
         else if (working_token(i:i) == '*') then
           ! $* - all positional parameters as single word
           var_value = get_shell_variable(shell, '*')
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          end if
+          i = i + 1
+        else if (working_token(i:i) == '-') then
+          ! $- - current shell option flags
+          var_value = get_shell_variable(shell, '-')
+          if (len_trim(var_value) > 0) then
+            result(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+          end if
+          i = i + 1
+        else if (working_token(i:i) == '_') then
+          ! $_ - last argument of previous command
+          var_value = get_shell_variable(shell, '_')
           if (len_trim(var_value) > 0) then
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
@@ -2707,6 +2730,106 @@ contains
       call c_exit(1)
     end if
   end subroutine
+
+  ! Extract prefix assignments (VAR=value command) from tokenized command
+  ! Moves VAR=value pairs to cmd%prefix_assignments and removes them from tokens
+  subroutine extract_prefix_assignments(cmd)
+    type(command_t), intent(inout) :: cmd
+    integer :: i, eq_pos, first_cmd_token
+    character(len=256) :: token
+    logical :: is_assignment
+    character(len=:), allocatable :: new_tokens(:)
+    integer :: new_token_count
+
+    if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
+
+    cmd%num_prefix_assignments = 0
+    first_cmd_token = 0
+
+    ! Scan tokens from the beginning to find prefix assignments
+    do i = 1, cmd%num_tokens
+      token = trim(cmd%tokens(i))
+
+      ! Check if token is a valid assignment (VAR=value)
+      is_assignment = .false.
+      eq_pos = index(token, '=')
+
+      if (eq_pos > 1) then
+        ! Has '=' and something before it
+        ! Check if everything before '=' is a valid variable name
+        ! (letters, numbers, underscore, but must start with letter or underscore)
+        is_assignment = is_valid_var_name(token(:eq_pos-1))
+      end if
+
+      if (is_assignment) then
+        ! This is a prefix assignment
+        if (cmd%num_prefix_assignments < 10) then
+          cmd%num_prefix_assignments = cmd%num_prefix_assignments + 1
+          cmd%prefix_assignments(cmd%num_prefix_assignments) = trim(token)
+        end if
+      else
+        ! First non-assignment token - this is where the command starts
+        first_cmd_token = i
+        exit
+      end if
+    end do
+
+    ! If we found prefix assignments, remove them from tokens
+    if (cmd%num_prefix_assignments > 0 .and. first_cmd_token > 0) then
+      new_token_count = cmd%num_tokens - cmd%num_prefix_assignments
+
+      if (new_token_count > 0) then
+        ! Allocate new token array with remaining tokens
+        allocate(character(len=len(cmd%tokens)) :: new_tokens(new_token_count))
+
+        ! Copy remaining tokens
+        do i = 1, new_token_count
+          new_tokens(i) = cmd%tokens(first_cmd_token + i - 1)
+        end do
+
+        ! Replace tokens array
+        deallocate(cmd%tokens)
+        cmd%tokens = new_tokens
+        cmd%num_tokens = new_token_count
+      else
+        ! All tokens were assignments, no actual command
+        deallocate(cmd%tokens)
+        cmd%num_tokens = 0
+      end if
+    end if
+  end subroutine
+
+  ! Check if a string is a valid shell variable name
+  function is_valid_var_name(name) result(is_valid)
+    character(len=*), intent(in) :: name
+    logical :: is_valid
+    integer :: i
+    character :: ch
+
+    is_valid = .false.
+    if (len_trim(name) == 0) return
+
+    ! First character must be letter or underscore
+    ch = name(1:1)
+    if (.not. ((ch >= 'A' .and. ch <= 'Z') .or. &
+               (ch >= 'a' .and. ch <= 'z') .or. &
+               ch == '_')) then
+      return
+    end if
+
+    ! Remaining characters can be letters, digits, or underscores
+    do i = 2, len_trim(name)
+      ch = name(i:i)
+      if (.not. ((ch >= 'A' .and. ch <= 'Z') .or. &
+                 (ch >= 'a' .and. ch <= 'z') .or. &
+                 (ch >= '0' .and. ch <= '9') .or. &
+                 ch == '_')) then
+        return
+      end if
+    end do
+
+    is_valid = .true.
+  end function
 
   ! Check if a line has unclosed quotes (needs continuation)
   function has_unclosed_quote(line) result(has_unclosed)
