@@ -6,6 +6,7 @@ module expansion
   use shell_types
   use variables
   use substitution, only: execute_command_and_capture
+  use shell_options, only: check_nounset
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
@@ -486,9 +487,20 @@ contains
     else
       ! Simple variable expansion
       var_value = get_shell_variable(shell, trim(var_name))
+
+      ! Check if variable is unset and set -u is enabled
+      if (len_trim(var_value) == 0 .and. .not. is_shell_variable_set(shell, trim(var_name))) then
+        if (check_nounset(shell, trim(var_name))) then
+          shell%last_exit_status = 1
+          shell%fatal_expansion_error = .true.
+          expanded = ''
+          return
+        end if
+      end if
+
       expanded = trim(var_value)
     end if
-    
+
   end function
 
   subroutine parse_substring_expansion(input, var_name, offset_str, length_str)

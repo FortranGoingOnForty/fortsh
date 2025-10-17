@@ -69,8 +69,8 @@ contains
       if (trim(shell%variables(i)%name) == trim(name)) then
         ! Check if variable is readonly
         if (shell%variables(i)%readonly) then
-          write(error_unit, '(a)') trim(name) // ': readonly variable'
-          shell%last_exit_status = 127
+          write(error_unit, '(a)') 'sh: line 1: ' // trim(name) // ': readonly variable'
+          shell%last_exit_status = 1
           return
         end if
         shell%variables(i)%value = value
@@ -395,8 +395,8 @@ contains
         end if
       end if
       ! Set exit status to 0 for successful assignments
-      ! Don't overwrite error codes like 127 (readonly violation)
-      if (shell%last_exit_status /= 127) then
+      ! Don't overwrite error codes like 1 (readonly violation)
+      if (shell%last_exit_status /= 1) then
         shell%last_exit_status = 0
       end if
     else
