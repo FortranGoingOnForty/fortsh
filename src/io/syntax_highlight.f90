@@ -100,7 +100,6 @@ contains
 
   ! Main function: Highlight a command line
   function highlight_command_line(input) result(highlighted)
-    use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: highlighted
 
@@ -114,9 +113,7 @@ contains
     end if
 
     ! Tokenize input
-    write(error_unit, '(A,I0)') '[DEBUG highlight_command_line] Tokenizing, input length=', len(input)
     call tokenize_for_highlighting(input, tokens, num_tokens)
-    write(error_unit, '(A,I0)') '[DEBUG highlight_command_line] Tokenized, num_tokens=', num_tokens
 
     if (num_tokens == 0) then
       highlighted = input
@@ -124,14 +121,11 @@ contains
     end if
 
     ! Determine color for each token
-    write(error_unit, '(A)') '[DEBUG highlight_command_line] Colorizing tokens...'
     allocate(character(len=32) :: token_colors(num_tokens))
     call colorize_tokens(tokens, num_tokens, token_colors)
-    write(error_unit, '(A)') '[DEBUG highlight_command_line] Building highlighted string...'
 
     ! Build highlighted string
     call build_highlighted_string(input, tokens, num_tokens, token_colors, highlighted)
-    write(error_unit, '(A)') '[DEBUG highlight_command_line] Done building'
 
     ! Don't trim! We need to preserve trailing spaces for correct display
 
