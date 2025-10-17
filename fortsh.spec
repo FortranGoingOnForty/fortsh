@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        5.2.9
+Version:        5.2.10
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,12 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Fri Oct 17 2025 mfw <espadon@outlook.com> - 5.2.10-1
+- Fixed shell hang issues for improved responsiveness
+- Enhanced signal handling and process management
+- Improved readline and executor reliability
+- Shell now hang-free under normal operation
+
 * Fri Oct 17 2025 mfw <espadon@outlook.com> - 5.2.9-1
 - Fixed allocatable array handling and memory management
 - Addressed compiler warnings for cleaner builds
