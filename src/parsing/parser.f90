@@ -10,6 +10,7 @@ module parser
   use glob
   use error_handling
   use performance
+  use shell_options, only: check_nounset
   use iso_fortran_env, only: error_unit, input_unit
   implicit none
 
@@ -1381,6 +1382,16 @@ contains
               if (allocated(var_value) .and. len(var_value) > 0) then
                 result(j:j+len(var_value)-1) = var_value
                 j = j + len(var_value)
+              else
+                ! Variable is not set - check if set -u is enabled
+                if (.not. is_shell_variable_set(shell, trim(var_name))) then
+                  if (check_nounset(shell, trim(var_name))) then
+                    shell%last_exit_status = 1
+                    shell%fatal_expansion_error = .true.
+                    expanded = ''
+                    return
+                  end if
+                end if
               end if
             end if
           end if
