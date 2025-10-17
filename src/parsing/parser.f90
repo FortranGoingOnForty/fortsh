@@ -1362,20 +1362,26 @@ contains
             if (.not. (is_alnum(working_token(i:i)) .or. working_token(i:i) == '_')) exit
             i = i + 1
           end do
-          
+
           var_name = working_token(var_start:i-1)
-          
-          ! Check shell variables first
-          var_value = get_shell_variable(shell, trim(var_name))
-          if (len_trim(var_value) > 0) then
-            result(j:j+len_trim(var_value)-1) = trim(var_value)
-            j = j + len_trim(var_value)
+
+          ! If no valid variable name was found, treat $ as literal
+          if (len_trim(var_name) == 0) then
+            result(j:j) = '$'
+            j = j + 1
           else
-            ! Fall back to environment variables
-            var_value = get_environment_var(trim(var_name))
-            if (allocated(var_value) .and. len(var_value) > 0) then
-              result(j:j+len(var_value)-1) = var_value
-              j = j + len(var_value)
+            ! Check shell variables first
+            var_value = get_shell_variable(shell, trim(var_name))
+            if (len_trim(var_value) > 0) then
+              result(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
+            else
+              ! Fall back to environment variables
+              var_value = get_environment_var(trim(var_name))
+              if (allocated(var_value) .and. len(var_value) > 0) then
+                result(j:j+len(var_value)-1) = var_value
+                j = j + len(var_value)
+              end if
             end if
           end if
         end if

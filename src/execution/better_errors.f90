@@ -4,7 +4,8 @@
 ! ==============================================================================
 module better_errors
   use iso_fortran_env, only: error_unit
-  use system_interface, only: get_environment_var
+  use system_interface, only: get_environment_var, c_isatty
+  use iso_c_binding, only: c_int
   implicit none
   private
 
@@ -31,19 +32,34 @@ contains
     character(len=*), intent(in) :: command
     character(len=:), allocatable :: suggestions(:)
     integer :: num_suggestions, i
+    character(len=10) :: shell_name
 
-    ! Print main error message in red
-    write(error_unit, '(a,a,a,a)') &
-      color_code(COLOR_RED), &
-      "fortsh: Unknown command '", trim(command), "'"
-    write(error_unit, '(a)') color_code(COLOR_RESET)
+    ! Use "sh" for POSIX compliance in non-interactive mode
+    if (stderr_is_tty()) then
+      shell_name = "fortsh"
+    else
+      shell_name = "sh"
+    end if
+
+    ! Print main error message in red (POSIX format)
+    write(error_unit, '(a,a,a,a,a)') &
+      trim(color_code(COLOR_RED)), &
+      trim(shell_name), ": line 1: ", trim(command), ": command not found"
+
+    ! Only write color reset if using colors
+    if (stderr_is_tty()) then
+      write(error_unit, '(a)') trim(color_code(COLOR_RESET))
+    end if
+
+    ! Only show suggestions if stderr is a TTY (interactive mode)
+    if (.not. stderr_is_tty()) return
 
     ! Try to find similar commands
     call suggest_similar_commands(command, suggestions, num_suggestions)
 
     if (num_suggestions > 0) then
       ! Print suggestions
-      write(error_unit, '(a)', advance='no') color_code(COLOR_CYAN)
+      write(error_unit, '(a)', advance='no') trim(color_code(COLOR_CYAN))
       write(error_unit, '(a)', advance='no') "Did you mean"
 
       if (num_suggestions == 1) then
@@ -54,12 +70,12 @@ contains
         write(error_unit, '(a)') ":"
         do i = 1, num_suggestions
           write(error_unit, '(a)', advance='no') "  "
-          write(error_unit, '(a)', advance='no') color_code(COLOR_GREEN)
+          write(error_unit, '(a)', advance='no') trim(color_code(COLOR_GREEN))
           write(error_unit, '(a)', advance='no') trim(suggestions(i))
-          write(error_unit, '(a)') color_code(COLOR_CYAN)
+          write(error_unit, '(a)') trim(color_code(COLOR_CYAN))
         end do
       end if
-      write(error_unit, '(a)') color_code(COLOR_RESET)
+      write(error_unit, '(a)') trim(color_code(COLOR_RESET))
     end if
 
     ! Cleanup
@@ -279,10 +295,27 @@ contains
     deallocate(matrix)
   end function
 
+  ! Check if stderr is a TTY (terminal)
+  function stderr_is_tty() result(is_tty)
+    logical :: is_tty
+    integer(c_int) :: result
+
+    ! error_unit is typically 0 or 2 depending on implementation
+    ! Standard error is file descriptor 2
+    result = c_isatty(int(2, c_int))
+    is_tty = (result /= 0)
+  end function
+
   ! Generate ANSI color code
   function color_code(color) result(code)
     integer, intent(in) :: color
     character(len=16) :: code
+
+    ! Only use colors if stderr is a TTY
+    if (.not. stderr_is_tty()) then
+      code = ''
+      return
+    end if
 
     if (color == COLOR_RESET) then
       code = char(27) // '[0m'
