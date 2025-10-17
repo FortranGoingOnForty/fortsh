@@ -822,6 +822,7 @@ contains
       if (pos > len_trim(working_copy)) exit
 
       ! Found start of token
+      start = pos  ! Initialize start to beginning of token
       token_count = token_count + 1
       in_quotes = .false.
       in_arith = .false.
