@@ -2463,24 +2463,9 @@ contains
       input_state%buffer(input_state%length:input_state%length) = ch
       input_state%cursor_pos = input_state%length
 
-      ! For simple append at end, just output the character directly
-      ! This avoids full redraw for the common case
-      ! Note: We still need to apply syntax highlighting for the new char
-      block
-        character(len=:), allocatable :: highlighted_char
-        character(len=10) :: temp_str
-
-        ! Get the highlighted version of just this character
-        temp_str = ch
-        highlighted_char = highlight_single_char(ch, input_state%buffer(:input_state%length))
-
-        ! Output the highlighted character
-        write(output_unit, '(a)', advance='no') highlighted_char
-        flush(output_unit)
-      end block
-
-      ! Don't mark as dirty yet for simple append - we handled it inline
-      input_state%dirty = .false.
+      ! Mark dirty to trigger full redraw with proper syntax highlighting
+      ! This ensures commands are colored correctly based on validity
+      input_state%dirty = .true.
     else
       ! Insert in middle - shift characters right
       do i = input_state%length, input_state%cursor_pos + 1, -1
@@ -3055,9 +3040,14 @@ contains
         write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
       end do
 
-      ! Move to beginning of line and clear everything from here down (including menu)
+      ! Move to beginning of line, move down one line (to first menu row), then clear menu
       write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
-      write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Cursor down one line
+      write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down (menu only)
+
+      ! Move cursor back up to command line
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+      write(output_unit, '(a)', advance='no') char(13)  ! Back to start of command line
     end if
 
     input_state%in_menu_select = .false.
