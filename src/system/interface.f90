@@ -658,7 +658,7 @@ contains
 
     type(c_ptr) :: pipe_ptr
     character(kind=c_char), target :: buffer(1024)
-    character(len=MAX_TOKEN_LEN*10) :: temp_output
+    character(len=8192) :: temp_output  ! Increased buffer size for more files
     type(c_ptr) :: ret_ptr
     integer :: i, pos
     character(len=256), target :: c_command
@@ -687,12 +687,14 @@ contains
       ! Convert to Fortran string
       do i = 1, 1024
         if (buffer(i) == c_null_char) exit
-        if (buffer(i) /= char(10)) then  ! Skip newlines
-          temp_output(pos:pos) = buffer(i)
-          pos = pos + 1
-        else if (pos > 1 .and. temp_output(pos-1:pos-1) /= ' ') then
-          temp_output(pos:pos) = ' '
-          pos = pos + 1
+        if (pos <= len(temp_output)) then
+          if (buffer(i) /= char(10)) then  ! Skip newlines
+            temp_output(pos:pos) = buffer(i)
+            pos = pos + 1
+          else if (pos > 1 .and. temp_output(pos-1:pos-1) /= ' ') then
+            temp_output(pos:pos) = ' '
+            pos = pos + 1
+          end if
         end if
       end do
     end do

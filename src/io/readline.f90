@@ -59,7 +59,7 @@ module readline
   integer, parameter :: MAX_MENU_ITEM_LEN = 256
   integer, parameter :: MAX_MENU_ITEMS = 20  ! Reduced from 50
   integer, parameter :: MAX_LOCAL_COMPLETIONS = 20  ! Max completions to process locally
-  integer, parameter :: MAX_DIR_ENTRIES = 30  ! Max directory entries (was 100 = 409KB!)
+  integer, parameter :: MAX_DIR_ENTRIES = 200  ! Max directory entries (increased for better completion)
   integer, parameter :: MAX_SCORED_ITEMS = 30  ! Max scored completion items
 
   type :: input_state_t
@@ -1788,7 +1788,7 @@ contains
 
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
     character(len=MAX_LINE_LEN) :: ls_command, ls_output
-    character(len=MAX_LINE_LEN) :: entries(MAX_DIR_ENTRIES)  ! Reduced from 100
+    character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
     integer :: num_entries, i, last_slash_pos
     character(len=MAX_LINE_LEN) :: full_path
     logical :: is_dir
@@ -1846,6 +1846,9 @@ contains
         end if
       end if
     end do
+
+    ! Clean up allocatable array
+    if (allocated(entries)) deallocate(entries)
   end subroutine expand_glob_for_completion
 
   subroutine complete_commands(prefix, completions, num_completions)
@@ -2086,7 +2089,7 @@ contains
     integer, intent(inout) :: num_completions
 
     character(len=MAX_LINE_LEN) :: ls_command, ls_output, expanded_dir
-    character(len=MAX_LINE_LEN) :: entries(MAX_DIR_ENTRIES)  ! Reduced from 100  ! Temp storage for directory entries
+    character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
     character(len=MAX_LINE_LEN) :: full_path, check_path
     character(len=:), allocatable :: home_dir, debug_mode
     ! Use allocatable array to avoid static storage
@@ -2185,8 +2188,9 @@ contains
       completions(num_completions) = scored(j)%text
     end do
 
-    ! Clean up allocatable array
+    ! Clean up allocatable arrays
     if (allocated(scored)) deallocate(scored)
+    if (allocated(entries)) deallocate(entries)
   end subroutine
 
   ! Check if a path is a directory
@@ -2204,37 +2208,71 @@ contains
   ! Parse ls output into individual entries
   subroutine parse_ls_output(output, entries, num_entries)
     character(len=*), intent(in) :: output
-    character(len=MAX_LINE_LEN), intent(out) :: entries(MAX_DIR_ENTRIES)  ! Reduced from 100
+    character(len=MAX_LINE_LEN), allocatable, intent(out) :: entries(:)
     integer, intent(out) :: num_entries
-    
-    integer :: pos, start, output_len
-    
+
+    integer :: pos, start, output_len, count_pass
+
+    output_len = len_trim(output)
+
+    ! First pass: count entries
     num_entries = 0
     pos = 1
-    output_len = len_trim(output)
-    
-    do while (pos <= output_len .and. num_entries < 100)
+    do while (pos <= output_len)
       ! Skip whitespace
       do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
         pos = pos + 1
       end do
-      
+
       if (pos > output_len) exit
-      
+
       start = pos
-      
-      ! Find end of entry (newline or space)
-      do while (pos <= output_len .and. output(pos:pos) /= char(10) .and. output(pos:pos) /= ' ')
+
+      ! Find end of entry (space only, since execute_and_capture converts newlines to spaces)
+      do while (pos <= output_len .and. output(pos:pos) /= ' ')
         pos = pos + 1
       end do
-      
+
       if (pos > start) then
         num_entries = num_entries + 1
-        entries(num_entries) = output(start:pos-1)
       end if
 
       pos = pos + 1
     end do
+
+    ! Allocate array based on actual count
+    if (num_entries > 0) then
+      allocate(entries(num_entries))
+
+      ! Second pass: fill entries
+      count_pass = 0
+      pos = 1
+      do while (pos <= output_len .and. count_pass < num_entries)
+        ! Skip whitespace
+        do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+          pos = pos + 1
+        end do
+
+        if (pos > output_len) exit
+
+        start = pos
+
+        ! Find end of entry
+        do while (pos <= output_len .and. output(pos:pos) /= ' ')
+          pos = pos + 1
+        end do
+
+        if (pos > start) then
+          count_pass = count_pass + 1
+          entries(count_pass) = output(start:pos-1)
+        end if
+
+        pos = pos + 1
+      end do
+    else
+      ! No entries - allocate empty array
+      allocate(entries(0))
+    end if
   end subroutine
 
   subroutine show_completions(completions, num_completions)
@@ -2441,8 +2479,13 @@ contains
         flush(output_unit)
       end block
 
-      ! Don't mark as dirty for simple append - we handled it inline
-      input_state%dirty = .false.
+      ! If autosuggestion changed, we need to redraw to show it
+      if (input_state%suggestion_length > 0) then
+        input_state%dirty = .true.
+      else
+        ! Don't mark as dirty for simple append - we handled it inline
+        input_state%dirty = .false.
+      end if
     else
       ! Insert in middle - shift characters right
       do i = input_state%length, input_state%cursor_pos + 1, -1
@@ -3390,9 +3433,10 @@ contains
       return
     end if
 
-    ! For short patterns (1-2 chars), require prefix match for better UX
+    ! For short patterns (1-3 chars), require prefix match for better UX
     ! This prevents "RE" from matching "parser_enhanced.mod"
-    if (pattern_len <= 2) then
+    ! and "tes" from matching "ast_types.mod"
+    if (pattern_len <= 3) then
       is_prefix_match = .true.
       do i = 1, pattern_len
         if (to_lowercase(pattern(i:i)) /= to_lowercase(candidate(i:i))) then

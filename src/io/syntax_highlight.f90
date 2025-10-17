@@ -127,6 +127,9 @@ contains
     ! Build highlighted string
     call build_highlighted_string(input, tokens, num_tokens, token_colors, highlighted)
 
+    ! Trim the result to remove any padding
+    highlighted = trim(highlighted)
+
     ! Cleanup
     if (allocated(tokens)) deallocate(tokens)
     if (allocated(token_colors)) deallocate(token_colors)
