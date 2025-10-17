@@ -453,10 +453,7 @@ contains
             write(output_unit, '(a)', advance='no') prompt
             if (input_state%length > 0) then
               ! Apply syntax highlighting (safe - doesn't take input_state)
-              write(error_unit, '(A,I0,A,A)') '[DEBUG] About to highlight, length=', input_state%length, &
-                  ' buffer=', trim(input_state%buffer(:input_state%length))
               highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-              write(error_unit, '(A)') '[DEBUG] Highlighting done'
               write(output_unit, '(a)', advance='no') highlighted
 
               ! Display autosuggestion if present (only when cursor is at end)
@@ -3294,9 +3291,7 @@ contains
       flush(output_unit)
     else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
       ! At end of line with suggestion - accept it
-      write(error_unit, '(A)') '[DEBUG] Accepting autosuggestion...'
       call accept_autosuggestion(input_state)
-      write(error_unit, '(A)') '[DEBUG] Autosuggestion accepted, returning'
     end if
   end subroutine
   
@@ -4824,21 +4819,16 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer :: i, new_length
 
-    write(error_unit, '(A,I0,A,I0)') '[DEBUG] accept_autosuggestion called, suggestion_length=', &
-        input_state%suggestion_length, ' current length=', input_state%length
     if (input_state%suggestion_length == 0) return
 
     ! Safety check: ensure we won't overflow
     new_length = input_state%length + input_state%suggestion_length
     if (new_length > MAX_LINE_LEN) then
-      write(error_unit, '(A,I0,A,I0)') '[ERROR] Would overflow buffer! new_length=', new_length, &
-          ' MAX_LINE_LEN=', MAX_LINE_LEN
       input_state%suggestion_length = MAX_LINE_LEN - input_state%length
       if (input_state%suggestion_length < 0) input_state%suggestion_length = 0
       new_length = input_state%length + input_state%suggestion_length
     end if
 
-    write(error_unit, '(A)') '[DEBUG] Appending suggestion to buffer...'
     ! Append suggestion to buffer
     do i = 1, input_state%suggestion_length
       if (input_state%length + i <= MAX_LINE_LEN) then
@@ -4847,13 +4837,11 @@ contains
       end if
     end do
 
-    write(error_unit, '(A)') '[DEBUG] Updating state...'
     input_state%length = new_length
     input_state%cursor_pos = input_state%length
     input_state%suggestion = ''
     input_state%suggestion_length = 0
     input_state%dirty = .true.
-    write(error_unit, '(A,I0)') '[DEBUG] accept_autosuggestion done, new length=', input_state%length
   end subroutine
 
   ! Accept one word from the autosuggestion (for partial acceptance)
