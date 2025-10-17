@@ -956,7 +956,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, num_words, total_tokens
     character(len=:), allocatable :: expanded
-    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
+    character(len=1024), allocatable :: temp_tokens(:)  ! Increased to match split_words length
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
     character(len=1024) :: split_words(30)
     character(len=MAX_TOKEN_LEN) :: word
@@ -1031,7 +1031,7 @@ contains
 
     ! Replace command tokens with expanded ones
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(total_tokens))
+    allocate(character(len=1024) :: cmd%tokens(total_tokens))  ! Match temp_tokens length
     do i = 1, total_tokens
       cmd%tokens(i) = temp_tokens(i)
     end do

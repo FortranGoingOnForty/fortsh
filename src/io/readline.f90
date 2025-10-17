@@ -2479,13 +2479,8 @@ contains
         flush(output_unit)
       end block
 
-      ! If autosuggestion changed, we need to redraw to show it
-      if (input_state%suggestion_length > 0) then
-        input_state%dirty = .true.
-      else
-        ! Don't mark as dirty for simple append - we handled it inline
-        input_state%dirty = .false.
-      end if
+      ! Don't mark as dirty yet for simple append - we handled it inline
+      input_state%dirty = .false.
     else
       ! Insert in middle - shift characters right
       do i = input_state%length, input_state%cursor_pos + 1, -1
@@ -2500,6 +2495,11 @@ contains
 
     ! Update autosuggestion after inserting character
     call update_autosuggestion(input_state)
+
+    ! If autosuggestion was generated, we need to redraw to show it
+    if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
+      input_state%dirty = .true.
+    end if
   end subroutine
 
   subroutine handle_backspace(input_state)
@@ -4788,7 +4788,7 @@ contains
           suggestion_candidate = command_history%lines(i)(input_state%length+1:)
 
           ! Find first newline character
-          newline_pos = 0
+          newline_pos = -1  ! Initialize to -1 to indicate not found
           do j = 1, len_trim(suggestion_candidate)
             if (suggestion_candidate(j:j) == char(10) .or. suggestion_candidate(j:j) == char(13)) then
               newline_pos = j - 1
@@ -4796,11 +4796,14 @@ contains
             end if
           end do
 
-          if (newline_pos >= 0 .and. newline_pos < len_trim(suggestion_candidate)) then
+          if (newline_pos >= 0) then
             ! Found newline - truncate before it (or clear if newline is first char)
             if (newline_pos > 0) then
               input_state%suggestion = suggestion_candidate(:newline_pos)
               input_state%suggestion_length = newline_pos
+              ! DEBUG: Print when suggestion is generated
+              ! write(error_unit, '(A,A,A,I0)') "[DEBUG] Generated suggestion: '", &
+              !       trim(input_state%suggestion), "' length=", input_state%suggestion_length
             else
               ! Newline is first character - no suggestion
               input_state%suggestion = ''

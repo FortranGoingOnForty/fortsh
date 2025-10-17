@@ -1154,7 +1154,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=256) :: pattern, case_value
+    character(len=1024) :: case_value  ! Increased to match condition_cmd length
+    character(len=256) :: pattern
     logical :: pattern_matches
     integer :: i
 
