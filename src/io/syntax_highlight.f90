@@ -10,6 +10,7 @@ module syntax_highlight
 
   ! Public interface
   public :: highlight_command_line
+  public :: highlight_single_char
   public :: is_valid_command
   public :: init_syntax_highlighting
   public :: clear_command_cache
@@ -129,6 +130,43 @@ contains
     ! Cleanup
     if (allocated(tokens)) deallocate(tokens)
     if (allocated(token_colors)) deallocate(token_colors)
+  end function
+
+  ! Highlight a single character based on context
+  ! This is a simplified version for incremental display updates
+  function highlight_single_char(ch, buffer) result(highlighted)
+    character, intent(in) :: ch
+    character(len=*), intent(in) :: buffer
+    character(len=:), allocatable :: highlighted
+
+    character(len=32) :: colored_char
+    integer :: color
+
+    ! Simple heuristics for single character highlighting
+    if (ch == '"' .or. ch == "'") then
+      color = COLOR_STRING
+    else if (ch == '-' .and. (len_trim(buffer) == 0 .or. buffer(len_trim(buffer):len_trim(buffer)) == ' ')) then
+      color = COLOR_OPTION
+    else if (ch == '#') then
+      color = COLOR_COMMENT
+    else if (ch == '$') then
+      color = COLOR_VARIABLE
+    else if (ch == '|' .or. ch == '&' .or. ch == '>' .or. ch == '<' .or. ch == ';') then
+      color = COLOR_OPERATOR
+    else if (ch >= '0' .and. ch <= '9') then
+      color = COLOR_NUMBER
+    else
+      ! For now, just use reset color for regular chars
+      color = COLOR_RESET
+    end if
+
+    ! Build the colored character
+    if (color /= COLOR_RESET) then
+      write(colored_char, '(a,i0,a,a,a)') char(27) // '[', color, 'm', ch, char(27) // '[0m'
+      highlighted = trim(colored_char)
+    else
+      highlighted = ch
+    end if
   end function
 
   ! Tokenize input for syntax highlighting

@@ -49,18 +49,23 @@ contains
     integer, intent(in) :: num_tokens
     character(len=MAX_TOKEN_LEN), allocatable, intent(out) :: expanded_tokens(:)
     integer, intent(out) :: expanded_count
-    
-    character(len=MAX_TOKEN_LEN) :: temp_tokens(MAX_GLOB_MATCHES)
-    integer :: i, j, match_count, total_count
-    character(len=MAX_TOKEN_LEN) :: matches(MAX_GLOB_MATCHES)
+
+    ! Use allocatable arrays to avoid static storage
+    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
+    character(len=MAX_TOKEN_LEN), allocatable :: matches(:)
+    integer :: i, j, match_count, total_count, current_size
     logical :: has_glob_chars
     integer(int64) :: glob_start_time
     
     ! Start performance timing
     call start_timer('glob_expansion', glob_start_time)
-    
+
+    ! Allocate initial arrays
+    allocate(temp_tokens(100))  ! Start with reasonable size
+    allocate(matches(100))
+    current_size = 100
     total_count = 0
-    
+
     do i = 1, num_tokens
       ! Check if token contains unescaped glob characters
       has_glob_chars = has_unescaped_glob_chars(tokens(i))
@@ -68,28 +73,32 @@ contains
       if (has_glob_chars) then
         ! Expand the glob pattern
         call glob_match(tokens(i), matches, match_count)
-        
+
         if (match_count > 0) then
           ! Add matches to result
           do j = 1, match_count
-            if (total_count < MAX_GLOB_MATCHES) then
-              total_count = total_count + 1
-              temp_tokens(total_count) = matches(j)
+            ! Grow array if needed
+            if (total_count >= current_size) then
+              call grow_token_array(temp_tokens, current_size)
             end if
+            total_count = total_count + 1
+            temp_tokens(total_count) = matches(j)
           end do
         else
           ! No matches found - keep original token
-          if (total_count < MAX_GLOB_MATCHES) then
-            total_count = total_count + 1
-            temp_tokens(total_count) = tokens(i)
+          if (total_count >= current_size) then
+            call grow_token_array(temp_tokens, current_size)
           end if
-        end if
-      else
-        ! No glob characters - keep original token
-        if (total_count < MAX_GLOB_MATCHES) then
           total_count = total_count + 1
           temp_tokens(total_count) = tokens(i)
         end if
+      else
+        ! No glob characters - keep original token
+        if (total_count >= current_size) then
+          call grow_token_array(temp_tokens, current_size)
+        end if
+        total_count = total_count + 1
+        temp_tokens(total_count) = tokens(i)
       end if
     end do
     
@@ -110,9 +119,31 @@ contains
     if (allocated(expanded_tokens)) then
       call track_allocation(size(expanded_tokens) * MAX_TOKEN_LEN, 'expanded_tokens')
     end if
-    
+
+    ! Clean up allocatable arrays
+    if (allocated(temp_tokens)) deallocate(temp_tokens)
+    if (allocated(matches)) deallocate(matches)
+
     ! End performance timing
     call end_timer('glob_expansion', glob_start_time, total_glob_time)
+  end subroutine
+
+  ! Helper subroutine to grow token array
+  subroutine grow_token_array(array, current_size)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: array(:)
+    integer, intent(inout) :: current_size
+    character(len=MAX_TOKEN_LEN), allocatable :: new_array(:)
+    integer :: new_size
+
+    new_size = current_size * 2
+    allocate(new_array(new_size))
+
+    ! Copy existing data
+    new_array(1:current_size) = array(1:current_size)
+
+    ! Swap arrays
+    call move_alloc(new_array, array)
+    current_size = new_size
   end subroutine
 
   ! Match a glob pattern against files in current directory

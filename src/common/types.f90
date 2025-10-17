@@ -141,7 +141,7 @@ module shell_types
     character(len=256), allocatable :: for_values(:)  ! parsed for-loop values
     integer :: for_index = 0         ! current index in for loop
     integer :: for_count = 0         ! total count of for loop values
-    character(len=256) :: condition_cmd = ''  ! while condition command
+    character(len=1024) :: condition_cmd = ''  ! while condition command (must match control_flow usage)
     integer :: loop_start_line = 0   ! for loop replay
     ! Loop body buffering for proper iteration
     character(len=1024), allocatable :: loop_body(:)  ! commands in loop body

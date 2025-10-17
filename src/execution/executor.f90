@@ -313,7 +313,7 @@ contains
     integer(int64) :: exec_start_time
     integer :: i
     character(len=2048) :: reconstructed_cmd
-    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
+    character(len=1024), allocatable :: temp_tokens(:)  ! Must match potential expanded length
     type(pipeline_t) :: pipeline
 
     ! Start performance timing
@@ -719,7 +719,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     character(len=MAX_TOKEN_LEN) :: var_name, var_value, token
-    character(len=MAX_TOKEN_LEN) :: array_elements(100)
+    ! Reduced from 100 to 30 elements
+    character(len=MAX_TOKEN_LEN) :: array_elements(30)
     character(len=100) :: index_str
     character(len=:), allocatable :: expanded_value
     integer :: eq_pos, paren_start, paren_end, num_elements, bracket_pos
@@ -955,8 +956,9 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, num_words, total_tokens
     character(len=:), allocatable :: expanded
-    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
-    character(len=1024) :: split_words(100)
+    character(len=1024), allocatable :: temp_tokens(:)  ! Must match split_words length
+    ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
+    character(len=1024) :: split_words(30)
     character(len=MAX_TOKEN_LEN) :: word
     character(len=256) :: ifs_to_use
     integer :: word_count, start_pos, pos, k
@@ -1029,7 +1031,7 @@ contains
 
     ! Replace command tokens with expanded ones
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(total_tokens))
+    allocate(character(len=1024) :: cmd%tokens(total_tokens))  ! Match temp_tokens length to avoid truncation
     do i = 1, total_tokens
       cmd%tokens(i) = temp_tokens(i)
     end do
@@ -1854,7 +1856,8 @@ contains
 
     character(len=256) :: func_name
     character(len=2048) :: reconstructed
-    character(len=1024) :: func_body(100)
+    ! Reduced from 100 to 50 lines to avoid static storage (102KB -> 51KB)
+    character(len=1024) :: func_body(50)
     integer :: body_count, brace_start, brace_end, paren_pos
 
     is_func_def = .false.

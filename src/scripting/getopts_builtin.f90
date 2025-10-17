@@ -16,7 +16,7 @@ contains
     
     character(len=256) :: optstring, optname
     character(len=1024) :: argv_str, current_arg
-    character(len=64) :: optind_str, optarg_str
+    character(len=1024) :: optind_str, optarg_str
     integer :: optind, argc, current_pos, i
     character :: opt_char
     logical :: found_option, requires_arg, silent_mode

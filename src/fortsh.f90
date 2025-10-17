@@ -322,7 +322,8 @@ contains
     character(len=:), allocatable :: expanded_line, history_expanded
     logical :: in_function
     character(len=256) :: func_name
-    character(len=1024) :: func_body(100)  ! Max 100 lines per function
+    ! Reduced from 100 to 50 lines to avoid static storage (102KB -> 51KB)
+    character(len=1024) :: func_body(50)
 
     ! Reset the source flag first
     shell%should_source = .false.

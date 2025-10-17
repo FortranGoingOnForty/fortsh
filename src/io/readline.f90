@@ -6,7 +6,7 @@ module readline
   use shell_types
   use system_interface
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
-  use syntax_highlight, only: highlight_command_line, init_syntax_highlighting
+  use syntax_highlight, only: highlight_command_line, highlight_single_char, init_syntax_highlighting
   use abbreviations, only: try_expand_abbreviation
   use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
@@ -54,6 +54,14 @@ module readline
   integer, parameter :: VI_MODE_INSERT = 1
   integer, parameter :: VI_MODE_COMMAND = 2
 
+  ! Reduced buffer sizes to prevent static storage issues
+  ! Was causing 204KB allocation (50*4096), now only 12.5KB (50*256)
+  integer, parameter :: MAX_MENU_ITEM_LEN = 256
+  integer, parameter :: MAX_MENU_ITEMS = 20  ! Reduced from 50
+  integer, parameter :: MAX_LOCAL_COMPLETIONS = 20  ! Max completions to process locally
+  integer, parameter :: MAX_DIR_ENTRIES = 30  ! Max directory entries (was 100 = 409KB!)
+  integer, parameter :: MAX_SCORED_ITEMS = 30  ! Max scored completion items
+
   type :: input_state_t
     character(len=MAX_LINE_LEN) :: buffer = ''
     character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
@@ -95,8 +103,9 @@ module readline
     integer :: suggestion_length = 0  ! Length of suggestion
 
     ! Menu selection support (zsh/fish-style interactive completion)
+    ! REDUCED SIZE: Was 204KB (50*4096), now only 5KB (20*256) to avoid static storage
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
-    character(len=MAX_LINE_LEN) :: menu_items(50) = ''  ! Completion items for menu
+    character(len=MAX_MENU_ITEM_LEN) :: menu_items(MAX_MENU_ITEMS) = ''  ! Completion items for menu
     integer :: menu_num_items = 0  ! Number of items in menu
     integer :: menu_selection = 1  ! Currently selected item (1-based)
     character(len=MAX_LINE_LEN) :: menu_prefix = ''  ! Command prefix before completion word
@@ -533,7 +542,7 @@ contains
     integer, intent(out) :: iostat
     
     character(len=MAX_LINE_LEN) :: temp_line
-    character(len=MAX_LINE_LEN) :: completions(50)
+    character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     integer :: num_completions, tab_pos
     
     ! Print prompt
@@ -1608,7 +1617,7 @@ contains
   ! Basic tab completion - simplified implementation
   subroutine tab_complete(partial_input, completions, num_completions)
     character(len=*), intent(in) :: partial_input
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)  ! Max 50 completions
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)  ! Max 50 completions
     integer, intent(out) :: num_completions
     
     character(len=MAX_LINE_LEN) :: last_word, dir_path, file_pattern
@@ -1643,12 +1652,12 @@ contains
   ! Enhanced tab completion with programmable completion system integration
   subroutine enhanced_tab_complete(partial_input, completions, num_completions, shell)
     character(len=*), intent(in) :: partial_input
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     type(shell_state_t), intent(inout), optional :: shell
 
     character(len=MAX_LINE_LEN) :: last_word, prefix_part, command_name
-    character(len=256) :: temp_completions(MAX_COMPLETIONS)
+    character(len=256) :: temp_completions(MAX_COMPLETIONS)  ! Must match completion module's expectation
     integer :: last_space_pos, i, first_space_pos, temp_count
     logical :: is_command, used_programmable_completion
     type(completion_spec_t) :: spec
@@ -1736,10 +1745,10 @@ contains
 
   ! Filter completions to only keep directories (entries ending with /)
   subroutine filter_directories_only(completions, num_completions)
-    character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(inout) :: num_completions
 
-    character(len=MAX_LINE_LEN) :: temp_completions(50)
+    character(len=MAX_LINE_LEN) :: temp_completions(MAX_LOCAL_COMPLETIONS)  ! Local temp storage
     integer :: i, new_count, original_count
 
     original_count = num_completions
@@ -1774,12 +1783,12 @@ contains
   ! Expand glob pattern for tab completion using real filesystem
   subroutine expand_glob_for_completion(pattern, completions, num_completions)
     character(len=*), intent(in) :: pattern
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
 
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
     character(len=MAX_LINE_LEN) :: ls_command, ls_output
-    character(len=MAX_LINE_LEN) :: entries(100)
+    character(len=MAX_LINE_LEN) :: entries(MAX_DIR_ENTRIES)  ! Reduced from 100
     integer :: num_entries, i, last_slash_pos
     character(len=MAX_LINE_LEN) :: full_path
     logical :: is_dir
@@ -1841,7 +1850,7 @@ contains
 
   subroutine complete_commands(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     
     character(len=50), parameter :: builtin_commands(19) = [ &
@@ -1861,7 +1870,7 @@ contains
       if (prefix_len == 0 .or. &
           index(trim(builtin_commands(i)), prefix(1:prefix_len)) == 1) then
         num_completions = num_completions + 1
-        if (num_completions <= 50) then
+        if (num_completions <= MAX_LOCAL_COMPLETIONS) then
           completions(num_completions) = trim(builtin_commands(i))
         end if
       end if
@@ -1872,7 +1881,7 @@ contains
 
   subroutine complete_files(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern, current_dir
@@ -1915,7 +1924,7 @@ contains
   ! Enhanced command completion with PATH executable scanning
   subroutine complete_commands_enhanced(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
 
     character(len=50), parameter :: builtin_commands(20) = [ &
@@ -1925,9 +1934,12 @@ contains
       'kill     ', 'wait     ', 'trap     ', 'config   ', &
       'alias    ', 'unalias  ', 'help     ', 'rawtest  ' &
     ]
-    type(scored_completion_t) :: scored(100)  ! Temp storage for scoring
+    ! Use allocatable array to avoid static storage
+    type(scored_completion_t), allocatable :: scored(:)
     integer :: i, num_scored, score
 
+    ! Allocate scored array
+    allocate(scored(100))  ! This should be enough for builtins
     num_completions = 0
     num_scored = 0
 
@@ -1956,11 +1968,14 @@ contains
     do i = 1, num_completions
       completions(i) = scored(i)%text
     end do
+
+    ! Clean up allocatable array
+    if (allocated(scored)) deallocate(scored)
   end subroutine
 
   subroutine add_system_commands(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
-    character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(inout) :: num_completions
 
     character(len=50), parameter :: common_commands(15) = [ &
@@ -2011,7 +2026,7 @@ contains
   ! Enhanced file completion with real filesystem access
   subroutine complete_files_enhanced(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
 
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
@@ -2047,7 +2062,7 @@ contains
     ! Don't add ./ when user is trying to complete dotfiles like .fortshrc
     if (len_trim(file_pattern) == 0) then
       ! Empty pattern - offer . and ..
-      if (num_completions < 50) then
+      if (num_completions < MAX_LOCAL_COMPLETIONS) then
         num_completions = num_completions + 1
         if (trim(dir_path) == '.') then
           completions(num_completions) = './'
@@ -2067,20 +2082,24 @@ contains
   ! Scan directory for matching files and directories (with fuzzy matching)
   subroutine scan_directory(dir_path, pattern, completions, num_completions)
     character(len=*), intent(in) :: dir_path, pattern
-    character(len=MAX_LINE_LEN), intent(inout) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(inout) :: num_completions
 
     character(len=MAX_LINE_LEN) :: ls_command, ls_output, expanded_dir
-    character(len=MAX_LINE_LEN) :: entries(100)  ! Temp storage for directory entries
+    character(len=MAX_LINE_LEN) :: entries(MAX_DIR_ENTRIES)  ! Reduced from 100  ! Temp storage for directory entries
     character(len=MAX_LINE_LEN) :: full_path, check_path
     character(len=:), allocatable :: home_dir, debug_mode
-    type(scored_completion_t) :: scored(100)
+    ! Use allocatable array to avoid static storage
+    type(scored_completion_t), allocatable :: scored(:)
     integer :: num_entries, i, pattern_len, num_scored, score, j
     logical :: is_dir, debug_enabled
 
     ! Check if debug mode is enabled
     debug_mode = get_environment_var('FORTSH_DEBUG_COMPLETION')
     debug_enabled = (allocated(debug_mode) .and. trim(debug_mode) == '1')
+
+    ! Allocate scored array
+    allocate(scored(100))
 
     pattern_len = len_trim(pattern)
 
@@ -2165,6 +2184,9 @@ contains
       num_completions = num_completions + 1
       completions(num_completions) = scored(j)%text
     end do
+
+    ! Clean up allocatable array
+    if (allocated(scored)) deallocate(scored)
   end subroutine
 
   ! Check if a path is a directory
@@ -2182,7 +2204,7 @@ contains
   ! Parse ls output into individual entries
   subroutine parse_ls_output(output, entries, num_entries)
     character(len=*), intent(in) :: output
-    character(len=MAX_LINE_LEN), intent(out) :: entries(100)
+    character(len=MAX_LINE_LEN), intent(out) :: entries(MAX_DIR_ENTRIES)  ! Reduced from 100
     integer, intent(out) :: num_entries
     
     integer :: pos, start, output_len
@@ -2210,13 +2232,13 @@ contains
         num_entries = num_entries + 1
         entries(num_entries) = output(start:pos-1)
       end if
-      
+
       pos = pos + 1
     end do
   end subroutine
 
   subroutine show_completions(completions, num_completions)
-    character(len=MAX_LINE_LEN), intent(in) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(in) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(in) :: num_completions
     integer :: i
     
@@ -2232,7 +2254,7 @@ contains
 
   ! Find common prefix among completions
   function get_common_prefix(completions, num_completions) result(prefix)
-    character(len=MAX_LINE_LEN), intent(in) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(in) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(in) :: num_completions
     character(len=MAX_LINE_LEN) :: prefix
     
@@ -2279,7 +2301,7 @@ contains
   ! Enhanced tab completion that handles partial completion
   subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
     character(len=*), intent(in) :: partial_input
-    character(len=MAX_LINE_LEN), intent(out) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     character(len=*), intent(out) :: completed_line
     logical, intent(out) :: completed
@@ -2402,8 +2424,25 @@ contains
       input_state%length = input_state%length + 1
       input_state%buffer(input_state%length:input_state%length) = ch
       input_state%cursor_pos = input_state%length
-      ! Always trigger highlighting for real-time color updates
-      input_state%dirty = .true.
+
+      ! For simple append at end, just output the character directly
+      ! This avoids full redraw for the common case
+      ! Note: We still need to apply syntax highlighting for the new char
+      block
+        character(len=:), allocatable :: highlighted_char
+        character(len=10) :: temp_str
+
+        ! Get the highlighted version of just this character
+        temp_str = ch
+        highlighted_char = highlight_single_char(ch, input_state%buffer(:input_state%length))
+
+        ! Output the highlighted character
+        write(output_unit, '(a)', advance='no') highlighted_char
+        flush(output_unit)
+      end block
+
+      ! Don't mark as dirty for simple append - we handled it inline
+      input_state%dirty = .false.
     else
       ! Insert in middle - shift characters right
       do i = input_state%length, input_state%cursor_pos + 1, -1
@@ -2412,6 +2451,7 @@ contains
       input_state%cursor_pos = input_state%cursor_pos + 1
       input_state%buffer(input_state%cursor_pos:input_state%cursor_pos) = ch
       input_state%length = input_state%length + 1
+      ! Middle insertion requires full redraw
       input_state%dirty = .true.
     end if
 
@@ -2423,7 +2463,22 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer :: i
 
+    ! Defensive checks for buffer corruption
     if (input_state%cursor_pos <= 0) return
+    if (input_state%length <= 0) return
+    if (input_state%cursor_pos > input_state%length) then
+      ! Cursor beyond buffer - fix it
+      input_state%cursor_pos = input_state%length
+    end if
+    if (input_state%length > MAX_LINE_LEN) then
+      ! Buffer overflow detected - reset to safe state
+      write(error_unit, '(A,I0,A,I0)') '[DEBUG] Buffer overflow in backspace! length=', &
+            input_state%length, ' cursor_pos=', input_state%cursor_pos
+      input_state%length = 0
+      input_state%cursor_pos = 0
+      input_state%dirty = .true.
+      return
+    end if
 
     ! If we're browsing history, exit history mode when editing
     if (input_state%in_history) then
@@ -2433,14 +2488,20 @@ contains
 
     ! Reset completion state when buffer changes
     input_state%completions_shown = .false.
-    
+
     ! If cursor is at end, simple deletion
     if (input_state%cursor_pos >= input_state%length) then
       input_state%length = input_state%length - 1
       input_state%cursor_pos = input_state%cursor_pos - 1
       input_state%buffer(input_state%length+1:input_state%length+1) = ' '
-      ! Always trigger highlighting for real-time color updates
-      input_state%dirty = .true.
+
+      ! For simple backspace at end, just do minimal screen update
+      ! Move cursor back one position and clear character
+      write(output_unit, '(a)', advance='no') char(8) // ' ' // char(8)  ! BS + space + BS
+      flush(output_unit)
+
+      ! Don't mark as dirty - we handled it inline
+      input_state%dirty = .false.
     else
       ! Delete in middle - shift characters left
       do i = input_state%cursor_pos, input_state%length - 1
@@ -2449,6 +2510,7 @@ contains
       input_state%cursor_pos = input_state%cursor_pos - 1
       input_state%length = input_state%length - 1
       input_state%buffer(input_state%length+1:input_state%length+1) = ' '
+      ! Middle deletion requires full redraw
       input_state%dirty = .true.
     end if
 
@@ -2462,7 +2524,7 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer :: tab_num_completions, i, last_space_pos
     logical :: tab_completed, tab_made_progress, tab_buffer_changed
-    character(len=MAX_LINE_LEN) :: tab_completions(50)
+    character(len=MAX_LINE_LEN) :: tab_completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: tab_partial_input
     character(len=MAX_LINE_LEN) :: tab_completed_line
     character(len=MAX_LINE_LEN) :: tab_saved_input
@@ -2504,9 +2566,10 @@ contains
         else
           if (.not. input_state%completions_shown .or. tab_buffer_changed) then
             ! First tab - store completions and draw grid menu
-            input_state%menu_num_items = tab_num_completions
-            do i = 1, tab_num_completions
-              input_state%menu_items(i) = tab_completions(i)
+            input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
+            do i = 1, input_state%menu_num_items
+              ! Truncate to fit menu item buffer
+              input_state%menu_items(i) = tab_completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i))))
             end do
             input_state%menu_selection = 1
             call draw_completion_menu(input_state, .true.)
@@ -2557,9 +2620,10 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. tab_buffer_changed) then
         ! First tab - store completions and draw grid menu
-        input_state%menu_num_items = tab_num_completions
-        do i = 1, tab_num_completions
-          input_state%menu_items(i) = tab_completions(i)
+        input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
+        do i = 1, input_state%menu_num_items
+          ! Truncate to fit menu item buffer
+          input_state%menu_items(i) = tab_completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i))))
         end do
         input_state%menu_selection = 1
         call draw_completion_menu(input_state, .true.)
@@ -2608,7 +2672,7 @@ contains
   subroutine handle_tab_completion(input_state)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: partial_input
-    character(len=MAX_LINE_LEN) :: completions(50)
+    character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_LINE_LEN) :: saved_input
     integer :: num_completions, i
@@ -2659,9 +2723,10 @@ contains
           ! At common prefix already - show available options only if not already shown
           if (.not. input_state%completions_shown .or. buffer_changed) then
             ! Store completions for menu mode and draw once
-            input_state%menu_num_items = num_completions
-            do i = 1, num_completions
-              input_state%menu_items(i) = completions(i)
+            input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
+            do i = 1, input_state%menu_num_items
+              ! Truncate to fit menu item buffer
+          input_state%menu_items(i) = completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(completions(i))))
             end do
             input_state%menu_selection = 1
             call draw_completion_menu(input_state, .true.)
@@ -2682,9 +2747,10 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. buffer_changed) then
         ! First tab - store completions and draw menu
-        input_state%menu_num_items = num_completions
-        do i = 1, num_completions
-          input_state%menu_items(i) = completions(i)
+        input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
+        do i = 1, input_state%menu_num_items
+          ! Truncate to fit menu item buffer
+          input_state%menu_items(i) = completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(completions(i))))
         end do
         input_state%menu_selection = 1
         call draw_completion_menu(input_state, .true.)
@@ -2704,7 +2770,7 @@ contains
 
   subroutine enter_menu_select_mode(input_state, completions, num_completions, current_input)
     type(input_state_t), intent(inout) :: input_state
-    character(len=MAX_LINE_LEN), intent(in) :: completions(50)
+    character(len=MAX_LINE_LEN), intent(in) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(in) :: num_completions
     character(len=*), intent(in) :: current_input
     integer :: i, last_space_pos
@@ -2737,11 +2803,12 @@ contains
 
     ! Store menu items
     input_state%in_menu_select = .true.
-    input_state%menu_num_items = num_completions
+    input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
     input_state%menu_selection = 1  ! Start with first item selected
 
-    do i = 1, num_completions
-      input_state%menu_items(i) = completions(i)
+    do i = 1, input_state%menu_num_items
+      ! Truncate to fit menu item buffer
+      input_state%menu_items(i) = completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(completions(i))))
     end do
 
     ! Find the prefix (everything before the last word being completed)
@@ -4642,6 +4709,17 @@ contains
     character(len=MAX_LINE_LEN) :: current_input
     character(len=MAX_LINE_LEN) :: suggestion_candidate
 
+    ! Defensive check: ensure length and cursor_pos are valid
+    if (input_state%length < 0 .or. input_state%length > MAX_LINE_LEN) then
+      ! Corruption detected - reset to safe state
+      write(error_unit, '(A,I0,A,I0)') '[DEBUG] Buffer corruption detected in autosuggestion! length=', &
+            input_state%length, ' cursor_pos=', input_state%cursor_pos
+      input_state%length = 0
+      input_state%cursor_pos = 0
+      input_state%suggestion = ''
+      input_state%suggestion_length = 0
+      return
+    end if
 
     ! Clear suggestion if buffer is empty or in special modes
     if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
@@ -4650,7 +4728,7 @@ contains
       return
     end if
 
-    ! Get current input
+    ! Get current input (now safe after bounds check)
     current_input = input_state%buffer(:input_state%length)
 
     ! Search history backwards for matching command
