@@ -2377,9 +2377,15 @@ contains
   function recursive_expand_all_braces(input) result(output)
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: output
-    character(len=1024) :: words(100), temp_result
-    integer :: word_count, i, j, out_pos
+    ! Use allocatable array to avoid static storage
+    character(len=1024), allocatable :: words(:)
+    character(len=1024) :: temp_result
+    integer :: word_count, i, j, out_pos, capacity
     character(len=4096) :: final_result
+
+    ! Allocate initial array
+    allocate(words(20))  ! Start with reasonable size
+    capacity = 20
 
     ! Split by spaces
     word_count = 0
@@ -2389,9 +2395,11 @@ contains
       if (input(i:i) == ' ') then
         if (out_pos > 1) then
           word_count = word_count + 1
-          if (word_count <= 100) then
-            words(word_count) = temp_result(:out_pos-1)
+          ! Grow array if needed
+          if (word_count > capacity) then
+            call grow_expansion_array(words, capacity)
           end if
+          words(word_count) = temp_result(:out_pos-1)
           out_pos = 1
         end if
       else
@@ -2402,9 +2410,11 @@ contains
     ! Don't forget last word
     if (out_pos > 1) then
       word_count = word_count + 1
-      if (word_count <= 100) then
-        words(word_count) = temp_result(:out_pos-1)
+      ! Grow array if needed
+      if (word_count > capacity) then
+        call grow_expansion_array(words, capacity)
       end if
+      words(word_count) = temp_result(:out_pos-1)
     end if
 
     ! Recursively expand each word and recombine
@@ -2429,7 +2439,28 @@ contains
     end do
 
     output = trim(final_result)
+
+    ! Clean up allocatable array
+    if (allocated(words)) deallocate(words)
   end function recursive_expand_all_braces
+
+  ! Helper subroutine to grow expansion array
+  subroutine grow_expansion_array(array, current_size)
+    character(len=1024), allocatable, intent(inout) :: array(:)
+    integer, intent(inout) :: current_size
+    character(len=1024), allocatable :: new_array(:)
+    integer :: new_size
+
+    new_size = current_size * 2
+    allocate(new_array(new_size))
+
+    ! Copy existing data
+    new_array(1:current_size) = array(1:current_size)
+
+    ! Swap arrays
+    call move_alloc(new_array, array)
+    current_size = new_size
+  end subroutine
 
   ! Tilde expansion - expands ~ to home directory
   subroutine tilde_expansion(shell, input, output)

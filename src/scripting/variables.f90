@@ -308,7 +308,8 @@ contains
     character(len=*), intent(in) :: input_line
     integer :: eq_pos, bracket_pos, bracket_end, array_index, read_status
     integer :: actual_value_len, i
-    character(len=256) :: var_name, var_value, index_str
+    character(len=256) :: var_name, index_str
+    character(len=1024) :: var_value  ! Must match get_shell_variable return type
     character(len=:), allocatable :: expanded_value
     character(len=1) :: quote_char_temp
 
@@ -406,19 +407,23 @@ contains
   subroutine handle_array_assignment(shell, var_name, array_expr)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: var_name, array_expr
-    character(len=1024) :: values(100)
-    integer :: count, i, start_pos, pos
+    ! Use allocatable array to avoid static storage
+    character(len=1024), allocatable :: values(:)
+    integer :: count, i, start_pos, pos, capacity
     character(len=1024) :: content
     logical :: in_quotes
     
     ! Remove parentheses
     content = array_expr(2:len_trim(array_expr)-1)
-    
+
+    ! Allocate initial array
+    allocate(values(20))  ! Start with reasonable size
+    capacity = 20
     count = 0
     pos = 1
     start_pos = 1
     in_quotes = .false.
-    
+
     ! Parse space-separated values, respecting quotes
     do while (pos <= len_trim(content))
       if (content(pos:pos) == '"' .or. content(pos:pos) == "'") then
@@ -426,14 +431,16 @@ contains
       else if (content(pos:pos) == ' ' .and. .not. in_quotes) then
         if (pos > start_pos) then
           count = count + 1
-          if (count <= 100) then
-            values(count) = content(start_pos:pos-1)
-            ! Remove quotes if present
-            if (len_trim(values(count)) >= 2) then
-              if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
-                  (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
-                values(count) = values(count)(2:len_trim(values(count))-1)
-              end if
+          ! Grow array if needed
+          if (count > capacity) then
+            call grow_string_array(values, capacity)
+          end if
+          values(count) = content(start_pos:pos-1)
+          ! Remove quotes if present
+          if (len_trim(values(count)) >= 2) then
+            if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
+                (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
+              values(count) = values(count)(2:len_trim(values(count))-1)
             end if
           end if
         end if
@@ -445,21 +452,44 @@ contains
     ! Handle last value
     if (start_pos <= len_trim(content)) then
       count = count + 1
-      if (count <= 100) then
-        values(count) = content(start_pos:)
-        ! Remove quotes if present
-        if (len_trim(values(count)) >= 2) then
-          if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
-              (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
-            values(count) = values(count)(2:len_trim(values(count))-1)
-          end if
+      ! Grow array if needed
+      if (count > capacity) then
+        call grow_string_array(values, capacity)
+      end if
+      values(count) = content(start_pos:)
+      ! Remove quotes if present
+      if (len_trim(values(count)) >= 2) then
+        if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
+            (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
+          values(count) = values(count)(2:len_trim(values(count))-1)
         end if
       end if
     end if
     
     if (count > 0) then
-      call set_array_variable(shell, var_name, values, count)
+      call set_array_variable(shell, var_name, values(1:count), count)
     end if
+
+    ! Clean up allocatable array
+    if (allocated(values)) deallocate(values)
+  end subroutine
+
+  ! Helper subroutine to grow string array
+  subroutine grow_string_array(array, current_size)
+    character(len=1024), allocatable, intent(inout) :: array(:)
+    integer, intent(inout) :: current_size
+    character(len=1024), allocatable :: new_array(:)
+    integer :: new_size
+
+    new_size = current_size * 2
+    allocate(new_array(new_size))
+
+    ! Copy existing data
+    new_array(1:current_size) = array(1:current_size)
+
+    ! Swap arrays
+    call move_alloc(new_array, array)
+    current_size = new_size
   end subroutine
 
   subroutine simple_expand_variables(input, expanded, shell)
@@ -469,8 +499,8 @@ contains
     
     character(len=2048) :: result
     integer :: i, j, var_start, brace_end
-    character(len=256) :: var_name, expansion_result
-    character(len=1024) :: var_value
+    character(len=256) :: var_name
+    character(len=1024) :: expansion_result, var_value  ! Must match get_shell_variable return type
     character(len=:), allocatable :: env_value
     
     result = ''
@@ -936,7 +966,8 @@ contains
     character(len=*), intent(out) :: result
     type(shell_state_t), intent(inout) :: shell
     
-    character(len=256) :: param_name, default_value, var_value
+    character(len=256) :: param_name, default_value
+    character(len=1024) :: var_value  ! Must match get_shell_variable return type
     integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
     integer :: percent_pos, hash_pos, percent2_pos, hash2_pos
     logical :: has_colon

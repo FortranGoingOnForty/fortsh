@@ -142,24 +142,29 @@ contains
     logical, intent(in) :: expand_vars, strip_tabs
     character(len=*), intent(inout) :: cmd_line
     integer, intent(in) :: pos
-    
-    character(len=MAX_HEREDOC_LENGTH) :: doc_lines(MAX_HEREDOC_LINES)
+
+    ! Use allocatable array to avoid static storage (was 4MB!)
+    character(len=MAX_HEREDOC_LENGTH), allocatable :: doc_lines(:)
     character(len=MAX_HEREDOC_LENGTH) :: line, processed_line
     character(len=1024) :: temp_file
-    integer :: num_lines, i
+    integer :: num_lines, i, capacity
     logical :: found_delimiter
     
+    ! Allocate initial array
+    allocate(doc_lines(20))  ! Start with reasonable size
+    capacity = 20
     num_lines = 0
     found_delimiter = .false.
-    
+
     write(output_unit, '(a)', advance='no') '> '
-    
+
     ! Read lines until we find the delimiter
-    do while (num_lines < MAX_HEREDOC_LINES)
+    do while (.true.)  ! Remove MAX_HEREDOC_LINES limit
       read(input_unit, '(a)', iostat=i) line
       if (i /= 0) then
         write(error_unit, '(a)') 'heredoc: unexpected end of input'
         shell%last_exit_status = 1
+        if (allocated(doc_lines)) deallocate(doc_lines)
         return
       end if
       
@@ -178,27 +183,51 @@ contains
         found_delimiter = .true.
         exit
       end if
-      
+
       num_lines = num_lines + 1
-      doc_lines(num_lines) = line
-      
-      ! Show continuation prompt
-      if (num_lines < MAX_HEREDOC_LINES) then
-        write(output_unit, '(a)', advance='no') '> '
+      ! Grow array if needed
+      if (num_lines > capacity) then
+        call grow_heredoc_array(doc_lines, capacity)
       end if
+      doc_lines(num_lines) = line
+
+      ! Show continuation prompt
+      write(output_unit, '(a)', advance='no') '> '
     end do
     
     if (.not. found_delimiter) then
       write(error_unit, '(a,a,a)') 'heredoc: delimiter "', trim(delimiter), '" not found'
       shell%last_exit_status = 1
+      if (allocated(doc_lines)) deallocate(doc_lines)
       return
     end if
     
     ! Process the collected lines
-    call process_heredoc_lines(shell, doc_lines, num_lines, expand_vars, strip_tabs, temp_file)
-    
+    call process_heredoc_lines(shell, doc_lines(1:num_lines), num_lines, expand_vars, strip_tabs, temp_file)
+
+    ! Clean up allocatable array
+    if (allocated(doc_lines)) deallocate(doc_lines)
+
     ! Replace the heredoc part in command line with file redirection
     cmd_line = cmd_line(1:pos-1) // ' < ' // trim(temp_file)
+  end subroutine
+
+  ! Helper subroutine to grow heredoc array
+  subroutine grow_heredoc_array(array, current_size)
+    character(len=MAX_HEREDOC_LENGTH), allocatable, intent(inout) :: array(:)
+    integer, intent(inout) :: current_size
+    character(len=MAX_HEREDOC_LENGTH), allocatable :: new_array(:)
+    integer :: new_size
+
+    new_size = current_size * 2
+    allocate(new_array(new_size))
+
+    ! Copy existing data
+    new_array(1:current_size) = array(1:current_size)
+
+    ! Swap arrays
+    call move_alloc(new_array, array)
+    current_size = new_size
   end subroutine
 
   subroutine process_heredoc_lines(shell, lines, num_lines, expand_vars, strip_tabs, temp_file)
@@ -248,7 +277,8 @@ contains
     
     character(len=len(input_string)) :: work_string
     integer :: pos, var_start, var_end
-    character(len=256) :: var_name, var_value
+    character(len=256) :: var_name
+    character(len=1024) :: var_value
     
     work_string = input_string
     expanded_string = ''

@@ -12,9 +12,10 @@ module completion
   ! variables module will be used in specific subroutines
 
   ! Maximum number of completion specifications
-  integer, parameter :: MAX_COMPLETION_SPECS = 100
-  integer, parameter :: MAX_WORD_LIST = 1000
-  integer, parameter :: MAX_COMPLETIONS = 1000
+  ! REDUCED to avoid static storage (was 100 specs * 256KB = 25.6MB!)
+  integer, parameter :: MAX_COMPLETION_SPECS = 20   ! 20 specs max (was 100)
+  integer, parameter :: MAX_WORD_LIST = 50          ! 50 words per spec (was 1000!)
+  integer, parameter :: MAX_COMPLETIONS = 50        ! 50 completions (was 1000!)
 
   ! Completion specification type
   type :: completion_spec_t

@@ -607,7 +607,7 @@ contains
     character(len=*), intent(in) :: operand
     character(len=*), intent(out) :: expanded
 
-    character(len=256) :: temp
+    character(len=1024) :: temp  ! Must match get_shell_variable return type
     integer :: temp_len
 
     ! Simple variable expansion for test operands
