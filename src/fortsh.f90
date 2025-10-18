@@ -118,6 +118,14 @@ program fortran_shell
       end if
     end if
 
+    ! Process any sourced files queued by the command
+    if (shell%should_source) then
+      call process_source_file(shell)
+    end if
+
+    ! Execute EXIT trap if one is set (before exiting)
+    call execute_trap_for_signal(shell, 0)  ! 0 is TRAP_EXIT
+
     ! Exit with last command's exit status
     call c_exit(shell%last_exit_status)
   end if
@@ -127,6 +135,9 @@ program fortran_shell
     shell%source_file = script_file
     shell%should_source = .true.
     call process_source_file(shell)
+
+    ! Execute EXIT trap if one is set (before exiting)
+    call execute_trap_for_signal(shell, 0)  ! 0 is TRAP_EXIT
 
     ! Exit with last command's exit status (don't print Goodbye for scripts)
     if (perf_monitoring_enabled) then

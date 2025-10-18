@@ -71,6 +71,10 @@ contains
         if (shell%variables(i)%readonly) then
           write(error_unit, '(a)') 'sh: line 1: ' // trim(name) // ': readonly variable'
           shell%last_exit_status = 1
+          ! POSIX: In non-interactive shells, stop execution after readonly violation
+          if (.not. shell%is_interactive) then
+            shell%running = .false.
+          end if
           return
         end if
         shell%variables(i)%value = value
