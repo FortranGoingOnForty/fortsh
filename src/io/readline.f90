@@ -20,6 +20,7 @@ module readline
   integer, parameter :: KEY_TAB = 9
   integer, parameter :: KEY_CTRL_C = 3
   integer, parameter :: KEY_CTRL_D = 4
+  integer, parameter :: KEY_CTRL_X = 24   ! Process kill mode
   integer, parameter :: KEY_CTRL_A = 1    ! Home (beginning of line)
   integer, parameter :: KEY_CTRL_E = 5    ! End (end of line)
   integer, parameter :: KEY_CTRL_K = 11   ! Kill to end of line
@@ -112,6 +113,12 @@ module readline
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
     character(len=MAX_LINE_LEN) :: menu_prompt = ''  ! Prompt when in menu mode (for live preview)
     logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
+
+    ! Process kill mode support (Ctrl-X)
+    logical :: in_process_kill_mode = .false.  ! Currently in process kill mode
+    logical :: in_signal_input = .false.  ! Entering signal to send
+    integer :: selected_pid = 0  ! PID of selected process
+    character(len=256) :: selected_process_name = ''  ! Name of selected process
   end type input_state_t
 
   type :: history_t
@@ -244,7 +251,21 @@ contains
         select case(char_code)
         case(KEY_ENTER)
           ! Enter - accept menu selection, finish input, or accept search
-          if (input_state%in_menu_select) then
+          if (input_state%in_signal_input) then
+            ! Send signal to selected process
+            write(output_unit, '()')  ! New line
+            call send_signal_to_process(input_state)
+            ! Exit signal mode and return to normal prompt
+            input_state%in_signal_input = .false.
+            input_state%in_process_kill_mode = .false.
+            input_state%buffer = ''
+            input_state%length = 0
+            input_state%cursor_pos = 0
+            done = .true.
+          else if (input_state%in_process_kill_mode .and. input_state%in_menu_select) then
+            ! Select process from menu
+            call handle_process_selection(input_state)
+          else if (input_state%in_menu_select) then
             call handle_menu_navigation(input_state, KEY_ENTER, done)
             ! If menu selection was accepted, output newline
             if (done) then
@@ -285,10 +306,28 @@ contains
           input_state%cursor_pos = 0
           done = .true.
 
+        case(KEY_CTRL_X)
+          ! Ctrl+X - Enter process kill mode
+          if (.not. input_state%in_process_kill_mode) then
+            call enter_process_kill_mode(input_state)
+          end if
+
         case(KEY_BACKSPACE)
           ! Backspace
-          if (input_state%in_search) then
-            call search_backspace(input_state, prompt)
+          if (input_state%in_signal_input) then
+            ! For signal mode, delete last char and update display
+            if (input_state%length > 0) then
+              input_state%length = input_state%length - 1
+              input_state%cursor_pos = input_state%length
+              call update_signal_display(input_state)
+            end if
+          else if (input_state%in_search) then
+            ! For search mode, delete last char and redraw
+            if (input_state%length > 0) then
+              input_state%length = input_state%length - 1
+              input_state%cursor_pos = input_state%length
+              input_state%dirty = .true.
+            end if
           else
             call handle_backspace(input_state)
           end if
@@ -384,7 +423,10 @@ contains
 
         case(32:126)
           ! Regular printable characters
-          if (input_state%in_menu_select) then
+          if (input_state%in_signal_input) then
+            ! Handle signal input for process kill
+            call handle_signal_input(input_state, ch)
+          else if (input_state%in_menu_select) then
             ! Exit menu mode and process character normally
             call exit_menu_select_mode(input_state)
             call insert_char(input_state, ch)
@@ -2935,9 +2977,12 @@ contains
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
         end if
 
-        ! Add spacing between columns
+        ! Pad to column width for alignment (except last column in row)
         if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
-          write(output_unit, '(a)', advance='no') '  '
+          ! Pad with spaces to reach full column width
+          do i = len_trim(input_state%menu_items(item_idx)) + 1, cols_per_item
+            write(output_unit, '(a)', advance='no') ' '
+          end do
         end if
 
         item_idx = item_idx + 1
@@ -3197,6 +3242,341 @@ contains
     write(output_unit, '(a)', advance='no') char(13)
 
     flush(output_unit)
+  end subroutine
+
+  ! ===========================================================================
+  ! Process Kill Mode (Ctrl-X quick process termination)
+  ! ===========================================================================
+
+  subroutine enter_process_kill_mode(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: processes(MAX_MENU_ITEMS)
+    integer :: pids(MAX_MENU_ITEMS)
+    integer :: num_processes, i
+
+    ! Get process list
+    call get_process_list(processes, pids, num_processes)
+
+    if (num_processes == 0) then
+      write(output_unit, '(a)') ''
+      write(output_unit, '(a)') 'No processes found.'
+      return
+    end if
+
+    ! Clear the current line
+    write(output_unit, '(a)', advance='no') char(13)  ! CR
+    write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear line
+
+    ! Enter process kill mode
+    input_state%in_process_kill_mode = .true.
+    input_state%in_menu_select = .true.  ! Reuse menu selection infrastructure
+    input_state%menu_num_items = num_processes
+
+    ! Store process info in menu items (format: "PID: process_name")
+    do i = 1, num_processes
+      write(input_state%menu_items(i), '(i8,a,a)') pids(i), ': ', trim(processes(i))
+    end do
+
+    ! Store PIDs for later use (we'll extract from menu_items when needed)
+    input_state%menu_selection = 1
+
+    ! Draw the process menu
+    write(output_unit, '(a)') 'Select process to signal (arrow keys to navigate, Enter to select, ESC to cancel):'
+    call draw_completion_menu(input_state, .true.)
+  end subroutine
+
+  subroutine get_process_list(processes, pids, num_processes)
+    character(len=MAX_LINE_LEN), intent(out) :: processes(MAX_MENU_ITEMS)
+    integer, intent(out) :: pids(MAX_MENU_ITEMS)
+    integer, intent(out) :: num_processes
+
+    integer :: unit, iostat, pid, i
+    character(len=512) :: line, cmd_name, username
+    character(len=32) :: pid_str
+    integer :: stat
+
+    num_processes = 0
+
+    ! Get current username for filtering
+    call get_environment_variable('USER', username, status=stat)
+    if (stat /= 0) then
+      username = ''  ! Fall back to showing all processes if USER not set
+    end if
+
+    ! Use ps command to get process list for current user
+    ! -u USER: processes for current user only
+    ! -o pid,comm: output PID and command name
+    ! --no-headers: no headers
+    open(newunit=unit, file='/tmp/fortsh_procs.tmp', status='replace', &
+         action='write', iostat=iostat)
+    if (iostat /= 0) return
+    close(unit)
+
+    ! Execute ps and capture output - filter to current user
+    if (len_trim(username) > 0) then
+      call execute_command_line('ps -u ' // trim(username) // &
+                               ' -o pid,comm --no-headers > /tmp/fortsh_procs.tmp 2>/dev/null', &
+                               exitstat=iostat)
+    else
+      ! Fallback: show all processes if no USER env var
+      call execute_command_line('ps -eo pid,comm --no-headers > /tmp/fortsh_procs.tmp 2>/dev/null', &
+                               exitstat=iostat)
+    end if
+
+    if (iostat /= 0) then
+      ! Try BSD-style ps (for macOS)
+      if (len_trim(username) > 0) then
+        call execute_command_line('ps -u ' // trim(username) // &
+                                 ' -o pid,comm > /tmp/fortsh_procs.tmp 2>/dev/null', &
+                                 exitstat=iostat)
+      else
+        call execute_command_line('ps -ax -o pid,comm > /tmp/fortsh_procs.tmp 2>/dev/null', &
+                                 exitstat=iostat)
+      end if
+    end if
+
+    if (iostat == 0) then
+      ! Read the process list
+      open(newunit=unit, file='/tmp/fortsh_procs.tmp', status='old', &
+           action='read', iostat=iostat)
+
+      if (iostat == 0) then
+        ! Skip header if BSD-style (first line contains PID)
+        read(unit, '(a)', iostat=iostat) line
+        if (iostat == 0 .and. index(line, 'PID') > 0) then
+          ! This was a header, skip it
+        else if (iostat == 0) then
+          ! Not a header, process it
+          read(line, *, iostat=iostat) pid, cmd_name
+          if (iostat == 0 .and. num_processes < MAX_MENU_ITEMS) then
+            num_processes = num_processes + 1
+            pids(num_processes) = pid
+            processes(num_processes) = trim(cmd_name)
+          end if
+        end if
+
+        ! Read remaining lines
+        do while (iostat == 0 .and. num_processes < MAX_MENU_ITEMS)
+          read(unit, '(a)', iostat=iostat) line
+          if (iostat == 0 .and. len_trim(line) > 0) then
+            ! Parse PID and command
+            read(line, *, iostat=iostat) pid, cmd_name
+            if (iostat == 0) then
+              num_processes = num_processes + 1
+              pids(num_processes) = pid
+              processes(num_processes) = trim(cmd_name)
+            end if
+          end if
+        end do
+
+        close(unit)
+      end if
+    end if
+
+    ! Clean up temp file
+    call execute_command_line('rm -f /tmp/fortsh_procs.tmp 2>/dev/null')
+  end subroutine
+
+  subroutine handle_process_selection(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=32) :: pid_str
+    integer :: colon_pos, iostat
+
+    ! Extract PID from selected menu item (format: "PID: process_name")
+    colon_pos = index(input_state%menu_items(input_state%menu_selection), ':')
+    if (colon_pos > 0) then
+      pid_str = input_state%menu_items(input_state%menu_selection)(:colon_pos-1)
+      read(pid_str, *, iostat=iostat) input_state%selected_pid
+
+      if (iostat == 0) then
+        ! Store process name
+        input_state%selected_process_name = &
+          input_state%menu_items(input_state%menu_selection)(colon_pos+2:)
+
+        ! Clear menu and enter signal input mode
+        call exit_menu_select_mode(input_state)
+
+        ! Enter signal input mode - like reverse-i-search
+        input_state%in_process_kill_mode = .true.
+        input_state%in_signal_input = .true.
+
+        ! Clear the buffer for signal input
+        input_state%buffer = ''
+        input_state%length = 0
+        input_state%cursor_pos = 0
+
+        ! Clear dirty flag set by exit_menu_select_mode
+        ! We handle our own display, don't want normal redraw
+        input_state%dirty = .false.
+
+        ! Display the signal prompt (like reverse-i-search display)
+        call update_signal_display(input_state)
+      end if
+    end if
+  end subroutine
+
+  subroutine update_signal_display(input_state)
+    type(input_state_t), intent(in) :: input_state
+    character(len=512) :: signal_prompt
+
+    ! Build signal prompt: (signal: PID 1234 firefox):
+    write(signal_prompt, '(a,i0,a,a,a)') '(signal: PID ', input_state%selected_pid, ' ', &
+          trim(input_state%selected_process_name), '): '
+
+    ! Clear line and redraw with signal prompt
+    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
+    write(output_unit, '(a)', advance='no') trim(signal_prompt)
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+    end if
+    flush(output_unit)
+  end subroutine
+
+  subroutine handle_signal_input(input_state, ch)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=1), intent(in) :: ch
+
+    ! Add character to buffer directly (like search mode does)
+    ! Don't use insert_char() to avoid setting dirty flag
+    if (input_state%length < MAX_LINE_LEN) then
+      input_state%length = input_state%length + 1
+      input_state%buffer(input_state%length:input_state%length) = ch
+      input_state%cursor_pos = input_state%length
+    end if
+
+    ! Update the signal display (inline prompt like reverse-i-search)
+    call update_signal_display(input_state)
+  end subroutine
+
+  subroutine send_signal_to_process(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: signal_num, iostat, result
+    character(len=MAX_LINE_LEN) :: signal_str
+    interface
+      function c_kill(pid, sig) bind(C, name="kill")
+        use iso_c_binding
+        integer(c_int), value :: pid, sig
+        integer(c_int) :: c_kill
+      end function c_kill
+    end interface
+
+    ! Parse signal from buffer (can be number or SIG<name>)
+    signal_str = input_state%buffer(:input_state%length)
+
+    ! Try to parse as number first
+    read(signal_str, *, iostat=iostat) signal_num
+
+    if (iostat /= 0) then
+      ! Try to parse as signal name
+      call parse_signal_name(signal_str, signal_num)
+    end if
+
+    if (signal_num > 0) then
+      ! Send the signal
+      result = c_kill(input_state%selected_pid, signal_num)
+
+      if (result == 0) then
+        ! Success - green
+        write(output_unit, '(a)', advance='no') char(27) // '[1;32m'  ! Bold green
+        write(output_unit, '(a)', advance='no') ' ✓ '
+        write(output_unit, '(a)', advance='no') char(27) // '[0m'
+        write(output_unit, '(a,i0,a,i0)') 'Sent signal ', signal_num, &
+          ' to PID ', input_state%selected_pid
+      else
+        ! Failure - red
+        write(output_unit, '(a)', advance='no') char(27) // '[1;31m'  ! Bold red
+        write(output_unit, '(a)', advance='no') ' ✗ '
+        write(output_unit, '(a)', advance='no') char(27) // '[0m'
+        write(output_unit, '(a,i0,a,i0)') 'Failed to send signal ', signal_num, &
+          ' to PID ', input_state%selected_pid
+        write(output_unit, '(a)', advance='no') char(27) // '[33m'    ! Yellow
+        write(output_unit, '(a)') ' (permission denied or process not found)'
+        write(output_unit, '(a)', advance='no') char(27) // '[0m'
+      end if
+    else
+      ! Invalid signal - red
+      write(output_unit, '(a)', advance='no') char(27) // '[1;31m'  ! Bold red
+      write(output_unit, '(a)', advance='no') ' ✗ '
+      write(output_unit, '(a)', advance='no') char(27) // '[0m'
+      write(output_unit, '(a)', advance='no') 'Invalid signal: '
+      write(output_unit, '(a)', advance='no') char(27) // '[33m'    ! Yellow
+      write(output_unit, '(a)', advance='no') trim(signal_str)
+      write(output_unit, '(a)', advance='no') char(27) // '[0m'
+      write(output_unit, '(a)') ' (use number or SIGTERM, SIGKILL, etc.)'
+    end if
+
+    ! Don't set dirty - we're exiting readline, caller will handle prompt
+    ! Cleanup is done in Enter key handler
+  end subroutine
+
+  subroutine parse_signal_name(name, signal_num)
+    character(len=*), intent(in) :: name
+    integer, intent(out) :: signal_num
+    character(len=32) :: upper_name
+    integer :: i
+
+    ! Convert to uppercase
+    upper_name = name
+    do i = 1, len_trim(upper_name)
+      if (upper_name(i:i) >= 'a' .and. upper_name(i:i) <= 'z') then
+        upper_name(i:i) = char(iachar(upper_name(i:i)) - 32)
+      end if
+    end do
+
+    ! Remove SIG prefix if present
+    if (upper_name(1:3) == 'SIG') then
+      upper_name = upper_name(4:)
+    end if
+
+    ! Map common signal names to numbers
+    select case(trim(upper_name))
+    case('HUP', 'SIGHUP')
+      signal_num = 1
+    case('INT', 'SIGINT')
+      signal_num = 2
+    case('QUIT', 'SIGQUIT')
+      signal_num = 3
+    case('ILL', 'SIGILL')
+      signal_num = 4
+    case('TRAP', 'SIGTRAP')
+      signal_num = 5
+    case('ABRT', 'SIGABRT')
+      signal_num = 6
+    case('BUS', 'SIGBUS')
+      signal_num = 7
+    case('FPE', 'SIGFPE')
+      signal_num = 8
+    case('KILL', 'SIGKILL')
+      signal_num = 9
+    case('USR1', 'SIGUSR1')
+      signal_num = 10
+    case('SEGV', 'SIGSEGV')
+      signal_num = 11
+    case('USR2', 'SIGUSR2')
+      signal_num = 12
+    case('PIPE', 'SIGPIPE')
+      signal_num = 13
+    case('ALRM', 'SIGALRM')
+      signal_num = 14
+    case('TERM', 'SIGTERM')
+      signal_num = 15
+    case('STKFLT', 'SIGSTKFLT')
+      signal_num = 16
+    case('CHLD', 'SIGCHLD')
+      signal_num = 17
+    case('CONT', 'SIGCONT')
+      signal_num = 18
+    case('STOP', 'SIGSTOP')
+      signal_num = 19
+    case('TSTP', 'SIGTSTP')
+      signal_num = 20
+    case('TTIN', 'SIGTTIN')
+      signal_num = 21
+    case('TTOU', 'SIGTTOU')
+      signal_num = 22
+    case default
+      signal_num = -1  ! Invalid signal
+    end select
   end subroutine
 
   subroutine handle_escape_sequence(input_state, done)
