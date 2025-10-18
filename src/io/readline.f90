@@ -3192,7 +3192,9 @@ contains
   subroutine update_live_preview(input_state)
     type(input_state_t), intent(in) :: input_state
     integer :: i, term_rows, term_cols, cols_per_item, items_per_row, num_menu_rows
+    integer :: prompt_len
     character(len=MAX_LINE_LEN) :: preview_line
+    character(len=:), allocatable :: highlighted_preview
     logical :: success
 
     ! Calculate menu layout to know how many lines to navigate
@@ -3230,8 +3232,20 @@ contains
     ! Clear the entire line
     write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
 
-    ! Redraw: prompt + preview
-    write(output_unit, '(a)', advance='no') trim(input_state%menu_prompt) // trim(preview_line)
+    ! Apply syntax highlighting to preview
+    highlighted_preview = highlight_command_line(trim(preview_line))
+
+    ! Calculate prompt length including trailing space if present
+    prompt_len = len_trim(input_state%menu_prompt)
+    if (prompt_len < len(input_state%menu_prompt)) then
+      if (input_state%menu_prompt(prompt_len+1:prompt_len+1) == ' ') then
+        prompt_len = prompt_len + 1  ! Include one trailing space
+      end if
+    end if
+
+    ! Redraw: prompt + highlighted preview
+    write(output_unit, '(a)', advance='no') input_state%menu_prompt(:prompt_len)
+    write(output_unit, '(a)', advance='no') highlighted_preview
 
     ! Move cursor back down to menu
     do i = 1, num_menu_rows + 1
