@@ -33,6 +33,7 @@ module readline
   integer, parameter :: KEY_CTRL_R = 18   ! Reverse-i-search
   integer, parameter :: KEY_CTRL_S = 19   ! Forward-i-search
   integer, parameter :: KEY_CTRL_G = 7    ! Cancel (alternate to Ctrl+C)
+  integer, parameter :: KEY_CTRL_H = 8    ! FZF history browser
   integer, parameter :: KEY_CTRL_T = 20   ! Transpose characters
   integer, parameter :: KEY_ESC = 27
   integer, parameter :: KEY_UP = 65
@@ -417,6 +418,10 @@ contains
             input_state%cursor_pos = 0
             done = .true.
           end if
+
+        case(KEY_CTRL_H)
+          ! FZF history browser - search and insert from history
+          call launch_fzf_history_browser(input_state, prompt)
 
         case(KEY_CTRL_T)
           ! Transpose characters (swap current char with previous)
@@ -5317,12 +5322,12 @@ contains
       preview_cmd = 'head -n 500 {}'
     end if
 
-    ! Build fzf command with options
-    write(fzf_cmd, '(a)') 'fzf --height=40% --reverse --border ' // &
+    ! Build fzf command with options (including multi-select)
+    write(fzf_cmd, '(a)') 'fzf --multi --height=40% --reverse --border ' // &
           '--preview=''' // trim(preview_cmd) // ''' ' // &
           '--preview-window=right:60%:wrap ' // &
           '--bind=''ctrl-/:toggle-preview'' ' // &
-          '--header=''Ctrl-F: File Browser | Ctrl-/: Toggle Preview | ESC: Cancel'' ' // &
+          '--header=''TAB: Multi-select | Ctrl-/: Toggle Preview | ESC: Cancel'' ' // &
           '> /tmp/fortsh_fzf_selection.tmp 2>/dev/null'
 
     ! Clear screen and show fzf
@@ -5333,20 +5338,41 @@ contains
     ! Execute fzf
     call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
 
-    ! Read selection if fzf exited successfully
+    ! Read selection(s) if fzf exited successfully (supports multi-select)
     if (exit_status == 0) then
       inquire(file='/tmp/fortsh_fzf_selection.tmp', exist=file_exists)
       if (file_exists) then
         open(newunit=unit, file='/tmp/fortsh_fzf_selection.tmp', &
              status='old', action='read', iostat=iostat)
         if (iostat == 0) then
-          read(unit, '(a)', iostat=iostat) selected_path
-          close(unit)
+          block
+            character(len=1024) :: line, combined_selection
+            logical :: first_line
+            first_line = .true.
+            combined_selection = ''
 
-          if (iostat == 0 .and. len_trim(selected_path) > 0) then
-            ! Insert selected path at cursor position
-            call insert_string_at_cursor(input_state, trim(selected_path))
-          end if
+            ! Read all lines (one per selected file)
+            do
+              read(unit, '(a)', iostat=iostat) line
+              if (iostat /= 0) exit
+
+              if (len_trim(line) > 0) then
+                if (first_line) then
+                  combined_selection = trim(line)
+                  first_line = .false.
+                else
+                  ! Add space between multiple selections
+                  combined_selection = trim(combined_selection) // ' ' // trim(line)
+                end if
+              end if
+            end do
+            close(unit)
+
+            ! Insert combined selections at cursor position
+            if (len_trim(combined_selection) > 0) then
+              call insert_string_at_cursor(input_state, trim(combined_selection))
+            end if
+          end block
         end if
         ! Clean up temp file
         call execute_command_line('rm -f /tmp/fortsh_fzf_selection.tmp 2>/dev/null')
@@ -5372,6 +5398,89 @@ contains
           end do
         end block
       end if
+    end if
+    flush(output_unit)
+
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine launch_fzf_history_browser(input_state, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
+    character(len=1024) :: fzf_cmd, selected_cmd, history_file
+    integer :: unit, iostat, exit_status
+    logical :: file_exists
+
+    ! Check if fzf is installed
+    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    if (exit_status /= 0) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: fzf is not installed. Please install fzf first.'
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Get history file path
+    call get_environment_variable('HOME', history_file)
+    history_file = trim(history_file) // '/.fortsh_history'
+
+    ! Check if history file exists
+    inquire(file=trim(history_file), exist=file_exists)
+    if (.not. file_exists) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'No history file found.'
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Build fzf command for history
+    ! tac reverses the file so recent commands appear first
+    ! Use exact match for consistency
+    write(fzf_cmd, '(a)') 'tac ' // trim(history_file) // ' | ' // &
+          'fzf --height=40% --reverse --border ' // &
+          '--no-sort ' // &
+          '--tiebreak=index ' // &
+          '--header=''Ctrl-H: History Browser | Select: Replace Line | ESC: Cancel'' ' // &
+          '> /tmp/fortsh_fzf_history.tmp 2>/dev/null'
+
+    ! Clear screen and show fzf
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
+    write(output_unit, '(a)', advance='no') char(27) // '[H'   ! Move cursor home
+    flush(output_unit)
+
+    ! Execute fzf
+    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+
+    ! Read selection if fzf exited successfully
+    if (exit_status == 0) then
+      inquire(file='/tmp/fortsh_fzf_history.tmp', exist=file_exists)
+      if (file_exists) then
+        open(newunit=unit, file='/tmp/fortsh_fzf_history.tmp', &
+             status='old', action='read', iostat=iostat)
+        if (iostat == 0) then
+          read(unit, '(a)', iostat=iostat) selected_cmd
+          close(unit)
+
+          if (iostat == 0 .and. len_trim(selected_cmd) > 0) then
+            ! Replace entire line with selected command
+            input_state%buffer = trim(selected_cmd)
+            input_state%length = len_trim(selected_cmd)
+            input_state%cursor_pos = input_state%length
+          end if
+        end if
+        ! Clean up temp file
+        call execute_command_line('rm -f /tmp/fortsh_fzf_history.tmp 2>/dev/null')
+      end if
+    end if
+
+    ! Restore terminal and redraw prompt
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
+    write(output_unit, '(a)', advance='no') char(27) // '[H'   ! Move cursor home
+    write(output_unit, '(a)', advance='no') trim(prompt)
+
+    ! Redraw current line
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
     end if
     flush(output_unit)
 
