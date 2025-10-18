@@ -110,6 +110,7 @@ module readline
     integer :: menu_selection = 1  ! Currently selected item (1-based)
     character(len=MAX_LINE_LEN) :: menu_prefix = ''  ! Command prefix before completion word
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
+    logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
   end type input_state_t
 
   type :: history_t
@@ -439,11 +440,15 @@ contains
             if (current_line > 100) current_line = 0
 
             ! Move cursor up to the first line if we're on a wrapped line
-            if (current_line > 0) then
+            ! UNLESS we just exited menu mode (skip_cursor_up_on_redraw flag set)
+            if (current_line > 0 .and. .not. input_state%skip_cursor_up_on_redraw) then
               do i_redraw = 1, current_line
                 write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
               end do
             end if
+
+            ! Clear the skip flag after using it
+            input_state%skip_cursor_up_on_redraw = .false.
 
             ! Move to beginning of line and clear from cursor to end of screen
             write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
@@ -2670,10 +2675,11 @@ contains
             end if
 
             ! Advance selection to second item to show we've entered menu mode
-            input_state%menu_selection = min(2, input_state%menu_num_items)
-
-            ! Redraw menu with highlighting to show selection change
-            call draw_completion_menu(input_state, .false.)
+            ! Update in place without reprinting the whole menu
+            if (input_state%menu_num_items > 1) then
+              input_state%menu_selection = 2  ! Change from 1 to 2
+              call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+            end if
             flush(output_unit)
           end if
         end if
@@ -2716,10 +2722,11 @@ contains
         end if
 
         ! Advance selection to second item to show we've entered menu mode
-        input_state%menu_selection = min(2, input_state%menu_num_items)
-
-        ! Redraw menu with highlighting to show selection change
-        call draw_completion_menu(input_state, .false.)
+        ! Update in place without reprinting the whole menu
+        if (input_state%menu_num_items > 1) then
+          input_state%menu_selection = 2  ! Change from 1 to 2
+          call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+        end if
         flush(output_unit)
       end if
     end if
@@ -2859,10 +2866,11 @@ contains
 
     ! Advance selection to second item to make it clear we've entered menu mode
     ! This provides visual feedback that menu selection is now active
-    input_state%menu_selection = min(2, input_state%menu_num_items)
-
-    ! Redraw menu with the new selection highlighted
-    call draw_completion_menu(input_state, .false.)
+    ! Update in place without reprinting the whole menu
+    if (input_state%menu_num_items > 1) then
+      input_state%menu_selection = 2  ! Change from 1 to 2
+      call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+    end if
     flush(output_unit)
   end subroutine
 
@@ -3000,16 +3008,20 @@ contains
       completed_line = trim(input_state%menu_items(input_state%menu_selection))
     end if
 
-    ! Update buffer
-    input_state%buffer = completed_line
-    input_state%length = len_trim(completed_line)
-    input_state%cursor_pos = input_state%length
-
-    ! Exit menu mode (clears menu from screen)
+    ! Exit menu mode FIRST (clears menu from screen and positions cursor at start of command line)
     call exit_menu_select_mode(input_state)
 
-    ! Don't redraw here - the main loop will handle it
-    ! Just mark as dirty so it gets redrawn after we return
+    ! Update buffer after menu is cleared
+    input_state%buffer = completed_line
+    input_state%length = len_trim(completed_line)
+    input_state%cursor_pos = input_state%length  ! Cursor at end
+
+    ! CRITICAL: Set flag to skip upward cursor movement on redraw
+    ! We're already on the first line after exit_menu_select_mode,
+    ! so the redraw shouldn't try to move up based on cursor position
+    input_state%skip_cursor_up_on_redraw = .true.
+
+    ! Mark dirty to trigger redraw
     input_state%dirty = .true.
 
     ! Update autosuggestion for future use
