@@ -253,8 +253,16 @@ contains
         case(KEY_ENTER)
           ! Enter - accept menu selection, finish input, or accept search
           if (input_state%in_signal_input) then
-            ! Handle signal input for process kill
-            call handle_signal_input(input_state, ch)
+            ! Send signal to selected process
+            write(output_unit, '()')  ! New line
+            call send_signal_to_process(input_state)
+            ! Exit signal mode and return to normal prompt
+            input_state%in_signal_input = .false.
+            input_state%in_process_kill_mode = .false.
+            input_state%buffer = ''
+            input_state%length = 0
+            input_state%cursor_pos = 0
+            done = .true.
           else if (input_state%in_process_kill_mode .and. input_state%in_menu_select) then
             ! Select process from menu
             call handle_process_selection(input_state)
@@ -308,9 +316,19 @@ contains
         case(KEY_BACKSPACE)
           ! Backspace
           if (input_state%in_signal_input) then
-            call handle_signal_input(input_state, ch)
+            ! For signal mode, delete last char and update display
+            if (input_state%length > 0) then
+              input_state%length = input_state%length - 1
+              input_state%cursor_pos = input_state%length
+              call update_signal_display(input_state)
+            end if
           else if (input_state%in_search) then
-            call search_backspace(input_state, prompt)
+            ! For search mode, delete last char and redraw
+            if (input_state%length > 0) then
+              input_state%length = input_state%length - 1
+              input_state%cursor_pos = input_state%length
+              input_state%dirty = .true.
+            end if
           else
             call handle_backspace(input_state)
           end if
@@ -3296,72 +3314,63 @@ contains
 
         ! Clear menu and enter signal input mode
         call exit_menu_select_mode(input_state)
-        input_state%in_process_kill_mode = .true.  ! Keep in process kill mode
+
+        ! Enter signal input mode - like reverse-i-search
+        input_state%in_process_kill_mode = .true.
         input_state%in_signal_input = .true.
 
-        ! Prompt for signal
-        write(output_unit, '()')
-        write(output_unit, '(a,i0,a,a,a)', advance='no') &
-          'Enter signal for PID ', input_state%selected_pid, &
-          ' (', trim(input_state%selected_process_name), '): '
+        ! Clear the buffer for signal input
+        input_state%buffer = ''
+        input_state%length = 0
+        input_state%cursor_pos = 0
 
-        ! Initialize signal buffer
-        input_state%signal_buffer = ''
-        input_state%signal_buffer_len = 0
+        ! Clear dirty flag set by exit_menu_select_mode
+        ! We handle our own display, don't want normal redraw
+        input_state%dirty = .false.
 
-        flush(output_unit)
+        ! Display the signal prompt (like reverse-i-search display)
+        call update_signal_display(input_state)
       end if
     end if
   end subroutine
 
+  subroutine update_signal_display(input_state)
+    type(input_state_t), intent(in) :: input_state
+    character(len=512) :: signal_prompt
+
+    ! Build signal prompt: (signal: PID 1234 firefox):
+    write(signal_prompt, '(a,i0,a,a,a)') '(signal: PID ', input_state%selected_pid, ' ', &
+          trim(input_state%selected_process_name), '): '
+
+    ! Clear line and redraw with signal prompt
+    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
+    write(output_unit, '(a)', advance='no') trim(signal_prompt)
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+    end if
+    flush(output_unit)
+  end subroutine
+
   subroutine handle_signal_input(input_state, ch)
     type(input_state_t), intent(inout) :: input_state
-    character, intent(in) :: ch
-    integer :: char_code, signal_num, iostat
-    character(len=32) :: signal_name
+    character(len=1), intent(in) :: ch
 
-    char_code = iachar(ch)
+    ! Add character to buffer directly (like search mode does)
+    ! Don't use insert_char() to avoid setting dirty flag
+    if (input_state%length < MAX_LINE_LEN) then
+      input_state%length = input_state%length + 1
+      input_state%buffer(input_state%length:input_state%length) = ch
+      input_state%cursor_pos = input_state%length
+    end if
 
-    select case(char_code)
-    case(KEY_ENTER)
-      ! Process the signal
-      call send_signal_to_process(input_state)
-
-    case(KEY_BACKSPACE)
-      ! Delete last character
-      if (input_state%signal_buffer_len > 0) then
-        input_state%signal_buffer_len = input_state%signal_buffer_len - 1
-        input_state%signal_buffer(input_state%signal_buffer_len+1:) = ''
-
-        ! Update display
-        write(output_unit, '(a)', advance='no') char(8) // ' ' // char(8)  ! Backspace, space, backspace
-      end if
-
-    case(KEY_ESC, KEY_CTRL_C)
-      ! Cancel signal input
-      write(output_unit, '(a)') ' (cancelled)'
-      input_state%in_signal_input = .false.
-      input_state%in_process_kill_mode = .false.
-      input_state%dirty = .true.
-
-    case default
-      ! Add character to buffer
-      if (input_state%signal_buffer_len < 32) then
-        input_state%signal_buffer_len = input_state%signal_buffer_len + 1
-        input_state%signal_buffer(input_state%signal_buffer_len:input_state%signal_buffer_len) = ch
-
-        ! Echo character
-        write(output_unit, '(a)', advance='no') ch
-      end if
-    end select
-
-    flush(output_unit)
+    ! Update the signal display (inline prompt like reverse-i-search)
+    call update_signal_display(input_state)
   end subroutine
 
   subroutine send_signal_to_process(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: signal_num, iostat, result
-    character(len=32) :: signal_str
+    character(len=MAX_LINE_LEN) :: signal_str
     interface
       function c_kill(pid, sig) bind(C, name="kill")
         use iso_c_binding
@@ -3370,8 +3379,8 @@ contains
       end function c_kill
     end interface
 
-    ! Parse signal (can be number or SIG<name>)
-    signal_str = input_state%signal_buffer(:input_state%signal_buffer_len)
+    ! Parse signal from buffer (can be number or SIG<name>)
+    signal_str = input_state%buffer(:input_state%length)
 
     ! Try to parse as number first
     read(signal_str, *, iostat=iostat) signal_num
@@ -3386,21 +3395,37 @@ contains
       result = c_kill(input_state%selected_pid, signal_num)
 
       if (result == 0) then
-        write(output_unit, '(a,i0,a,i0,a)') ' -> Sent signal ', signal_num, &
-          ' to PID ', input_state%selected_pid, ' successfully'
+        ! Success - green
+        write(output_unit, '(a)', advance='no') char(27) // '[1;32m'  ! Bold green
+        write(output_unit, '(a)', advance='no') ' ✓ '
+        write(output_unit, '(a)', advance='no') char(27) // '[0m'
+        write(output_unit, '(a,i0,a,i0)') 'Sent signal ', signal_num, &
+          ' to PID ', input_state%selected_pid
       else
-        write(output_unit, '(a,i0,a,i0,a)') ' -> Failed to send signal ', signal_num, &
-          ' to PID ', input_state%selected_pid, ' (permission denied or process not found)'
+        ! Failure - red
+        write(output_unit, '(a)', advance='no') char(27) // '[1;31m'  ! Bold red
+        write(output_unit, '(a)', advance='no') ' ✗ '
+        write(output_unit, '(a)', advance='no') char(27) // '[0m'
+        write(output_unit, '(a,i0,a,i0)') 'Failed to send signal ', signal_num, &
+          ' to PID ', input_state%selected_pid
+        write(output_unit, '(a)', advance='no') char(27) // '[33m'    ! Yellow
+        write(output_unit, '(a)') ' (permission denied or process not found)'
+        write(output_unit, '(a)', advance='no') char(27) // '[0m'
       end if
     else
-      write(output_unit, '(a,a,a)') ' -> Invalid signal: ', trim(signal_str), &
-        ' (use number or SIGTERM, SIGKILL, etc.)'
+      ! Invalid signal - red
+      write(output_unit, '(a)', advance='no') char(27) // '[1;31m'  ! Bold red
+      write(output_unit, '(a)', advance='no') ' ✗ '
+      write(output_unit, '(a)', advance='no') char(27) // '[0m'
+      write(output_unit, '(a)', advance='no') 'Invalid signal: '
+      write(output_unit, '(a)', advance='no') char(27) // '[33m'    ! Yellow
+      write(output_unit, '(a)', advance='no') trim(signal_str)
+      write(output_unit, '(a)', advance='no') char(27) // '[0m'
+      write(output_unit, '(a)') ' (use number or SIGTERM, SIGKILL, etc.)'
     end if
 
-    ! Exit signal input and process kill mode
-    input_state%in_signal_input = .false.
-    input_state%in_process_kill_mode = .false.
-    input_state%dirty = .true.
+    ! Don't set dirty - we're exiting readline, caller will handle prompt
+    ! Cleanup is done in Enter key handler
   end subroutine
 
   subroutine parse_signal_name(name, signal_num)
