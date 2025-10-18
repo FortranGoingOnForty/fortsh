@@ -84,13 +84,10 @@ test_p0_readonly_enforcement() {
         fail "P0-1.3: Commands after readonly violation do not execute" "Command was executed"
     fi
 
-    # Test 4: Readonly variable preserves original value
-    output=$($FORTSH_BIN -c 'readonly VAR=original; VAR=changed 2>/dev/null; echo $VAR' 2>&1)
-    if echo "$output" | grep -q "original"; then
-        pass "P0-1.4: Readonly variable preserves original value"
-    else
-        fail "P0-1.4: Readonly variable preserves original value" "Value was changed"
-    fi
+    # Test 4: Readonly variable preserves original value (test removed - see P0-1.3)
+    # Note: POSIX requires non-interactive shells to exit on readonly violations,
+    # so we cannot test value preservation after failed assignment in same script.
+    # Value preservation is implicitly tested by P0-1.1 (error occurs) and P0-1.3 (execution stops).
 
     # Test 5: Multiple readonly violations
     $FORTSH_BIN -c 'readonly A=1; readonly B=2; A=x; B=y' >/dev/null 2>&1
