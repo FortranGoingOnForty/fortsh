@@ -47,6 +47,10 @@ contains
 
       case(SEP_SEMICOLON, SEP_NONE)
         call execute_single(pipeline%commands(i), shell, original_input)
+        ! Process any sourced files immediately (for dot command in semicolon lists)
+        if (shell%should_source) then
+          call process_source_inline(shell)
+        end if
         call check_errexit(shell, shell%last_exit_status)
         ! Check if shell should exit (e.g., due to ${VAR?error})
         if (.not. shell%running) exit
@@ -2124,5 +2128,65 @@ contains
       end if
     end do
   end subroutine
+
+  ! Process sourced files inline (for dot command in non-interactive mode)
+  subroutine process_source_inline(shell)
+    use variables, only: set_shell_variable
+    type(shell_state_t), intent(inout) :: shell
+    character(len=1024) :: input_line
+    integer :: file_unit, iostat, i
+    type(pipeline_t) :: pipeline
+    character(len=:), allocatable :: expanded_line
+
+    ! Reset the source flag first
+    shell%should_source = .false.
+
+    ! Open file for reading
+    open(newunit=file_unit, file=trim(shell%source_file), status='old', action='read', iostat=iostat)
+    if (iostat /= 0) then
+      write(error_unit, '(a)') 'source: failed to open ' // trim(shell%source_file)
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Execute each line in the file
+    do
+      read(file_unit, '(a)', iostat=iostat) input_line
+      if (iostat /= 0) exit  ! End of file or error
+
+      ! Skip empty lines and comments
+      if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+
+      ! Expand aliases (simple version - just use the line as-is)
+      expanded_line = trim(input_line)
+
+      ! Parse and execute pipeline
+      call parse_pipeline(expanded_line, pipeline)
+
+      if (pipeline%num_commands > 0) then
+        call execute_pipeline(pipeline, shell, expanded_line)
+
+        ! Clean up pipeline
+        if (allocated(pipeline%commands)) then
+          do i = 1, pipeline%num_commands
+            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+          end do
+          deallocate(pipeline%commands)
+        end if
+      end if
+
+      ! Stop execution if exit command was encountered
+      if (.not. shell%running) exit
+    end do
+
+    close(file_unit)
+    shell%source_file = ''
+  end subroutine process_source_inline
 
 end module executor

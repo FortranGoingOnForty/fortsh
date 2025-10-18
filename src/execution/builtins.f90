@@ -230,15 +230,9 @@ contains
   subroutine builtin_exit(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    logical :: trap_executed
 
-    ! Execute EXIT trap if set
-    trap_executed = execute_trap(shell, TRAP_EXIT)
-
-    ! If a trap command was queued, execute it now
-    if (len_trim(shell%pending_trap_command) > 0) then
-      call execute_exit_trap_inline(shell)
-    end if
+    ! Don't execute EXIT trap here - it's handled in main program (fortsh.f90)
+    ! This ensures the trap runs in the current shell context with access to variables
 
     shell%running = .false.
     if (cmd%num_tokens > 1) then
@@ -564,8 +558,6 @@ contains
     shell%source_file = filename
     shell%should_source = .true.
     shell%last_exit_status = 0
-
-    write(output_unit, '(a)') 'source: ' // trim(filename) // ' queued for execution'
   end subroutine
 
   subroutine builtin_history(cmd, shell)
