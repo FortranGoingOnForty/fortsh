@@ -132,7 +132,7 @@ module readline
   ! Module-level editing mode (set by shell via option_vi)
   integer, save :: global_editing_mode = EDITING_MODE_EMACS
 
-  ! Detect macOS to work around menu mode crashes
+  ! Detect macOS for potential platform-specific workarounds
   logical, save :: is_macos_system = .false.
   logical, save :: macos_detected = .false.
 
@@ -2606,40 +2606,28 @@ contains
             input_state%dirty = .true.
           else
             ! Second tab - enter menu selection mode
-            ! Detect macOS once
-            call detect_macos()
+            ! Activate menu mode (items already stored and displayed)
+            input_state%in_menu_select = .true.
 
-            if (is_macos_system) then
-              ! macOS: Just show completions again, don't enter menu mode
-              write(output_unit, '()')
-              write(output_unit, '(a)') "Note: Menu selection disabled on macOS (compiler bug workaround)"
-              write(output_unit, '(a)') "Tab completion works - continue typing to filter"
-              call show_completions(tab_completions, tab_num_completions)
-              input_state%dirty = .true.
-            else
-              ! Normal platforms: Activate menu mode (items already stored and displayed)
-              input_state%in_menu_select = .true.
-
-              ! Store menu prefix
-              last_space_pos = 0
-              do i = len_trim(tab_partial_input), 1, -1
-                if (tab_partial_input(i:i) == ' ') then
-                  last_space_pos = i
-                  exit
-                end if
-              end do
-
-              if (last_space_pos > 0) then
-                input_state%menu_prefix = tab_partial_input(:last_space_pos)
-                input_state%menu_prefix_len = last_space_pos
-              else
-                input_state%menu_prefix = ''
-                input_state%menu_prefix_len = 0
+            ! Store menu prefix
+            last_space_pos = 0
+            do i = len_trim(tab_partial_input), 1, -1
+              if (tab_partial_input(i:i) == ' ') then
+                last_space_pos = i
+                exit
               end if
+            end do
 
-              ! Don't redraw - menu is already displayed from first tab
-              flush(output_unit)
+            if (last_space_pos > 0) then
+              input_state%menu_prefix = tab_partial_input(:last_space_pos)
+              input_state%menu_prefix_len = last_space_pos
+            else
+              input_state%menu_prefix = ''
+              input_state%menu_prefix_len = 0
             end if
+
+            ! Don't redraw - menu is already displayed from first tab
+            flush(output_unit)
           end if
         end if
       end if
@@ -2660,39 +2648,28 @@ contains
         ! Don't set dirty - command line is already displayed above menu
       else
         ! Second tab - enter menu selection mode
-        call detect_macos()
+        ! Activate menu mode (items already stored and displayed)
+        input_state%in_menu_select = .true.
 
-        if (is_macos_system) then
-          ! macOS: Just show completions again, don't enter menu mode
-          write(output_unit, '()')
-          write(output_unit, '(a)') "Note: Menu selection disabled on macOS (compiler bug workaround)"
-          write(output_unit, '(a)') "Tab completion works - continue typing to filter"
-          call show_completions(tab_completions, tab_num_completions)
-          input_state%dirty = .true.
-        else
-          ! Normal platforms: Activate menu mode (items already stored and displayed)
-          input_state%in_menu_select = .true.
-
-          ! Store menu prefix
-          last_space_pos = 0
-          do i = len_trim(tab_partial_input), 1, -1
-            if (tab_partial_input(i:i) == ' ') then
-              last_space_pos = i
-              exit
-            end if
-          end do
-
-          if (last_space_pos > 0) then
-            input_state%menu_prefix = tab_partial_input(:last_space_pos)
-            input_state%menu_prefix_len = last_space_pos
-          else
-            input_state%menu_prefix = ''
-            input_state%menu_prefix_len = 0
+        ! Store menu prefix
+        last_space_pos = 0
+        do i = len_trim(tab_partial_input), 1, -1
+          if (tab_partial_input(i:i) == ' ') then
+            last_space_pos = i
+            exit
           end if
+        end do
 
-          ! Don't redraw - menu is already displayed from first tab
-          flush(output_unit)
+        if (last_space_pos > 0) then
+          input_state%menu_prefix = tab_partial_input(:last_space_pos)
+          input_state%menu_prefix_len = last_space_pos
+        else
+          input_state%menu_prefix = ''
+          input_state%menu_prefix_len = 0
         end if
+
+        ! Don't redraw - menu is already displayed from first tab
+        flush(output_unit)
       end if
     end if
   end subroutine handle_tab_key_separate
@@ -2802,32 +2779,6 @@ contains
     integer, intent(in) :: num_completions
     character(len=*), intent(in) :: current_input
     integer :: i, last_space_pos
-
-    ! macOS workaround: Don't enter menu mode due to gfortran bug
-    block
-      character(len=256) :: ostype
-      integer :: status
-      logical :: is_macos
-
-      ! Check if we're on macOS at runtime
-      call get_environment_variable("OSTYPE", ostype, status=status)
-      if (status == 0) then
-        is_macos = (index(ostype, "darwin") > 0)
-      else
-        ! Alternative check using uname
-        call execute_command_line("uname -s | grep -q Darwin", wait=.true., exitstat=status)
-        is_macos = (status == 0)
-      end if
-
-      if (is_macos) then
-        write(output_unit, '()')
-        write(output_unit, '(a)') "Note: Menu selection disabled on macOS (gfortran bug workaround)"
-        call show_completions(completions, num_completions)
-        input_state%completions_shown = .true.
-        input_state%dirty = .true.
-        return
-      end if
-    end block
 
     ! Store menu items
     input_state%in_menu_select = .true.
