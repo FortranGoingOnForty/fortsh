@@ -3587,8 +3587,8 @@ contains
       case('f')
         ! Alt+f - Move forward one word
         call move_to_next_word(input_state)
-      case('c')
-        ! Alt+c - Directory browser with fzf (cd into selected dir)
+      case('j')
+        ! Alt+j - Jump to directory with fzf
         call launch_fzf_directory_browser(input_state)
       case('g')
         ! Alt+g - Git browser with fzf
@@ -5514,7 +5514,7 @@ contains
           'fzf --height=40% --reverse --border ' // &
           '--preview=''ls -lah {}'' ' // &
           '--preview-window=right:60%:wrap ' // &
-          '--header=''Alt-C: Directory Browser | Select: CD into dir | ESC: Cancel'' ' // &
+          '--header=''Alt-J: Jump to Directory | Select: CD into dir | ESC: Cancel'' ' // &
           '> /tmp/fortsh_fzf_dir.tmp 2>/dev/null'
 
     ! Clear screen and show fzf
