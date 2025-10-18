@@ -110,6 +110,7 @@ module readline
     integer :: menu_selection = 1  ! Currently selected item (1-based)
     character(len=MAX_LINE_LEN) :: menu_prefix = ''  ! Command prefix before completion word
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
+    character(len=MAX_LINE_LEN) :: menu_prompt = ''  ! Prompt when in menu mode (for live preview)
     logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
   end type input_state_t
 
@@ -227,6 +228,7 @@ contains
     input_state%vi_mode = VI_MODE_INSERT
     input_state%suggestion = ''
     input_state%suggestion_length = 0
+    input_state%menu_prompt = prompt  ! Store prompt for live preview in menu mode
 
     if (raw_enabled) then
       ! Enhanced input processing
@@ -2657,6 +2659,10 @@ contains
             ! Activate menu mode (items already stored and displayed)
             input_state%in_menu_select = .true.
 
+            ! Clear autosuggestion when entering menu mode
+            input_state%suggestion = ''
+            input_state%suggestion_length = 0
+
             ! Store menu prefix
             last_space_pos = 0
             do i = len_trim(tab_partial_input), 1, -1
@@ -2679,10 +2685,6 @@ contains
             if (input_state%menu_num_items > 1) then
               input_state%menu_selection = 2  ! Change from 1 to 2
               call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
-              call update_menu_preview(input_state)  ! Show preview in command line
-            else if (input_state%menu_num_items == 1) then
-              ! Only one item - just show its preview
-              call update_menu_preview(input_state)
             end if
             flush(output_unit)
           end if
@@ -2708,6 +2710,10 @@ contains
         ! Activate menu mode (items already stored and displayed)
         input_state%in_menu_select = .true.
 
+        ! Clear autosuggestion when entering menu mode
+        input_state%suggestion = ''
+        input_state%suggestion_length = 0
+
         ! Store menu prefix
         last_space_pos = 0
         do i = len_trim(tab_partial_input), 1, -1
@@ -2730,10 +2736,6 @@ contains
         if (input_state%menu_num_items > 1) then
           input_state%menu_selection = 2  ! Change from 1 to 2
           call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
-          call update_menu_preview(input_state)  ! Show preview in command line
-        else if (input_state%menu_num_items == 1) then
-          ! Only one item - just show its preview
-          call update_menu_preview(input_state)
         end if
         flush(output_unit)
       end if
@@ -2850,6 +2852,10 @@ contains
     input_state%in_menu_select = .true.
     input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
 
+    ! Clear autosuggestion when entering menu mode
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
     do i = 1, input_state%menu_num_items
       ! Truncate to fit menu item buffer
       input_state%menu_items(i) = completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(completions(i))))
@@ -2878,10 +2884,8 @@ contains
     if (input_state%menu_num_items > 1) then
       input_state%menu_selection = 2  ! Change from 1 to 2
       call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
-      call update_menu_preview(input_state)  ! Show preview in command line
-    else if (input_state%menu_num_items == 1) then
-      ! Only one item - just show its preview
-      call update_menu_preview(input_state)
+      ! Show initial preview
+      call update_live_preview(input_state)
     end if
     flush(output_unit)
   end subroutine
@@ -3001,15 +3005,15 @@ contains
       return
     end select
 
-    ! Update menu highlighting and command line preview if selection changed
+    ! Update menu highlighting if selection changed (in-place update)
     if (old_selection /= input_state%menu_selection) then
       call update_menu_selection(input_state, old_selection)
-      call update_menu_preview(input_state)
+      ! Update command line preview with selected item
+      call update_live_preview(input_state)
     end if
   end subroutine
 
-  ! Update command line preview with current menu selection
-  subroutine update_menu_preview(input_state)
+  subroutine accept_menu_selection(input_state)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: completed_line
 
@@ -3022,25 +3026,12 @@ contains
       completed_line = trim(input_state%menu_items(input_state%menu_selection))
     end if
 
-    ! Update buffer to show preview
-    input_state%buffer = completed_line
-    input_state%length = len_trim(completed_line)
-    input_state%cursor_pos = input_state%length  ! Cursor at end
-
-    ! Mark dirty to trigger redraw of command line
-    input_state%dirty = .true.
-  end subroutine
-
-  subroutine accept_menu_selection(input_state)
-    type(input_state_t), intent(inout) :: input_state
-
-    ! Preview is already in buffer from update_menu_preview, just exit menu mode
-
     ! Exit menu mode FIRST (clears menu from screen and positions cursor at start of command line)
     call exit_menu_select_mode(input_state)
 
-    ! Buffer already has the completed line from preview
-    ! Just update cursor position
+    ! Update buffer after menu is cleared
+    input_state%buffer = completed_line
+    input_state%length = len_trim(completed_line)
     input_state%cursor_pos = input_state%length  ! Cursor at end
 
     ! CRITICAL: Set flag to skip upward cursor movement on redraw
@@ -3149,6 +3140,61 @@ contains
 
     ! Redraw the menu with the new selection highlighted
     call draw_completion_menu(input_state, .false.)
+
+    flush(output_unit)
+  end subroutine
+
+  subroutine update_live_preview(input_state)
+    type(input_state_t), intent(in) :: input_state
+    integer :: i, term_rows, term_cols, cols_per_item, items_per_row, num_menu_rows
+    character(len=MAX_LINE_LEN) :: preview_line
+    logical :: success
+
+    ! Calculate menu layout to know how many lines to navigate
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80
+    end if
+
+    ! Calculate menu dimensions (same logic as update_menu_selection)
+    cols_per_item = 0
+    do i = 1, input_state%menu_num_items
+      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+    end do
+    cols_per_item = cols_per_item + 2
+    items_per_row = max(1, term_cols / cols_per_item)
+    num_menu_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+
+    ! Build preview line: prefix + selected item
+    if (input_state%menu_prefix_len > 0) then
+      preview_line = input_state%menu_prefix(:input_state%menu_prefix_len) // &
+                    trim(input_state%menu_items(input_state%menu_selection))
+    else
+      preview_line = trim(input_state%menu_items(input_state%menu_selection))
+    end if
+
+    ! Move cursor up past menu to command line
+    ! We need to go up: num_menu_rows (to get to start of menu) + 1 (to get to command line above menu)
+    do i = 1, num_menu_rows + 1
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+    end do
+
+    ! Move to start of line
+    write(output_unit, '(a)', advance='no') char(13)  ! CR
+
+    ! Clear the entire line
+    write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
+
+    ! Redraw: prompt + preview
+    write(output_unit, '(a)', advance='no') trim(input_state%menu_prompt) // trim(preview_line)
+
+    ! Move cursor back down to menu
+    do i = 1, num_menu_rows + 1
+      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Cursor down
+    end do
+
+    ! Move to start of line (we're back after the menu now)
+    write(output_unit, '(a)', advance='no') char(13)
 
     flush(output_unit)
   end subroutine
