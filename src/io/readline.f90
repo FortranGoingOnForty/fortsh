@@ -2278,15 +2278,58 @@ contains
   subroutine show_completions(completions, num_completions)
     character(len=MAX_LINE_LEN), intent(in) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(in) :: num_completions
-    integer :: i
-    
+    integer :: i, j, max_len, col_width, num_cols, items_in_row
+    integer :: term_width, status
+    character(len=10) :: cols_env
+
     if (num_completions > 1) then
       write(output_unit, '(a)') ''
+
+      ! Find maximum length of completions
+      max_len = 0
       do i = 1, num_completions
-        write(output_unit, '(a)', advance='no') trim(completions(i)) // '  '
-        if (mod(i, 8) == 0) write(output_unit, '(a)') ''  ! New line every 8 items
+        max_len = max(max_len, len_trim(completions(i)))
       end do
-      write(output_unit, '(a)') ''
+
+      ! Column width = max length + 2 spaces padding
+      col_width = max_len + 2
+
+      ! Get terminal width (default to 80 if not available)
+      call get_environment_variable("COLUMNS", cols_env, status=status)
+      if (status == 0 .and. len_trim(cols_env) > 0) then
+        read(cols_env, *, iostat=status) term_width
+        if (status /= 0) term_width = 80
+      else
+        term_width = 80
+      end if
+
+      ! Calculate number of columns that fit
+      num_cols = max(1, term_width / col_width)
+
+      ! Print items in rows, aligned to columns
+      do i = 1, num_completions
+        ! Print item padded to column width
+        write(output_unit, '(a)', advance='no') trim(completions(i))
+
+        ! Calculate position in current row
+        items_in_row = mod(i - 1, num_cols) + 1
+
+        ! Add padding unless it's the last item in the row or the last item overall
+        if (items_in_row < num_cols .and. i < num_completions) then
+          ! Pad to column width
+          do j = len_trim(completions(i)) + 1, col_width
+            write(output_unit, '(a)', advance='no') ' '
+          end do
+        else
+          ! End of row - print newline
+          write(output_unit, '(a)') ''
+        end if
+      end do
+
+      ! Ensure we end with a blank line if last row wasn't complete
+      if (mod(num_completions, num_cols) /= 0) then
+        write(output_unit, '(a)') ''
+      end if
     end if
   end subroutine
 
