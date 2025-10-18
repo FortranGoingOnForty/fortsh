@@ -246,6 +246,7 @@ contains
 
         if (working_input(i:i) == '|' .and. &
             (i == 1 .or. working_input(i-1:i-1) /= '|') .and. &
+            (i == 1 .or. working_input(i-1:i-1) /= '>') .and. &
             (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '|')) then
           ! Don't split on | if we're in a case pattern (after 'case...in') or inside parentheses (subshell)
           if (.not. after_case_in .and. paren_depth == 0) then
@@ -324,6 +325,7 @@ contains
         pipeline%commands(i)%num_tokens = temp_commands(i)%num_tokens
         pipeline%commands(i)%append_output = temp_commands(i)%append_output
         pipeline%commands(i)%append_error = temp_commands(i)%append_error
+        pipeline%commands(i)%force_clobber = temp_commands(i)%force_clobber
         pipeline%commands(i)%redirect_stderr_to_stdout = temp_commands(i)%redirect_stderr_to_stdout
         pipeline%commands(i)%redirect_stdout_to_stderr = temp_commands(i)%redirect_stdout_to_stderr
         pipeline%commands(i)%redirect_both_to_file = temp_commands(i)%redirect_both_to_file
@@ -664,13 +666,23 @@ contains
       cmd%output_file = trim(temp_str)
       working_input = working_input(:pos-1)
     else
-      ! Check for output redirection (>)
-      pos = find_outside_quotes(working_input, '>')
+      ! Check for force clobber (>|)
+      pos = find_outside_quotes(working_input, '>|')
       if (pos > 0) then
         cmd%append_output = .false.
-        call extract_filename(working_input(pos+1:), temp_str)
+        cmd%force_clobber = .true.
+        call extract_filename(working_input(pos+2:), temp_str)
         cmd%output_file = trim(temp_str)
         working_input = working_input(:pos-1)
+      else
+        ! Check for output redirection (>)
+        pos = find_outside_quotes(working_input, '>')
+        if (pos > 0) then
+          cmd%append_output = .false.
+          call extract_filename(working_input(pos+1:), temp_str)
+          cmd%output_file = trim(temp_str)
+          working_input = working_input(:pos-1)
+        end if
       end if
     end if
 
