@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        6.0.2
+Version:        6.0.3
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,6 +57,12 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sat Oct 18 2025 mfw <espadon@outlook.com> - 6.0.3-1
+- New quick kill feature with reverse-i-search-like interface
+- Process menu selection for sending signals
+- Live command line updates with menu selection
+- Enhanced process management capabilities
+
 * Sat Oct 18 2025 mfw <espadon@outlook.com> - 6.0.2-1
 - Restored menu navigation and fish-style features on macOS
 - Improved readline quality-of-life enhancements
