@@ -223,11 +223,11 @@ contains
           call c_exit(int(shell%last_exit_status, c_int))
         else if (is_builtin(pipeline%commands(i)%tokens(1))) then
           ! Builtins in pipes need redirections applied
-          call setup_redirections(pipeline%commands(i))
+          call setup_redirections(pipeline%commands(i), shell)
           call execute_builtin(pipeline%commands(i), shell)
           call c_exit(int(shell%last_exit_status, c_int))
         else
-          call setup_redirections(pipeline%commands(i))
+          call setup_redirections(pipeline%commands(i), shell)
           call exec_child(pipeline%commands(i)%tokens, pipeline%commands(i)%num_tokens)
           call c_exit(127)
         end if
@@ -640,6 +640,19 @@ contains
 
     ! Handle output redirection
     if (allocated(cmd%output_file)) then
+      ! Check noclobber protection
+      if (shell%option_noclobber .and. .not. cmd%force_clobber .and. .not. cmd%append_output) then
+        ! Check if file exists
+        if (file_exists(trim(cmd%output_file))) then
+          write(error_unit, '(3a)') 'fortsh: ', trim(cmd%output_file), ': cannot overwrite existing file'
+          shell%last_exit_status = 1
+          ! Restore stdin before returning
+          ret = c_dup2(saved_stdin, STDIN_FD)
+          ret = c_close(saved_stdin)
+          return
+        end if
+      end if
+
       if (cmd%append_output) then
         flags = ior(ior(O_WRONLY, O_CREAT), O_APPEND)
       else
@@ -1105,7 +1118,7 @@ contains
       call apply_prefix_assignments(cmd)
 
       ! Set up redirections
-      call setup_redirections(cmd)
+      call setup_redirections(cmd, shell)
 
       ! Execute
       call exec_child(cmd%tokens, cmd%num_tokens)
@@ -1199,16 +1212,12 @@ contains
     end if
   end subroutine
 
-  subroutine setup_redirections(cmd)
+  subroutine setup_redirections(cmd, shell)
     type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(in) :: shell
     integer :: fd, ret
     integer :: flags
     character(len=256), target :: c_filename
-    type(shell_state_t), pointer :: shell_ptr
-
-    ! Note: We need shell state for variable expansion in FD redirections
-    ! In child process context, we don't have direct access to shell state
-    ! So for now we'll handle literal FDs and environment variables
 
     ! Handle input redirection
     if (allocated(cmd%input_file)) then
@@ -1225,6 +1234,15 @@ contains
 
     ! Handle output redirection
     if (allocated(cmd%output_file)) then
+      ! Check noclobber protection
+      if (shell%option_noclobber .and. .not. cmd%force_clobber .and. .not. cmd%append_output) then
+        ! Check if file exists
+        if (file_exists(trim(cmd%output_file))) then
+          write(error_unit, '(3a)') 'fortsh: ', trim(cmd%output_file), ': cannot overwrite existing file'
+          call c_exit(1)
+        end if
+      end if
+
       if (cmd%append_output) then
         flags = ior(ior(O_WRONLY, O_CREAT), O_APPEND)
       else

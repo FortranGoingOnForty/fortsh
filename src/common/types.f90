@@ -70,6 +70,7 @@ module shell_types
     logical :: heredoc_quoted = .false.  ! delimiter was quoted (suppress variable expansion)
     logical :: append_output = .false.
     logical :: append_error = .false.
+    logical :: force_clobber = .false.  ! >| operator (override noclobber)
     logical :: redirect_stderr_to_stdout = .false.
     logical :: redirect_stdout_to_stderr = .false.
     logical :: redirect_both_to_file = .false.  ! &> redirection
