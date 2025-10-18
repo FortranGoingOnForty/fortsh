@@ -1767,10 +1767,15 @@ contains
     type(command_t) :: cmd
     type(pipeline_t) :: pipeline
     character(len=256) :: tokens(50)
-    integer :: num_tokens, i
+    integer :: num_tokens, i, saved_depth
 
     ! POSIX: Suppress errexit during condition evaluation (if/while/until test expressions)
     shell%evaluating_condition = .true.
+
+    ! Save control depth and temporarily reset to 0 so condition executes unconditionally
+    ! This prevents should_execute_command() from blocking condition evaluation
+    saved_depth = shell%control_depth
+    shell%control_depth = 0
 
     ! Check if it's a test command (starts with [ or test)
     if (index(trim(condition_cmd), '[') == 1 .or. &
@@ -1801,6 +1806,9 @@ contains
         result = .false.
       end if
     end if
+
+    ! Restore control depth
+    shell%control_depth = saved_depth
 
     ! Re-enable errexit checking
     shell%evaluating_condition = .false.

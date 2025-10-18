@@ -322,10 +322,7 @@ contains
     if (shell%evaluating_condition) return
 
     if (shell%option_errexit .and. exit_status /= 0) then
-      if (shell%option_verbose) then
-        write(error_unit, '(a,i0)') 'fortsh: errexit: exiting due to command failure (status: ', exit_status
-        write(error_unit, '(a)') ')'
-      end if
+      write(error_unit, '(a,i0,a)') 'fortsh: errexit: exiting due to command failure (status: ', exit_status, ')'
       shell%running = .false.
       shell%last_exit_status = exit_status
     end if

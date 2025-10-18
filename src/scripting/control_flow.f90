@@ -264,6 +264,10 @@ contains
 
     ! Push if block onto control stack
     call push_control_block(shell, BLOCK_IF, condition_result)
+
+    ! POSIX: Reset exit status after evaluating control flow condition
+    ! The 'if' keyword itself doesn't fail - it just sets up control state
+    shell%last_exit_status = 0
   end subroutine
   
   subroutine process_while_statement(cmd, shell, should_execute)
@@ -301,6 +305,11 @@ contains
 
     ! IMPORTANT: Store the condition command for re-evaluation at each iteration
     shell%control_stack(shell%control_depth)%condition_cmd = condition_cmd
+
+    ! POSIX: Reset exit status after evaluating control flow condition
+    ! The 'while' keyword itself doesn't fail - it just sets up control state
+    ! Re-evaluation at 'done' will execute the condition command fresh
+    shell%last_exit_status = 0
   end subroutine
 
   subroutine process_until_statement(cmd, shell, should_execute)
@@ -339,6 +348,11 @@ contains
 
     ! IMPORTANT: Store the condition command for re-evaluation at each iteration
     shell%control_stack(shell%control_depth)%condition_cmd = condition_cmd
+
+    ! POSIX: Reset exit status after evaluating control flow condition
+    ! The 'until' keyword itself doesn't fail - it just sets up control state
+    ! Re-evaluation at 'done' will execute the condition command fresh
+    shell%last_exit_status = 0
   end subroutine
 
   subroutine process_for_statement(cmd, shell, should_execute)
@@ -642,6 +656,10 @@ contains
       ! Previous condition was met, skip this elif
       shell%control_stack(shell%control_depth)%should_execute = .false.
     end if
+
+    ! POSIX: Reset exit status after evaluating control flow condition
+    ! The 'elif' keyword itself doesn't fail - it just sets up control state
+    shell%last_exit_status = 0
   end subroutine
 
   subroutine process_fi_statement(shell, should_execute)
@@ -800,6 +818,10 @@ contains
           ! Condition is still true - executor will replay the loop body
           return
         end if
+
+        ! POSIX: Reset exit status after loop condition check
+        ! The 'done' keyword itself doesn't fail - it just ends the loop
+        shell%last_exit_status = 0
       end if
 
     else if (shell%control_stack(shell%control_depth)%block_type == BLOCK_UNTIL) then
@@ -821,6 +843,10 @@ contains
           ! Condition is still false - executor will replay the loop body
           return
         end if
+
+        ! POSIX: Reset exit status after loop condition check
+        ! The 'done' keyword itself doesn't fail - it just ends the loop
+        shell%last_exit_status = 0
       end if
     end if
 
