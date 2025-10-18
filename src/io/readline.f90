@@ -2679,6 +2679,10 @@ contains
             if (input_state%menu_num_items > 1) then
               input_state%menu_selection = 2  ! Change from 1 to 2
               call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+              call update_menu_preview(input_state)  ! Show preview in command line
+            else if (input_state%menu_num_items == 1) then
+              ! Only one item - just show its preview
+              call update_menu_preview(input_state)
             end if
             flush(output_unit)
           end if
@@ -2726,6 +2730,10 @@ contains
         if (input_state%menu_num_items > 1) then
           input_state%menu_selection = 2  ! Change from 1 to 2
           call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+          call update_menu_preview(input_state)  ! Show preview in command line
+        else if (input_state%menu_num_items == 1) then
+          ! Only one item - just show its preview
+          call update_menu_preview(input_state)
         end if
         flush(output_unit)
       end if
@@ -2870,6 +2878,10 @@ contains
     if (input_state%menu_num_items > 1) then
       input_state%menu_selection = 2  ! Change from 1 to 2
       call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+      call update_menu_preview(input_state)  ! Show preview in command line
+    else if (input_state%menu_num_items == 1) then
+      ! Only one item - just show its preview
+      call update_menu_preview(input_state)
     end if
     flush(output_unit)
   end subroutine
@@ -2989,13 +3001,15 @@ contains
       return
     end select
 
-    ! Update menu highlighting if selection changed (in-place update)
+    ! Update menu highlighting and command line preview if selection changed
     if (old_selection /= input_state%menu_selection) then
       call update_menu_selection(input_state, old_selection)
+      call update_menu_preview(input_state)
     end if
   end subroutine
 
-  subroutine accept_menu_selection(input_state)
+  ! Update command line preview with current menu selection
+  subroutine update_menu_preview(input_state)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: completed_line
 
@@ -3008,12 +3022,25 @@ contains
       completed_line = trim(input_state%menu_items(input_state%menu_selection))
     end if
 
+    ! Update buffer to show preview
+    input_state%buffer = completed_line
+    input_state%length = len_trim(completed_line)
+    input_state%cursor_pos = input_state%length  ! Cursor at end
+
+    ! Mark dirty to trigger redraw of command line
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine accept_menu_selection(input_state)
+    type(input_state_t), intent(inout) :: input_state
+
+    ! Preview is already in buffer from update_menu_preview, just exit menu mode
+
     ! Exit menu mode FIRST (clears menu from screen and positions cursor at start of command line)
     call exit_menu_select_mode(input_state)
 
-    ! Update buffer after menu is cleared
-    input_state%buffer = completed_line
-    input_state%length = len_trim(completed_line)
+    ! Buffer already has the completed line from preview
+    ! Just update cursor position
     input_state%cursor_pos = input_state%length  ! Cursor at end
 
     ! CRITICAL: Set flag to skip upward cursor movement on redraw
