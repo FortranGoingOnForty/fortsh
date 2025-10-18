@@ -2939,9 +2939,12 @@ contains
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
         end if
 
-        ! Add spacing between columns
+        ! Pad to column width for alignment (except last column in row)
         if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
-          write(output_unit, '(a)', advance='no') '  '
+          ! Pad with spaces to reach full column width
+          do i = len_trim(input_state%menu_items(item_idx)) + 1, cols_per_item
+            write(output_unit, '(a)', advance='no') ' '
+          end do
         end if
 
         item_idx = item_idx + 1
