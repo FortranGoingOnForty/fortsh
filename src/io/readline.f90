@@ -238,6 +238,7 @@ contains
     input_state%vi_mode = VI_MODE_INSERT
     input_state%suggestion = ''
     input_state%suggestion_length = 0
+    input_state%menu_prompt = prompt  ! Store prompt for FZF and menu functions
 
     if (raw_enabled) then
       ! Enhanced input processing
@@ -3586,9 +3587,12 @@ contains
       case('f')
         ! Alt+f - Move forward one word
         call move_to_next_word(input_state)
-      case('d')
-        ! Alt+d - Delete word forward
-        call handle_delete_word_forward(input_state)
+      case('c')
+        ! Alt+c - Directory browser with fzf (cd into selected dir)
+        call launch_fzf_directory_browser(input_state)
+      case('g')
+        ! Alt+g - Git browser with fzf
+        call launch_fzf_git_browser(input_state)
       case('u')
         ! Alt+u - Uppercase word (from cursor to end of word)
         call handle_uppercase_word(input_state)
@@ -5481,6 +5485,167 @@ contains
     ! Redraw current line
     if (input_state%length > 0) then
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+    end if
+    flush(output_unit)
+
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine launch_fzf_directory_browser(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=1024) :: fzf_cmd, selected_dir
+    integer :: unit, iostat, exit_status
+    logical :: file_exists
+
+    ! Check if fzf is installed
+    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    if (exit_status /= 0) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: fzf is not installed.'
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Build fzf command for directories only
+    ! Use find to list directories, fd if available (faster)
+    write(fzf_cmd, '(a)') '(command -v fd >/dev/null 2>&1 && ' // &
+          'fd --type d --hidden --exclude .git || ' // &
+          'find . -type d -not -path ''*/\.git/*'' 2>/dev/null) | ' // &
+          'fzf --height=40% --reverse --border ' // &
+          '--preview=''ls -lah {}'' ' // &
+          '--preview-window=right:60%:wrap ' // &
+          '--header=''Alt-C: Directory Browser | Select: CD into dir | ESC: Cancel'' ' // &
+          '> /tmp/fortsh_fzf_dir.tmp 2>/dev/null'
+
+    ! Clear screen and show fzf
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'
+    write(output_unit, '(a)', advance='no') char(27) // '[H'
+    flush(output_unit)
+
+    ! Execute fzf
+    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+
+    ! Read selection and cd into it
+    if (exit_status == 0) then
+      inquire(file='/tmp/fortsh_fzf_dir.tmp', exist=file_exists)
+      if (file_exists) then
+        open(newunit=unit, file='/tmp/fortsh_fzf_dir.tmp', &
+             status='old', action='read', iostat=iostat)
+        if (iostat == 0) then
+          read(unit, '(a)', iostat=iostat) selected_dir
+          close(unit)
+
+          if (iostat == 0 .and. len_trim(selected_dir) > 0) then
+            ! Replace line with cd command
+            input_state%buffer = 'cd ' // trim(selected_dir)
+            input_state%length = len_trim(input_state%buffer)
+            input_state%cursor_pos = input_state%length
+          end if
+        end if
+        call execute_command_line('rm -f /tmp/fortsh_fzf_dir.tmp 2>/dev/null')
+      end if
+    end if
+
+    ! Restore terminal
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'
+    write(output_unit, '(a)', advance='no') char(27) // '[H'
+    write(output_unit, '(a)', advance='no') trim(input_state%menu_prompt)
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+    end if
+    flush(output_unit)
+
+    input_state%dirty = .true.
+  end subroutine
+
+  subroutine launch_fzf_git_browser(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=1024) :: fzf_cmd, selected_item, git_cmd
+    character(len=512) :: preview_cmd
+    integer :: unit, iostat, exit_status
+    logical :: file_exists, in_git_repo
+
+    ! Check if in git repo
+    call execute_command_line('git rev-parse --git-dir >/dev/null 2>&1', exitstat=exit_status)
+    in_git_repo = (exit_status == 0)
+
+    if (.not. in_git_repo) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Not in a git repository.'
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Check if fzf is installed
+    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    if (exit_status /= 0) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: fzf is not installed.'
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Build git file browser (changed/staged files + branches)
+    ! Show modified files and branches
+    write(git_cmd, '(a)') '{ echo "=== Changed Files ==="; ' // &
+          'git status --short; ' // &
+          'echo ""; echo "=== Branches ==="; ' // &
+          'git branch --all; }'
+
+    write(preview_cmd, '(a)') 'if [[ {} == *"==="* ]]; then echo "Select an item below"; ' // &
+          'elif git show {}  >/dev/null 2>&1; then git show --stat {}; ' // &
+          'else git diff {}; fi'
+
+    write(fzf_cmd, '(a)') trim(git_cmd) // ' | ' // &
+          'fzf --height=40% --reverse --border --ansi ' // &
+          '--preview=''' // trim(preview_cmd) // ''' ' // &
+          '--preview-window=right:60%:wrap ' // &
+          '--header=''Alt-G: Git Browser | Select file or branch | ESC: Cancel'' ' // &
+          '> /tmp/fortsh_fzf_git.tmp 2>/dev/null'
+
+    ! Clear screen and show fzf
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'
+    write(output_unit, '(a)', advance='no') char(27) // '[H'
+    flush(output_unit)
+
+    ! Execute fzf
+    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+
+    ! Read selection
+    if (exit_status == 0) then
+      inquire(file='/tmp/fortsh_fzf_git.tmp', exist=file_exists)
+      if (file_exists) then
+        open(newunit=unit, file='/tmp/fortsh_fzf_git.tmp', &
+             status='old', action='read', iostat=iostat)
+        if (iostat == 0) then
+          read(unit, '(a)', iostat=iostat) selected_item
+          close(unit)
+
+          if (iostat == 0 .and. len_trim(selected_item) > 0) then
+            ! Insert selected item at cursor
+            call insert_string_at_cursor(input_state, trim(selected_item))
+          end if
+        end if
+        call execute_command_line('rm -f /tmp/fortsh_fzf_git.tmp 2>/dev/null')
+      end if
+    end if
+
+    ! Restore terminal
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'
+    write(output_unit, '(a)', advance='no') char(27) // '[H'
+    write(output_unit, '(a)', advance='no') trim(input_state%menu_prompt)
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+      ! Move cursor to correct position
+      if (input_state%cursor_pos < input_state%length) then
+        block
+          integer :: i, moves
+          moves = input_state%length - input_state%cursor_pos
+          do i = 1, moves
+            write(output_unit, '(a)', advance='no') char(27) // '[D'
+          end do
+        end block
+      end if
     end if
     flush(output_unit)
 
