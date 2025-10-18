@@ -2669,7 +2669,11 @@ contains
               input_state%menu_prefix_len = 0
             end if
 
-            ! Don't redraw - menu is already displayed from first tab
+            ! Advance selection to second item to show we've entered menu mode
+            input_state%menu_selection = min(2, input_state%menu_num_items)
+
+            ! Redraw menu with highlighting to show selection change
+            call draw_completion_menu(input_state, .false.)
             flush(output_unit)
           end if
         end if
@@ -2711,7 +2715,11 @@ contains
           input_state%menu_prefix_len = 0
         end if
 
-        ! Don't redraw - menu is already displayed from first tab
+        ! Advance selection to second item to show we've entered menu mode
+        input_state%menu_selection = min(2, input_state%menu_num_items)
+
+        ! Redraw menu with highlighting to show selection change
+        call draw_completion_menu(input_state, .false.)
         flush(output_unit)
       end if
     end if
@@ -2826,7 +2834,6 @@ contains
     ! Store menu items
     input_state%in_menu_select = .true.
     input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
-    input_state%menu_selection = 1  ! Start with first item selected
 
     do i = 1, input_state%menu_num_items
       ! Truncate to fit menu item buffer
@@ -2850,9 +2857,12 @@ contains
       input_state%menu_prefix_len = 0
     end if
 
-    ! Don't redraw the menu - it was already shown by the first tab
-    ! Just activate menu mode silently and wait for navigation keys
-    ! The menu will stay static on screen from the first tab display
+    ! Advance selection to second item to make it clear we've entered menu mode
+    ! This provides visual feedback that menu selection is now active
+    input_state%menu_selection = min(2, input_state%menu_num_items)
+
+    ! Redraw menu with the new selection highlighted
+    call draw_completion_menu(input_state, .false.)
     flush(output_unit)
   end subroutine
 
