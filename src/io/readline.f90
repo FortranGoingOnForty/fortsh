@@ -28,7 +28,7 @@ module readline
   integer, parameter :: KEY_CTRL_W = 23   ! Kill previous word
   integer, parameter :: KEY_CTRL_U = 21   ! Kill entire line
   integer, parameter :: KEY_CTRL_Y = 25   ! Yank (paste) killed text
-  integer, parameter :: KEY_CTRL_F = 6    ! Forward character (same as right arrow)
+  integer, parameter :: KEY_CTRL_F = 6    ! FZF file browser
   integer, parameter :: KEY_CTRL_B = 2    ! Backward character (same as left arrow)
   integer, parameter :: KEY_CTRL_R = 18   ! Reverse-i-search
   integer, parameter :: KEY_CTRL_S = 19   ! Forward-i-search
@@ -356,8 +356,8 @@ contains
           call handle_end(input_state)
           
         case(KEY_CTRL_F)
-          ! Forward character (same as right arrow)
-          call handle_cursor_right(input_state)
+          ! FZF file browser - insert selection at cursor
+          call launch_fzf_file_browser(input_state, prompt)
           
         case(KEY_CTRL_B)
           ! Backward character (same as left arrow)
@@ -5268,6 +5268,114 @@ contains
 
     ! Update suggestion to remove accepted part
     call update_autosuggestion(input_state)
+  end subroutine
+
+  ! ===========================================================================
+  ! FZF Integration (Ctrl-F fuzzy file finder)
+  ! ===========================================================================
+
+  subroutine launch_fzf_file_browser(input_state, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
+    character(len=1024) :: fzf_cmd, selected_path
+    character(len=512) :: preview_cmd
+    integer :: unit, iostat, exit_status
+    logical :: file_exists
+    character(len=256) :: bat_path
+
+    ! Check if fzf is installed
+    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    if (exit_status /= 0) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: fzf is not installed. Please install fzf first.'
+      write(output_unit, '(a)') '  Ubuntu/Debian: sudo apt install fzf'
+      write(output_unit, '(a)') '  macOS: brew install fzf'
+      write(output_unit, '(a)') '  Arch: sudo pacman -S fzf'
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Check if bat is available for syntax highlighting
+    call execute_command_line('command -v bat >/dev/null 2>&1', exitstat=exit_status)
+    if (exit_status == 0) then
+      bat_path = 'bat'
+    else
+      ! Try batcat (Debian/Ubuntu package name)
+      call execute_command_line('command -v batcat >/dev/null 2>&1', exitstat=exit_status)
+      if (exit_status == 0) then
+        bat_path = 'batcat'
+      else
+        bat_path = ''  ! Will use cat fallback
+      end if
+    end if
+
+    ! Build preview command
+    if (len_trim(bat_path) > 0) then
+      write(preview_cmd, '(a)') trim(bat_path) // &
+           ' --color=always --style=numbers,changes --line-range=:500 {}'
+    else
+      preview_cmd = 'head -n 500 {}'
+    end if
+
+    ! Build fzf command with options
+    write(fzf_cmd, '(a)') 'fzf --height=40% --reverse --border ' // &
+          '--preview=''' // trim(preview_cmd) // ''' ' // &
+          '--preview-window=right:60%:wrap ' // &
+          '--bind=''ctrl-/:toggle-preview'' ' // &
+          '--header=''Ctrl-F: File Browser | Ctrl-/: Toggle Preview | ESC: Cancel'' ' // &
+          '> /tmp/fortsh_fzf_selection.tmp 2>/dev/null'
+
+    ! Clear screen and show fzf
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
+    write(output_unit, '(a)', advance='no') char(27) // '[H'   ! Move cursor home
+    flush(output_unit)
+
+    ! Execute fzf
+    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+
+    ! Read selection if fzf exited successfully
+    if (exit_status == 0) then
+      inquire(file='/tmp/fortsh_fzf_selection.tmp', exist=file_exists)
+      if (file_exists) then
+        open(newunit=unit, file='/tmp/fortsh_fzf_selection.tmp', &
+             status='old', action='read', iostat=iostat)
+        if (iostat == 0) then
+          read(unit, '(a)', iostat=iostat) selected_path
+          close(unit)
+
+          if (iostat == 0 .and. len_trim(selected_path) > 0) then
+            ! Insert selected path at cursor position
+            call insert_string_at_cursor(input_state, trim(selected_path))
+          end if
+        end if
+        ! Clean up temp file
+        call execute_command_line('rm -f /tmp/fortsh_fzf_selection.tmp 2>/dev/null')
+      end if
+    end if
+
+    ! Restore terminal and redraw prompt
+    write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
+    write(output_unit, '(a)', advance='no') char(27) // '[H'   ! Move cursor home
+    write(output_unit, '(a)', advance='no') trim(prompt)
+
+    ! Redraw current line
+    if (input_state%length > 0) then
+      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+      ! Move cursor to correct position (if not at end)
+      if (input_state%cursor_pos < input_state%length) then
+        ! Move cursor back from end to cursor position using ANSI escape codes
+        block
+          integer :: i, moves
+          moves = input_state%length - input_state%cursor_pos
+          do i = 1, moves
+            write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+          end do
+        end block
+      end if
+    end if
+    flush(output_unit)
+
+    input_state%dirty = .true.
   end subroutine
 
 end module readline
