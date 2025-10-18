@@ -1357,6 +1357,7 @@ contains
   end subroutine
 
   subroutine exec_child(tokens, num_tokens)
+    use system_interface, only: file_exists, file_is_executable
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
 
@@ -1364,6 +1365,7 @@ contains
     character(kind=c_char), target :: c_tokens(MAX_TOKEN_LEN+1, num_tokens)
     integer :: i, j
     integer :: ret
+    logical :: is_path_command
 
     ! Convert tokens to C strings
     do i = 1, num_tokens
@@ -1374,6 +1376,22 @@ contains
       argv(i) = c_loc(c_tokens(1, i))
     end do
     argv(num_tokens + 1) = c_null_ptr
+
+    ! Check if command is a path (contains /) before calling exec
+    ! This allows us to distinguish between "file not found" (127) and "permission denied" (126)
+    is_path_command = (index(trim(tokens(1)), '/') > 0)
+
+    if (is_path_command) then
+      ! For path-based commands, check if file exists and is executable
+      if (file_exists(trim(tokens(1)))) then
+        if (.not. file_is_executable(trim(tokens(1)))) then
+          ! File exists but is not executable -> exit 126
+          write(error_unit, '(a)') 'fortsh: ' // trim(tokens(1)) // ': Permission denied'
+          call c_exit(126)
+        end if
+      end if
+      ! If file doesn't exist, execvp will fail with ENOENT (exit 127 below)
+    end if
 
     ! Execute the command
     ret = c_execvp(argv(1), c_loc(argv))

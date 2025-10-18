@@ -1859,7 +1859,7 @@ contains
   subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
-                         set_shell_variable, is_shell_variable_set
+                         set_shell_variable, is_shell_variable_set, check_nounset
     character(len=*), intent(in) :: param_expr
     character(len=:), allocatable, intent(out) :: result_value
     type(shell_state_t), intent(inout) :: shell
@@ -2455,6 +2455,16 @@ contains
     ! Apply parameter expansion logic
     if (op_pos == 0) then
       ! Simple expansion ${VAR}
+      ! Check if variable is unset and set -u is enabled
+      if (.not. var_is_set) then
+        if (check_nounset(shell, trim(var_name))) then
+          shell%last_exit_status = 1
+          shell%fatal_expansion_error = .true.
+          result_value = ''
+          return
+        end if
+      end if
+
       if (allocated(current_value)) then
         result_value = current_value
       else

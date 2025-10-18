@@ -841,6 +841,9 @@ contains
         ! until loops continue while condition is FALSE (opposite of while)
         if (.not. condition_result) then
           ! Condition is still false - executor will replay the loop body
+          ! POSIX: Reset exit status before returning
+          ! The 'done' keyword itself doesn't fail - it's checking loop continuation
+          shell%last_exit_status = 0
           return
         end if
 
