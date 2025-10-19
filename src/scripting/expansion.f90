@@ -565,30 +565,44 @@ contains
   function quote_value(input) result(output)
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: output
-    character(len=4096) :: temp_output
-    integer :: i, out_pos
+    character(len=:), allocatable :: temp_output
+    integer :: i, out_pos, capacity
 
     if (len_trim(input) == 0) then
       output = "''"
       return
     end if
 
+    ! Allocate with initial capacity
+    capacity = len(input) * 2 + 10
+    allocate(character(len=capacity) :: temp_output)
     temp_output = "'"
     out_pos = 2
 
     do i = 1, len_trim(input)
       if (input(i:i) == "'") then
+        ! Ensure we have space for escape sequence
+        if (out_pos + 4 > capacity) then
+          call grow_string_buffer_exp(temp_output, capacity, capacity * 2)
+        end if
         ! Escape single quote: ' becomes '\''
         temp_output(out_pos:out_pos+3) = "'\'''"
         out_pos = out_pos + 4
       else
+        if (out_pos > capacity) then
+          call grow_string_buffer_exp(temp_output, capacity, capacity * 2)
+        end if
         temp_output(out_pos:out_pos) = input(i:i)
         out_pos = out_pos + 1
       end if
     end do
 
+    if (out_pos > capacity) then
+      call grow_string_buffer_exp(temp_output, capacity, capacity * 2)
+    end if
     temp_output(out_pos:out_pos) = "'"
     output = temp_output(1:out_pos)
+    deallocate(temp_output)
   end function
 
   ! Expand escape sequences in string
@@ -596,9 +610,12 @@ contains
   function expand_escape_sequences(input) result(output)
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: output
-    character(len=4096) :: temp_output
-    integer :: i, out_pos
+    character(len=:), allocatable :: temp_output
+    integer :: i, out_pos, capacity
 
+    ! Allocate with initial capacity
+    capacity = len(input) + 100
+    allocate(character(len=capacity) :: temp_output)
     temp_output = ''
     out_pos = 1
     i = 1
@@ -655,6 +672,7 @@ contains
     end do
 
     output = temp_output(1:out_pos-1)
+    deallocate(temp_output)
   end function
 
   ! Pattern replacement in string
@@ -1921,13 +1939,17 @@ contains
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=4096) :: result
-    integer :: i, start_pos, end_pos, bracket_count
+    character(len=:), allocatable :: result
+    integer :: i, start_pos, end_pos, bracket_count, result_capacity, result_pos
     character(len=256) :: var_expr
     character(len=2048) :: var_value
     logical :: in_expansion, in_single_quote, in_double_quote
 
+    ! Allocate with initial capacity
+    result_capacity = len(input) * 2 + 256
+    allocate(character(len=result_capacity) :: result)
     result = ''
+    result_pos = 0
     i = 1
     in_single_quote = .false.
     in_double_quote = .false.
@@ -2394,11 +2416,18 @@ contains
     character(len=1024), allocatable :: words(:)
     character(len=1024) :: temp_result
     integer :: word_count, i, j, out_pos, capacity
-    character(len=4096) :: final_result
+    character(len=:), allocatable :: final_result
+    integer :: final_result_capacity, final_result_len
+    character(len=:), allocatable :: temp_piece
 
     ! Allocate initial array
     allocate(words(20))  ! Start with reasonable size
     capacity = 20
+
+    ! Allocate final_result buffer to avoid stack allocation
+    final_result_capacity = max(512, len(input) * 2)
+    allocate(character(len=final_result_capacity) :: final_result)
+    final_result_len = 0
 
     ! Split by spaces
     word_count = 0
@@ -2431,30 +2460,41 @@ contains
     end if
 
     ! Recursively expand each word and recombine
-    final_result = ''
     do i = 1, word_count
       if (index(words(i), '{') > 0) then
         ! Still has braces - recurse
         temp_result = expand_braces(trim(words(i)))
-        if (len_trim(final_result) > 0) then
-          final_result = trim(final_result) // ' ' // trim(temp_result)
+        if (final_result_len > 0) then
+          temp_piece = ' ' // trim(temp_result)
         else
-          final_result = trim(temp_result)
+          temp_piece = trim(temp_result)
         end if
       else
         ! No braces - use as-is
-        if (len_trim(final_result) > 0) then
-          final_result = trim(final_result) // ' ' // trim(words(i))
+        if (final_result_len > 0) then
+          temp_piece = ' ' // trim(words(i))
         else
-          final_result = trim(words(i))
+          temp_piece = trim(words(i))
         end if
       end if
+
+      ! Grow buffer if needed
+      if (final_result_len + len(temp_piece) > final_result_capacity) then
+        call grow_string_buffer_exp(final_result, final_result_capacity, &
+                                     max(final_result_capacity * 2, final_result_len + len(temp_piece) + 256))
+      end if
+
+      ! Append the piece
+      final_result(final_result_len+1:final_result_len+len(temp_piece)) = temp_piece
+      final_result_len = final_result_len + len(temp_piece)
     end do
 
-    output = trim(final_result)
+    output = final_result(:final_result_len)
 
-    ! Clean up allocatable array
+    ! Clean up allocatable arrays
     if (allocated(words)) deallocate(words)
+    if (allocated(final_result)) deallocate(final_result)
+    if (allocated(temp_piece)) deallocate(temp_piece)
   end function recursive_expand_all_braces
 
   ! Helper subroutine to grow expansion array
@@ -2554,6 +2594,29 @@ contains
       word_count = 1
       expanded_words(1) = quote_removed
     end if
+  end subroutine
+
+  ! Helper to grow an allocatable string buffer
+  subroutine grow_string_buffer_exp(buffer, old_capacity, new_capacity)
+    character(len=:), allocatable, intent(inout) :: buffer
+    integer, intent(inout) :: old_capacity
+    integer, intent(in) :: new_capacity
+    character(len=:), allocatable :: temp
+
+    ! Save current content
+    allocate(character(len=new_capacity) :: temp)
+    temp = ''
+    if (allocated(buffer)) then
+      temp(1:old_capacity) = buffer
+      deallocate(buffer)
+    end if
+
+    ! Allocate new larger buffer
+    allocate(character(len=new_capacity) :: buffer)
+    buffer = temp
+    old_capacity = new_capacity
+
+    deallocate(temp)
   end subroutine
 
 end module expansion

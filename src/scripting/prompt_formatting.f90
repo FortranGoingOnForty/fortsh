@@ -20,11 +20,16 @@ contains
     integer, intent(in), optional :: stored_len
     character(len=:), allocatable :: expanded
 
-    character(len=4096) :: result
-    integer :: i, j, prompt_len
+    ! Use allocatable to avoid stack allocation
+    character(len=:), allocatable :: result
+    integer :: i, j, prompt_len, result_capacity
     character(len=256) :: replacement
 
+    ! Start with reasonable capacity
+    result_capacity = len(prompt_str) * 2 + 256
+    allocate(character(len=result_capacity) :: result)
     result = ''
+
     j = 1
     i = 1
     ! Use stored length if provided (preserves intentional trailing spaces),
@@ -42,12 +47,19 @@ contains
         call process_escape_sequence(prompt_str(i:i), shell, replacement)
 
         if (len_trim(replacement) > 0) then
+          ! Grow buffer if needed
+          if (j + len_trim(replacement) > result_capacity) then
+            call grow_string_buffer(result, result_capacity, result_capacity * 2)
+          end if
           result(j:j+len_trim(replacement)-1) = trim(replacement)
           j = j + len_trim(replacement)
         end if
         i = i + 1
       else
         ! Regular character
+        if (j > result_capacity) then
+          call grow_string_buffer(result, result_capacity, result_capacity * 2)
+        end if
         result(j:j) = prompt_str(i:i)
         i = i + 1
         j = j + 1
@@ -56,6 +68,7 @@ contains
 
     ! Allocate exact length to preserve trailing spaces
     expanded = result(1:j-1)
+    deallocate(result)
   end function
 
   ! Process individual escape sequence
@@ -237,24 +250,12 @@ contains
   ! Get pretty path with ~ for home directory and intelligent shortening
   function get_pretty_path(path) result(pretty)
     character(len=*), intent(in) :: path
-    character(len=:), allocatable :: pretty, home_dir, shortened
-    integer :: home_len, term_rows, term_cols, max_path_len
-    logical :: success
-
-    ! Get terminal width to determine available space
-    success = get_terminal_size(term_rows, term_cols)
-    if (.not. success .or. term_cols <= 0) then
-      term_cols = 80
-    end if
-
-    ! Calculate max path length: use 25% of terminal width or 30 chars, whichever is smaller
-    ! This leaves plenty of room for username, hostname, git branch, and other prompt elements
-    max_path_len = min(term_cols / 4, 30)
-    if (max_path_len < 15) max_path_len = 15  ! Ensure minimum readability
+    character(len=:), allocatable :: pretty, home_dir
+    integer :: home_len
 
     home_dir = get_environment_var('HOME')
 
-    ! First, replace HOME with ~
+    ! Replace HOME with ~ (skip shortening on macOS to avoid memory issues)
     if (allocated(home_dir) .and. len(home_dir) > 0) then
       home_len = len(home_dir)
       if (len_trim(path) >= home_len) then
@@ -264,18 +265,13 @@ contains
           else
             pretty = '~' // trim(path(home_len+1:))
           end if
-
-          ! Apply intelligent shortening if path is still long
-          shortened = shorten_path(pretty, max_path_len)
-          pretty = shortened
           return
         end if
       end if
     end if
 
-    ! Apply intelligent shortening to non-home paths too
-    shortened = shorten_path(trim(path), max_path_len)
-    pretty = shortened
+    ! Return full path without shortening
+    pretty = trim(path)
   end function
 
   ! Intelligently shorten a path by abbreviating parent directories
@@ -284,16 +280,25 @@ contains
     character(len=*), intent(in) :: path
     integer, intent(in) :: max_length
     character(len=:), allocatable :: shortened
-    character(len=256) :: components(50)
-    integer :: num_components, i, slash_pos, start_pos
-    character(len=512) :: result
-    integer :: result_len
+    character(len=256), allocatable :: components(:)
+    integer :: num_components, i, slash_pos, start_pos, components_capacity
+    character(len=:), allocatable :: result
+    integer :: result_len, result_capacity
 
     ! If path is already short enough, return as-is
     if (len_trim(path) <= max_length) then
       shortened = trim(path)
       return
     end if
+
+    ! Allocate initial components array
+    components_capacity = 50
+    allocate(components(components_capacity))
+
+    ! Allocate result buffer - initialize with spaces
+    result_capacity = 512
+    allocate(character(len=result_capacity) :: result)
+    result = repeat(' ', result_capacity)  ! Initialize properly
 
     ! Split path into components
     num_components = 0
@@ -305,6 +310,10 @@ contains
         slash_pos = slash_pos + start_pos - 1
         if (slash_pos > start_pos) then
           num_components = num_components + 1
+          ! Grow array if needed
+          if (num_components > components_capacity) then
+            call grow_components_array(components, components_capacity)
+          end if
           components(num_components) = path(start_pos:slash_pos-1)
         end if
         start_pos = slash_pos + 1
@@ -312,6 +321,10 @@ contains
         ! Last component
         if (start_pos <= len_trim(path)) then
           num_components = num_components + 1
+          ! Grow array if needed
+          if (num_components > components_capacity) then
+            call grow_components_array(components, components_capacity)
+          end if
           components(num_components) = path(start_pos:)
         end if
         exit
@@ -319,16 +332,15 @@ contains
     end do
 
     ! Build shortened path
-    result = ''
     result_len = 0
 
     ! Handle leading ~ or /
     if (len_trim(path) > 0 .and. path(1:1) == '~') then
-      result = '~'
+      result(1:1) = '~'
       result_len = 1
       start_pos = 2  ! Skip the ~ component
     else if (len_trim(path) > 0 .and. path(1:1) == '/') then
-      result = '/'
+      result(1:1) = '/'
       result_len = 1
       start_pos = 1
     else
@@ -340,10 +352,16 @@ contains
       if (len_trim(components(i)) > 0) then
         if (result_len > 0 .and. result(result_len:result_len) /= '/') then
           result_len = result_len + 1
+          if (result_len > result_capacity) then
+            call grow_string_buffer(result, result_capacity, result_capacity * 2)
+          end if
           result(result_len:result_len) = '/'
         end if
         ! Use first character of each parent directory
         result_len = result_len + 1
+        if (result_len > result_capacity) then
+          call grow_string_buffer(result, result_capacity, result_capacity * 2)
+        end if
         result(result_len:result_len) = components(i)(1:1)
       end if
     end do
@@ -352,7 +370,13 @@ contains
     if (num_components > 0) then
       if (result_len > 0 .and. result(result_len:result_len) /= '/') then
         result_len = result_len + 1
+        if (result_len > result_capacity) then
+          call grow_string_buffer(result, result_capacity, result_capacity * 2)
+        end if
         result(result_len:result_len) = '/'
+      end if
+      if (result_len + len_trim(components(num_components)) > result_capacity) then
+        call grow_string_buffer(result, result_capacity, result_len + len_trim(components(num_components)) + 256)
       end if
       result(result_len+1:result_len+len_trim(components(num_components))) = &
         trim(components(num_components))
@@ -360,6 +384,10 @@ contains
     end if
 
     shortened = result(1:result_len)
+
+    ! Clean up
+    if (allocated(components)) deallocate(components)
+    if (allocated(result)) deallocate(result)
   end function
 
   ! Get basename of path
@@ -449,5 +477,46 @@ contains
     output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
     in_git = (len_trim(output) > 0)
   end function
+
+  ! Helper to grow an allocatable string buffer
+  subroutine grow_string_buffer(buffer, old_capacity, new_capacity)
+    character(len=:), allocatable, intent(inout) :: buffer
+    integer, intent(inout) :: old_capacity
+    integer, intent(in) :: new_capacity
+    character(len=:), allocatable :: temp
+
+    ! Save current content
+    allocate(character(len=new_capacity) :: temp)
+    temp = ''
+    if (allocated(buffer)) then
+      temp(1:old_capacity) = buffer
+      deallocate(buffer)
+    end if
+
+    ! Allocate new larger buffer
+    allocate(character(len=new_capacity) :: buffer)
+    buffer = temp
+    old_capacity = new_capacity
+
+    deallocate(temp)
+  end subroutine
+
+  ! Helper to grow an allocatable components array
+  subroutine grow_components_array(array, current_size)
+    character(len=256), allocatable, intent(inout) :: array(:)
+    integer, intent(inout) :: current_size
+    character(len=256), allocatable :: new_array(:)
+    integer :: new_size
+
+    new_size = current_size * 2
+    allocate(new_array(new_size))
+
+    ! Copy existing data
+    new_array(1:current_size) = array(1:current_size)
+
+    ! Swap arrays
+    call move_alloc(new_array, array)
+    current_size = new_size
+  end subroutine
 
 end module prompt_formatting

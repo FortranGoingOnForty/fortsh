@@ -18,7 +18,7 @@ program fortran_shell
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
-  type(shell_state_t) :: shell
+  type(shell_state_t), allocatable :: shell
   type(pipeline_t) :: pipeline
   character(len=1024) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, prompt_str, history_expanded
@@ -32,6 +32,9 @@ program fortran_shell
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
+
+  ! Allocate shell to avoid large stack allocation on macOS
+  allocate(shell)
 
   ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
@@ -163,20 +166,9 @@ program fortran_shell
 
     ! Read input with enhanced readline (includes prompt only if interactive)
     if (shell%is_interactive) then
-#ifdef __APPLE__
-      ! WORKAROUND: On macOS ARM64, gfortran has a bug with large stack-allocated
-      ! derived types that causes segfaults. Until this is fixed, we bypass
-      ! readline_enhanced and expand_prompt, using simple prompts instead.
-      ! This means no command history, line editing, or tab completion on macOS.
-      prompt_str = '$ '
-      write(output_unit, '(a)', advance='no') prompt_str
-      flush(output_unit)
-      read(input_unit, '(a)', iostat=iostat) input_line
-#else
-      ! Full readline with prompt expansion on other platforms
+      ! Full functionality - expand_prompt now uses allocatable buffers
       prompt_str = expand_prompt(shell%ps1, shell, shell%ps1_len)
       call readline_enhanced(prompt_str, input_line, iostat)
-#endif
     else
       read(input_unit, '(a)', iostat=iostat) input_line
       ! Note: History will be added after expansion below
@@ -197,17 +189,9 @@ program fortran_shell
     ! Check for unclosed quotes and continue reading lines if needed
     do while (has_unclosed_quote(input_line))
       if (shell%is_interactive) then
-#ifdef __APPLE__
-        ! WORKAROUND: Simple PS2 prompt for macOS (see main loop for details)
-        prompt_str = '> '
-        write(output_unit, '(a)', advance='no') prompt_str
-        flush(output_unit)
-        read(input_unit, '(a)', iostat=iostat) proc_subst_line
-#else
         ! Full readline with PS2 prompt expansion
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
         call readline_enhanced(prompt_str, proc_subst_line, iostat)
-#endif
       else
         ! Non-interactive: just read next line
         read(input_unit, '(a)', iostat=iostat) proc_subst_line
@@ -256,6 +240,24 @@ program fortran_shell
       call system_clock(cmd_start_time, clock_rate)
 
       call execute_pipeline(pipeline, shell, expanded_line)
+
+      ! Exit immediately if exit command was executed
+      if (.not. shell%running) then
+        ! Clean up pipeline before exiting
+        if (allocated(pipeline%commands)) then
+          do i = 1, pipeline%num_commands
+            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+          end do
+          deallocate(pipeline%commands)
+        end if
+        exit  ! Exit the main loop immediately
+      end if
 
       ! Calculate and display duration if > 1 second
       call system_clock(cmd_end_time)
@@ -587,6 +589,19 @@ contains
     character(kind=c_char), target :: c_hostname(256)
     character(len=256) :: arg
     integer :: ret, i, num_args
+
+    ! Initialize allocatable arrays to avoid large stack allocation on macOS
+    if (.not. allocated(shell%positional_params)) then
+      allocate(shell%positional_params(50))
+      shell%positional_params_capacity = 50
+    end if
+    if (.not. allocated(shell%local_vars)) then
+      allocate(shell%local_vars(MAX_CONTROL_DEPTH, 20))
+    end if
+    if (.not. allocated(shell%local_var_counts)) then
+      allocate(shell%local_var_counts(MAX_CONTROL_DEPTH))
+      shell%local_var_counts = 0
+    end if
 
     ! Detect if this is a login shell
     ! Check if argv[0] starts with '-' or if --login flag is present
