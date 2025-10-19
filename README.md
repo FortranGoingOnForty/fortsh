@@ -3,6 +3,8 @@
 
 A shell written in Fortran. Because we can.
 
+> **⚠️ macOS Users**: Due to a gfortran bug on ARM64 (Apple Silicon), fortsh currently runs with limited features on macOS. Basic shell operations work, but readline features (history, line editing, tab completion) are temporarily disabled to prevent crashes. We're actively investigating solutions to restore full functionality.
+
 ## Status
 
 **POSIX compliance**: 100% (well, I haven't run their test bench yet, but my tests are fairly robust)  
@@ -44,7 +46,7 @@ Requires:
 - POSIX system (Linux, BSD, macOS)
 - Realistic expectations
 
-**macOS ARM64 Warning**: gfortran has a stack frame corruption bug on Apple Silicon that breaks menu selection mode. Tab completion still works, you just can't use arrow keys to navigate. Blame the compiler, not us.
+**macOS ARM64 Note**: The gfortran stack corruption bug affects more than initially thought - we've had to temporarily disable readline entirely on macOS to prevent segfaults. The shell is fully functional for running commands and scripts, but interactive features are limited. See the warning at the top of this README.
 
 ```bash
 git clone https://github.com/FortranGoingOnForty/fortsh.git

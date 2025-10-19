@@ -164,11 +164,16 @@ program fortran_shell
     ! Read input with enhanced readline (includes prompt only if interactive)
     if (shell%is_interactive) then
 #ifdef __APPLE__
-      ! WORKAROUND: Bypass prompt expansion and readline on macOS due to gfortran ARM64 bug
-      write(output_unit, '(a)', advance='no') 'fortsh> '
+      ! WORKAROUND: On macOS ARM64, gfortran has a bug with large stack-allocated
+      ! derived types that causes segfaults. Until this is fixed, we bypass
+      ! readline_enhanced and expand_prompt, using simple prompts instead.
+      ! This means no command history, line editing, or tab completion on macOS.
+      prompt_str = '$ '
+      write(output_unit, '(a)', advance='no') prompt_str
+      flush(output_unit)
       read(input_unit, '(a)', iostat=iostat) input_line
 #else
-      ! Expand prompt with escape sequences
+      ! Full readline with prompt expansion on other platforms
       prompt_str = expand_prompt(shell%ps1, shell, shell%ps1_len)
       call readline_enhanced(prompt_str, input_line, iostat)
 #endif
@@ -193,11 +198,13 @@ program fortran_shell
     do while (has_unclosed_quote(input_line))
       if (shell%is_interactive) then
 #ifdef __APPLE__
-        ! WORKAROUND: Use simple input on macOS due to gfortran ARM64 bug
-        write(output_unit, '(a)', advance='no') '> '
+        ! WORKAROUND: Simple PS2 prompt for macOS (see main loop for details)
+        prompt_str = '> '
+        write(output_unit, '(a)', advance='no') prompt_str
+        flush(output_unit)
         read(input_unit, '(a)', iostat=iostat) proc_subst_line
 #else
-        ! Show PS2 continuation prompt
+        ! Full readline with PS2 prompt expansion
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
         call readline_enhanced(prompt_str, proc_subst_line, iostat)
 #endif
