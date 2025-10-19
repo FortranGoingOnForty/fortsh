@@ -1,12 +1,13 @@
 # fortsh
+(noun) : something clever never
 
 A shell written in Fortran. Because we can.
 
 ## Status
 
-**POSIX compliance**: 100%
-**bash compatibility**: ~99%
-**Chance you'll miss the other 1%**: Low
+**POSIX compliance**: 100% (well, I haven't run their test bench yet, but my tests are fairly robust)  
+**bash compatibility**: ~99%  
+**Chance you'll miss the other 1%**: Low  
 
 Turns out you can write a pretty decent shell in Fortran. Who knew.
 
@@ -19,6 +20,8 @@ Pretty much everything:
 - Job control
 - History with Ctrl+R
 - Tab completion
+- History suggestions a la fish
+- fuzzy matching a la fish
 - Arrays (indexed and associative)
 - Parameter expansion (`${var#stuff}`, etc.)
 - Process substitution (`<(cmd)`, `>(cmd)`)
