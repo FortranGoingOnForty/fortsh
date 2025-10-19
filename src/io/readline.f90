@@ -42,8 +42,15 @@ module readline
   integer, parameter :: KEY_LEFT = 68
   
   ! History and line management
+  ! EXTREMELY reduced sizes on macOS to avoid gfortran ARM64 stack corruption bug
+  ! The static command_history variable causes issues even at moderate sizes
+#ifdef __APPLE__
+  integer, parameter :: MAX_HISTORY = 10       ! Drastically reduced for macOS (10 * 128 = 1.2KB)
+  integer, parameter :: MAX_LINE_LEN = 128     ! Drastically reduced for macOS
+#else
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
+#endif
 
   ! Glob expansion constants (from glob module)
   integer, parameter :: MAX_GLOB_MATCHES = 1000

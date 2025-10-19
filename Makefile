@@ -7,7 +7,9 @@ FC = gfortran
 # Platform detection
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    PLATFORM_FLAGS = -D__APPLE__ -cpp
+    # Force ALL arrays to heap on macOS to avoid gfortran ARM64 stack corruption bug
+    # This is aggressive but necessary to prevent segfaults
+    PLATFORM_FLAGS = -D__APPLE__ -cpp -fmax-stack-var-size=1 -frecursive
 else
     PLATFORM_FLAGS = -cpp
 endif
