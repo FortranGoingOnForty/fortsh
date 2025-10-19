@@ -42,9 +42,15 @@ module readline
   integer, parameter :: KEY_LEFT = 68
   
   ! History and line management
-  ! Use reasonable sizes now that we're using allocatable arrays
+  ! EXTREMELY reduced sizes on macOS to avoid gfortran ARM64 stack corruption bug
+  ! The static command_history variable causes issues even at moderate sizes
+#ifdef __APPLE__
+  integer, parameter :: MAX_HISTORY = 10       ! Drastically reduced for macOS (10 * 128 = 1.2KB)
+  integer, parameter :: MAX_LINE_LEN = 128     ! Drastically reduced for macOS
+#else
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
+#endif
 
   ! Glob expansion constants (from glob module)
   integer, parameter :: MAX_GLOB_MATCHES = 1000
@@ -66,11 +72,10 @@ module readline
   integer, parameter :: MAX_SCORED_ITEMS = 30  ! Max scored completion items
 
   type :: input_state_t
-    ! Use allocatable strings to avoid stack issues
-    character(len=:), allocatable :: buffer
-    character(len=:), allocatable :: original_buffer
-    character(len=:), allocatable :: kill_buffer
-    character(len=:), allocatable :: last_completion_buffer
+    character(len=MAX_LINE_LEN) :: buffer = ''
+    character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
+    character(len=MAX_LINE_LEN) :: kill_buffer = ''    ! Kill ring buffer for cut/paste
+    character(len=MAX_LINE_LEN) :: last_completion_buffer = '' ! Buffer when we last showed completions
     integer :: length = 0
     integer :: cursor_pos = 0  ! 0-based position in buffer
     integer :: history_pos = 0  ! Current position in history (0 = not browsing)
@@ -82,57 +87,55 @@ module readline
     ! Reverse-i-search state
     logical :: in_search = .false. ! Currently in i-search mode (forward or reverse)
     logical :: search_forward = .false. ! True = forward, False = reverse
-    character(len=:), allocatable :: search_string
+    character(len=MAX_LINE_LEN) :: search_string = '' ! Current search query
     integer :: search_length = 0 ! Length of search string
     integer :: search_match_index = 0 ! Current history match index
 
     ! Editing mode support
     integer :: editing_mode = EDITING_MODE_EMACS
     integer :: vi_mode = VI_MODE_INSERT
-    character(len=:), allocatable :: vi_command_buffer
+    character(len=MAX_LINE_LEN) :: vi_command_buffer = ''
     integer :: vi_command_count = 0
     logical :: vi_repeat_pending = .false.
 
     ! Advanced vi mode features
-    character(len=:), allocatable :: vi_yank_buffer
+    character(len=MAX_LINE_LEN) :: vi_yank_buffer = ''  ! Vi-style yank buffer
     integer :: vi_yank_length = 0
     integer :: vi_marks(26) = 0  ! Mark positions for 'a'-'z' (0 = not set)
-    character(len=:), allocatable :: vi_search_pattern
+    character(len=MAX_LINE_LEN) :: vi_search_pattern = ''
     integer :: vi_search_length = 0
     logical :: vi_search_forward = .true.
     logical :: vi_in_vi_search = .false.
 
     ! Autosuggestion support (fish-style)
-    character(len=:), allocatable :: suggestion
+    character(len=MAX_LINE_LEN) :: suggestion = ''  ! Current suggestion from history
     integer :: suggestion_length = 0  ! Length of suggestion
 
     ! Menu selection support (zsh/fish-style interactive completion)
+    ! REDUCED SIZE: Was 204KB (50*4096), now only 5KB (20*256) to avoid static storage
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
-    character(len=MAX_MENU_ITEM_LEN), allocatable :: menu_items(:)  ! Completion items for menu
+    character(len=MAX_MENU_ITEM_LEN) :: menu_items(MAX_MENU_ITEMS) = ''  ! Completion items for menu
     integer :: menu_num_items = 0  ! Number of items in menu
     integer :: menu_selection = 1  ! Currently selected item (1-based)
-    character(len=:), allocatable :: menu_prefix
+    character(len=MAX_LINE_LEN) :: menu_prefix = ''  ! Command prefix before completion word
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
-    character(len=:), allocatable :: menu_prompt
+    character(len=MAX_LINE_LEN) :: menu_prompt = ''  ! Prompt when in menu mode (for live preview)
     logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
 
     ! Process kill mode support (Ctrl-X)
     logical :: in_process_kill_mode = .false.  ! Currently in process kill mode
     logical :: in_signal_input = .false.  ! Entering signal to send
     integer :: selected_pid = 0  ! PID of selected process
-    character(len=:), allocatable :: selected_process_name
+    character(len=256) :: selected_process_name = ''  ! Name of selected process
   end type input_state_t
 
   type :: history_t
-    ! Use allocatable array to avoid stack issues
-    character(len=:), allocatable :: lines(:)
+    character(len=MAX_LINE_LEN) :: lines(MAX_HISTORY)
     integer :: count = 0
     integer :: current = 0  ! Current position in history navigation
-    logical :: initialized = .false.
   end type history_t
 
   type(history_t), save :: command_history
-  type(input_state_t), save :: global_input_state  ! Module-level to avoid stack issues
 
   ! Type to hold completion candidates with scores for fuzzy matching
   type :: scored_completion_t
@@ -194,71 +197,22 @@ contains
     end if
   end subroutine
 
-  ! Initialize input_state_t with allocated strings
-  subroutine init_input_state(state)
-    type(input_state_t), intent(out) :: state
-    ! Allocate all string fields with initial empty values
-    allocate(character(len=MAX_LINE_LEN) :: state%buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%original_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%kill_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%last_completion_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
-    allocate(character(len=MAX_LINE_LEN) :: state%suggestion)
-    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
-    allocate(character(len=MAX_LINE_LEN) :: state%menu_prompt)
-    allocate(character(len=256) :: state%selected_process_name)
-
-    ! Initialize strings to empty
-    state%buffer = ''
-    state%original_buffer = ''
-    state%kill_buffer = ''
-    state%last_completion_buffer = ''
-    state%search_string = ''
-    state%vi_command_buffer = ''
-    state%vi_yank_buffer = ''
-    state%vi_search_pattern = ''
-    state%suggestion = ''
-    state%menu_prefix = ''
-    state%menu_prompt = ''
-    state%selected_process_name = ''
-
-    ! Allocate menu items array
-    allocate(state%menu_items(MAX_MENU_ITEMS))
-    state%menu_items = ''
-  end subroutine
-
-  ! Initialize command history
-  subroutine init_history()
-    if (.not. command_history%initialized) then
-      allocate(character(len=MAX_LINE_LEN) :: command_history%lines(MAX_HISTORY))
-      command_history%lines = ''
-      command_history%count = 0
-      command_history%current = 0
-      command_history%initialized = .true.
-    end if
-  end subroutine
-
   ! Enhanced readline with character-by-character input processing
   subroutine readline_enhanced(prompt, line, iostat)
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
-
+    
+    type(input_state_t) :: input_state
     type(termios_t) :: original_termios
     character :: ch
     logical :: success, done, raw_enabled
     integer :: char_code
-
+    
     iostat = 0
     done = .false.
     raw_enabled = .false.
-
-    ! Initialize command history on first use
-    call init_history()
-
+    
     ! Try to enable raw mode (only works in interactive mode)
     success = enable_raw_mode(original_termios)
     if (success) then
@@ -268,22 +222,25 @@ contains
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
     flush(output_unit)
-
-    ! Initialize input state with allocatable strings (use module-level variable)
-    call init_input_state(global_input_state)
-    global_input_state%length = 0
-    global_input_state%cursor_pos = 0
-    global_input_state%history_pos = 0
-    global_input_state%kill_length = 0
-    global_input_state%dirty = .false.
-    global_input_state%in_history = .false.
-    global_input_state%completions_shown = .false.
-    global_input_state%in_search = .false.
-    global_input_state%search_string = ''
-    global_input_state%search_length = 0
-    global_input_state%search_match_index = 0
-    global_input_state%editing_mode = global_editing_mode  ! Initialize from global state
-    global_input_state%vi_mode = VI_MODE_INSERT
+    
+    ! Initialize input state
+    input_state%buffer = ''
+    input_state%original_buffer = ''
+    input_state%kill_buffer = ''
+    input_state%last_completion_buffer = ''
+    input_state%length = 0
+    input_state%cursor_pos = 0
+    input_state%history_pos = 0
+    input_state%kill_length = 0
+    input_state%dirty = .false.
+    input_state%in_history = .false.
+    input_state%completions_shown = .false.
+    input_state%in_search = .false.
+    input_state%search_string = ''
+    input_state%search_length = 0
+    input_state%search_match_index = 0
+    input_state%editing_mode = global_editing_mode  ! Initialize from global state
+    input_state%vi_mode = VI_MODE_INSERT
     input_state%suggestion = ''
     input_state%suggestion_length = 0
     input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
