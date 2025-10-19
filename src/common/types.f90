@@ -236,9 +236,9 @@ module shell_types
     type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)
     integer :: control_depth = 0
     logical :: case_pattern_skip_first_token = .false.  ! Skip first token in case pattern execution
-    ! Function call stack for local variables
-    type(shell_var_t) :: local_vars(MAX_CONTROL_DEPTH, 20)  ! stack of local variable scopes
-    integer :: local_var_counts(MAX_CONTROL_DEPTH) = 0
+    ! Function call stack for local variables (allocatable to avoid large stack allocation)
+    type(shell_var_t), allocatable :: local_vars(:,:)  ! stack of local variable scopes
+    integer, allocatable :: local_var_counts(:)
     ! Script sourcing state
     character(len=MAX_PATH_LEN) :: source_file = ''
     logical :: should_source = .false.
@@ -282,9 +282,10 @@ module shell_types
     character(len=256) :: ps4 = '+ '              ! Trace prompt (set -x)
     integer :: ps4_len = 0                     ! Actual length of PS4
     integer :: command_number = 0              ! For \# in prompts
-    ! Positional parameters
-    character(len=1024) :: positional_params(50) ! $1, $2, ..., $n
+    ! Positional parameters (allocatable to avoid large stack allocation on macOS)
+    character(len=1024), allocatable :: positional_params(:) ! $1, $2, ..., $n
     integer :: num_positional = 0             ! $# (number of positional parameters)
+    integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting
     character(len=256) :: ifs = ' \t\n'       ! $IFS (internal field separator)
     ! History control

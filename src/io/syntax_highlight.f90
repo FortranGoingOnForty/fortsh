@@ -177,13 +177,15 @@ contains
     character(len=:), allocatable, intent(out) :: tokens(:)
     integer, intent(out) :: num_tokens
 
-    character(len=len(input)) :: working
+    character(len=:), allocatable :: working  ! Use allocatable to avoid stack allocation
     integer :: i, token_start, token_end
     logical :: in_quotes, in_comment
     character(len=1) :: quote_char
     character(len=:), allocatable :: temp_tokens(:)
     integer :: max_tokens
 
+    ! Allocate working string
+    allocate(character(len=len(input)) :: working)
     working = input
     max_tokens = 64
     allocate(character(len=256) :: temp_tokens(max_tokens))
@@ -268,6 +270,7 @@ contains
     end if
 
     deallocate(temp_tokens)
+    if (allocated(working)) deallocate(working)
   end subroutine
 
   ! Determine colors for tokens

@@ -72,10 +72,11 @@ module readline
   integer, parameter :: MAX_SCORED_ITEMS = 30  ! Max scored completion items
 
   type :: input_state_t
-    character(len=MAX_LINE_LEN) :: buffer = ''
-    character(len=MAX_LINE_LEN) :: original_buffer = '' ! Save original input during history navigation
-    character(len=MAX_LINE_LEN) :: kill_buffer = ''    ! Kill ring buffer for cut/paste
-    character(len=MAX_LINE_LEN) :: last_completion_buffer = '' ! Buffer when we last showed completions
+    ! Use allocatable strings to avoid stack allocation on macOS
+    character(len=:), allocatable :: buffer
+    character(len=:), allocatable :: original_buffer  ! Save original input during history navigation
+    character(len=:), allocatable :: kill_buffer      ! Kill ring buffer for cut/paste
+    character(len=:), allocatable :: last_completion_buffer  ! Buffer when we last showed completions
     integer :: length = 0
     integer :: cursor_pos = 0  ! 0-based position in buffer
     integer :: history_pos = 0  ! Current position in history (0 = not browsing)
@@ -87,52 +88,56 @@ module readline
     ! Reverse-i-search state
     logical :: in_search = .false. ! Currently in i-search mode (forward or reverse)
     logical :: search_forward = .false. ! True = forward, False = reverse
-    character(len=MAX_LINE_LEN) :: search_string = '' ! Current search query
+    character(len=:), allocatable :: search_string  ! Current search query
     integer :: search_length = 0 ! Length of search string
     integer :: search_match_index = 0 ! Current history match index
 
     ! Editing mode support
     integer :: editing_mode = EDITING_MODE_EMACS
     integer :: vi_mode = VI_MODE_INSERT
-    character(len=MAX_LINE_LEN) :: vi_command_buffer = ''
+    character(len=:), allocatable :: vi_command_buffer
     integer :: vi_command_count = 0
     logical :: vi_repeat_pending = .false.
 
     ! Advanced vi mode features
-    character(len=MAX_LINE_LEN) :: vi_yank_buffer = ''  ! Vi-style yank buffer
+    character(len=:), allocatable :: vi_yank_buffer  ! Vi-style yank buffer
     integer :: vi_yank_length = 0
     integer :: vi_marks(26) = 0  ! Mark positions for 'a'-'z' (0 = not set)
-    character(len=MAX_LINE_LEN) :: vi_search_pattern = ''
+    character(len=:), allocatable :: vi_search_pattern
     integer :: vi_search_length = 0
     logical :: vi_search_forward = .true.
     logical :: vi_in_vi_search = .false.
 
     ! Autosuggestion support (fish-style)
-    character(len=MAX_LINE_LEN) :: suggestion = ''  ! Current suggestion from history
+    character(len=:), allocatable :: suggestion  ! Current suggestion from history
     integer :: suggestion_length = 0  ! Length of suggestion
 
     ! Menu selection support (zsh/fish-style interactive completion)
-    ! REDUCED SIZE: Was 204KB (50*4096), now only 5KB (20*256) to avoid static storage
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
-    character(len=MAX_MENU_ITEM_LEN) :: menu_items(MAX_MENU_ITEMS) = ''  ! Completion items for menu
+    character(len=:), allocatable :: menu_items(:)  ! Completion items for menu (allocatable array)
     integer :: menu_num_items = 0  ! Number of items in menu
     integer :: menu_selection = 1  ! Currently selected item (1-based)
-    character(len=MAX_LINE_LEN) :: menu_prefix = ''  ! Command prefix before completion word
+    character(len=:), allocatable :: menu_prefix  ! Command prefix before completion word
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
-    character(len=MAX_LINE_LEN) :: menu_prompt = ''  ! Prompt when in menu mode (for live preview)
+    character(len=:), allocatable :: menu_prompt  ! Prompt when in menu mode (for live preview)
     logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
 
     ! Process kill mode support (Ctrl-X)
     logical :: in_process_kill_mode = .false.  ! Currently in process kill mode
     logical :: in_signal_input = .false.  ! Entering signal to send
     integer :: selected_pid = 0  ! PID of selected process
-    character(len=256) :: selected_process_name = ''  ! Name of selected process
+    character(len=:), allocatable :: selected_process_name  ! Name of selected process
+
+    ! Track if initialized
+    logical :: initialized = .false.
   end type input_state_t
 
   type :: history_t
-    character(len=MAX_LINE_LEN) :: lines(MAX_HISTORY)
+    ! Use allocatable array to avoid stack allocation on macOS
+    character(len=:), allocatable :: lines(:)
     integer :: count = 0
     integer :: current = 0  ! Current position in history navigation
+    logical :: initialized = .false.
   end type history_t
 
   type(history_t), save :: command_history
@@ -154,6 +159,111 @@ module readline
   logical, save :: macos_detected = .false.
 
 contains
+  ! Initialize input_state_t with allocated strings
+  subroutine init_input_state(state)
+    type(input_state_t), intent(out) :: state
+
+    ! Allocate all strings with initial capacity
+    allocate(character(len=MAX_LINE_LEN) :: state%buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%original_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%kill_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%last_completion_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
+    allocate(character(len=MAX_LINE_LEN) :: state%suggestion)
+    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
+    allocate(character(len=MAX_LINE_LEN) :: state%menu_prompt)
+    allocate(character(len=256) :: state%selected_process_name)
+
+    ! Allocate menu items array
+    allocate(character(len=MAX_MENU_ITEM_LEN) :: state%menu_items(MAX_MENU_ITEMS))
+
+    ! Initialize all strings to empty
+    state%buffer = ''
+    state%original_buffer = ''
+    state%kill_buffer = ''
+    state%last_completion_buffer = ''
+    state%search_string = ''
+    state%vi_command_buffer = ''
+    state%vi_yank_buffer = ''
+    state%vi_search_pattern = ''
+    state%suggestion = ''
+    state%menu_prefix = ''
+    state%menu_prompt = ''
+    state%selected_process_name = ''
+    state%menu_items = ''
+
+    ! Initialize numeric fields
+    state%length = 0
+    state%cursor_pos = 0
+    state%history_pos = 0
+    state%kill_length = 0
+    state%search_length = 0
+    state%search_match_index = 0
+    state%editing_mode = global_editing_mode
+    state%vi_mode = VI_MODE_INSERT
+    state%vi_command_count = 0
+    state%vi_yank_length = 0
+    state%vi_marks = 0
+    state%vi_search_length = 0
+    state%suggestion_length = 0
+    state%menu_num_items = 0
+    state%menu_selection = 1
+    state%menu_prefix_len = 0
+    state%selected_pid = 0
+
+    ! Initialize logical fields
+    state%dirty = .false.
+    state%in_history = .false.
+    state%completions_shown = .false.
+    state%in_search = .false.
+    state%search_forward = .false.
+    state%vi_repeat_pending = .false.
+    state%vi_search_forward = .true.
+    state%vi_in_vi_search = .false.
+    state%in_menu_select = .false.
+    state%skip_cursor_up_on_redraw = .false.
+    state%in_process_kill_mode = .false.
+    state%in_signal_input = .false.
+
+    ! Set initialized flag
+    state%initialized = .true.
+  end subroutine
+
+  ! Initialize history with allocated array
+  subroutine init_history()
+    if (.not. command_history%initialized) then
+      allocate(character(len=MAX_LINE_LEN) :: command_history%lines(MAX_HISTORY))
+      command_history%lines = ''
+      command_history%count = 0
+      command_history%current = 0
+      command_history%initialized = .true.
+    end if
+  end subroutine
+
+  ! Clean up input_state_t allocations
+  subroutine cleanup_input_state(state)
+    type(input_state_t), intent(inout) :: state
+
+    if (state%initialized) then
+      if (allocated(state%buffer)) deallocate(state%buffer)
+      if (allocated(state%original_buffer)) deallocate(state%original_buffer)
+      if (allocated(state%kill_buffer)) deallocate(state%kill_buffer)
+      if (allocated(state%last_completion_buffer)) deallocate(state%last_completion_buffer)
+      if (allocated(state%search_string)) deallocate(state%search_string)
+      if (allocated(state%vi_command_buffer)) deallocate(state%vi_command_buffer)
+      if (allocated(state%vi_yank_buffer)) deallocate(state%vi_yank_buffer)
+      if (allocated(state%vi_search_pattern)) deallocate(state%vi_search_pattern)
+      if (allocated(state%suggestion)) deallocate(state%suggestion)
+      if (allocated(state%menu_prefix)) deallocate(state%menu_prefix)
+      if (allocated(state%menu_prompt)) deallocate(state%menu_prompt)
+      if (allocated(state%selected_process_name)) deallocate(state%selected_process_name)
+      if (allocated(state%menu_items)) deallocate(state%menu_items)
+      state%initialized = .false.
+    end if
+  end subroutine
 
   ! Set the HISTCONTROL setting for history management
   subroutine set_histcontrol(histcontrol)
@@ -202,47 +312,32 @@ contains
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
-    
+
     type(input_state_t) :: input_state
     type(termios_t) :: original_termios
     character :: ch
     logical :: success, done, raw_enabled
     integer :: char_code
-    
+
     iostat = 0
     done = .false.
     raw_enabled = .false.
-    
+
+    ! Initialize history on first use
+    call init_history()
+
     ! Try to enable raw mode (only works in interactive mode)
     success = enable_raw_mode(original_termios)
     if (success) then
       raw_enabled = .true.
     end if
-    
+
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
     flush(output_unit)
-    
-    ! Initialize input state
-    input_state%buffer = ''
-    input_state%original_buffer = ''
-    input_state%kill_buffer = ''
-    input_state%last_completion_buffer = ''
-    input_state%length = 0
-    input_state%cursor_pos = 0
-    input_state%history_pos = 0
-    input_state%kill_length = 0
-    input_state%dirty = .false.
-    input_state%in_history = .false.
-    input_state%completions_shown = .false.
-    input_state%in_search = .false.
-    input_state%search_string = ''
-    input_state%search_length = 0
-    input_state%search_match_index = 0
-    input_state%editing_mode = global_editing_mode  ! Initialize from global state
-    input_state%vi_mode = VI_MODE_INSERT
-    input_state%suggestion = ''
-    input_state%suggestion_length = 0
+
+    ! Initialize input state with allocated strings
+    call init_input_state(input_state)
     input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
     if (raw_enabled) then
@@ -576,6 +671,9 @@ contains
     else
       line = ''
     end if
+
+    ! Clean up allocated memory
+    call cleanup_input_state(input_state)
   end subroutine
 
   ! Simple fallback readline - uses standard input for now
