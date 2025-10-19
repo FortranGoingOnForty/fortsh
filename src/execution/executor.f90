@@ -1941,7 +1941,7 @@ contains
 
     character(len=256) :: func_name
     character(len=2048) :: reconstructed
-    ! Reduced from 100 to 50 lines to avoid static storage (102KB -> 51KB)
+    ! Reduced from 100 to 50 lines to avoid static storage
     character(len=1024) :: func_body(50)
     integer :: body_count, brace_start, brace_end, paren_pos
 

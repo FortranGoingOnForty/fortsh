@@ -1457,11 +1457,11 @@ contains
   subroutine read_heredoc(delimiter, content)
     character(len=*), intent(in) :: delimiter
     character(len=:), allocatable, intent(out) :: content
-    
+
     character(len=MAX_TOKEN_LEN) :: line
     character(len=MAX_HEREDOC_LEN) :: buffer
     integer :: iostat, pos
-    
+
     buffer = ''
     pos = 1
     

@@ -163,9 +163,15 @@ program fortran_shell
 
     ! Read input with enhanced readline (includes prompt only if interactive)
     if (shell%is_interactive) then
+#ifdef __APPLE__
+      ! WORKAROUND: Bypass prompt expansion and readline on macOS due to gfortran ARM64 bug
+      write(output_unit, '(a)', advance='no') 'fortsh> '
+      read(input_unit, '(a)', iostat=iostat) input_line
+#else
       ! Expand prompt with escape sequences
       prompt_str = expand_prompt(shell%ps1, shell, shell%ps1_len)
       call readline_enhanced(prompt_str, input_line, iostat)
+#endif
     else
       read(input_unit, '(a)', iostat=iostat) input_line
       ! Note: History will be added after expansion below
@@ -186,9 +192,15 @@ program fortran_shell
     ! Check for unclosed quotes and continue reading lines if needed
     do while (has_unclosed_quote(input_line))
       if (shell%is_interactive) then
+#ifdef __APPLE__
+        ! WORKAROUND: Use simple input on macOS due to gfortran ARM64 bug
+        write(output_unit, '(a)', advance='no') '> '
+        read(input_unit, '(a)', iostat=iostat) proc_subst_line
+#else
         ! Show PS2 continuation prompt
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
         call readline_enhanced(prompt_str, proc_subst_line, iostat)
+#endif
       else
         ! Non-interactive: just read next line
         read(input_unit, '(a)', iostat=iostat) proc_subst_line
@@ -333,7 +345,7 @@ contains
     character(len=:), allocatable :: expanded_line, history_expanded
     logical :: in_function
     character(len=256) :: func_name
-    ! Reduced from 100 to 50 lines to avoid static storage (102KB -> 51KB)
+    ! Reduced from 100 to 50 lines to avoid static storage
     character(len=1024) :: func_body(50)
 
     ! Reset the source flag first
@@ -411,7 +423,7 @@ contains
           brace_depth = 0
         else
           ! Add this line to function body (skip the closing } line)
-          if (func_line_count < 100 .and. trim(input_line) /= '}') then
+          if (func_line_count < 50 .and. trim(input_line) /= '}') then
             func_line_count = func_line_count + 1
             func_body(func_line_count) = trim(input_line)
           end if
