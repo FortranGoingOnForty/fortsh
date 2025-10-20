@@ -55,11 +55,14 @@ module syntax_highlight
   integer, parameter :: COLOR_NUMBER = COLOR_CYAN
   integer, parameter :: COLOR_PATH = COLOR_BRIGHT_BLUE
 
+  ! Fixed-length parameters to avoid heap corruption with some compilers
+  integer, parameter :: MAX_COMMAND_LEN = 256
+
   ! Command validation cache
   type :: cache_entry_t
-    character(len=:), allocatable :: command
-    logical :: is_valid
-    integer :: timestamp
+    character(len=MAX_COMMAND_LEN) :: command = ''
+    logical :: is_valid = .false.
+    integer :: timestamp = 0
   end type cache_entry_t
 
   integer, parameter :: CACHE_SIZE = 256
@@ -88,9 +91,7 @@ contains
     integer :: i
 
     do i = 1, CACHE_SIZE
-      if (allocated(command_cache(i)%command)) then
-        deallocate(command_cache(i)%command)
-      end if
+      command_cache(i)%command = ''
       command_cache(i)%is_valid = .false.
       command_cache(i)%timestamp = 0
     end do
@@ -426,7 +427,7 @@ contains
     logical :: valid
 
     integer :: cache_idx
-    character(len=:), allocatable :: cmd
+    character(len=MAX_COMMAND_LEN) :: cmd
 
     cmd = trim(command)
     valid = .false.
@@ -571,8 +572,8 @@ contains
     idx = 0
 
     do i = 1, min(cache_count, CACHE_SIZE)
-      if (allocated(command_cache(i)%command)) then
-        if (command_cache(i)%command == command) then
+      if (len_trim(command_cache(i)%command) > 0) then
+        if (trim(command_cache(i)%command) == trim(command)) then
           ! Update timestamp for LRU
           command_cache(i)%timestamp = current_timestamp
           current_timestamp = current_timestamp + 1
@@ -602,7 +603,7 @@ contains
     oldest_time = command_cache(1)%timestamp
 
     do i = 1, CACHE_SIZE
-      if (.not. allocated(command_cache(i)%command)) then
+      if (len_trim(command_cache(i)%command) == 0) then
         idx = i
         exit
       end if
@@ -617,9 +618,6 @@ contains
     if (idx == 0) idx = oldest_idx
 
     ! Store in cache
-    if (allocated(command_cache(idx)%command)) then
-      deallocate(command_cache(idx)%command)
-    end if
     command_cache(idx)%command = trim(command)
     command_cache(idx)%is_valid = is_valid
     command_cache(idx)%timestamp = current_timestamp
