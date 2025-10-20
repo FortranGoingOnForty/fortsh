@@ -2,16 +2,27 @@
 # ====================================
 
 # Compiler settings
-FC = gfortran
-
-# Platform detection
+# Use LLVM Flang on macOS ARM64 for better stability
 UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+
 ifeq ($(UNAME_S),Darwin)
-    # Add -frecursive for proper stack handling on macOS
-    # The allocatable arrays should prevent the gfortran ARM64 bug
-    PLATFORM_FLAGS = -D__APPLE__ -cpp -frecursive
+    ifeq ($(UNAME_M),arm64)
+        # macOS ARM64: Use LLVM Flang (flang-new) - recommended
+        FC = flang-new
+        PLATFORM_FLAGS = -D__APPLE__
+        $(info Using LLVM Flang (flang-new) - recommended for macOS ARM64)
+    else
+        # macOS Intel: Use gfortran with fixes
+        FC = gfortran
+        PLATFORM_FLAGS = -D__APPLE__ -cpp -frecursive
+        $(info Using gfortran on macOS Intel)
+    endif
 else
+    # Linux: Use gfortran
+    FC = gfortran
     PLATFORM_FLAGS = -cpp
+    $(info Using gfortran on Linux)
 endif
 
 # Development flags (verbose warnings, debug symbols)
