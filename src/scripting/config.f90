@@ -124,7 +124,19 @@ contains
   ! Load configuration for interactive non-login shells
   subroutine load_interactive_configs(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=MAX_PATH_LEN) :: home_dir
+    character(len=MAX_PATH_LEN) :: home_dir, rc_file
+
+    ! Check for FORTSH_RC_FILE environment variable
+    rc_file = ''
+    call get_environment_variable('FORTSH_RC_FILE', rc_file)
+
+    if (len_trim(rc_file) > 0) then
+      ! Use specified rc file (or skip if /dev/null)
+      if (trim(rc_file) /= '/dev/null') then
+        call source_if_exists(trim(rc_file), shell, .true.)
+      end if
+      return
+    end if
 
     ! 1. System-wide rc file
     call source_if_exists('/etc/fortsh/fortshrc', shell, .false.)

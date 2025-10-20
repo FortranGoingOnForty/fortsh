@@ -13,6 +13,56 @@ module prompt_formatting
 
 contains
 
+  ! Safe version that outputs to fixed-length buffer (no allocatable strings)
+  ! Avoids LLVM Flang heap corruption bugs
+  subroutine safe_expand_prompt(prompt_str, shell, stored_len, expanded)
+    character(len=*), intent(in) :: prompt_str
+    type(shell_state_t), intent(in) :: shell
+    integer, intent(in), optional :: stored_len
+    character(len=*), intent(out) :: expanded
+
+    character(len=1024) :: result  ! Fixed-length buffer
+    integer :: i, j, prompt_len
+    character(len=256) :: replacement
+
+    result = ''
+    j = 1
+    i = 1
+
+    ! Use stored length if provided
+    if (present(stored_len) .and. stored_len > 0) then
+      prompt_len = min(stored_len, len(prompt_str))
+    else
+      prompt_len = len_trim(prompt_str)
+    end if
+
+    do while (i <= prompt_len .and. j <= len(result))
+      if (prompt_str(i:i) == '\' .and. i < prompt_len) then
+        ! Process escape sequence
+        i = i + 1
+        call process_escape_sequence(prompt_str(i:i), shell, replacement)
+
+        if (len_trim(replacement) > 0) then
+          if (j + len_trim(replacement) - 1 <= len(result)) then
+            result(j:j+len_trim(replacement)-1) = trim(replacement)
+            j = j + len_trim(replacement)
+          end if
+        end if
+        i = i + 1
+      else
+        ! Regular character
+        if (j <= len(result)) then
+          result(j:j) = prompt_str(i:i)
+          j = j + 1
+        end if
+        i = i + 1
+      end if
+    end do
+
+    ! Copy to output
+    expanded = result(1:min(j-1, len(expanded)))
+  end subroutine
+
   ! Main function to expand prompt string with escape sequences
   function expand_prompt(prompt_str, shell, stored_len) result(expanded)
     character(len=*), intent(in) :: prompt_str

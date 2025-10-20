@@ -21,7 +21,8 @@ program fortran_shell
   type(shell_state_t), allocatable :: shell
   type(pipeline_t) :: pipeline
   character(len=1024) :: input_line, proc_subst_line
-  character(len=:), allocatable :: expanded_line, prompt_str, history_expanded
+  character(len=:), allocatable :: expanded_line, history_expanded
+  character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
   integer :: iostat, i, num_args
   character(len=1024) :: arg1, command_string
   logical :: execute_command_string, execute_script_file
@@ -166,9 +167,9 @@ program fortran_shell
 
     ! Read input with enhanced readline (includes prompt only if interactive)
     if (shell%is_interactive) then
-      ! Full functionality - expand_prompt now uses allocatable buffers
-      prompt_str = expand_prompt(shell%ps1, shell, shell%ps1_len)
-      call readline_enhanced(prompt_str, input_line, iostat)
+      ! Use safe_expand_prompt to avoid LLVM Flang heap corruption
+      call safe_expand_prompt(shell%ps1, shell, shell%ps1_len, prompt_str)
+      call readline_enhanced(trim(prompt_str), input_line, iostat)
     else
       read(input_unit, '(a)', iostat=iostat) input_line
       ! Note: History will be added after expansion below
