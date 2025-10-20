@@ -17,7 +17,7 @@ module shell_config
       type(shell_state_t), intent(inout) :: shell
     end subroutine
   end interface
-  
+
   procedure(parse_and_execute_interface), pointer :: parse_and_execute_proc => null()
 
 contains
@@ -46,13 +46,14 @@ contains
   ! Check if this is first run (no config files) and prompt user
   subroutine check_first_run_and_prompt(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=:), allocatable :: home_dir
+    character(len=MAX_PATH_LEN) :: home_dir
     logical :: fortshrc_exists, fortsh_profile_exists
     character(len=10) :: response
 
-    ! Get home directory
-    home_dir = get_environment_var('HOME')
-    if (len(home_dir) == 0) return
+    ! Get home directory using intrinsic
+    home_dir = ''
+    call get_environment_variable('HOME', home_dir)
+    if (len_trim(home_dir) == 0) return
 
     ! Check if config files exist
     inquire(file=trim(home_dir)//'/.fortshrc', exist=fortshrc_exists)
@@ -99,14 +100,14 @@ contains
   ! Load configuration for login shells
   subroutine load_login_configs(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=:), allocatable :: home_dir
+    character(len=MAX_PATH_LEN) :: home_dir
     logical :: file_exists
 
     ! 1. System-wide profile
     call source_if_exists('/etc/fortsh/profile', shell, .false.)
 
     ! 2. User profile (try in order)
-    home_dir = get_environment_var('HOME')
+    home_dir = ''; call get_environment_variable('HOME', home_dir)
     if (len(home_dir) > 0) then
       ! Try ~/.fortsh_profile first
       inquire(file=trim(home_dir)//'/.fortsh_profile', exist=file_exists)
@@ -123,13 +124,13 @@ contains
   ! Load configuration for interactive non-login shells
   subroutine load_interactive_configs(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=:), allocatable :: home_dir
+    character(len=MAX_PATH_LEN) :: home_dir
 
     ! 1. System-wide rc file
     call source_if_exists('/etc/fortsh/fortshrc', shell, .false.)
 
     ! 2. User rc file
-    home_dir = get_environment_var('HOME')
+    home_dir = ''; call get_environment_variable('HOME', home_dir)
     if (len(home_dir) > 0) then
       ! Try ~/.fortshrc (new style)
       call source_if_exists(trim(home_dir)//'/.fortshrc', shell, .true.)
@@ -142,10 +143,10 @@ contains
   ! Load configuration for non-interactive shells
   subroutine load_noninteractive_configs(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=:), allocatable :: env_file
+    character(len=MAX_PATH_LEN) :: env_file
 
     ! Check ENV variable
-    env_file = get_environment_var('ENV')
+    env_file = ''; call get_environment_variable('ENV', env_file)
     if (len(env_file) > 0) then
       call source_if_exists(env_file, shell, .false.)
     end if
@@ -173,13 +174,13 @@ contains
   ! Legacy load function for backward compatibility
   subroutine load_legacy_config(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=:), allocatable :: home_dir, config_file
+    character(len=MAX_PATH_LEN) :: home_dir, config_file
     character(len=1024) :: line
     integer :: unit, iostat
     logical :: file_exists
 
     ! Get home directory
-    home_dir = get_environment_var('HOME')
+    home_dir = ''; call get_environment_variable('HOME', home_dir)
     if (len(home_dir) == 0) then
       return  ! No HOME directory, skip config
     end if
@@ -239,10 +240,10 @@ contains
 
   ! Create default configuration files
   subroutine create_default_config()
-    character(len=:), allocatable :: home_dir
+    character(len=MAX_PATH_LEN) :: home_dir
 
     ! Get home directory
-    home_dir = get_environment_var('HOME')
+    home_dir = ''; call get_environment_variable('HOME', home_dir)
     if (len(home_dir) == 0) then
       write(output_unit, '(a)') 'fortsh: warning: HOME not set, cannot create config files'
       return
@@ -257,7 +258,7 @@ contains
   ! Create default ~/.fortshrc
   subroutine create_fortshrc(home_dir)
     character(len=*), intent(in) :: home_dir
-    character(len=:), allocatable :: config_file
+    character(len=MAX_PATH_LEN) :: config_file
     integer :: unit, iostat
     logical :: file_exists
 
@@ -310,7 +311,7 @@ contains
   ! Create default ~/.fortsh_profile
   subroutine create_fortsh_profile(home_dir)
     character(len=*), intent(in) :: home_dir
-    character(len=:), allocatable :: config_file
+    character(len=MAX_PATH_LEN) :: config_file
     integer :: unit, iostat
     logical :: file_exists
 
@@ -355,7 +356,7 @@ contains
   ! Create default ~/.fortsh_logout
   subroutine create_fortsh_logout(home_dir)
     character(len=*), intent(in) :: home_dir
-    character(len=:), allocatable :: config_file
+    character(len=MAX_PATH_LEN) :: config_file
     integer :: unit, iostat
     logical :: file_exists
 
@@ -390,13 +391,13 @@ contains
 
   ! Show the current config file content
   subroutine show_config()
-    character(len=:), allocatable :: home_dir, config_file
+    character(len=MAX_PATH_LEN) :: home_dir, config_file
     character(len=1024) :: line
     integer :: unit, iostat
     logical :: file_exists
     
     ! Get home directory
-    home_dir = get_environment_var('HOME')
+    home_dir = ''; call get_environment_variable('HOME', home_dir)
     if (len(home_dir) == 0) then
       write(output_unit, '(a)') 'fortsh: warning: HOME not set'
       return
