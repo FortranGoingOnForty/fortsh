@@ -8,10 +8,10 @@ UNAME_M := $(shell uname -m)
 
 ifeq ($(UNAME_S),Darwin)
     ifeq ($(UNAME_M),arm64)
-        # macOS ARM64: Use LLVM Flang (flang-new) - recommended
+        # macOS ARM64: Use LLVM Flang with no optimization to avoid crashes
         FC = flang-new
         PLATFORM_FLAGS = -D__APPLE__
-        $(info Using LLVM Flang (flang-new) - recommended for macOS ARM64)
+        $(info Using LLVM Flang (flang-new) for macOS ARM64)
     else
         # macOS Intel: Use gfortran with fixes
         FC = gfortran
@@ -26,7 +26,7 @@ else
 endif
 
 # Development flags (verbose warnings, debug symbols)
-FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O2 $(PLATFORM_FLAGS)
+FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS)
 # Production flags (minimal warnings, optimized, no debug symbols)
 FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS)
 LDFLAGS = 
