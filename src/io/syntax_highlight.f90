@@ -55,8 +55,12 @@ module syntax_highlight
   integer, parameter :: COLOR_NUMBER = COLOR_CYAN
   integer, parameter :: COLOR_PATH = COLOR_BRIGHT_BLUE
 
-  ! Fixed-length parameters to avoid heap corruption with some compilers
+  ! Fixed-length parameters to avoid heap corruption with LLVM Flang
   integer, parameter :: MAX_COMMAND_LEN = 256
+  integer, parameter :: MAX_HIGHLIGHT_LEN = 4096
+  integer, parameter :: MAX_TOKEN_LEN = 256
+  integer, parameter :: MAX_TOKENS = 100
+  integer, parameter :: MAX_PATH_LEN = 4096
 
   ! Command validation cache
   type :: cache_entry_t
@@ -104,9 +108,11 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: highlighted
 
-    character(len=:), allocatable :: tokens(:)
+    character(len=MAX_TOKEN_LEN) :: tokens(MAX_TOKENS)
     integer :: num_tokens
-    character(len=:), allocatable :: token_colors(:)
+    character(len=32) :: token_colors(MAX_TOKENS)
+    character(len=MAX_HIGHLIGHT_LEN) :: temp_highlighted
+    integer :: actual_len
 
     if (.not. highlighting_enabled .or. len_trim(input) == 0) then
       highlighted = input
@@ -122,17 +128,17 @@ contains
     end if
 
     ! Determine color for each token
-    allocate(character(len=32) :: token_colors(num_tokens))
     call colorize_tokens(tokens, num_tokens, token_colors)
 
-    ! Build highlighted string
-    call build_highlighted_string(input, tokens, num_tokens, token_colors, highlighted)
+    ! Build highlighted string into temp buffer
+    call build_highlighted_string(input, tokens, num_tokens, token_colors, temp_highlighted, actual_len)
 
-    ! Don't trim! We need to preserve trailing spaces for correct display
-
-    ! Cleanup
-    if (allocated(tokens)) deallocate(tokens)
-    if (allocated(token_colors)) deallocate(token_colors)
+    ! Allocate result with exact length needed
+    if (actual_len > 0) then
+      highlighted = temp_highlighted(1:actual_len)
+    else
+      highlighted = input
+    end if
   end function
 
   ! Highlight a single character based on context
@@ -140,7 +146,7 @@ contains
   function highlight_single_char(ch, buffer) result(highlighted)
     character, intent(in) :: ch
     character(len=*), intent(in) :: buffer
-    character(len=:), allocatable :: highlighted
+    character(len=32) :: highlighted
 
     character(len=32) :: colored_char
     integer :: color
@@ -175,21 +181,16 @@ contains
   ! Tokenize input for syntax highlighting
   subroutine tokenize_for_highlighting(input, tokens, num_tokens)
     character(len=*), intent(in) :: input
-    character(len=:), allocatable, intent(out) :: tokens(:)
+    character(len=MAX_TOKEN_LEN), intent(out) :: tokens(:)
     integer, intent(out) :: num_tokens
 
-    character(len=:), allocatable :: working  ! Use allocatable to avoid stack allocation
+    character(len=4096) :: working
     integer :: i, token_start, token_end
     logical :: in_quotes, in_comment
     character(len=1) :: quote_char
-    character(len=:), allocatable :: temp_tokens(:)
-    integer :: max_tokens
 
-    ! Allocate working string
-    allocate(character(len=len(input)) :: working)
+    ! Initialize
     working = input
-    max_tokens = 64
-    allocate(character(len=256) :: temp_tokens(max_tokens))
     num_tokens = 0
 
     i = 1
@@ -209,8 +210,8 @@ contains
       if (working(i:i) == '#' .and. .not. in_quotes) then
         ! Rest of line is comment
         num_tokens = num_tokens + 1
-        if (num_tokens <= max_tokens) then
-          temp_tokens(num_tokens) = trim(working(i:))
+        if (num_tokens <= MAX_TOKENS) then
+          tokens(num_tokens) = trim(working(i:))
         end if
         exit
       end if
@@ -224,8 +225,8 @@ contains
           working(i:i) == '&' .or. working(i:i) == '>' .or. working(i:i) == '<') then
         ! Operator - add as single character token
         num_tokens = num_tokens + 1
-        if (num_tokens <= max_tokens) then
-          temp_tokens(num_tokens) = working(i:i)
+        if (num_tokens <= MAX_TOKENS) then
+          tokens(num_tokens) = working(i:i)
         end if
         i = i + 1
         cycle  ! Continue to next iteration
@@ -256,22 +257,11 @@ contains
       token_end = i - 1
       if (token_end >= token_start) then
         num_tokens = num_tokens + 1
-        if (num_tokens <= max_tokens) then
-          temp_tokens(num_tokens) = trim(working(token_start:token_end))
+        if (num_tokens <= MAX_TOKENS) then
+          tokens(num_tokens) = trim(working(token_start:token_end))
         end if
       end if
     end do
-
-    ! Copy to output array
-    if (num_tokens > 0) then
-      allocate(character(len=256) :: tokens(num_tokens))
-      do i = 1, num_tokens
-        tokens(i) = temp_tokens(i)
-      end do
-    end if
-
-    deallocate(temp_tokens)
-    if (allocated(working)) deallocate(working)
   end subroutine
 
   ! Determine colors for tokens
@@ -325,14 +315,15 @@ contains
   end subroutine
 
   ! Build highlighted string with ANSI codes - preserves original spacing
-  subroutine build_highlighted_string(input, tokens, num_tokens, colors, highlighted)
+  subroutine build_highlighted_string(input, tokens, num_tokens, colors, highlighted, actual_len)
     character(len=*), intent(in) :: input
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
     character(len=*), intent(in) :: colors(:)
-    character(len=:), allocatable, intent(out) :: highlighted
+    character(len=MAX_HIGHLIGHT_LEN), intent(out) :: highlighted
+    integer, intent(out) :: actual_len
 
-    character(len=:), allocatable :: result_buffer
+    character(len=MAX_HIGHLIGHT_LEN) :: result_buffer
     integer :: i, input_pos, token_len, result_pos, color_len, reset_len
     integer :: buffer_size
     character(len=256) :: token_trimmed
@@ -342,12 +333,12 @@ contains
     ! Handle empty input
     if (len(input) == 0) then
       highlighted = ''
+      actual_len = 0
       return
     end if
 
-    ! Allocate buffer with safe minimum size
-    buffer_size = max(len(input) * 3, 100)
-    allocate(character(len=buffer_size) :: result_buffer)
+    ! Use fixed buffer
+    buffer_size = MAX_HIGHLIGHT_LEN
 
     ! Initialize result buffer tracking
     result_pos = 1
@@ -413,12 +404,11 @@ contains
     ! Extract final result (result_pos is one past the last character)
     if (result_pos > 1) then
       highlighted = result_buffer(1:result_pos-1)
+      actual_len = result_pos - 1
     else
       highlighted = ''
+      actual_len = 0
     end if
-
-    ! Cleanup
-    if (allocated(result_buffer)) deallocate(result_buffer)
   end subroutine
 
   ! Check if a command is valid (exists in PATH, is builtin, or is function)
@@ -486,19 +476,21 @@ contains
 
   ! Check if command exists in PATH
   function command_exists_in_path(command) result(exists)
-    use system_interface, only: get_environment_var, file_is_executable
+    use system_interface, only: file_is_executable
     character(len=*), intent(in) :: command
     logical :: exists
 
-    character(len=:), allocatable :: path_env, full_path
+    character(len=MAX_PATH_LEN) :: path_env
+    character(len=MAX_PATH_LEN) :: full_path
     integer :: path_start, path_end, colon_pos
     character(len=1024) :: dir
 
     exists = .false.
 
-    ! Get PATH environment variable
-    path_env = get_environment_var('PATH')
-    if (.not. allocated(path_env) .or. len_trim(path_env) == 0) then
+    ! Get PATH environment variable using intrinsic
+    path_env = ''
+    call get_environment_variable('PATH', path_env)
+    if (len_trim(path_env) == 0) then
       return
     end if
 
