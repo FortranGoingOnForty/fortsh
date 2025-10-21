@@ -10,7 +10,7 @@ ifeq ($(UNAME_S),Darwin)
     ifeq ($(UNAME_M),arm64)
         # macOS ARM64: Use LLVM Flang with no optimization to avoid crashes
         FC = flang-new
-        PLATFORM_FLAGS = -D__APPLE__
+        PLATFORM_FLAGS = -D__APPLE__ -cpp
         $(info Using LLVM Flang (flang-new) for macOS ARM64)
     else
         # macOS Intel: Use gfortran with fixes
