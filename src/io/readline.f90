@@ -318,6 +318,10 @@ contains
     character :: ch
     logical :: success, done, raw_enabled
     integer :: char_code
+    ! Variables for redraw (moved out of block to avoid flang-new crash)
+    integer :: i_redraw, term_cols, term_rows
+    integer :: prompt_visual_len, cursor_visual_pos, current_line
+    integer :: suggestion_display_len, available_space
 
     iostat = 0
     done = .false.
@@ -413,9 +417,9 @@ contains
           end if
 
           ! Clear buffer and return empty line
-          input_state%buffer = ''
           input_state%length = 0
           input_state%cursor_pos = 0
+          input_state%dirty = .false.  ! Prevent redraw with empty buffer
           done = .true.
 
         case(KEY_CTRL_X)
@@ -567,13 +571,10 @@ contains
         ! Redraw line if needed
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         if (input_state%dirty) then
-          block
-            integer :: i_redraw, term_cols, term_rows
-            integer :: prompt_visual_len, cursor_visual_pos, current_line
-            integer :: suggestion_display_len, available_space
-            logical :: success
+          ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
+          ! Variables moved to subroutine level
 
-            ! Get terminal size for multiline handling
+          ! Get terminal size for multiline handling
             success = get_terminal_size(term_rows, term_cols)
             if (.not. success .or. term_cols <= 0) then
               term_cols = 80
@@ -657,7 +658,7 @@ contains
             end if
 
             flush(output_unit)
-          end block
+
           input_state%dirty = .false.
         end if
       end do
