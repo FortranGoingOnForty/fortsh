@@ -6,7 +6,7 @@ module readline
   use shell_types
   use system_interface
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
-  use syntax_highlight, only: highlight_command_line, highlight_single_char, init_syntax_highlighting
+  use syntax_highlight, only: highlight_command_line, highlight_single_char, init_syntax_highlighting, MAX_HIGHLIGHT_LEN
   use abbreviations, only: try_expand_abbreviation
   use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
@@ -26,12 +26,6 @@ module readline
       integer(c_int) :: readline_c_system
       character(kind=c_char), intent(in) :: command(*)
     end function readline_c_system
-
-    ! Get errno to debug system() failures
-    function c_get_errno() bind(C, name="__error")
-      use iso_c_binding
-      type(c_ptr) :: c_get_errno
-    end function c_get_errno
   end interface
 
   ! Note: c_signal, SIG_DFL, and SIGCHLD are imported from system_interface
@@ -345,10 +339,19 @@ contains
     integer :: i_redraw, term_cols, term_rows
     integer :: prompt_visual_len, cursor_visual_pos, current_line
     integer :: suggestion_display_len, available_space
+    ! Use allocatable to avoid stack overflow (heap allocation is safer)
+    character(len=:), allocatable :: highlighted_inline  ! For syntax highlighting in inline redraw
+    integer :: highlighted_len  ! Actual length of highlighted string
 
+    ! Initialize variables
     iostat = 0
     done = .false.
     raw_enabled = .false.
+
+    ! Allocate highlighting buffer on heap (not stack) to avoid overflow
+    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted_inline)
+    highlighted_inline = ' '  ! Initialize to prevent garbage data
+    highlighted_len = 0
 
     ! Initialize history on first use
     call init_history()
@@ -357,13 +360,9 @@ contains
     success = enable_raw_mode(original_termios)
     if (success) then
       raw_enabled = .true.
-      write(*, '(a)') '[DEBUG: Raw mode ENABLED]'
-
       ! Save terminal state for FZF functions (flang-new workaround)
       module_original_termios = original_termios
       module_termios_saved = .true.
-    else
-      write(*, '(a)') '[DEBUG: Raw mode FAILED]'
     end if
 
     ! Print prompt
@@ -372,10 +371,10 @@ contains
 
     ! Initialize input state with allocated strings
     call init_input_state(input_state)
+
     input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
     if (raw_enabled) then
-      write(*, '(a)') '[DEBUG: Entering character-by-character mode]'
       ! Enhanced input processing
       do while (.not. done)
         success = read_single_char(ch)
@@ -383,13 +382,8 @@ contains
           iostat = -1
           exit
         end if
-        
-        char_code = iachar(ch)
 
-        ! DEBUG: Show control characters
-        if (char_code < 32) then
-          write(*, '(a,i0)') '[DEBUG: Control char code: ', char_code, ']'
-        end if
+        char_code = iachar(ch)
 
         select case(char_code)
         case(KEY_ENTER)
@@ -644,10 +638,12 @@ contains
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
             if (input_state%length > 0) then
-              ! WORKAROUND: Skip syntax highlighting in block to avoid flang-new crash
-              ! with allocatable strings inside block constructs.
-              ! TODO: Add syntax highlighting back using a non-allocatable approach
-              write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+              ! Now using subroutine-based highlighting with heap-allocated buffer (safe!)
+              call highlight_command_line(input_state%buffer(:input_state%length), highlighted_inline, highlighted_len)
+              ! Use actual length instead of trim() to avoid walking garbage data
+              if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
+                write(output_unit, '(a)', advance='no') highlighted_inline(1:highlighted_len)
+              end if
 
               ! Display autosuggestion if present (only when cursor is at end)
               if (input_state%suggestion_length > 0 .and. &
@@ -711,6 +707,9 @@ contains
 
     ! Clean up allocated memory
     call cleanup_input_state(input_state)
+
+    ! Deallocate heap-allocated highlighting buffer
+    if (allocated(highlighted_inline)) deallocate(highlighted_inline)
   end subroutine
 
   ! Simple fallback readline - uses standard input for now
@@ -3351,10 +3350,15 @@ contains
   subroutine update_live_preview(input_state)
     type(input_state_t), intent(in) :: input_state
     integer :: i, term_rows, term_cols, cols_per_item, items_per_row, num_menu_rows
-    integer :: prompt_len
+    integer :: prompt_len, highlighted_len
     character(len=MAX_LINE_LEN) :: preview_line
-    character(len=:), allocatable :: highlighted_preview
+    character(len=:), allocatable :: highlighted_preview  ! Heap allocation to avoid stack overflow
     logical :: success
+
+    ! Allocate and initialize buffers
+    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted_preview)
+    highlighted_preview = ' '
+    highlighted_len = 0
 
     ! Calculate menu layout to know how many lines to navigate
     success = get_terminal_size(term_rows, term_cols)
@@ -3392,7 +3396,7 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
 
     ! Apply syntax highlighting to preview
-    highlighted_preview = highlight_command_line(trim(preview_line))
+    call highlight_command_line(trim(preview_line), highlighted_preview, highlighted_len)
 
     ! Calculate prompt length including trailing space if present
     prompt_len = len_trim(input_state%menu_prompt)
@@ -3404,7 +3408,9 @@ contains
 
     ! Redraw: prompt + highlighted preview
     write(output_unit, '(a)', advance='no') input_state%menu_prompt(:prompt_len)
-    write(output_unit, '(a)', advance='no') highlighted_preview
+    if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
+      write(output_unit, '(a)', advance='no') highlighted_preview(1:highlighted_len)
+    end if
 
     ! Move cursor back down to menu
     do i = 1, num_menu_rows + 1
@@ -3415,6 +3421,9 @@ contains
     write(output_unit, '(a)', advance='no') char(13)
 
     flush(output_unit)
+
+    ! Deallocate heap-allocated buffer
+    if (allocated(highlighted_preview)) deallocate(highlighted_preview)
   end subroutine
 
   ! ===========================================================================
@@ -4203,12 +4212,18 @@ contains
   subroutine redraw_line(prompt, input_state)
     character(len=*), intent(in) :: prompt
     type(input_state_t), intent(in) :: input_state
-    character(len=:), allocatable :: highlighted
+    character(len=:), allocatable :: highlighted  ! Heap allocation to avoid stack overflow
+    integer :: highlighted_len
     integer :: term_rows, term_cols, total_visual_chars
     integer :: prompt_visual_len, current_line, end_line
     integer :: cursor_visual_pos, cursor_line, cursor_col
     integer :: i, suggestion_display_len, available_space
     logical :: success
+
+    ! Allocate and initialize buffers
+    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted)
+    highlighted = ' '
+    highlighted_len = 0
 
     ! Get terminal size
     success = get_terminal_size(term_rows, term_cols)
@@ -4261,8 +4276,10 @@ contains
     ! Redraw prompt and full buffer with syntax highlighting
     write(output_unit, '(a)', advance='no') prompt
     if (input_state%length > 0) then
-      highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-      write(output_unit, '(a)', advance='no') highlighted
+      call highlight_command_line(input_state%buffer(:input_state%length), highlighted, highlighted_len)
+      if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
+        write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
+      end if
     end if
 
     ! Display autosuggestion if cursor is at end
@@ -4306,14 +4323,22 @@ contains
     end if
 
     flush(output_unit)
+
+    ! Deallocate heap-allocated buffer
+    if (allocated(highlighted)) deallocate(highlighted)
   end subroutine
 
   ! Partial redraw - only from cursor to end (reduces flashing)
   subroutine redraw_from_cursor(input_state)
     use syntax_highlight, only: highlight_command_line
     type(input_state_t), intent(in) :: input_state
-    character(len=:), allocatable :: highlighted
-    integer :: i, cursor_col
+    character(len=:), allocatable :: highlighted  ! Heap allocation to avoid stack overflow
+    integer :: i, cursor_col, highlighted_len
+
+    ! Allocate and initialize buffers
+    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted)
+    highlighted = ' '
+    highlighted_len = 0
 
     if (input_state%length == 0) return
 
@@ -4332,8 +4357,10 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[K'
 
     ! Redraw buffer with highlighting
-    highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-    write(output_unit, '(a)', advance='no') highlighted
+    call highlight_command_line(input_state%buffer(:input_state%length), highlighted, highlighted_len)
+    if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
+      write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
+    end if
 
     ! Move cursor back to correct position
     do i = input_state%length, cursor_col + 1, -1
@@ -4341,6 +4368,9 @@ contains
     end do
 
     flush(output_unit)
+
+    ! Deallocate heap-allocated buffer
+    if (allocated(highlighted)) deallocate(highlighted)
   end subroutine
 
   ! Helper to convert integer to string
@@ -4486,9 +4516,14 @@ contains
   subroutine handle_clear_screen(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
-    character(len=:), allocatable :: highlighted
-    integer :: i, term_rows, term_cols, available_space, suggestion_display_len
+    character(len=:), allocatable :: highlighted  ! Heap allocation to avoid stack overflow
+    integer :: i, term_rows, term_cols, available_space, suggestion_display_len, highlighted_len
     logical :: success
+
+    ! Allocate and initialize buffers
+    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted)
+    highlighted = ' '
+    highlighted_len = 0
 
     ! Clear screen and move cursor to home position (0,0)
     write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
@@ -4501,8 +4536,10 @@ contains
 
     ! Draw the current buffer with syntax highlighting
     if (input_state%length > 0) then
-      highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-      write(output_unit, '(a)', advance='no') highlighted
+      call highlight_command_line(input_state%buffer(:input_state%length), highlighted, highlighted_len)
+      if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
+        write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
+      end if
     end if
 
     ! Position cursor correctly
@@ -4543,6 +4580,9 @@ contains
 
     flush(output_unit)
     input_state%dirty = .false.
+
+    ! Deallocate heap-allocated buffer
+    if (allocated(highlighted)) deallocate(highlighted)
   end subroutine
 
   ! Transpose characters (Ctrl+t) - swap char at cursor with previous char

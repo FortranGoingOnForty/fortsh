@@ -14,6 +14,7 @@ module syntax_highlight
   public :: is_valid_command
   public :: init_syntax_highlighting
   public :: clear_command_cache
+  public :: MAX_HIGHLIGHT_LEN  ! Export buffer size for callers
 
   ! ANSI color codes
   integer, parameter :: COLOR_RESET = 0
@@ -104,42 +105,94 @@ contains
   end subroutine
 
   ! Main function: Highlight a command line
-  function highlight_command_line(input) result(highlighted)
+  ! Convert to subroutine to avoid allocatable string returns (flang-new workaround)
+  subroutine highlight_command_line(input, highlighted, actual_len)
     character(len=*), intent(in) :: input
-    character(len=:), allocatable :: highlighted
+    character(len=MAX_HIGHLIGHT_LEN), intent(out) :: highlighted
+    integer, intent(out), optional :: actual_len
 
-    character(len=MAX_TOKEN_LEN) :: tokens(MAX_TOKENS)
+    ! Use allocatable to avoid stack overflow (25KB is too much for stack!)
+    character(len=MAX_TOKEN_LEN), allocatable :: tokens(:)
     integer :: num_tokens
     character(len=32) :: token_colors(MAX_TOKENS)
-    character(len=MAX_HIGHLIGHT_LEN) :: temp_highlighted
-    integer :: actual_len
+    integer :: len_used
+    integer :: input_len
 
-    if (.not. highlighting_enabled .or. len_trim(input) == 0) then
-      highlighted = input
+    ! Allocate tokens array on heap
+    allocate(tokens(MAX_TOKENS))
+
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: highlight_command_line called with input len=', len(input), ']'
+
+    ! Safety: check input length
+    ! Use len(input) not len_trim() to avoid walking garbage data
+    input_len = len(input)
+    if (input_len < 0) input_len = 0
+
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: input_len set to ', input_len, ']'
+
+    if (.not. highlighting_enabled .or. input_len == 0) then
+      if (input_len > 0 .and. input_len <= MAX_HIGHLIGHT_LEN) then
+        highlighted(1:input_len) = input(1:input_len)
+        if (input_len < MAX_HIGHLIGHT_LEN) then
+          highlighted(input_len+1:MAX_HIGHLIGHT_LEN) = ' '
+        end if
+      else
+        highlighted = ' '
+        input_len = 0
+      end if
+      len_used = input_len
+      if (present(actual_len)) actual_len = len_used
       return
     end if
 
     ! Tokenize input
+    ! DEBUG: write(*, '(a)') '[DEBUG: About to tokenize]'
     call tokenize_for_highlighting(input, tokens, num_tokens)
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: Tokenized into ', num_tokens, ' tokens]'
+
+    ! DEBUG: write(*, '(a)') '[DEBUG: About to check num_tokens == 0]'
 
     if (num_tokens == 0) then
-      highlighted = input
+      ! DEBUG: write(*, '(a)') '[DEBUG: num_tokens is 0]'
+      if (input_len > 0 .and. input_len <= MAX_HIGHLIGHT_LEN) then
+        highlighted(1:input_len) = input(1:input_len)
+        if (input_len < MAX_HIGHLIGHT_LEN) then
+          highlighted(input_len+1:MAX_HIGHLIGHT_LEN) = ' '
+        end if
+      else
+        highlighted = ' '
+        input_len = 0
+      end if
+      len_used = input_len
+      if (present(actual_len)) actual_len = len_used
       return
     end if
 
+    ! DEBUG: write(*, '(a)') '[DEBUG: About to colorize tokens]'
     ! Determine color for each token
     call colorize_tokens(tokens, num_tokens, token_colors)
+    ! DEBUG: write(*, '(a)') '[DEBUG: Colorized tokens]'
 
-    ! Build highlighted string into temp buffer
-    call build_highlighted_string(input, tokens, num_tokens, token_colors, temp_highlighted, actual_len)
+    ! DEBUG: write(*, '(a)') '[DEBUG: About to build highlighted string]'
+    ! Build highlighted string directly into output buffer
+    call build_highlighted_string(input, tokens, num_tokens, token_colors, highlighted, len_used)
+    ! DEBUG: write(*, '(a)') '[DEBUG: Built highlighted string]'
 
-    ! Allocate result with exact length needed
-    if (actual_len > 0) then
-      highlighted = temp_highlighted(1:actual_len)
-    else
-      highlighted = input
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: len_used=', len_used, ']'
+
+    ! Return actual length used
+    ! DEBUG: write(*, '(a,l1,a)') '[DEBUG: present(actual_len)=', present(actual_len), ']'
+    if (present(actual_len)) then
+      ! DEBUG: write(*, '(a)') '[DEBUG: About to set actual_len]'
+      actual_len = len_used
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: Set actual_len to ', actual_len, ']'
     end if
-  end function
+
+    ! DEBUG: write(*, '(a)') '[DEBUG: Exiting highlight_command_line]'
+
+    ! Deallocate heap-allocated tokens array
+    if (allocated(tokens)) deallocate(tokens)
+  end subroutine
 
   ! Highlight a single character based on context
   ! This is a simplified version for incremental display updates
@@ -184,13 +237,34 @@ contains
     character(len=MAX_TOKEN_LEN), intent(out) :: tokens(:)
     integer, intent(out) :: num_tokens
 
-    character(len=4096) :: working
-    integer :: i, token_start, token_end
+    ! Use allocatable to avoid 4KB stack allocation
+    character(len=:), allocatable :: working
+    integer :: i, token_start, token_end, input_len, j
     logical :: in_quotes, in_comment
     character(len=1) :: quote_char
 
-    ! Initialize
-    working = input
+    ! Allocate working buffer on heap
+    allocate(character(len=4096) :: working)
+
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: input len=', len(input), ']'
+
+    ! Initialize tokens array to all spaces to make len_trim safe
+    do j = 1, size(tokens)
+      tokens(j) = ' '
+    end do
+
+    ! Initialize - use len(input) to avoid len_trim walking garbage
+    working = ' '  ! Initialize to spaces first
+    input_len = len(input)
+
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: input_len=', input_len, ']'
+
+    if (input_len > 0 .and. input_len <= len(working)) then
+      working(1:input_len) = input(1:input_len)
+    end if
+
+    ! DEBUG: write(*, '(a)') '[DEBUG tokenize: copied input to working]'
+
     num_tokens = 0
 
     i = 1
@@ -198,31 +272,44 @@ contains
     in_comment = .false.
     quote_char = ' '
 
-    do while (i <= len_trim(working))
+    ! DEBUG: write(*, '(a)') '[DEBUG tokenize: entering main loop]'
+
+    do while (i <= input_len)
+      ! DEBUG: write(*, '(a,i0,a,i0,a)') '[DEBUG tokenize: loop i=', i, ' input_len=', input_len, ']'
+
       ! Skip whitespace
-      do while (i <= len_trim(working) .and. working(i:i) == ' ')
+      ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to skip whitespace]'
+      do while (i <= input_len .and. working(i:i) == ' ')
         i = i + 1
       end do
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: after whitespace skip, i=', i, ']'
 
-      if (i > len_trim(working)) exit
+      if (i > input_len) exit
 
+      ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to check for comment]'
       ! Check for comment
       if (working(i:i) == '#' .and. .not. in_quotes) then
+        ! DEBUG: write(*, '(a)') '[DEBUG tokenize: found comment]'
         ! Rest of line is comment
         num_tokens = num_tokens + 1
         if (num_tokens <= MAX_TOKENS) then
-          tokens(num_tokens) = trim(working(i:))
+          ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to trim working for comment token]'
+          tokens(num_tokens) = working(i:input_len)
+          ! DEBUG: write(*, '(a)') '[DEBUG tokenize: trimmed working for comment token]'
         end if
         exit
       end if
+      ! DEBUG: write(*, '(a)') '[DEBUG tokenize: not a comment, continuing]'
 
       ! Start of token
       token_start = i
       in_quotes = .false.
 
+      ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to check for operator]'
       ! Check if this is an operator character - treat as single-char token
       if (working(i:i) == ';' .or. working(i:i) == '|' .or. &
           working(i:i) == '&' .or. working(i:i) == '>' .or. working(i:i) == '<') then
+        ! DEBUG: write(*, '(a)') '[DEBUG tokenize: found operator]'
         ! Operator - add as single character token
         num_tokens = num_tokens + 1
         if (num_tokens <= MAX_TOKENS) then
@@ -232,8 +319,10 @@ contains
         cycle  ! Continue to next iteration
       end if
 
+      ! DEBUG: write(*, '(a)') '[DEBUG tokenize: not an operator, finding end of token]'
       ! Find end of token
-      do while (i <= len_trim(working))
+      do while (i <= input_len)
+        ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: in end-of-token loop, i=', i, ']'
         if (.not. in_quotes) then
           if (working(i:i) == '"' .or. working(i:i) == "'") then
             in_quotes = .true.
@@ -253,15 +342,26 @@ contains
         i = i + 1
       end do
 
+      ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to extract token]'
       ! Extract token
       token_end = i - 1
       if (token_end >= token_start) then
+        ! DEBUG: write(*, '(a,i0,a,i0,a)') '[DEBUG tokenize: token_start=', token_start, ' token_end=', token_end, ']'
         num_tokens = num_tokens + 1
         if (num_tokens <= MAX_TOKENS) then
-          tokens(num_tokens) = trim(working(token_start:token_end))
+          ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to assign token - NO TRIM]'
+          ! SAFETY: Don't use trim() - it walks the string
+          if (token_end - token_start + 1 <= MAX_TOKEN_LEN) then
+            tokens(num_tokens) = working(token_start:token_end)
+          else
+            tokens(num_tokens) = working(token_start:token_start+MAX_TOKEN_LEN-1)
+          end if
+          ! DEBUG: write(*, '(a)') '[DEBUG tokenize: assigned token]'
         end if
       end if
     end do
+
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: exiting with num_tokens=', num_tokens, ']'
   end subroutine
 
   ! Determine colors for tokens
@@ -270,25 +370,49 @@ contains
     integer, intent(in) :: num_tokens
     character(len=*), intent(out) :: colors(:)
 
-    integer :: i
+    integer :: i, token_len
     character(len=256) :: token
 
-    do i = 1, num_tokens
-      token = trim(tokens(i))
+    ! DEBUG: write(*, '(a)') '[DEBUG colorize: entering colorize_tokens]'
 
-      if (len_trim(token) == 0) then
+    do i = 1, num_tokens
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: processing token ', i, ']'
+
+      ! SAFETY: tokens array is initialized to spaces, so len_trim is safe here
+      token_len = len_trim(tokens(i))
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: after len_trim, token_len=', token_len, ']'
+
+      if (token_len > 0 .and. token_len <= len(token)) then
+        token(1:token_len) = tokens(i)(1:token_len)
+        if (token_len < len(token)) then
+          token(token_len+1:) = ' '
+        end if
+      else
+        token = ' '
+        token_len = 0
+      end if
+
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: final token_len=', token_len, ']'
+
+      if (token_len == 0) then
         colors(i) = color_code(COLOR_RESET)
         cycle
       end if
 
+      ! DEBUG: write(*, '(a)') '[DEBUG colorize: determining token type]'
       ! Determine token type and color
       if (i == 1) then
-        ! First token is the command
-        if (is_valid_command(trim(token))) then
+        ! DEBUG: write(*, '(a)') '[DEBUG colorize: first token (command)]'
+        ! DEBUG: write(*, '(a,a,a)') '[DEBUG colorize: calling is_valid_command with token="', token(1:token_len), '"]'
+        ! First token is the command - use token_len for bounds
+        if (is_valid_command(token(1:token_len))) then
+          ! DEBUG: write(*, '(a)') '[DEBUG colorize: command is valid]'
           colors(i) = color_code(COLOR_COMMAND_VALID)
         else
+          ! DEBUG: write(*, '(a)') '[DEBUG colorize: command is invalid]'
           colors(i) = color_code(COLOR_COMMAND_INVALID)
         end if
+        ! DEBUG: write(*, '(a)') '[DEBUG colorize: after is_valid_command]'
       else if (token(1:1) == '#') then
         ! Comment
         colors(i) = color_code(COLOR_COMMENT)
@@ -311,7 +435,11 @@ contains
         ! Default
         colors(i) = color_code(COLOR_RESET)
       end if
+
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: finished processing token ', i, ']'
     end do
+
+    ! DEBUG: write(*, '(a)') '[DEBUG colorize: exiting colorize_tokens]'
   end subroutine
 
   ! Build highlighted string with ANSI codes - preserves original spacing
@@ -346,69 +474,134 @@ contains
     reset_str = color_code(COLOR_RESET)
     reset_len = len_trim(reset_str)
 
+    ! DEBUG: write(*, '(a)') '[DEBUG build: entering main loop]'
     ! Walk through input character by character, preserving all spacing
     do while (input_pos <= len(input))
+      ! DEBUG: write(*, '(a,i0,a,i0,a)') '[DEBUG build: input_pos=', input_pos, ' len(input)=', len(input), ']'
       in_token = .false.
 
       ! Check if current position starts a token
       do i = 1, num_tokens
-        token_trimmed = trim(tokens(i))
-        token_len = len_trim(token_trimmed)
+        ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: checking token ', i, ']'
+        ! SAFETY: tokens are initialized to spaces, so len_trim is safe
+        token_len = len_trim(tokens(i))
+        ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: token_len=', token_len, ']'
+
+        if (token_len > 0 .and. token_len <= len(token_trimmed)) then
+          token_trimmed(1:token_len) = tokens(i)(1:token_len)
+        else
+          token_len = 0
+        end if
+        ! DEBUG: write(*, '(a)') '[DEBUG build: copied token]'
 
         ! Skip empty tokens to avoid infinite loop
         if (token_len == 0) cycle
 
+        ! DEBUG: write(*, '(a)') '[DEBUG build: about to match token at current position]'
         ! Try to match token at current position
         if (input_pos + token_len - 1 <= len(input)) then
-          if (input(input_pos:input_pos+token_len-1) == token_trimmed(:token_len)) then
+          ! DEBUG: write(*, '(a)') '[DEBUG build: bounds check passed, comparing strings]'
+          if (input(input_pos:input_pos+token_len-1) == token_trimmed(1:token_len)) then
+            ! DEBUG: write(*, '(a)') '[DEBUG build: token matched!]'
             ! Found a token - add color, token, and reset
-            color_str = trim(colors(i))
-            color_len = len_trim(color_str)
+            ! SAFETY: colors come from color_code() which produces proper strings, so len_trim is safe
+            color_len = len_trim(colors(i))
+            ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: after len_trim, color_len=', color_len, ']'
+            if (color_len > 0 .and. color_len <= len(color_str)) then
+              color_str(1:color_len) = colors(i)(1:color_len)
+            else
+              color_len = 0
+            end if
+            ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: final color_len=', color_len, ']'
+
+            ! DEBUG: write(*, '(a)') '[DEBUG build: about to bounds check]'
+            ! DEBUG: write(*, '(a,i0,a,i0,a,i0,a,i0,a,i0,a)') '[DEBUG build: result_pos=', result_pos, ' color_len=', color_len, ' token_len=', token_len, ' reset_len=', reset_len, ' buffer_size=', buffer_size, ']'
 
             ! Bounds check before writing
             if (result_pos + color_len + token_len + reset_len - 1 <= buffer_size) then
+              ! DEBUG: write(*, '(a)') '[DEBUG build: bounds check passed]'
               ! Add color code
               if (color_len > 0) then
-                result_buffer(result_pos:result_pos+color_len-1) = color_str(:color_len)
+                ! DEBUG: write(*, '(a)') '[DEBUG build: writing color code]'
+                result_buffer(result_pos:result_pos+color_len-1) = color_str(1:color_len)
                 result_pos = result_pos + color_len
+                ! DEBUG: write(*, '(a)') '[DEBUG build: wrote color code]'
               end if
               ! Add token
               if (token_len > 0) then
-                result_buffer(result_pos:result_pos+token_len-1) = token_trimmed(:token_len)
+                ! DEBUG: write(*, '(a)') '[DEBUG build: writing token]'
+                result_buffer(result_pos:result_pos+token_len-1) = token_trimmed(1:token_len)
                 result_pos = result_pos + token_len
+                ! DEBUG: write(*, '(a)') '[DEBUG build: wrote token]'
               end if
               ! Add reset code
               if (reset_len > 0) then
-                result_buffer(result_pos:result_pos+reset_len-1) = reset_str(:reset_len)
+                ! DEBUG: write(*, '(a)') '[DEBUG build: writing reset code]'
+                result_buffer(result_pos:result_pos+reset_len-1) = reset_str(1:reset_len)
                 result_pos = result_pos + reset_len
+                ! DEBUG: write(*, '(a)') '[DEBUG build: wrote reset code]'
               end if
             end if
 
             input_pos = input_pos + token_len
             in_token = .true.
+            ! DEBUG: write(*, '(a)') '[DEBUG build: about to exit inner loop]'
             exit
           end if
         end if
       end do
 
+      ! DEBUG: write(*, '(a,l1,a)') '[DEBUG build: after inner loop, in_token=', in_token, ']'
+
       ! If not in a token, just copy the character (whitespace, etc.)
       if (.not. in_token) then
+        ! DEBUG: write(*, '(a)') '[DEBUG build: not in token, copying character]'
         if (result_pos <= buffer_size) then
           result_buffer(result_pos:result_pos) = input(input_pos:input_pos)
           result_pos = result_pos + 1
         end if
         input_pos = input_pos + 1
       end if
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: end of outer loop iteration, input_pos=', input_pos, ']'
     end do
+
+    ! DEBUG: write(*, '(a)') '[DEBUG build: exited outer loop]'
+
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: result_pos=', result_pos, ']'
 
     ! Extract final result (result_pos is one past the last character)
     if (result_pos > 1) then
-      highlighted = result_buffer(1:result_pos-1)
+      ! DEBUG: write(*, '(a)') '[DEBUG build: result_pos > 1, extracting result]'
+      ! Copy the result to output buffer
+      ! Must use substring assignment to fixed-length string
       actual_len = result_pos - 1
+
+      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: actual_len=', actual_len, ']'
+
+      ! Safety check to prevent buffer overflow
+      if (actual_len > 0 .and. actual_len <= MAX_HIGHLIGHT_LEN) then
+        ! DEBUG: write(*, '(a)') '[DEBUG build: about to copy result_buffer to highlighted]'
+        highlighted(1:actual_len) = result_buffer(1:actual_len)
+        ! DEBUG: write(*, '(a)') '[DEBUG build: copied result_buffer to highlighted]'
+        ! Pad rest with spaces (Fortran requirement for fixed-length strings)
+        if (actual_len < MAX_HIGHLIGHT_LEN) then
+          ! DEBUG: write(*, '(a)') '[DEBUG build: about to pad with spaces]'
+          highlighted(actual_len+1:MAX_HIGHLIGHT_LEN) = ' '
+          ! DEBUG: write(*, '(a)') '[DEBUG build: padded with spaces]'
+        end if
+      else
+        ! DEBUG: write(*, '(a)') '[DEBUG build: actual_len out of bounds, using fallback]'
+        ! Safety fallback
+        highlighted = ''
+        actual_len = 0
+      end if
     else
+      ! DEBUG: write(*, '(a)') '[DEBUG build: result_pos <= 1, using empty]'
       highlighted = ''
       actual_len = 0
     end if
+
+    ! DEBUG: write(*, '(a)') '[DEBUG build: done with build_highlighted_string]'
   end subroutine
 
   ! Check if a command is valid (exists in PATH, is builtin, or is function)
