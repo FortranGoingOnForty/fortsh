@@ -13,6 +13,11 @@ module readline
   use iso_c_binding
   implicit none
 
+  ! Module-level terminal state for FZF functions
+  ! Needed because LLVM flang-new's execute_command_line requires cooked mode
+  type(termios_t), save :: module_original_termios
+  logical, save :: module_termios_saved = .false.
+
   ! Constants for special keys
   integer, parameter :: KEY_ENTER = 10
   integer, parameter :: KEY_BACKSPACE = 127
@@ -42,9 +47,15 @@ module readline
   integer, parameter :: KEY_LEFT = 68
   
   ! History and line management
-  ! Use reasonable sizes now that we're using allocatable arrays
+  ! EXTREMELY reduced sizes on macOS to avoid gfortran ARM64 stack corruption bug
+  ! The static command_history variable causes issues even at moderate sizes
+#ifdef __APPLE__
+  integer, parameter :: MAX_HISTORY = 10       ! Drastically reduced for macOS (10 * 128 = 1.2KB)
+  integer, parameter :: MAX_LINE_LEN = 128     ! Drastically reduced for macOS
+#else
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
+#endif
 
   ! Glob expansion constants (from glob module)
   integer, parameter :: MAX_GLOB_MATCHES = 1000
@@ -66,11 +77,11 @@ module readline
   integer, parameter :: MAX_SCORED_ITEMS = 30  ! Max scored completion items
 
   type :: input_state_t
-    ! Use allocatable strings to avoid stack issues
+    ! Use allocatable strings to avoid stack allocation on macOS
     character(len=:), allocatable :: buffer
-    character(len=:), allocatable :: original_buffer
-    character(len=:), allocatable :: kill_buffer
-    character(len=:), allocatable :: last_completion_buffer
+    character(len=:), allocatable :: original_buffer  ! Save original input during history navigation
+    character(len=:), allocatable :: kill_buffer      ! Kill ring buffer for cut/paste
+    character(len=:), allocatable :: last_completion_buffer  ! Buffer when we last showed completions
     integer :: length = 0
     integer :: cursor_pos = 0  ! 0-based position in buffer
     integer :: history_pos = 0  ! Current position in history (0 = not browsing)
@@ -82,7 +93,7 @@ module readline
     ! Reverse-i-search state
     logical :: in_search = .false. ! Currently in i-search mode (forward or reverse)
     logical :: search_forward = .false. ! True = forward, False = reverse
-    character(len=:), allocatable :: search_string
+    character(len=:), allocatable :: search_string  ! Current search query
     integer :: search_length = 0 ! Length of search string
     integer :: search_match_index = 0 ! Current history match index
 
@@ -94,7 +105,7 @@ module readline
     logical :: vi_repeat_pending = .false.
 
     ! Advanced vi mode features
-    character(len=:), allocatable :: vi_yank_buffer
+    character(len=:), allocatable :: vi_yank_buffer  ! Vi-style yank buffer
     integer :: vi_yank_length = 0
     integer :: vi_marks(26) = 0  ! Mark positions for 'a'-'z' (0 = not set)
     character(len=:), allocatable :: vi_search_pattern
@@ -103,28 +114,31 @@ module readline
     logical :: vi_in_vi_search = .false.
 
     ! Autosuggestion support (fish-style)
-    character(len=:), allocatable :: suggestion
+    character(len=:), allocatable :: suggestion  ! Current suggestion from history
     integer :: suggestion_length = 0  ! Length of suggestion
 
     ! Menu selection support (zsh/fish-style interactive completion)
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
-    character(len=MAX_MENU_ITEM_LEN), allocatable :: menu_items(:)  ! Completion items for menu
+    character(len=:), allocatable :: menu_items(:)  ! Completion items for menu (allocatable array)
     integer :: menu_num_items = 0  ! Number of items in menu
     integer :: menu_selection = 1  ! Currently selected item (1-based)
-    character(len=:), allocatable :: menu_prefix
+    character(len=:), allocatable :: menu_prefix  ! Command prefix before completion word
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
-    character(len=:), allocatable :: menu_prompt
+    character(len=:), allocatable :: menu_prompt  ! Prompt when in menu mode (for live preview)
     logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
 
     ! Process kill mode support (Ctrl-X)
     logical :: in_process_kill_mode = .false.  ! Currently in process kill mode
     logical :: in_signal_input = .false.  ! Entering signal to send
     integer :: selected_pid = 0  ! PID of selected process
-    character(len=:), allocatable :: selected_process_name
+    character(len=:), allocatable :: selected_process_name  ! Name of selected process
+
+    ! Track if initialized
+    logical :: initialized = .false.
   end type input_state_t
 
   type :: history_t
-    ! Use allocatable array to avoid stack issues
+    ! Use allocatable array to avoid stack allocation on macOS
     character(len=:), allocatable :: lines(:)
     integer :: count = 0
     integer :: current = 0  ! Current position in history navigation
@@ -132,7 +146,6 @@ module readline
   end type history_t
 
   type(history_t), save :: command_history
-  type(input_state_t), save :: global_input_state  ! Module-level to avoid stack issues
 
   ! Type to hold completion candidates with scores for fuzzy matching
   type :: scored_completion_t
@@ -151,6 +164,111 @@ module readline
   logical, save :: macos_detected = .false.
 
 contains
+  ! Initialize input_state_t with allocated strings
+  subroutine init_input_state(state)
+    type(input_state_t), intent(out) :: state
+
+    ! Allocate all strings with initial capacity
+    allocate(character(len=MAX_LINE_LEN) :: state%buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%original_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%kill_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%last_completion_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
+    allocate(character(len=MAX_LINE_LEN) :: state%suggestion)
+    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
+    allocate(character(len=MAX_LINE_LEN) :: state%menu_prompt)
+    allocate(character(len=256) :: state%selected_process_name)
+
+    ! Allocate menu items array
+    allocate(character(len=MAX_MENU_ITEM_LEN) :: state%menu_items(MAX_MENU_ITEMS))
+
+    ! Initialize all strings to empty
+    state%buffer = ''
+    state%original_buffer = ''
+    state%kill_buffer = ''
+    state%last_completion_buffer = ''
+    state%search_string = ''
+    state%vi_command_buffer = ''
+    state%vi_yank_buffer = ''
+    state%vi_search_pattern = ''
+    state%suggestion = ''
+    state%menu_prefix = ''
+    state%menu_prompt = ''
+    state%selected_process_name = ''
+    state%menu_items = ''
+
+    ! Initialize numeric fields
+    state%length = 0
+    state%cursor_pos = 0
+    state%history_pos = 0
+    state%kill_length = 0
+    state%search_length = 0
+    state%search_match_index = 0
+    state%editing_mode = global_editing_mode
+    state%vi_mode = VI_MODE_INSERT
+    state%vi_command_count = 0
+    state%vi_yank_length = 0
+    state%vi_marks = 0
+    state%vi_search_length = 0
+    state%suggestion_length = 0
+    state%menu_num_items = 0
+    state%menu_selection = 1
+    state%menu_prefix_len = 0
+    state%selected_pid = 0
+
+    ! Initialize logical fields
+    state%dirty = .false.
+    state%in_history = .false.
+    state%completions_shown = .false.
+    state%in_search = .false.
+    state%search_forward = .false.
+    state%vi_repeat_pending = .false.
+    state%vi_search_forward = .true.
+    state%vi_in_vi_search = .false.
+    state%in_menu_select = .false.
+    state%skip_cursor_up_on_redraw = .false.
+    state%in_process_kill_mode = .false.
+    state%in_signal_input = .false.
+
+    ! Set initialized flag
+    state%initialized = .true.
+  end subroutine
+
+  ! Initialize history with allocated array
+  subroutine init_history()
+    if (.not. command_history%initialized) then
+      allocate(character(len=MAX_LINE_LEN) :: command_history%lines(MAX_HISTORY))
+      command_history%lines = ''
+      command_history%count = 0
+      command_history%current = 0
+      command_history%initialized = .true.
+    end if
+  end subroutine
+
+  ! Clean up input_state_t allocations
+  subroutine cleanup_input_state(state)
+    type(input_state_t), intent(inout) :: state
+
+    if (state%initialized) then
+      if (allocated(state%buffer)) deallocate(state%buffer)
+      if (allocated(state%original_buffer)) deallocate(state%original_buffer)
+      if (allocated(state%kill_buffer)) deallocate(state%kill_buffer)
+      if (allocated(state%last_completion_buffer)) deallocate(state%last_completion_buffer)
+      if (allocated(state%search_string)) deallocate(state%search_string)
+      if (allocated(state%vi_command_buffer)) deallocate(state%vi_command_buffer)
+      if (allocated(state%vi_yank_buffer)) deallocate(state%vi_yank_buffer)
+      if (allocated(state%vi_search_pattern)) deallocate(state%vi_search_pattern)
+      if (allocated(state%suggestion)) deallocate(state%suggestion)
+      if (allocated(state%menu_prefix)) deallocate(state%menu_prefix)
+      if (allocated(state%menu_prompt)) deallocate(state%menu_prompt)
+      if (allocated(state%selected_process_name)) deallocate(state%selected_process_name)
+      if (allocated(state%menu_items)) deallocate(state%menu_items)
+      state%initialized = .false.
+    end if
+  end subroutine
 
   ! Set the HISTCONTROL setting for history management
   subroutine set_histcontrol(histcontrol)
@@ -194,101 +312,52 @@ contains
     end if
   end subroutine
 
-  ! Initialize input_state_t with allocated strings
-  subroutine init_input_state(state)
-    type(input_state_t), intent(out) :: state
-    ! Allocate all string fields with initial empty values
-    allocate(character(len=MAX_LINE_LEN) :: state%buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%original_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%kill_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%last_completion_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
-    allocate(character(len=MAX_LINE_LEN) :: state%suggestion)
-    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
-    allocate(character(len=MAX_LINE_LEN) :: state%menu_prompt)
-    allocate(character(len=256) :: state%selected_process_name)
-
-    ! Initialize strings to empty
-    state%buffer = ''
-    state%original_buffer = ''
-    state%kill_buffer = ''
-    state%last_completion_buffer = ''
-    state%search_string = ''
-    state%vi_command_buffer = ''
-    state%vi_yank_buffer = ''
-    state%vi_search_pattern = ''
-    state%suggestion = ''
-    state%menu_prefix = ''
-    state%menu_prompt = ''
-    state%selected_process_name = ''
-
-    ! Allocate menu items array
-    allocate(state%menu_items(MAX_MENU_ITEMS))
-    state%menu_items = ''
-  end subroutine
-
-  ! Initialize command history
-  subroutine init_history()
-    if (.not. command_history%initialized) then
-      allocate(character(len=MAX_LINE_LEN) :: command_history%lines(MAX_HISTORY))
-      command_history%lines = ''
-      command_history%count = 0
-      command_history%current = 0
-      command_history%initialized = .true.
-    end if
-  end subroutine
-
   ! Enhanced readline with character-by-character input processing
   subroutine readline_enhanced(prompt, line, iostat)
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
 
+    type(input_state_t) :: input_state
     type(termios_t) :: original_termios
     character :: ch
     logical :: success, done, raw_enabled
     integer :: char_code
+    ! Variables for redraw (moved out of block to avoid flang-new crash)
+    integer :: i_redraw, term_cols, term_rows
+    integer :: prompt_visual_len, cursor_visual_pos, current_line
+    integer :: suggestion_display_len, available_space
 
     iostat = 0
     done = .false.
     raw_enabled = .false.
 
-    ! Initialize command history on first use
+    ! Initialize history on first use
     call init_history()
 
     ! Try to enable raw mode (only works in interactive mode)
     success = enable_raw_mode(original_termios)
     if (success) then
       raw_enabled = .true.
+      write(*, '(a)') '[DEBUG: Raw mode ENABLED]'
+
+      ! Save terminal state for FZF functions (flang-new workaround)
+      module_original_termios = original_termios
+      module_termios_saved = .true.
+    else
+      write(*, '(a)') '[DEBUG: Raw mode FAILED]'
     end if
-    
+
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
     flush(output_unit)
 
-    ! Initialize input state with allocatable strings (use module-level variable)
-    call init_input_state(global_input_state)
-    global_input_state%length = 0
-    global_input_state%cursor_pos = 0
-    global_input_state%history_pos = 0
-    global_input_state%kill_length = 0
-    global_input_state%dirty = .false.
-    global_input_state%in_history = .false.
-    global_input_state%completions_shown = .false.
-    global_input_state%in_search = .false.
-    global_input_state%search_string = ''
-    global_input_state%search_length = 0
-    global_input_state%search_match_index = 0
-    global_input_state%editing_mode = global_editing_mode  ! Initialize from global state
-    global_input_state%vi_mode = VI_MODE_INSERT
-    input_state%suggestion = ''
-    input_state%suggestion_length = 0
+    ! Initialize input state with allocated strings
+    call init_input_state(input_state)
     input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
     if (raw_enabled) then
+      write(*, '(a)') '[DEBUG: Entering character-by-character mode]'
       ! Enhanced input processing
       do while (.not. done)
         success = read_single_char(ch)
@@ -298,7 +367,12 @@ contains
         end if
         
         char_code = iachar(ch)
-        
+
+        ! DEBUG: Show control characters
+        if (char_code < 32) then
+          write(*, '(a,i0)') '[DEBUG: Control char code: ', char_code, ']'
+        end if
+
         select case(char_code)
         case(KEY_ENTER)
           ! Enter - accept menu selection, finish input, or accept search
@@ -352,9 +426,9 @@ contains
           end if
 
           ! Clear buffer and return empty line
-          input_state%buffer = ''
           input_state%length = 0
           input_state%cursor_pos = 0
+          input_state%dirty = .false.  ! Prevent redraw with empty buffer
           done = .true.
 
         case(KEY_CTRL_X)
@@ -506,14 +580,10 @@ contains
         ! Redraw line if needed
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         if (input_state%dirty) then
-          block
-            character(len=:), allocatable :: highlighted
-            integer :: i_redraw, term_cols, term_rows
-            integer :: prompt_visual_len, cursor_visual_pos, current_line
-            integer :: suggestion_display_len, available_space
-            logical :: success
+          ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
+          ! Variables moved to subroutine level
 
-            ! Get terminal size for multiline handling
+          ! Get terminal size for multiline handling
             success = get_terminal_size(term_rows, term_cols)
             if (.not. success .or. term_cols <= 0) then
               term_cols = 80
@@ -556,9 +626,10 @@ contains
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
             if (input_state%length > 0) then
-              ! Apply syntax highlighting (safe - doesn't take input_state)
-              highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-              write(output_unit, '(a)', advance='no') highlighted
+              ! WORKAROUND: Skip syntax highlighting in block to avoid flang-new crash
+              ! with allocatable strings inside block constructs.
+              ! TODO: Add syntax highlighting back using a non-allocatable approach
+              write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
 
               ! Display autosuggestion if present (only when cursor is at end)
               if (input_state%suggestion_length > 0 .and. &
@@ -596,7 +667,7 @@ contains
             end if
 
             flush(output_unit)
-          end block
+
           input_state%dirty = .false.
         end if
       end do
@@ -619,6 +690,9 @@ contains
     else
       line = ''
     end if
+
+    ! Clean up allocated memory
+    call cleanup_input_state(input_state)
   end subroutine
 
   ! Simple fallback readline - uses standard input for now
@@ -2586,6 +2660,7 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
     integer :: i
+    character(len=MAX_LINE_LEN) :: temp_buffer
 
     ! Check if we have room
     if (input_state%length >= MAX_LINE_LEN) return
@@ -2614,13 +2689,24 @@ contains
       ! This ensures commands are colored correctly based on validity
       input_state%dirty = .true.
     else
-      ! Insert in middle - shift characters right
-      do i = input_state%length, input_state%cursor_pos + 1, -1
-        input_state%buffer(i+1:i+1) = input_state%buffer(i:i)
-      end do
-      input_state%cursor_pos = input_state%cursor_pos + 1
-      input_state%buffer(input_state%cursor_pos:input_state%cursor_pos) = ch
+      ! Insert in middle - use temp to avoid substring overlap issues
+      ! Initialize temp with current buffer
+      temp_buffer = input_state%buffer
+
+      ! Shift part after cursor one position right in temp
+      if (input_state%cursor_pos < input_state%length) then
+        temp_buffer(input_state%cursor_pos+2:input_state%length+1) = &
+          input_state%buffer(input_state%cursor_pos+1:input_state%length)
+      end if
+
+      ! Insert new character at cursor+1
+      temp_buffer(input_state%cursor_pos+1:input_state%cursor_pos+1) = ch
+
+      ! Copy result back to buffer
+      input_state%buffer = temp_buffer
       input_state%length = input_state%length + 1
+      input_state%cursor_pos = input_state%cursor_pos + 1
+
       ! Middle insertion requires full redraw
       input_state%dirty = .true.
     end if
@@ -4249,26 +4335,24 @@ contains
   ! Advanced line editing functions for Phase 5
   subroutine handle_home(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     ! Move cursor to beginning of line
     if (input_state%cursor_pos > 0) then
-      do while (input_state%cursor_pos > 0)
-        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
-        input_state%cursor_pos = input_state%cursor_pos - 1
-      end do
-      flush(output_unit)
+      input_state%cursor_pos = 0
+      ! Mark dirty to trigger full redraw with correct cursor position
+      input_state%dirty = .true.
     end if
   end subroutine
   
   subroutine handle_end(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     ! Move cursor to end of line
-    do while (input_state%cursor_pos < input_state%length)
-      write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
-      input_state%cursor_pos = input_state%cursor_pos + 1
-    end do
-    flush(output_unit)
+    if (input_state%cursor_pos < input_state%length) then
+      input_state%cursor_pos = input_state%length
+      ! Mark dirty to trigger full redraw with correct cursor position
+      input_state%dirty = .true.
+    end if
   end subroutine
   
   subroutine handle_kill_to_end(input_state)
@@ -5424,6 +5508,36 @@ contains
   end subroutine
 
   ! ===========================================================================
+  ! Helper function for execute_command_line in raw mode (flang-new workaround)
+  ! ===========================================================================
+  subroutine safe_execute_command(command, exitstat)
+    character(len=*), intent(in) :: command
+    integer, intent(out), optional :: exitstat
+    type(termios_t) :: temp_termios
+    logical :: success
+    integer :: exit_code
+
+    exit_code = 0
+
+    ! Temporarily restore terminal to cooked mode
+    if (module_termios_saved) then
+      success = restore_terminal(module_original_termios)
+    end if
+
+    ! Execute command
+    call execute_command_line(command, exitstat=exit_code)
+
+    ! Re-enable raw mode
+    if (module_termios_saved) then
+      success = enable_raw_mode(temp_termios)
+      ! Update saved state with new termios
+      module_original_termios = temp_termios
+    end if
+
+    if (present(exitstat)) exitstat = exit_code
+  end subroutine
+
+  ! ===========================================================================
   ! FZF Integration (Ctrl-F fuzzy file finder)
   ! ===========================================================================
 
@@ -5435,6 +5549,10 @@ contains
     integer :: unit, iostat, exit_status
     logical :: file_exists
     character(len=256) :: bat_path
+    ! Variables for block construct workaround (flang-new compatibility)
+    character(len=1024) :: line, combined_selection
+    logical :: first_line
+    integer :: i, moves
 
     ! Check if fzf is installed
     call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
@@ -5493,34 +5611,32 @@ contains
         open(newunit=unit, file='/tmp/fortsh_fzf_selection.tmp', &
              status='old', action='read', iostat=iostat)
         if (iostat == 0) then
-          block
-            character(len=1024) :: line, combined_selection
-            logical :: first_line
-            first_line = .true.
-            combined_selection = ''
+          ! WORKAROUND: Removed block construct for flang-new compatibility
+          ! Variables moved to subroutine level
+          first_line = .true.
+          combined_selection = ''
 
-            ! Read all lines (one per selected file)
-            do
-              read(unit, '(a)', iostat=iostat) line
-              if (iostat /= 0) exit
+          ! Read all lines (one per selected file)
+          do
+            read(unit, '(a)', iostat=iostat) line
+            if (iostat /= 0) exit
 
-              if (len_trim(line) > 0) then
-                if (first_line) then
-                  combined_selection = trim(line)
-                  first_line = .false.
-                else
-                  ! Add space between multiple selections
-                  combined_selection = trim(combined_selection) // ' ' // trim(line)
-                end if
+            if (len_trim(line) > 0) then
+              if (first_line) then
+                combined_selection = trim(line)
+                first_line = .false.
+              else
+                ! Add space between multiple selections
+                combined_selection = trim(combined_selection) // ' ' // trim(line)
               end if
-            end do
-            close(unit)
-
-            ! Insert combined selections at cursor position
-            if (len_trim(combined_selection) > 0) then
-              call insert_string_at_cursor(input_state, trim(combined_selection))
             end if
-          end block
+          end do
+          close(unit)
+
+          ! Insert combined selections at cursor position
+          if (len_trim(combined_selection) > 0) then
+            call insert_string_at_cursor(input_state, trim(combined_selection))
+          end if
         end if
         ! Clean up temp file
         call execute_command_line('rm -f /tmp/fortsh_fzf_selection.tmp 2>/dev/null')
@@ -5538,13 +5654,12 @@ contains
       ! Move cursor to correct position (if not at end)
       if (input_state%cursor_pos < input_state%length) then
         ! Move cursor back from end to cursor position using ANSI escape codes
-        block
-          integer :: i, moves
-          moves = input_state%length - input_state%cursor_pos
-          do i = 1, moves
-            write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
-          end do
-        end block
+        ! WORKAROUND: Removed block construct for flang-new compatibility
+        ! Variables moved to subroutine level
+        moves = input_state%length - input_state%cursor_pos
+        do i = 1, moves
+          write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+        end do
       end if
     end if
     flush(output_unit)
@@ -5708,6 +5823,8 @@ contains
     character(len=512) :: preview_cmd
     integer :: unit, iostat, exit_status
     logical :: file_exists, in_git_repo
+    ! Variables for block construct workaround (flang-new compatibility)
+    integer :: i, moves
 
     ! Check if in git repo
     call execute_command_line('git rev-parse --git-dir >/dev/null 2>&1', exitstat=exit_status)
@@ -5782,13 +5899,12 @@ contains
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
       ! Move cursor to correct position
       if (input_state%cursor_pos < input_state%length) then
-        block
-          integer :: i, moves
-          moves = input_state%length - input_state%cursor_pos
-          do i = 1, moves
-            write(output_unit, '(a)', advance='no') char(27) // '[D'
-          end do
-        end block
+        ! WORKAROUND: Removed block construct for flang-new compatibility
+        ! Variables moved to subroutine level
+        moves = input_state%length - input_state%cursor_pos
+        do i = 1, moves
+          write(output_unit, '(a)', advance='no') char(27) // '[D'
+        end do
       end if
     end if
     flush(output_unit)

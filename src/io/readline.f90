@@ -13,6 +13,29 @@ module readline
   use iso_c_binding
   implicit none
 
+  ! Module-level terminal state for FZF functions
+  ! Needed because LLVM flang-new's execute_command_line requires cooked mode
+  type(termios_t), save :: module_original_termios
+  logical, save :: module_termios_saved = .false.
+
+  ! Import c_system from builtins module (it already works there)
+  ! We'll reference it via the module instead of defining our own
+  interface
+    function readline_c_system(command) bind(C, name="system")
+      use iso_c_binding
+      integer(c_int) :: readline_c_system
+      character(kind=c_char), intent(in) :: command(*)
+    end function readline_c_system
+
+    ! Get errno to debug system() failures
+    function c_get_errno() bind(C, name="__error")
+      use iso_c_binding
+      type(c_ptr) :: c_get_errno
+    end function c_get_errno
+  end interface
+
+  ! Note: c_signal, SIG_DFL, and SIGCHLD are imported from system_interface
+
   ! Constants for special keys
   integer, parameter :: KEY_ENTER = 10
   integer, parameter :: KEY_BACKSPACE = 127
@@ -335,6 +358,10 @@ contains
     if (success) then
       raw_enabled = .true.
       write(*, '(a)') '[DEBUG: Raw mode ENABLED]'
+
+      ! Save terminal state for FZF functions (flang-new workaround)
+      module_original_termios = original_termios
+      module_termios_saved = .true.
     else
       write(*, '(a)') '[DEBUG: Raw mode FAILED]'
     end if
@@ -2651,6 +2678,7 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
     integer :: i
+    character(len=MAX_LINE_LEN) :: temp_buffer
 
     ! Check if we have room
     if (input_state%length >= MAX_LINE_LEN) return
@@ -2679,13 +2707,24 @@ contains
       ! This ensures commands are colored correctly based on validity
       input_state%dirty = .true.
     else
-      ! Insert in middle - shift characters right
-      do i = input_state%length, input_state%cursor_pos + 1, -1
-        input_state%buffer(i+1:i+1) = input_state%buffer(i:i)
-      end do
-      input_state%cursor_pos = input_state%cursor_pos + 1
-      input_state%buffer(input_state%cursor_pos:input_state%cursor_pos) = ch
+      ! Insert in middle - use temp to avoid substring overlap issues
+      ! Initialize temp with current buffer
+      temp_buffer = input_state%buffer
+
+      ! Shift part after cursor one position right in temp
+      if (input_state%cursor_pos < input_state%length) then
+        temp_buffer(input_state%cursor_pos+2:input_state%length+1) = &
+          input_state%buffer(input_state%cursor_pos+1:input_state%length)
+      end if
+
+      ! Insert new character at cursor+1
+      temp_buffer(input_state%cursor_pos+1:input_state%cursor_pos+1) = ch
+
+      ! Copy result back to buffer
+      input_state%buffer = temp_buffer
       input_state%length = input_state%length + 1
+      input_state%cursor_pos = input_state%cursor_pos + 1
+
       ! Middle insertion requires full redraw
       input_state%dirty = .true.
     end if
@@ -4314,26 +4353,24 @@ contains
   ! Advanced line editing functions for Phase 5
   subroutine handle_home(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     ! Move cursor to beginning of line
     if (input_state%cursor_pos > 0) then
-      do while (input_state%cursor_pos > 0)
-        write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
-        input_state%cursor_pos = input_state%cursor_pos - 1
-      end do
-      flush(output_unit)
+      input_state%cursor_pos = 0
+      ! Mark dirty to trigger full redraw with correct cursor position
+      input_state%dirty = .true.
     end if
   end subroutine
   
   subroutine handle_end(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     ! Move cursor to end of line
-    do while (input_state%cursor_pos < input_state%length)
-      write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
-      input_state%cursor_pos = input_state%cursor_pos + 1
-    end do
-    flush(output_unit)
+    if (input_state%cursor_pos < input_state%length) then
+      input_state%cursor_pos = input_state%length
+      ! Mark dirty to trigger full redraw with correct cursor position
+      input_state%dirty = .true.
+    end if
   end subroutine
   
   subroutine handle_kill_to_end(input_state)
@@ -5489,6 +5526,59 @@ contains
   end subroutine
 
   ! ===========================================================================
+  ! Helper function for execute_command_line in raw mode (flang-new workaround)
+  ! ===========================================================================
+  subroutine safe_execute_command(command, exitstat)
+    character(len=*), intent(in) :: command
+    integer, intent(out), optional :: exitstat
+    type(termios_t) :: temp_termios
+    logical :: success
+    integer(c_int) :: c_exit_code
+    type(c_funptr) :: old_sigchld_handler
+
+    ! Flush all I/O before system() call
+    flush(output_unit)
+    flush(error_unit)
+    flush(0)  ! stdin
+
+    ! CRITICAL: Must restore terminal to cooked mode before fork/exec
+    if (module_termios_saved) then
+      success = restore_terminal(module_original_termios)
+    end if
+
+    ! CRITICAL FIX: Temporarily restore SIGCHLD to default handler
+    ! The shell's SIGCHLD handler causes auto-reaping of child processes,
+    ! which makes system()'s wait() fail with ECHILD (errno 10)
+    old_sigchld_handler = c_signal(SIGCHLD, SIG_DFL)
+
+    ! Use C system() instead of execute_command_line (flang-new workaround)
+    c_exit_code = readline_c_system(trim(command) // c_null_char)
+
+    ! Restore the original SIGCHLD handler
+    old_sigchld_handler = c_signal(SIGCHLD, old_sigchld_handler)
+
+    ! Re-enable raw mode for continued readline operation
+    if (module_termios_saved) then
+      success = enable_raw_mode(temp_termios)
+      if (success) then
+        ! Update saved state with new termios
+        module_original_termios = temp_termios
+      end if
+    end if
+
+    ! Convert C exit code to Fortran exitstat
+    ! system() returns: (exit_status << 8) | signal_number
+    ! Extract just the exit status
+    if (present(exitstat)) then
+      if (c_exit_code == -1) then
+        exitstat = -1  ! Fork/exec failed
+      else
+        exitstat = ishft(c_exit_code, -8)  ! Shift right 8 bits
+      end if
+    end if
+  end subroutine
+
+  ! ===========================================================================
   ! FZF Integration (Ctrl-F fuzzy file finder)
   ! ===========================================================================
 
@@ -5500,9 +5590,13 @@ contains
     integer :: unit, iostat, exit_status
     logical :: file_exists
     character(len=256) :: bat_path
+    ! Variables for block construct workaround (flang-new compatibility)
+    character(len=1024) :: line, combined_selection
+    logical :: first_line
+    integer :: i, moves
 
     ! Check if fzf is installed
-    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
     if (exit_status /= 0) then
       write(output_unit, '()')
       write(output_unit, '(a)') 'Error: fzf is not installed. Please install fzf first.'
@@ -5514,12 +5608,12 @@ contains
     end if
 
     ! Check if bat is available for syntax highlighting
-    call execute_command_line('command -v bat >/dev/null 2>&1', exitstat=exit_status)
+    call safe_execute_command('command -v bat >/dev/null 2>&1', exitstat=exit_status)
     if (exit_status == 0) then
       bat_path = 'bat'
     else
       ! Try batcat (Debian/Ubuntu package name)
-      call execute_command_line('command -v batcat >/dev/null 2>&1', exitstat=exit_status)
+      call safe_execute_command('command -v batcat >/dev/null 2>&1', exitstat=exit_status)
       if (exit_status == 0) then
         bat_path = 'batcat'
       else
@@ -5549,7 +5643,7 @@ contains
     flush(output_unit)
 
     ! Execute fzf
-    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+    call safe_execute_command(trim(fzf_cmd), exitstat=exit_status)
 
     ! Read selection(s) if fzf exited successfully (supports multi-select)
     if (exit_status == 0) then
@@ -5558,37 +5652,35 @@ contains
         open(newunit=unit, file='/tmp/fortsh_fzf_selection.tmp', &
              status='old', action='read', iostat=iostat)
         if (iostat == 0) then
-          block
-            character(len=1024) :: line, combined_selection
-            logical :: first_line
-            first_line = .true.
-            combined_selection = ''
+          ! WORKAROUND: Removed block construct for flang-new compatibility
+          ! Variables moved to subroutine level
+          first_line = .true.
+          combined_selection = ''
 
-            ! Read all lines (one per selected file)
-            do
-              read(unit, '(a)', iostat=iostat) line
-              if (iostat /= 0) exit
+          ! Read all lines (one per selected file)
+          do
+            read(unit, '(a)', iostat=iostat) line
+            if (iostat /= 0) exit
 
-              if (len_trim(line) > 0) then
-                if (first_line) then
-                  combined_selection = trim(line)
-                  first_line = .false.
-                else
-                  ! Add space between multiple selections
-                  combined_selection = trim(combined_selection) // ' ' // trim(line)
-                end if
+            if (len_trim(line) > 0) then
+              if (first_line) then
+                combined_selection = trim(line)
+                first_line = .false.
+              else
+                ! Add space between multiple selections
+                combined_selection = trim(combined_selection) // ' ' // trim(line)
               end if
-            end do
-            close(unit)
-
-            ! Insert combined selections at cursor position
-            if (len_trim(combined_selection) > 0) then
-              call insert_string_at_cursor(input_state, trim(combined_selection))
             end if
-          end block
+          end do
+          close(unit)
+
+          ! Insert combined selections at cursor position
+          if (len_trim(combined_selection) > 0) then
+            call insert_string_at_cursor(input_state, trim(combined_selection))
+          end if
         end if
         ! Clean up temp file
-        call execute_command_line('rm -f /tmp/fortsh_fzf_selection.tmp 2>/dev/null')
+        call safe_execute_command('rm -f /tmp/fortsh_fzf_selection.tmp 2>/dev/null')
       end if
     end if
 
@@ -5603,13 +5695,12 @@ contains
       ! Move cursor to correct position (if not at end)
       if (input_state%cursor_pos < input_state%length) then
         ! Move cursor back from end to cursor position using ANSI escape codes
-        block
-          integer :: i, moves
-          moves = input_state%length - input_state%cursor_pos
-          do i = 1, moves
-            write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
-          end do
-        end block
+        ! WORKAROUND: Removed block construct for flang-new compatibility
+        ! Variables moved to subroutine level
+        moves = input_state%length - input_state%cursor_pos
+        do i = 1, moves
+          write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+        end do
       end if
     end if
     flush(output_unit)
@@ -5625,7 +5716,7 @@ contains
     logical :: file_exists
 
     ! Check if fzf is installed
-    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
     if (exit_status /= 0) then
       write(output_unit, '()')
       write(output_unit, '(a)') 'Error: fzf is not installed. Please install fzf first.'
@@ -5662,7 +5753,7 @@ contains
     flush(output_unit)
 
     ! Execute fzf
-    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+    call safe_execute_command(trim(fzf_cmd), exitstat=exit_status)
 
     ! Read selection if fzf exited successfully
     if (exit_status == 0) then
@@ -5682,7 +5773,7 @@ contains
           end if
         end if
         ! Clean up temp file
-        call execute_command_line('rm -f /tmp/fortsh_fzf_history.tmp 2>/dev/null')
+        call safe_execute_command('rm -f /tmp/fortsh_fzf_history.tmp 2>/dev/null')
       end if
     end if
 
@@ -5707,7 +5798,7 @@ contains
     logical :: file_exists
 
     ! Check if fzf is installed
-    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
     if (exit_status /= 0) then
       write(output_unit, '()')
       write(output_unit, '(a)') 'Error: fzf is not installed.'
@@ -5732,7 +5823,7 @@ contains
     flush(output_unit)
 
     ! Execute fzf
-    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+    call safe_execute_command(trim(fzf_cmd), exitstat=exit_status)
 
     ! Read selection and cd into it
     if (exit_status == 0) then
@@ -5751,7 +5842,7 @@ contains
             input_state%cursor_pos = input_state%length
           end if
         end if
-        call execute_command_line('rm -f /tmp/fortsh_fzf_dir.tmp 2>/dev/null')
+        call safe_execute_command('rm -f /tmp/fortsh_fzf_dir.tmp 2>/dev/null')
       end if
     end if
 
@@ -5773,9 +5864,11 @@ contains
     character(len=512) :: preview_cmd
     integer :: unit, iostat, exit_status
     logical :: file_exists, in_git_repo
+    ! Variables for block construct workaround (flang-new compatibility)
+    integer :: i, moves
 
     ! Check if in git repo
-    call execute_command_line('git rev-parse --git-dir >/dev/null 2>&1', exitstat=exit_status)
+    call safe_execute_command('git rev-parse --git-dir >/dev/null 2>&1', exitstat=exit_status)
     in_git_repo = (exit_status == 0)
 
     if (.not. in_git_repo) then
@@ -5786,7 +5879,7 @@ contains
     end if
 
     ! Check if fzf is installed
-    call execute_command_line('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
     if (exit_status /= 0) then
       write(output_unit, '()')
       write(output_unit, '(a)') 'Error: fzf is not installed.'
@@ -5818,7 +5911,7 @@ contains
     flush(output_unit)
 
     ! Execute fzf
-    call execute_command_line(trim(fzf_cmd), exitstat=exit_status)
+    call safe_execute_command(trim(fzf_cmd), exitstat=exit_status)
 
     ! Read selection
     if (exit_status == 0) then
@@ -5835,7 +5928,7 @@ contains
             call insert_string_at_cursor(input_state, trim(selected_item))
           end if
         end if
-        call execute_command_line('rm -f /tmp/fortsh_fzf_git.tmp 2>/dev/null')
+        call safe_execute_command('rm -f /tmp/fortsh_fzf_git.tmp 2>/dev/null')
       end if
     end if
 
@@ -5847,13 +5940,12 @@ contains
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
       ! Move cursor to correct position
       if (input_state%cursor_pos < input_state%length) then
-        block
-          integer :: i, moves
-          moves = input_state%length - input_state%cursor_pos
-          do i = 1, moves
-            write(output_unit, '(a)', advance='no') char(27) // '[D'
-          end do
-        end block
+        ! WORKAROUND: Removed block construct for flang-new compatibility
+        ! Variables moved to subroutine level
+        moves = input_state%length - input_state%cursor_pos
+        do i = 1, moves
+          write(output_unit, '(a)', advance='no') char(27) // '[D'
+        end do
       end if
     end if
     flush(output_unit)
