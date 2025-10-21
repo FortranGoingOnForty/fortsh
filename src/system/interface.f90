@@ -87,6 +87,21 @@ module system_interface
   integer(c_long), parameter :: ISIG   = int(z'00000080', c_long)  ! enable signals
 
   ! Control character indices (macOS)
+  integer(c_int), parameter :: VEOF   = 0   ! EOF character (Ctrl-D)
+  integer(c_int), parameter :: VEOL   = 1   ! EOL character
+  integer(c_int), parameter :: VEOL2  = 2   ! EOL2 character
+  integer(c_int), parameter :: VERASE = 3   ! ERASE character
+  integer(c_int), parameter :: VWERASE = 4  ! WERASE character
+  integer(c_int), parameter :: VKILL  = 5   ! KILL character
+  integer(c_int), parameter :: VREPRINT = 6 ! REPRINT character
+  integer(c_int), parameter :: VINTR  = 8   ! INTR character (Ctrl-C)
+  integer(c_int), parameter :: VQUIT  = 9   ! QUIT character
+  integer(c_int), parameter :: VSUSP  = 10  ! SUSP character (Ctrl-Z)
+  integer(c_int), parameter :: VDSUSP = 11  ! DSUSP character
+  integer(c_int), parameter :: VSTART = 12  ! START character (Ctrl-Q)
+  integer(c_int), parameter :: VSTOP  = 13  ! STOP character (Ctrl-S)
+  integer(c_int), parameter :: VLNEXT = 14  ! LNEXT character
+  integer(c_int), parameter :: VDISCARD = 15 ! DISCARD character
   integer(c_int), parameter :: VMIN  = 16  ! minimum chars for noncanonical read
   integer(c_int), parameter :: VTIME = 17  ! timeout for noncanonical read
 #else
@@ -776,6 +791,23 @@ contains
     raw_termios%c_cc(VMIN + 1) = char(1)  ! Read at least 1 character
     raw_termios%c_cc(VTIME + 1) = char(0) ! No timeout
 
+#ifdef __APPLE__
+    ! Disable special character mappings that might intercept control chars
+    ! With ISIG and ICANON disabled, most of these shouldn't matter, but
+    ! explicitly clearing them ensures no control chars are intercepted
+    raw_termios%c_cc(VINTR + 1) = char(0)   ! Disable Ctrl-C (we handle it ourselves)
+    raw_termios%c_cc(VQUIT + 1) = char(0)   ! Disable Ctrl-\ quit
+    raw_termios%c_cc(VSUSP + 1) = char(0)   ! Disable Ctrl-Z suspend
+    raw_termios%c_cc(VDSUSP + 1) = char(0)  ! Disable delayed suspend
+    raw_termios%c_cc(VSTART + 1) = char(0)  ! Disable Ctrl-Q start (XON)
+    raw_termios%c_cc(VSTOP + 1) = char(0)   ! Disable Ctrl-S stop (XOFF)
+    raw_termios%c_cc(VLNEXT + 1) = char(0)  ! Disable literal next (Ctrl-V)
+    raw_termios%c_cc(VDISCARD + 1) = char(0) ! Disable output discard
+    raw_termios%c_cc(VWERASE + 1) = char(0) ! Disable word erase
+    raw_termios%c_cc(VREPRINT + 1) = char(0) ! Disable reprint line
+    ! Don't disable VEOF, VERASE, VKILL - we may want to check them
+#endif
+
     ! Apply raw mode settings - use TCSAFLUSH to discard pending input
     ! TCSAFLUSH is critical on macOS to ensure settings actually take effect
     ret = c_tcsetattr(STDIN_FD, TCSAFLUSH, raw_termios)
@@ -801,6 +833,15 @@ contains
         write(*, '(a)') '[DEBUG: ICANON successfully cleared]'
       end if
       write(*, '(a,z16.16)') '[DEBUG: c_lflag = 0x', raw_termios%c_lflag
+
+#ifdef __APPLE__
+      ! Debug: Show c_cc values to see what control chars are mapped
+      write(*, '(a,i0)') '[DEBUG: c_cc(VEOF)=', ichar(raw_termios%c_cc(VEOF + 1))
+      write(*, '(a,i0)') '[DEBUG: c_cc(VINTR)=', ichar(raw_termios%c_cc(VINTR + 1))
+      write(*, '(a,i0)') '[DEBUG: c_cc(VQUIT)=', ichar(raw_termios%c_cc(VQUIT + 1))
+      write(*, '(a,i0)') '[DEBUG: c_cc(VSTART)=', ichar(raw_termios%c_cc(VSTART + 1))
+      write(*, '(a,i0)') '[DEBUG: c_cc(VSTOP)=', ichar(raw_termios%c_cc(VSTOP + 1))
+#endif
     end if
 
     ! Assign to result variable at the very end
