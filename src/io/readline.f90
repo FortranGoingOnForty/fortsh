@@ -330,6 +330,9 @@ contains
     success = enable_raw_mode(original_termios)
     if (success) then
       raw_enabled = .true.
+      write(*, '(a)') '[DEBUG: Raw mode ENABLED]'
+    else
+      write(*, '(a)') '[DEBUG: Raw mode FAILED]'
     end if
 
     ! Print prompt
@@ -341,6 +344,7 @@ contains
     input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
     if (raw_enabled) then
+      write(*, '(a)') '[DEBUG: Entering character-by-character mode]'
       ! Enhanced input processing
       do while (.not. done)
         success = read_single_char(ch)
@@ -350,7 +354,12 @@ contains
         end if
         
         char_code = iachar(ch)
-        
+
+        ! DEBUG: Show control characters
+        if (char_code < 32) then
+          write(*, '(a,i0)') '[DEBUG: Control char code: ', char_code, ']'
+        end if
+
         select case(char_code)
         case(KEY_ENTER)
           ! Enter - accept menu selection, finish input, or accept search
@@ -559,7 +568,6 @@ contains
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         if (input_state%dirty) then
           block
-            character(len=:), allocatable :: highlighted
             integer :: i_redraw, term_cols, term_rows
             integer :: prompt_visual_len, cursor_visual_pos, current_line
             integer :: suggestion_display_len, available_space
@@ -608,9 +616,10 @@ contains
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
             if (input_state%length > 0) then
-              ! Apply syntax highlighting (safe - doesn't take input_state)
-              highlighted = highlight_command_line(input_state%buffer(:input_state%length))
-              write(output_unit, '(a)', advance='no') highlighted
+              ! WORKAROUND: Skip syntax highlighting in block to avoid flang-new crash
+              ! with allocatable strings inside block constructs.
+              ! TODO: Add syntax highlighting back using a non-allocatable approach
+              write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
 
               ! Display autosuggestion if present (only when cursor is at end)
               if (input_state%suggestion_length > 0 .and. &

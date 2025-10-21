@@ -714,36 +714,121 @@ contains
     logical :: success
     type(termios_t) :: raw_termios
     integer :: ret
-    
+    logical :: mode_ok  ! Workaround for potential LLVM Flang compiler bug
+    integer, save :: call_count = 0
+
     success = .false.
-    
+    mode_ok = .false.
+
+    call_count = call_count + 1
+    write(*, '(a,i0)') '[DEBUG: enable_raw_mode() call #', call_count, ']'
+
+    ! Verify stdin is actually a TTY
+    if (c_isatty(STDIN_FD) == 0) then
+      write(*, '(a)') '[ERROR: STDIN is not a TTY!]'
+      return
+    else
+      write(*, '(a)') '[DEBUG: STDIN is a TTY]'
+    end if
+
     ! Get current terminal settings
     ret = c_tcgetattr(STDIN_FD, original_termios)
-    if (ret /= 0) return
-    
+    if (ret /= 0) then
+      write(*, '(a,i0)') '[ERROR: tcgetattr failed: ', ret, ']'
+      return
+    end if
+
     ! Copy to modify for raw mode
     raw_termios = original_termios
-    
+
+    ! DEBUG: Show original flags
+    write(*, '(a,z16.16)') '[DEBUG: original c_iflag = 0x', original_termios%c_iflag
+    write(*, '(a,z16.16)') '[DEBUG: original c_lflag = 0x', original_termios%c_lflag
+
+    ! Disable input processing that might consume control chars
+#ifdef __APPLE__
+    ! macOS: Disable IXON (Ctrl-S/Q flow control), IXOFF, IXANY, BRKINT
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000600', c_long)))  ! IXON | IXOFF
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000800', c_long)))  ! IXANY
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000002', c_long)))  ! BRKINT
+#else
+    ! Linux: Disable flow control
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000400', c_int)))  ! IXON
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00001000', c_int)))  ! IXOFF
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000800', c_int)))  ! IXANY
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000002', c_int)))  ! BRKINT
+#endif
+
     ! Disable canonical mode, echo, and signals
     raw_termios%c_lflag = iand(raw_termios%c_lflag, not(ior(ior(ICANON, ECHO), ior(ECHOE, ECHOK))))
     raw_termios%c_lflag = iand(raw_termios%c_lflag, not(ior(ior(ECHONL, IEXTEN), ISIG)))
-    
+
+    ! Also disable ECHOCTL which echoes control chars as ^C
+#ifdef __APPLE__
+    ! macOS ECHOCTL flag (0x40)
+    raw_termios%c_lflag = iand(raw_termios%c_lflag, not(int(z'00000040', c_long)))
+#else
+    ! Linux ECHOCTL flag (typically 0x200)
+    raw_termios%c_lflag = iand(raw_termios%c_lflag, not(int(z'00000200', c_int)))
+#endif
+
     ! Set minimum characters and timeout for read
     raw_termios%c_cc(VMIN + 1) = char(1)  ! Read at least 1 character
     raw_termios%c_cc(VTIME + 1) = char(0) ! No timeout
-    
-    ! Apply raw mode settings
-    ret = c_tcsetattr(STDIN_FD, TCSANOW, raw_termios)
-    success = (ret == 0)
+
+    ! Apply raw mode settings - use TCSAFLUSH to discard pending input
+    ! TCSAFLUSH is critical on macOS to ensure settings actually take effect
+    ret = c_tcsetattr(STDIN_FD, TCSAFLUSH, raw_termios)
+    write(*, '(a,i0)') '[DEBUG: tcsetattr(TCSAFLUSH) returned: ', ret, ']'
+    mode_ok = (ret == 0)
+    if (mode_ok) then
+      write(*, '(a)') '[DEBUG: mode_ok = TRUE]'
+    else
+      write(*, '(a)') '[DEBUG: mode_ok = FALSE]'
+    end if
+
+    ! Verify flags were actually set
+    ret = c_tcgetattr(STDIN_FD, raw_termios)
+    if (ret == 0) then
+      if (iand(raw_termios%c_lflag, ISIG) /= 0) then
+        write(*, '(a)') '[BUG: ISIG still SET after tcsetattr!]'
+      else
+        write(*, '(a)') '[DEBUG: ISIG successfully cleared]'
+      end if
+      if (iand(raw_termios%c_lflag, ICANON) /= 0) then
+        write(*, '(a)') '[BUG: ICANON still SET!]'
+      else
+        write(*, '(a)') '[DEBUG: ICANON successfully cleared]'
+      end if
+      write(*, '(a,z16.16)') '[DEBUG: c_lflag = 0x', raw_termios%c_lflag
+    end if
+
+    ! Assign to result variable at the very end
+    success = mode_ok
+    if (success) then
+      write(*, '(a)') '[DEBUG: Returning TRUE]'
+    else
+      write(*, '(a)') '[DEBUG: Returning FALSE]'
+    end if
   end function
   
   function restore_terminal(original_termios) result(success)
     type(termios_t), intent(in) :: original_termios
     logical :: success
     integer :: ret
-    
+
+    write(*, '(a)') '[DEBUG: restore_terminal() called]'
+    write(*, '(a,z16.16)') '[DEBUG: restoring c_iflag = 0x', original_termios%c_iflag
+    write(*, '(a,z16.16)') '[DEBUG: restoring c_lflag = 0x', original_termios%c_lflag
+
     ret = c_tcsetattr(STDIN_FD, TCSANOW, original_termios)
     success = (ret == 0)
+
+    if (success) then
+      write(*, '(a)') '[DEBUG: restore_terminal() SUCCESS]'
+    else
+      write(*, '(a,i0)') '[DEBUG: restore_terminal() FAILED, ret = ', ret
+    end if
   end function
   
   function read_single_char(ch) result(success)
@@ -751,13 +836,15 @@ contains
     logical :: success
     character(c_char), target :: c_ch
     integer(c_size_t) :: bytes_read
-    
+
     bytes_read = c_read(STDIN_FD, c_loc(c_ch), 1_c_size_t)
     success = (bytes_read == 1)
     if (success) then
       ch = c_ch
+      write(*, '(a,i0)') '[read_single_char: got char ', ichar(ch), ']'
     else
       ch = char(0)
+      write(*, '(a,i0)') '[read_single_char: FAILED, bytes_read=', int(bytes_read), ']'
     end if
   end function
 
