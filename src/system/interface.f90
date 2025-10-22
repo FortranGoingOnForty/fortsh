@@ -753,8 +753,6 @@ contains
     raw_termios = original_termios
 
     ! DEBUG: Commented out - too noisy for normal use
-    ! write(*, '(a,z16.16)') '[DEBUG: original c_iflag = 0x', original_termios%c_iflag
-    ! write(*, '(a,z16.16)') '[DEBUG: original c_lflag = 0x', original_termios%c_lflag
 
     ! Disable input processing that might consume control chars
 #ifdef __APPLE__
@@ -808,13 +806,10 @@ contains
     ! TCSAFLUSH is critical on macOS to ensure settings actually take effect
     ret = c_tcsetattr(STDIN_FD, TCSAFLUSH, raw_termios)
     ! DEBUG: Commented out - too noisy
-    ! write(*, '(a,i0)') '[DEBUG: tcsetattr(TCSAFLUSH) returned: ', ret, ']'
     mode_ok = (ret == 0)
     ! DEBUG: Commented out - too noisy
     ! if (mode_ok) then
-    !   write(*, '(a)') '[DEBUG: mode_ok = TRUE]'
     ! else
-    !   write(*, '(a)') '[DEBUG: mode_ok = FALSE]'
     ! end if
 
     ! Verify flags were actually set
@@ -823,23 +818,15 @@ contains
       if (iand(raw_termios%c_lflag, ISIG) /= 0) then
         write(*, '(a)') '[BUG: ISIG still SET after tcsetattr!]'
       ! else
-      !   write(*, '(a)') '[DEBUG: ISIG successfully cleared]'
       end if
       if (iand(raw_termios%c_lflag, ICANON) /= 0) then
         write(*, '(a)') '[BUG: ICANON still SET!]'
       ! else
-      !   write(*, '(a)') '[DEBUG: ICANON successfully cleared]'
       end if
       ! DEBUG: Commented out - too noisy
-      ! write(*, '(a,z16.16)') '[DEBUG: c_lflag = 0x', raw_termios%c_lflag
 
 #ifdef __APPLE__
       ! DEBUG: Commented out - too noisy
-      ! write(*, '(a,i0)') '[DEBUG: c_cc(VEOF)=', ichar(raw_termios%c_cc(VEOF + 1))
-      ! write(*, '(a,i0)') '[DEBUG: c_cc(VINTR)=', ichar(raw_termios%c_cc(VINTR + 1))
-      ! write(*, '(a,i0)') '[DEBUG: c_cc(VQUIT)=', ichar(raw_termios%c_cc(VQUIT + 1))
-      ! write(*, '(a,i0)') '[DEBUG: c_cc(VSTART)=', ichar(raw_termios%c_cc(VSTART + 1))
-      ! write(*, '(a,i0)') '[DEBUG: c_cc(VSTOP)=', ichar(raw_termios%c_cc(VSTOP + 1))
 #endif
     end if
 
@@ -847,9 +834,7 @@ contains
     success = mode_ok
     ! DEBUG: Commented out - too noisy
     ! if (success) then
-    !   write(*, '(a)') '[DEBUG: Returning TRUE]'
     ! else
-    !   write(*, '(a)') '[DEBUG: Returning FALSE]'
     ! end if
   end function
   
@@ -863,12 +848,15 @@ contains
   end function
   
   function read_single_char(ch) result(success)
+    use iso_fortran_env, only: error_unit
     character, intent(out) :: ch
     logical :: success
     character(c_char), target :: c_ch
     integer(c_size_t) :: bytes_read
 
+
     bytes_read = c_read(STDIN_FD, c_loc(c_ch), 1_c_size_t)
+
     success = (bytes_read == 1)
     if (success) then
       ch = c_ch

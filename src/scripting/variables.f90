@@ -11,6 +11,7 @@ module variables
 contains
 
   subroutine set_shell_variable(shell, name, value, value_length)
+    use iso_fortran_env, only: error_unit
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: name, value
     integer, intent(in), optional :: value_length
@@ -30,19 +31,32 @@ contains
     select case (trim(name))
       case ('PS1')
         shell%ps1 = value
-        shell%ps1_len = actual_len  ! Store actual length including trailing spaces
+        ! For prompts, always use len_trim to get actual content length
+        shell%ps1_len = len_trim(value)
         return
       case ('PS2')
         shell%ps2 = value
-        shell%ps2_len = actual_len
+        if (present(value_length)) then
+          shell%ps2_len = value_length
+        else
+          shell%ps2_len = len(value)
+        end if
         return
       case ('PS3')
         shell%ps3 = value
-        shell%ps3_len = actual_len
+        if (present(value_length)) then
+          shell%ps3_len = value_length
+        else
+          shell%ps3_len = len(value)
+        end if
         return
       case ('PS4')
         shell%ps4 = value
-        shell%ps4_len = actual_len
+        if (present(value_length)) then
+          shell%ps4_len = value_length
+        else
+          shell%ps4_len = len(value)
+        end if
         return
       case ('IFS')
         shell%ifs = value
