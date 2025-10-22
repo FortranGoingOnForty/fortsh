@@ -666,11 +666,9 @@ contains
             write(output_unit, '(a)', advance='no') prompt
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
-              write(error_unit, '(a,i0)') '[READLINE: Calling highlight with length=', module_input_state%length
               call highlight_command_line(module_input_state%buffer, &
                                           module_highlighted_buffer, module_highlighted_len, &
                                           module_input_state%length)
-              write(error_unit, '(a,i0)') '[READLINE: Returned from highlight, highlighted_len=', module_highlighted_len
               if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
                 write(output_unit, '(a)', advance='no') module_highlighted_buffer(:module_highlighted_len)
               else

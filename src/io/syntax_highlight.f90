@@ -123,19 +123,14 @@ contains
     integer :: len_used
     integer :: actual_input_len
 
-    write(error_unit, '(a)') '[HIGHLIGHT: Entered highlight_command_line]'
-
-
     ! Allocate arrays on heap
     allocate(tokens(MAX_TOKENS))
     allocate(token_colors(MAX_TOKENS))
 
     ! Use provided length if given, otherwise use full buffer length
     if (present(input_len)) then
-      write(error_unit, '(a,i0)') '[HIGHLIGHT: input_len present, value=', input_len
       actual_input_len = input_len
     else
-      write(error_unit, '(a)') '[HIGHLIGHT: input_len NOT present, using len(input)]'
       actual_input_len = len(input)
     end if
 
@@ -144,10 +139,7 @@ contains
     ! Don't check upper bound against len(input) for allocatable strings
     ! if (actual_input_len > len(input)) actual_input_len = len(input)
 
-    write(error_unit, '(a,i0,a,l1)') '[HIGHLIGHT: After bounds check, actual_input_len=', actual_input_len, ', enabled=', highlighting_enabled
-
     if (.not. highlighting_enabled .or. actual_input_len == 0) then
-      write(error_unit, '(a)') '[HIGHLIGHT: Exiting early - disabled or empty]'
       if (actual_input_len > 0 .and. actual_input_len <= MAX_HIGHLIGHT_LEN) then
         highlighted(1:actual_input_len) = input(1:actual_input_len)
         if (actual_input_len < MAX_HIGHLIGHT_LEN) then
@@ -163,12 +155,9 @@ contains
     end if
 
     ! Tokenize input (pass full buffer with length to avoid substring operation)
-    write(error_unit, '(a)') '[HIGHLIGHT: About to tokenize]'
     call tokenize_for_highlighting(input, tokens, num_tokens, actual_input_len)
-    write(error_unit, '(a,i0)') '[HIGHLIGHT: Tokenized, num_tokens=', num_tokens
 
     if (num_tokens == 0) then
-      write(error_unit, '(a)') '[HIGHLIGHT: No tokens, returning plain text]'
       if (actual_input_len > 0 .and. actual_input_len <= MAX_HIGHLIGHT_LEN) then
         highlighted(1:actual_input_len) = input(1:actual_input_len)
         if (actual_input_len < MAX_HIGHLIGHT_LEN) then
@@ -183,15 +172,11 @@ contains
       return
     end if
 
-    write(error_unit, '(a)') '[HIGHLIGHT: About to colorize]'
     call colorize_tokens(tokens, num_tokens, token_colors)
-    write(error_unit, '(a)') '[HIGHLIGHT: Colorized]'
 
-    write(error_unit, '(a)') '[HIGHLIGHT: Using simple highlighting (just first token)]'
     ! WORKAROUND: build_highlighted_string has too many substring operations
     ! For now, just highlight the first token (command) in color, rest in plain text
     call build_simple_highlighted_string(input, tokens, num_tokens, token_colors, highlighted, len_used, actual_input_len)
-    write(error_unit, '(a,i0)') '[HIGHLIGHT: Simple highlight, len_used=', len_used
     ! DEBUG: write(*, '(a)') '[DEBUG: Built highlighted string]'
 
     ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: len_used=', len_used, ']'
@@ -469,30 +454,76 @@ contains
     integer, intent(out) :: actual_len
     integer, intent(in) :: input_len
 
-    integer :: first_token_len, i
+    integer :: first_token_len, i, j, pos, color_len, reset_len
     character(len=32) :: color_str, reset_str
 
-    ! For now, just output colored first token + plain rest
-    ! This avoids all the complex substring operations in build_highlighted_string
+    ! Initialize output buffer
+    highlighted = ' '
+    pos = 1
 
-    if (num_tokens > 0) then
+    if (num_tokens > 0 .and. input_len > 0) then
       first_token_len = len_trim(tokens(1))
       color_str = trim(colors(1))
       reset_str = trim(color_code(COLOR_RESET))
+      color_len = len_trim(color_str)
+      reset_len = len_trim(reset_str)
 
-      ! Build: color + first_token + reset + rest_of_input
-      ! Copy character by character to avoid substrings
-      highlighted = ' '
-      actual_len = len_trim(color_str) + first_token_len + len_trim(reset_str) + (input_len - first_token_len)
+      ! Write: color_code + first_token + reset_code + rest_of_input
 
-      ! For simplicity, just copy the whole input without coloring for now
-      ! TODO: Implement proper character-by-character copying with colors
-      ! This is a minimal implementation to test
-      highlighted = input
-      actual_len = input_len
+      ! 1. Copy color code
+      do i = 1, color_len
+        if (pos <= MAX_HIGHLIGHT_LEN) then
+          highlighted(pos:pos) = color_str(i:i)
+          pos = pos + 1
+        end if
+      end do
+
+      ! 2. Copy first token (from tokens array, not input - avoids substring on input)
+      do i = 1, first_token_len
+        if (pos <= MAX_HIGHLIGHT_LEN) then
+          highlighted(pos:pos) = tokens(1)(i:i)
+          pos = pos + 1
+        end if
+      end do
+
+      ! 3. Copy reset code
+      do i = 1, reset_len
+        if (pos <= MAX_HIGHLIGHT_LEN) then
+          highlighted(pos:pos) = reset_str(i:i)
+          pos = pos + 1
+        end if
+      end do
+
+      ! 4. Copy rest of input after first token
+      ! Skip whitespace and the first token in input, copy the rest
+      j = first_token_len + 1
+      do while (j <= input_len .and. module_working_buffer(j:j) == ' ')
+        ! Copy whitespace
+        if (pos <= MAX_HIGHLIGHT_LEN) then
+          highlighted(pos:pos) = ' '
+          pos = pos + 1
+        end if
+        j = j + 1
+      end do
+
+      ! Copy remaining characters
+      do while (j <= input_len)
+        if (pos <= MAX_HIGHLIGHT_LEN) then
+          highlighted(pos:pos) = module_working_buffer(j:j)
+          pos = pos + 1
+        end if
+        j = j + 1
+      end do
+
+      actual_len = pos - 1
     else
-      highlighted = input
+      ! No tokens or empty input - return plain
       actual_len = input_len
+      do i = 1, input_len
+        if (i <= MAX_HIGHLIGHT_LEN) then
+          highlighted(i:i) = input(i:i)
+        end if
+      end do
     end if
   end subroutine
 
