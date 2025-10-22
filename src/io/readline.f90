@@ -348,6 +348,7 @@ contains
     integer :: suggestion_display_len, available_space
     integer :: highlighted_len  ! Actual length of highlighted string
     character(len=32) :: buffer_fmt  ! Dynamic format string for buffer write
+    character(len=MAX_LINE_LEN) :: display_buffer  ! Temporary buffer for display
 
 
     ! Initialize module-level input_state on first use (avoids flang-new pointer corruption bug)
@@ -631,14 +632,20 @@ contains
             end if
 
             ! Calculate current cursor position and line
-            cursor_visual_pos = prompt_visual_len + module_input_state%cursor_pos
-            if (term_cols > 0) then
-              current_line = cursor_visual_pos / term_cols
-            else
-              current_line = 0
-            end if
-            if (current_line < 0) current_line = 0
-            if (current_line > 100) current_line = 0
+            ! WORKAROUND: Don't try to handle multiline with hardcoded term_cols
+            ! This avoids cursor positioning bugs when term_cols doesn't match actual terminal
+            ! Just assume single line for now
+            current_line = 0
+
+            ! Original multiline handling (disabled due to hardcoded term_cols)
+            ! cursor_visual_pos = prompt_visual_len + module_input_state%cursor_pos
+            ! if (term_cols > 0) then
+            !   current_line = cursor_visual_pos / term_cols
+            ! else
+            !   current_line = 0
+            ! end if
+            ! if (current_line < 0) current_line = 0
+            ! if (current_line > 100) current_line = 0
 
             ! Move cursor up to the first line if we're on a wrapped line
             ! UNLESS we just exited menu mode (skip_cursor_up_on_redraw flag set)
@@ -658,18 +665,18 @@ contains
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
             if (module_input_state%length > 0) then
-              ! WORKAROUND: Use dynamic format to write only N characters without substring
-              ! This avoids flang-new stack temporary bug with buffer(1:length) syntax
-              write(buffer_fmt, '(a,i0,a)') '(a', module_input_state%length, ')'
-              write(output_unit, buffer_fmt, advance='no') module_input_state%buffer
-              ! call highlight_command_line(module_input_state%buffer, &
-              !                             module_highlighted_buffer, module_highlighted_len, &
-              !                             module_input_state%length)
-              ! if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
-              !   write(output_unit, '(a)', advance='no') module_highlighted_buffer(1:module_highlighted_len)
-              ! else
-              !   write(output_unit, '(a)', advance='no') module_input_state%buffer(1:module_input_state%length)
-              ! end if
+              ! Try syntax highlighting
+              write(error_unit, '(a,i0)') '[READLINE: Calling highlight with length=', module_input_state%length
+              call highlight_command_line(module_input_state%buffer, &
+                                          module_highlighted_buffer, module_highlighted_len, &
+                                          module_input_state%length)
+              write(error_unit, '(a,i0)') '[READLINE: Returned from highlight, highlighted_len=', module_highlighted_len
+              if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
+                write(output_unit, '(a)', advance='no') module_highlighted_buffer(:module_highlighted_len)
+              else
+                ! Fallback to plain text
+                write(output_unit, '(a)', advance='no') module_input_state%buffer(:module_input_state%length)
+              end if
 
               ! Display autosuggestion if present (only when cursor is at end)
               if (module_input_state%suggestion_length > 0 .and. &

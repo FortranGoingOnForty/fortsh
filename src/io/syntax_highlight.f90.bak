@@ -123,8 +123,6 @@ contains
     integer :: len_used
     integer :: actual_input_len
 
-    write(error_unit, '(a)') '[HIGHLIGHT: Entered highlight_command_line]'
-
 
     ! Allocate arrays on heap
     allocate(tokens(MAX_TOKENS))
@@ -132,22 +130,15 @@ contains
 
     ! Use provided length if given, otherwise use full buffer length
     if (present(input_len)) then
-      write(error_unit, '(a,i0)') '[HIGHLIGHT: input_len present, value=', input_len
       actual_input_len = input_len
     else
-      write(error_unit, '(a)') '[HIGHLIGHT: input_len NOT present, using len(input)]'
       actual_input_len = len(input)
     end if
 
-    ! Bounds check - but don't use len(input) on allocatable strings (returns 0 in flang-new!)
     if (actual_input_len < 0) actual_input_len = 0
-    ! Don't check upper bound against len(input) for allocatable strings
-    ! if (actual_input_len > len(input)) actual_input_len = len(input)
-
-    write(error_unit, '(a,i0,a,l1)') '[HIGHLIGHT: After bounds check, actual_input_len=', actual_input_len, ', enabled=', highlighting_enabled
+    if (actual_input_len > len(input)) actual_input_len = len(input)
 
     if (.not. highlighting_enabled .or. actual_input_len == 0) then
-      write(error_unit, '(a)') '[HIGHLIGHT: Exiting early - disabled or empty]'
       if (actual_input_len > 0 .and. actual_input_len <= MAX_HIGHLIGHT_LEN) then
         highlighted(1:actual_input_len) = input(1:actual_input_len)
         if (actual_input_len < MAX_HIGHLIGHT_LEN) then
@@ -163,12 +154,9 @@ contains
     end if
 
     ! Tokenize input (pass full buffer with length to avoid substring operation)
-    write(error_unit, '(a)') '[HIGHLIGHT: About to tokenize]'
     call tokenize_for_highlighting(input, tokens, num_tokens, actual_input_len)
-    write(error_unit, '(a,i0)') '[HIGHLIGHT: Tokenized, num_tokens=', num_tokens
 
     if (num_tokens == 0) then
-      write(error_unit, '(a)') '[HIGHLIGHT: No tokens, returning plain text]'
       if (actual_input_len > 0 .and. actual_input_len <= MAX_HIGHLIGHT_LEN) then
         highlighted(1:actual_input_len) = input(1:actual_input_len)
         if (actual_input_len < MAX_HIGHLIGHT_LEN) then
@@ -183,15 +171,9 @@ contains
       return
     end if
 
-    write(error_unit, '(a)') '[HIGHLIGHT: About to colorize]'
     call colorize_tokens(tokens, num_tokens, token_colors)
-    write(error_unit, '(a)') '[HIGHLIGHT: Colorized]'
 
-    write(error_unit, '(a)') '[HIGHLIGHT: Using simple highlighting (just first token)]'
-    ! WORKAROUND: build_highlighted_string has too many substring operations
-    ! For now, just highlight the first token (command) in color, rest in plain text
-    call build_simple_highlighted_string(input, tokens, num_tokens, token_colors, highlighted, len_used, actual_input_len)
-    write(error_unit, '(a,i0)') '[HIGHLIGHT: Simple highlight, len_used=', len_used
+    call build_highlighted_string(input, tokens, num_tokens, token_colors, highlighted, len_used)
     ! DEBUG: write(*, '(a)') '[DEBUG: Built highlighted string]'
 
     ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: len_used=', len_used, ']'
@@ -294,7 +276,7 @@ contains
 
       ! Skip whitespace
       ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to skip whitespace]'
-      do while (i <= input_len .and. module_working_buffer(i:i) == ' ')
+      do while (i <= input_len .and. working(i:i) == ' ')
         i = i + 1
       end do
       ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: after whitespace skip, i=', i, ']'
@@ -303,13 +285,13 @@ contains
 
       ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to check for comment]'
       ! Check for comment
-      if (module_working_buffer(i:i) == '#' .and. .not. in_quotes) then
+      if (working(i:i) == '#' .and. .not. in_quotes) then
         ! DEBUG: write(*, '(a)') '[DEBUG tokenize: found comment]'
         ! Rest of line is comment
         num_tokens = num_tokens + 1
         if (num_tokens <= MAX_TOKENS) then
           ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to trim working for comment token]'
-          tokens(num_tokens) = module_working_buffer(i:input_len)
+          tokens(num_tokens) = working(i:input_len)
           ! DEBUG: write(*, '(a)') '[DEBUG tokenize: trimmed working for comment token]'
         end if
         exit
@@ -322,13 +304,13 @@ contains
 
       ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to check for operator]'
       ! Check if this is an operator character - treat as single-char token
-      if (module_working_buffer(i:i) == ';' .or. module_working_buffer(i:i) == '|' .or. &
-          module_working_buffer(i:i) == '&' .or. module_working_buffer(i:i) == '>' .or. module_working_buffer(i:i) == '<') then
+      if (working(i:i) == ';' .or. working(i:i) == '|' .or. &
+          working(i:i) == '&' .or. working(i:i) == '>' .or. working(i:i) == '<') then
         ! DEBUG: write(*, '(a)') '[DEBUG tokenize: found operator]'
         ! Operator - add as single character token
         num_tokens = num_tokens + 1
         if (num_tokens <= MAX_TOKENS) then
-          tokens(num_tokens) = module_working_buffer(i:i)
+          tokens(num_tokens) = working(i:i)
         end if
         i = i + 1
         cycle  ! Continue to next iteration
@@ -339,16 +321,16 @@ contains
       do while (i <= input_len)
         ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: in end-of-token loop, i=', i, ']'
         if (.not. in_quotes) then
-          if (module_working_buffer(i:i) == '"' .or. module_working_buffer(i:i) == "'") then
+          if (working(i:i) == '"' .or. working(i:i) == "'") then
             in_quotes = .true.
-            quote_char = module_working_buffer(i:i)
-          else if (module_working_buffer(i:i) == ' ' .or. module_working_buffer(i:i) == ';' .or. &
-                   module_working_buffer(i:i) == '|' .or. module_working_buffer(i:i) == '&' .or. &
-                   module_working_buffer(i:i) == '>' .or. module_working_buffer(i:i) == '<') then
+            quote_char = working(i:i)
+          else if (working(i:i) == ' ' .or. working(i:i) == ';' .or. &
+                   working(i:i) == '|' .or. working(i:i) == '&' .or. &
+                   working(i:i) == '>' .or. working(i:i) == '<') then
             exit
           end if
         else
-          if (module_working_buffer(i:i) == quote_char) then
+          if (working(i:i) == quote_char) then
             in_quotes = .false.
             i = i + 1
             exit
@@ -367,9 +349,9 @@ contains
           ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to assign token - NO TRIM]'
           ! SAFETY: Don't use trim() - it walks the string
           if (token_end - token_start + 1 <= MAX_TOKEN_LEN) then
-            tokens(num_tokens) = module_working_buffer(token_start:token_end)
+            tokens(num_tokens) = working(token_start:token_end)
           else
-            tokens(num_tokens) = module_working_buffer(token_start:token_start+MAX_TOKEN_LEN-1)
+            tokens(num_tokens) = working(token_start:token_start+MAX_TOKEN_LEN-1)
           end if
           ! DEBUG: write(*, '(a)') '[DEBUG tokenize: assigned token]'
         end if
@@ -379,6 +361,7 @@ contains
     ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: exiting with num_tokens=', num_tokens, ']'
 
     ! Deallocate heap-allocated working buffer
+    if (allocated(working)) deallocate(working)
   end subroutine
 
   ! Determine colors for tokens
@@ -457,43 +440,6 @@ contains
     end do
 
     ! DEBUG: write(*, '(a)') '[DEBUG colorize: exiting colorize_tokens]'
-  end subroutine
-
-  ! Simple highlighting - just color the first token, avoid substring operations
-  subroutine build_simple_highlighted_string(input, tokens, num_tokens, colors, highlighted, actual_len, input_len)
-    character(len=*), intent(in) :: input
-    character(len=*), intent(in) :: tokens(:)
-    integer, intent(in) :: num_tokens
-    character(len=*), intent(in) :: colors(:)
-    character(len=MAX_HIGHLIGHT_LEN), intent(out) :: highlighted
-    integer, intent(out) :: actual_len
-    integer, intent(in) :: input_len
-
-    integer :: first_token_len, i
-    character(len=32) :: color_str, reset_str
-
-    ! For now, just output colored first token + plain rest
-    ! This avoids all the complex substring operations in build_highlighted_string
-
-    if (num_tokens > 0) then
-      first_token_len = len_trim(tokens(1))
-      color_str = trim(colors(1))
-      reset_str = trim(color_code(COLOR_RESET))
-
-      ! Build: color + first_token + reset + rest_of_input
-      ! Copy character by character to avoid substrings
-      highlighted = ' '
-      actual_len = len_trim(color_str) + first_token_len + len_trim(reset_str) + (input_len - first_token_len)
-
-      ! For simplicity, just copy the whole input without coloring for now
-      ! TODO: Implement proper character-by-character copying with colors
-      ! This is a minimal implementation to test
-      highlighted = input
-      actual_len = input_len
-    else
-      highlighted = input
-      actual_len = input_len
-    end if
   end subroutine
 
   ! Build highlighted string with ANSI codes - preserves original spacing
