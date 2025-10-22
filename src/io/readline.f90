@@ -347,6 +347,7 @@ contains
     integer :: prompt_visual_len, cursor_visual_pos, current_line
     integer :: suggestion_display_len, available_space
     integer :: highlighted_len  ! Actual length of highlighted string
+    character(len=32) :: buffer_fmt  ! Dynamic format string for buffer write
 
 
     ! Initialize module-level input_state on first use (avoids flang-new pointer corruption bug)
@@ -392,33 +393,21 @@ contains
 
     module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
-    write(error_unit, '(a)') '[DEBUG: About to enter input loop, raw_enabled=T]'
-    flush(error_unit)
 
     if (raw_enabled) then
       ! Enhanced input processing
       do while (.not. done)
-        write(error_unit, '(a)') '[DEBUG: Top of input loop]'
-        flush(error_unit)
         success = read_single_char(ch)
-        write(error_unit, '(a)') '[DEBUG: read_single_char returned]'
-        flush(error_unit)
         if (.not. success) then
           iostat = -1
           exit
         end if
 
         char_code = iachar(ch)
-        write(error_unit, '(a,i0)') '[DEBUG: char_code=', char_code
-        flush(error_unit)
 
-        write(error_unit, '(a)') '[DEBUG: About to enter select case]'
-        flush(error_unit)
 
         select case(char_code)
         case(KEY_ENTER)
-          write(error_unit, '(a)') '[DEBUG: In KEY_ENTER case]'
-          flush(error_unit)
           ! Enter - accept menu selection, finish input, or accept search
           if (module_input_state%in_signal_input) then
             ! Send signal to selected process
@@ -595,8 +584,6 @@ contains
           call handle_transpose_chars(module_input_state)
 
         case(32:126)
-          write(error_unit, '(a)') '[DEBUG: In printable char case]'
-          flush(error_unit)
           ! Regular printable characters
           if (module_input_state%in_signal_input) then
             ! Handle signal input for process kill
@@ -616,25 +603,17 @@ contains
               call handle_vi_mode_switch(module_input_state, char_code)
             end if
           else
-            write(error_unit, '(a)') '[DEBUG: About to call insert_char_wrapper]'
-            flush(error_unit)
             call insert_char_wrapper(module_input_state, ch)
-            write(error_unit, '(a)') '[DEBUG: insert_char_wrapper returned]'
-            flush(error_unit)
           end if
 
         case default
           ! Ignore other control characters for now
         end select
 
-        write(error_unit, '(a)') '[DEBUG: After select case, before redraw]'
-        flush(error_unit)
 
         ! Redraw line if needed
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         if (module_input_state%dirty) then
-          write(error_unit, '(a)') '[DEBUG: In redraw section, dirty=T]'
-          flush(error_unit)
           ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
           ! Variables moved to subroutine level
 
@@ -644,15 +623,9 @@ contains
             ! success = get_terminal_size(term_rows, term_cols)
             term_cols = 80
             term_rows = 24
-            write(error_unit, '(a)') '[DEBUG: Set term_cols=80, term_rows=24]'
-            flush(error_unit)
 
             ! Calculate visual length of prompt (excluding ANSI codes)
-            write(error_unit, '(a)') '[DEBUG: About to call visual_length]'
-            flush(error_unit)
             prompt_visual_len = visual_length(prompt)
-            write(error_unit, '(a,i0)') '[DEBUG: prompt_visual_len=', prompt_visual_len
-            flush(error_unit)
             if (prompt_visual_len < 0) then
               prompt_visual_len = 0
             end if
@@ -681,21 +654,14 @@ contains
             ! Move to beginning of line and clear from cursor to end of screen
             write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
             write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
-            write(error_unit, '(a)') '[DEBUG: After clear screen]'
-            flush(error_unit)
 
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
-            write(error_unit, '(a)') '[DEBUG: After write prompt]'
-            flush(error_unit)
             if (module_input_state%length > 0) then
-              ! WORKAROUND: Cannot use substring operations due to flang-new stack temporary bug
-              ! Write the entire buffer up to allocated length (will include garbage past module_input_state%length)
-              ! TODO: Find a proper solution - maybe change buffer to character array?
-              ! For now, this won't work correctly but let's see what happens
-              write(output_unit, '(a)', advance='no') module_input_state%buffer
-              write(error_unit, '(a)') '[DEBUG: Wrote full buffer (may include garbage)]'
-              flush(error_unit)
+              ! WORKAROUND: Use dynamic format to write only N characters without substring
+              ! This avoids flang-new stack temporary bug with buffer(1:length) syntax
+              write(buffer_fmt, '(a,i0,a)') '(a', module_input_state%length, ')'
+              write(output_unit, buffer_fmt, advance='no') module_input_state%buffer
               ! call highlight_command_line(module_input_state%buffer, &
               !                             module_highlighted_buffer, module_highlighted_len, &
               !                             module_input_state%length)
@@ -735,8 +701,6 @@ contains
                 end if
               end if
             end if
-            write(error_unit, '(a)') '[DEBUG: After suggestion section]'
-            flush(error_unit)
 
             ! Position cursor correctly (if not at end of input)
             if (module_input_state%cursor_pos < module_input_state%length) then
@@ -747,15 +711,9 @@ contains
             end if
 
             flush(output_unit)
-            write(error_unit, '(a)') '[DEBUG: After flush]'
-            flush(error_unit)
 
           module_input_state%dirty = .false.
-          write(error_unit, '(a)') '[DEBUG: Set dirty=false]'
-          flush(error_unit)
         end if
-        write(error_unit, '(a,l1)') '[DEBUG: End of loop iteration, done=', done
-        flush(error_unit)
       end do
       
       ! Restore terminal

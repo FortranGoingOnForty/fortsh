@@ -150,8 +150,8 @@ contains
       return
     end if
 
-    ! Tokenize input (pass only the actual length we need)
-    call tokenize_for_highlighting(input(1:actual_input_len), tokens, num_tokens)
+    ! Tokenize input (pass full buffer with length to avoid substring operation)
+    call tokenize_for_highlighting(input, tokens, num_tokens, actual_input_len)
 
     if (num_tokens == 0) then
       if (actual_input_len > 0 .and. actual_input_len <= MAX_HIGHLIGHT_LEN) then
@@ -228,14 +228,15 @@ contains
   end function
 
   ! Tokenize input for syntax highlighting
-  subroutine tokenize_for_highlighting(input, tokens, num_tokens)
+  subroutine tokenize_for_highlighting(input, tokens, num_tokens, input_len)
     character(len=*), intent(in) :: input
     character(len=MAX_TOKEN_LEN), intent(out) :: tokens(:)
     integer, intent(out) :: num_tokens
+    integer, intent(in) :: input_len  ! Explicit length to avoid substrings
 
     ! Use allocatable to avoid 4KB stack allocation
     character(len=:), allocatable :: working
-    integer :: i, token_start, token_end, input_len, j
+    integer :: i, token_start, token_end, j
     logical :: in_quotes, in_comment
     character(len=1) :: quote_char
 
@@ -249,14 +250,14 @@ contains
       tokens(j) = ' '
     end do
 
-    ! Initialize - use len(input) to avoid len_trim walking garbage
-    working = ' '  ! Initialize to spaces first
-    input_len = len(input)
+    ! Initialize working buffer to spaces
+    working = ' '
 
-    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: input_len=', input_len, ']'
-
+    ! Copy input character by character to avoid substring temporaries (flang-new bug)
     if (input_len > 0 .and. input_len <= len(working)) then
-      working(1:input_len) = input(1:input_len)
+      do j = 1, input_len
+        working(j:j) = input(j:j)
+      end do
     end if
 
     ! DEBUG: write(*, '(a)') '[DEBUG tokenize: copied input to working]'
