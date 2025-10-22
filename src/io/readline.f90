@@ -656,16 +656,17 @@ contains
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
             if (module_input_state%length > 0) then
-              ! Pass full buffer and length separately (avoids substring temporaries on stack)
-              call highlight_command_line(module_input_state%buffer, &
-                                          module_highlighted_buffer, module_highlighted_len, &
-                                          module_input_state%length)
-              if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
-                write(output_unit, '(a)', advance='no') module_highlighted_buffer(1:module_highlighted_len)
-              else
-                ! Fallback to unhighlighted if highlighting fails
-                write(output_unit, '(a)', advance='no') module_input_state%buffer(1:module_input_state%length)
-              end if
+              ! Syntax highlighting disabled - creates stack temporaries that crash flang-new
+              ! TODO: Fix by eliminating ALL substring operations in syntax_highlight.f90
+              write(output_unit, '(a)', advance='no') module_input_state%buffer(1:module_input_state%length)
+              ! call highlight_command_line(module_input_state%buffer, &
+              !                             module_highlighted_buffer, module_highlighted_len, &
+              !                             module_input_state%length)
+              ! if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
+              !   write(output_unit, '(a)', advance='no') module_highlighted_buffer(1:module_highlighted_len)
+              ! else
+              !   write(output_unit, '(a)', advance='no') module_input_state%buffer(1:module_input_state%length)
+              ! end if
 
               ! Display autosuggestion if present (only when cursor is at end)
               if (module_input_state%suggestion_length > 0 .and. &
