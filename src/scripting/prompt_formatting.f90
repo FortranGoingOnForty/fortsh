@@ -16,14 +16,16 @@ contains
   ! Safe version that outputs to fixed-length buffer (no allocatable strings)
   ! Avoids LLVM Flang heap corruption bugs
   subroutine safe_expand_prompt(prompt_str, shell, stored_len, expanded)
+    use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: prompt_str
     type(shell_state_t), intent(in) :: shell
     integer, intent(in), optional :: stored_len
     character(len=*), intent(out) :: expanded
 
-    character(len=1024) :: result  ! Fixed-length buffer
+    character(len=1024) :: result  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
     integer :: i, j, prompt_len
-    character(len=256) :: replacement
+    integer, parameter :: RESULT_CAPACITY = 1024
+    character(len=256) :: replacement  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
 
     result = ''
     j = 1
@@ -36,14 +38,16 @@ contains
       prompt_len = len_trim(prompt_str)
     end if
 
-    do while (i <= prompt_len .and. j <= len(result))
+
+    do
+      if (i > prompt_len .or. j > RESULT_CAPACITY) exit
       if (prompt_str(i:i) == '\' .and. i < prompt_len) then
         ! Process escape sequence
         i = i + 1
         call process_escape_sequence(prompt_str(i:i), shell, replacement)
 
         if (len_trim(replacement) > 0) then
-          if (j + len_trim(replacement) - 1 <= len(result)) then
+          if (j + len_trim(replacement) - 1 <= RESULT_CAPACITY) then
             result(j:j+len_trim(replacement)-1) = trim(replacement)
             j = j + len_trim(replacement)
           end if
@@ -51,7 +55,7 @@ contains
         i = i + 1
       else
         ! Regular character
-        if (j <= len(result)) then
+        if (j <= RESULT_CAPACITY) then
           result(j:j) = prompt_str(i:i)
           j = j + 1
         end if
@@ -60,7 +64,10 @@ contains
     end do
 
     ! Copy to output
-    expanded = result(1:min(j-1, len(expanded)))
+    expanded = ''
+    if (j > 1) then
+      expanded = result(1:min(j-1, len(expanded)))
+    end if
   end subroutine
 
   ! Main function to expand prompt string with escape sequences
@@ -73,7 +80,10 @@ contains
     ! Use allocatable to avoid stack allocation
     character(len=:), allocatable :: result
     integer :: i, j, prompt_len, result_capacity
-    character(len=256) :: replacement
+    character(len=:), allocatable :: replacement  ! Heap allocation to avoid stack overflow
+
+    ! Allocate replacement buffer on heap
+    allocate(character(len=256) :: replacement)
 
     ! Start with reasonable capacity
     result_capacity = len(prompt_str) * 2 + 256
@@ -119,6 +129,7 @@ contains
     ! Allocate exact length to preserve trailing spaces
     expanded = result(1:j-1)
     deallocate(result)
+    if (allocated(replacement)) deallocate(replacement)
   end function
 
   ! Process individual escape sequence
@@ -127,7 +138,7 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(out) :: replacement
 
-    character(len=256) :: temp
+    character(len=:), allocatable :: temp  ! Heap allocation to avoid stack overflow
     integer :: values(8), year, month, day, hour, minute, second
     character(len=3), dimension(7) :: day_names = &
       ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -135,6 +146,9 @@ contains
       ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', &
        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     integer :: day_of_week
+
+    ! Allocate temp buffer on heap (must come after all declarations)
+    allocate(character(len=256) :: temp)
 
     replacement = ''
 
@@ -281,6 +295,9 @@ contains
         ! Unknown escape - just output the character
         replacement = escape_char
     end select
+
+    ! Deallocate temp buffer
+    if (allocated(temp)) deallocate(temp)
   end subroutine
 
   ! Get short hostname (up to first '.')

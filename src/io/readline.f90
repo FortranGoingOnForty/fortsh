@@ -175,6 +175,14 @@ module readline
   logical, save :: is_macos_system = .false.
   logical, save :: macos_detected = .false.
 
+  ! Module-level input_state to work around flang-new pointer corruption bug
+  type(input_state_t), save, target :: module_input_state
+  logical, save :: module_input_state_initialized = .false.
+
+  ! Module-level syntax highlighting buffer (fixed-length to avoid flang-new allocatable bugs)
+  character(len=4096), save :: module_highlighted_buffer
+  integer, save :: module_highlighted_len
+
 contains
   ! Initialize input_state_t with allocated strings
   subroutine init_input_state(state)
@@ -330,8 +338,7 @@ contains
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
 
-    type(input_state_t) :: input_state
-    type(termios_t) :: original_termios
+    ! Use module-level module_input_state directly (avoids flang-new pointer corruption bug)
     character :: ch
     logical :: success, done, raw_enabled
     integer :: char_code
@@ -339,40 +346,51 @@ contains
     integer :: i_redraw, term_cols, term_rows
     integer :: prompt_visual_len, cursor_visual_pos, current_line
     integer :: suggestion_display_len, available_space
-    ! Use allocatable to avoid stack overflow (heap allocation is safer)
-    character(len=:), allocatable :: highlighted_inline  ! For syntax highlighting in inline redraw
     integer :: highlighted_len  ! Actual length of highlighted string
+
+
+    ! Initialize module-level input_state on first use (avoids flang-new pointer corruption bug)
+    if (.not. module_input_state_initialized) then
+      ! Initialize input state with allocated strings (only on first use)
+      call init_input_state(module_input_state)
+      module_input_state_initialized = .true.
+    else
+      ! On subsequent calls, just reset the buffer and cursor
+      module_input_state%buffer = ''
+      module_input_state%length = 0
+      module_input_state%cursor_pos = 0
+      module_input_state%history_pos = 0
+      module_input_state%in_menu_select = .false.
+      module_input_state%in_search = .false.
+      module_input_state%in_process_kill_mode = .false.
+      module_input_state%in_signal_input = .false.
+    end if
 
     ! Initialize variables
     iostat = 0
     done = .false.
     raw_enabled = .false.
-
-    ! Allocate highlighting buffer on heap (not stack) to avoid overflow
-    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted_inline)
-    highlighted_inline = ' '  ! Initialize to prevent garbage data
     highlighted_len = 0
 
     ! Initialize history on first use
     call init_history()
 
+
     ! Try to enable raw mode (only works in interactive mode)
-    success = enable_raw_mode(original_termios)
+    success = enable_raw_mode(module_original_termios)
     if (success) then
       raw_enabled = .true.
-      ! Save terminal state for FZF functions (flang-new workaround)
-      module_original_termios = original_termios
+      ! Terminal state already in module_original_termios
       module_termios_saved = .true.
+    else
     end if
+
 
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
     flush(output_unit)
 
-    ! Initialize input state with allocated strings
-    call init_input_state(input_state)
-
-    input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
+    module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
     if (raw_enabled) then
       ! Enhanced input processing
@@ -388,28 +406,28 @@ contains
         select case(char_code)
         case(KEY_ENTER)
           ! Enter - accept menu selection, finish input, or accept search
-          if (input_state%in_signal_input) then
+          if (module_input_state%in_signal_input) then
             ! Send signal to selected process
             write(output_unit, '()')  ! New line
-            call send_signal_to_process(input_state)
+            call send_signal_to_process(module_input_state)
             ! Exit signal mode and return to normal prompt
-            input_state%in_signal_input = .false.
-            input_state%in_process_kill_mode = .false.
-            input_state%buffer = ''
-            input_state%length = 0
-            input_state%cursor_pos = 0
+            module_input_state%in_signal_input = .false.
+            module_input_state%in_process_kill_mode = .false.
+            module_input_state%buffer = ''
+            module_input_state%length = 0
+            module_input_state%cursor_pos = 0
             done = .true.
-          else if (input_state%in_process_kill_mode .and. input_state%in_menu_select) then
+          else if (module_input_state%in_process_kill_mode .and. module_input_state%in_menu_select) then
             ! Select process from menu
-            call handle_process_selection(input_state)
-          else if (input_state%in_menu_select) then
-            call handle_menu_navigation(input_state, KEY_ENTER, done)
+            call handle_process_selection(module_input_state)
+          else if (module_input_state%in_menu_select) then
+            call handle_menu_navigation(module_input_state, KEY_ENTER, done)
             ! If menu selection was accepted, output newline
             if (done) then
               write(output_unit, '()')  ! New line
             end if
-          else if (input_state%in_search) then
-            call accept_search(input_state, prompt)
+          else if (module_input_state%in_search) then
+            call accept_search(module_input_state, prompt)
             done = .true.
           else
             write(output_unit, '()')  ! New line
@@ -418,7 +436,7 @@ contains
 
         case(KEY_CTRL_D)
           ! Ctrl+D - EOF
-          if (input_state%length == 0) then
+          if (module_input_state%length == 0) then
             iostat = -1
             done = .true.
           end if
@@ -430,168 +448,168 @@ contains
           write(output_unit, '(a)') '^C'
 
           ! Clear buffer and exit search mode if active
-          if (input_state%in_search) then
-            input_state%in_search = .false.
-            input_state%search_string = ''
-            input_state%search_length = 0
-            input_state%search_match_index = 0
+          if (module_input_state%in_search) then
+            module_input_state%in_search = .false.
+            module_input_state%search_string = ''
+            module_input_state%search_length = 0
+            module_input_state%search_match_index = 0
           end if
 
           ! Clear buffer and return empty line
-          input_state%length = 0
-          input_state%cursor_pos = 0
-          input_state%dirty = .false.  ! Prevent redraw with empty buffer
+          module_input_state%length = 0
+          module_input_state%cursor_pos = 0
+          module_input_state%dirty = .false.  ! Prevent redraw with empty buffer
           done = .true.
 
         case(KEY_CTRL_X)
           ! Ctrl+X - Enter process kill mode
-          if (.not. input_state%in_process_kill_mode) then
-            call enter_process_kill_mode(input_state)
+          if (.not. module_input_state%in_process_kill_mode) then
+            call enter_process_kill_mode(module_input_state)
           end if
 
         case(KEY_BACKSPACE)
           ! Backspace
-          if (input_state%in_signal_input) then
+          if (module_input_state%in_signal_input) then
             ! For signal mode, delete last char and update display
-            if (input_state%length > 0) then
-              input_state%length = input_state%length - 1
-              input_state%cursor_pos = input_state%length
-              call update_signal_display(input_state)
+            if (module_input_state%length > 0) then
+              module_input_state%length = module_input_state%length - 1
+              module_input_state%cursor_pos = module_input_state%length
+              call update_signal_display(module_input_state)
             end if
-          else if (input_state%in_search) then
+          else if (module_input_state%in_search) then
             ! For search mode, delete last char and redraw
-            if (input_state%length > 0) then
-              input_state%length = input_state%length - 1
-              input_state%cursor_pos = input_state%length
-              input_state%dirty = .true.
+            if (module_input_state%length > 0) then
+              module_input_state%length = module_input_state%length - 1
+              module_input_state%cursor_pos = module_input_state%length
+              module_input_state%dirty = .true.
             end if
           else
-            call handle_backspace(input_state)
+            call handle_backspace(module_input_state)
           end if
           
         case(KEY_TAB)
           ! Tab completion or menu navigation
-          if (input_state%in_menu_select) then
-            call handle_menu_navigation(input_state, KEY_TAB, done)
+          if (module_input_state%in_menu_select) then
+            call handle_menu_navigation(module_input_state, KEY_TAB, done)
           else
             ! Call separate subroutine to work around macOS ARM64 crash
-            call handle_tab_key_separate(input_state)
+            call handle_tab_key_separate(module_input_state)
             ! All completion logic is now handled in the separate subroutine
           end if
 
         case(KEY_ESC)
           ! Escape sequence - parse it (will route to menu if needed)
-          call handle_escape_sequence(input_state, done)
+          call handle_escape_sequence(module_input_state, done)
           
         case(KEY_CTRL_A)
           ! Home - move to beginning of line
-          call handle_home(input_state)
+          call handle_home(module_input_state)
           
         case(KEY_CTRL_E)
           ! End - move to end of line
-          call handle_end(input_state)
+          call handle_end(module_input_state)
           
         case(KEY_CTRL_F)
           ! FZF file browser - insert selection at cursor
-          call launch_fzf_file_browser(input_state, prompt)
+          call launch_fzf_file_browser(module_input_state, prompt)
           
         case(KEY_CTRL_B)
           ! Backward character (same as left arrow)
-          call handle_cursor_left(input_state)
+          call handle_cursor_left(module_input_state)
           
         case(KEY_CTRL_K)
           ! Kill to end of line (exit menu mode first if active)
-          if (input_state%in_menu_select) then
-            call exit_menu_select_mode(input_state)
+          if (module_input_state%in_menu_select) then
+            call exit_menu_select_mode(module_input_state)
           end if
-          call handle_kill_to_end(input_state)
+          call handle_kill_to_end(module_input_state)
 
         case(KEY_CTRL_U)
           ! Kill entire line (exit menu mode first if active)
-          if (input_state%in_menu_select) then
-            call exit_menu_select_mode(input_state)
+          if (module_input_state%in_menu_select) then
+            call exit_menu_select_mode(module_input_state)
           end if
-          call handle_kill_line(input_state)
+          call handle_kill_line(module_input_state)
           
         case(KEY_CTRL_W)
           ! Kill previous word (exit menu mode first if active)
-          if (input_state%in_menu_select) then
-            call exit_menu_select_mode(input_state)
+          if (module_input_state%in_menu_select) then
+            call exit_menu_select_mode(module_input_state)
           end if
-          call handle_kill_word(input_state)
+          call handle_kill_word(module_input_state)
           
         case(KEY_CTRL_Y)
           ! Yank (paste) killed text
-          call handle_yank(input_state)
+          call handle_yank(module_input_state)
           
         case(KEY_CTRL_L)
           ! Clear screen and redraw
-          call handle_clear_screen(input_state, prompt)
+          call handle_clear_screen(module_input_state, prompt)
 
         case(KEY_CTRL_R)
           ! Reverse-i-search
-          call handle_isearch(input_state, prompt, .false.)
+          call handle_isearch(module_input_state, prompt, .false.)
         case(KEY_CTRL_S)
           ! Forward-i-search
-          call handle_isearch(input_state, prompt, .true.)
+          call handle_isearch(module_input_state, prompt, .true.)
 
         case(KEY_CTRL_G)
           ! Cancel search if active (bash-compatible)
-          if (input_state%in_search) then
+          if (module_input_state%in_search) then
             ! Clear line and exit search mode
             write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
             write(output_unit, '(a)') '^C'
 
-            input_state%in_search = .false.
-            input_state%search_string = ''
-            input_state%search_length = 0
-            input_state%search_match_index = 0
+            module_input_state%in_search = .false.
+            module_input_state%search_string = ''
+            module_input_state%search_length = 0
+            module_input_state%search_match_index = 0
 
             ! Clear buffer and return empty line
-            input_state%buffer = ''
-            input_state%length = 0
-            input_state%cursor_pos = 0
+            module_input_state%buffer = ''
+            module_input_state%length = 0
+            module_input_state%cursor_pos = 0
             done = .true.
           end if
 
         case(KEY_CTRL_H)
           ! FZF history browser - search and insert from history
-          call launch_fzf_history_browser(input_state, prompt)
+          call launch_fzf_history_browser(module_input_state, prompt)
 
         case(KEY_CTRL_T)
           ! Transpose characters (swap current char with previous)
-          call handle_transpose_chars(input_state)
+          call handle_transpose_chars(module_input_state)
 
         case(32:126)
           ! Regular printable characters
-          if (input_state%in_signal_input) then
+          if (module_input_state%in_signal_input) then
             ! Handle signal input for process kill
-            call handle_signal_input(input_state, ch)
-          else if (input_state%in_menu_select) then
+            call handle_signal_input(module_input_state, ch)
+          else if (module_input_state%in_menu_select) then
             ! Exit menu mode and process character normally
-            call exit_menu_select_mode(input_state)
-            call insert_char(input_state, ch)
-          else if (input_state%in_search) then
-            call search_add_char(input_state, ch, prompt)
-          else if (input_state%editing_mode == EDITING_MODE_VI .and. &
-                   input_state%vi_mode == VI_MODE_COMMAND) then
+            call exit_menu_select_mode(module_input_state)
+            call insert_char_wrapper(module_input_state, ch)
+          else if (module_input_state%in_search) then
+            call search_add_char(module_input_state, ch, prompt)
+          else if (module_input_state%editing_mode == EDITING_MODE_VI .and. &
+                   module_input_state%vi_mode == VI_MODE_COMMAND) then
             ! In Vi command mode - route to command handler
-            call handle_vi_command_mode(input_state, char_code)
+            call handle_vi_command_mode(module_input_state, char_code)
             ! Check if we switched back to insert mode
-            if (input_state%vi_mode == VI_MODE_INSERT) then
-              call handle_vi_mode_switch(input_state, char_code)
+            if (module_input_state%vi_mode == VI_MODE_INSERT) then
+              call handle_vi_mode_switch(module_input_state, char_code)
             end if
           else
-            call insert_char(input_state, ch)
+            call insert_char_wrapper(module_input_state, ch)
           end if
           
         case default
           ! Ignore other control characters for now
         end select
-        
+
         ! Redraw line if needed
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
-        if (input_state%dirty) then
+        if (module_input_state%dirty) then
           ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
           ! Variables moved to subroutine level
 
@@ -611,7 +629,7 @@ contains
             end if
 
             ! Calculate current cursor position and line
-            cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
+            cursor_visual_pos = prompt_visual_len + module_input_state%cursor_pos
             if (term_cols > 0) then
               current_line = cursor_visual_pos / term_cols
             else
@@ -622,14 +640,14 @@ contains
 
             ! Move cursor up to the first line if we're on a wrapped line
             ! UNLESS we just exited menu mode (skip_cursor_up_on_redraw flag set)
-            if (current_line > 0 .and. .not. input_state%skip_cursor_up_on_redraw) then
+            if (current_line > 0 .and. .not. module_input_state%skip_cursor_up_on_redraw) then
               do i_redraw = 1, current_line
                 write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
               end do
             end if
 
             ! Clear the skip flag after using it
-            input_state%skip_cursor_up_on_redraw = .false.
+            module_input_state%skip_cursor_up_on_redraw = .false.
 
             ! Move to beginning of line and clear from cursor to end of screen
             write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
@@ -637,30 +655,34 @@ contains
 
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
-            if (input_state%length > 0) then
-              ! Now using subroutine-based highlighting with heap-allocated buffer (safe!)
-              call highlight_command_line(input_state%buffer(:input_state%length), highlighted_inline, highlighted_len)
-              ! Use actual length instead of trim() to avoid walking garbage data
-              if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
-                write(output_unit, '(a)', advance='no') highlighted_inline(1:highlighted_len)
+            if (module_input_state%length > 0) then
+              ! Pass full buffer and length separately (avoids substring temporaries on stack)
+              call highlight_command_line(module_input_state%buffer, &
+                                          module_highlighted_buffer, module_highlighted_len, &
+                                          module_input_state%length)
+              if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
+                write(output_unit, '(a)', advance='no') module_highlighted_buffer(1:module_highlighted_len)
+              else
+                ! Fallback to unhighlighted if highlighting fails
+                write(output_unit, '(a)', advance='no') module_input_state%buffer(1:module_input_state%length)
               end if
 
               ! Display autosuggestion if present (only when cursor is at end)
-              if (input_state%suggestion_length > 0 .and. &
-                  input_state%cursor_pos == input_state%length) then
+              if (module_input_state%suggestion_length > 0 .and. &
+                  module_input_state%cursor_pos == module_input_state%length) then
                 ! Calculate available space on current line
-                available_space = term_cols - mod(prompt_visual_len + input_state%length, term_cols)
+                available_space = term_cols - mod(prompt_visual_len + module_input_state%length, term_cols)
                 if (available_space < 0) available_space = 0
 
                 ! Truncate suggestion to fit
                 if (available_space > 2) then
-                  suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
+                  suggestion_display_len = min(module_input_state%suggestion_length, available_space - 1)
                   if (suggestion_display_len < 0) suggestion_display_len = 0
                   if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
 
                   if (suggestion_display_len > 0) then
                     write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
-                    write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+                    write(output_unit, '(a)', advance='no') module_input_state%suggestion(:suggestion_display_len)
                     write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
 
                     ! Move cursor back to correct position (after suggestion)
@@ -673,43 +695,43 @@ contains
             end if
 
             ! Position cursor correctly (if not at end of input)
-            if (input_state%cursor_pos < input_state%length) then
+            if (module_input_state%cursor_pos < module_input_state%length) then
               ! Cursor not at end - move back to correct position
-              do i_redraw = 1, input_state%length - input_state%cursor_pos
+              do i_redraw = 1, module_input_state%length - module_input_state%cursor_pos
                 write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
               end do
             end if
 
             flush(output_unit)
 
-          input_state%dirty = .false.
+          module_input_state%dirty = .false.
         end if
       end do
       
       ! Restore terminal
-      if (.not. restore_terminal(original_termios)) then
+      if (.not. restore_terminal(module_original_termios)) then
         ! Warning but don't fail
       end if
     else
       ! Fallback to line-based input
-      read(input_unit, '(a)', iostat=iostat) input_state%buffer
-      if (iostat == 0) input_state%length = len_trim(input_state%buffer)
+      read(input_unit, '(a)', iostat=iostat) module_input_state%buffer
+      if (iostat == 0) module_input_state%length = len_trim(module_input_state%buffer)
     end if
     
     ! Return the result
     if (iostat == 0) then
-      line = input_state%buffer(:input_state%length)
+      line = module_input_state%buffer(:module_input_state%length)
       ! Note: History addition is now handled in the main loop AFTER expansion
       ! This prevents history expansion commands like !! from referencing themselves
     else
       line = ''
     end if
 
-    ! Clean up allocated memory
-    call cleanup_input_state(input_state)
+    ! Clean up allocated memory in module_input_state
+    call cleanup_input_state(module_input_state)
 
-    ! Deallocate heap-allocated highlighting buffer
-    if (allocated(highlighted_inline)) deallocate(highlighted_inline)
+    ! Note: module_input_state persists as a module variable, no deallocation needed
+
   end subroutine
 
   ! Simple fallback readline - uses standard input for now
@@ -2672,15 +2694,28 @@ contains
     end if
   end subroutine
 
+  ! Wrapper to work around potential flang-new bug with repeated function calls
+  subroutine insert_char_wrapper(input_state, ch)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: ch
+    call insert_char_impl(input_state, ch)
+  end subroutine
+
   ! Helper functions for enhanced readline
-  subroutine insert_char(input_state, ch)
+  subroutine insert_char_impl(input_state, ch)
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
     integer :: i
-    character(len=MAX_LINE_LEN) :: temp_buffer
+    character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
+
+    ! Allocate temp buffer on heap
+    allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
 
     ! Check if we have room
-    if (input_state%length >= MAX_LINE_LEN) return
+    if (input_state%length >= MAX_LINE_LEN) then
+      if (allocated(temp_buffer)) deallocate(temp_buffer)
+      return
+    end if
 
     ! If we're browsing history, exit history mode when typing
     if (input_state%in_history) then
@@ -2735,6 +2770,9 @@ contains
     if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
       input_state%dirty = .true.
     end if
+
+    ! Deallocate heap-allocated temp buffer
+    if (allocated(temp_buffer)) deallocate(temp_buffer)
   end subroutine
 
   subroutine handle_backspace(input_state)
@@ -2750,8 +2788,6 @@ contains
     end if
     if (input_state%length > MAX_LINE_LEN) then
       ! Buffer overflow detected - reset to safe state
-      write(error_unit, '(A,I0,A,I0)') '[DEBUG] Buffer overflow in backspace! length=', &
-            input_state%length, ' cursor_pos=', input_state%cursor_pos
       input_state%length = 0
       input_state%cursor_pos = 0
       input_state%dirty = .true.
@@ -5356,9 +5392,13 @@ contains
   ! Try to expand an abbreviation at cursor position (called when space is typed)
   subroutine try_expand_abbreviation_at_cursor(input_state)
     type(input_state_t), intent(inout) :: input_state
-    character(len=MAX_LINE_LEN) :: word_before_cursor
+    character(len=:), allocatable :: word_before_cursor  ! Heap allocation to avoid stack overflow
     character(len=:), allocatable :: expanded_form
     integer :: word_start, word_end, i, expanded_len
+
+
+    ! Allocate buffer on heap
+    allocate(character(len=MAX_LINE_LEN) :: word_before_cursor)
 
     ! Extract word before cursor
     word_end = input_state%cursor_pos
@@ -5379,12 +5419,16 @@ contains
     if (word_end > word_start) then
       word_before_cursor = input_state%buffer(word_start:word_end)
     else
+      if (allocated(word_before_cursor)) deallocate(word_before_cursor)
       return  ! No word to expand
     end if
 
     ! Check if it's an abbreviation
     expanded_form = try_expand_abbreviation(trim(word_before_cursor))
-    if (len(expanded_form) == 0) return  ! Not an abbreviation
+    if (len(expanded_form) == 0) then
+      if (allocated(word_before_cursor)) deallocate(word_before_cursor)
+      return  ! Not an abbreviation
+    end if
 
     ! Replace the word with expanded form
     expanded_len = len(expanded_form)
@@ -5416,6 +5460,9 @@ contains
     input_state%length = input_state%length + expanded_len
     input_state%cursor_pos = input_state%cursor_pos + expanded_len
     input_state%dirty = .true.
+
+    ! Deallocate heap buffer
+    if (allocated(word_before_cursor)) deallocate(word_before_cursor)
   end subroutine try_expand_abbreviation_at_cursor
 
   ! ============================================================================
@@ -5426,18 +5473,22 @@ contains
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, newline_pos, j
-    character(len=MAX_LINE_LEN) :: current_input
-    character(len=MAX_LINE_LEN) :: suggestion_candidate
+    character(len=:), allocatable :: current_input  ! Heap allocation to avoid stack overflow
+    character(len=:), allocatable :: suggestion_candidate  ! Heap allocation to avoid stack overflow
+
+    ! Allocate buffers on heap
+    allocate(character(len=MAX_LINE_LEN) :: current_input)
+    allocate(character(len=MAX_LINE_LEN) :: suggestion_candidate)
 
     ! Defensive check: ensure length and cursor_pos are valid
     if (input_state%length < 0 .or. input_state%length > MAX_LINE_LEN) then
       ! Corruption detected - reset to safe state
-      write(error_unit, '(A,I0,A,I0)') '[DEBUG] Buffer corruption detected in autosuggestion! length=', &
-            input_state%length, ' cursor_pos=', input_state%cursor_pos
       input_state%length = 0
       input_state%cursor_pos = 0
       input_state%suggestion = ''
       input_state%suggestion_length = 0
+      if (allocated(current_input)) deallocate(current_input)
+      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
       return
     end if
 
@@ -5445,6 +5496,8 @@ contains
     if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
       input_state%suggestion = ''
       input_state%suggestion_length = 0
+      if (allocated(current_input)) deallocate(current_input)
+      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
       return
     end if
 
@@ -5474,8 +5527,6 @@ contains
             if (newline_pos > 0) then
               input_state%suggestion = suggestion_candidate(:newline_pos)
               input_state%suggestion_length = newline_pos
-              ! DEBUG: Print when suggestion is generated
-              ! write(error_unit, '(A,A,A,I0)') "[DEBUG] Generated suggestion: '", &
               !       trim(input_state%suggestion), "' length=", input_state%suggestion_length
             else
               ! Newline is first character - no suggestion
@@ -5487,6 +5538,8 @@ contains
             input_state%suggestion = suggestion_candidate
             input_state%suggestion_length = len_trim(suggestion_candidate)
           end if
+          if (allocated(current_input)) deallocate(current_input)
+          if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
           return
         end if
       end if
@@ -5495,6 +5548,10 @@ contains
     ! No match found
     input_state%suggestion = ''
     input_state%suggestion_length = 0
+
+    ! Deallocate heap-allocated buffers
+    if (allocated(current_input)) deallocate(current_input)
+    if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
   end subroutine
 
   ! Accept the current autosuggestion

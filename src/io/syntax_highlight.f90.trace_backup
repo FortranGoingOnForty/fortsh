@@ -106,71 +106,91 @@ contains
 
   ! Main function: Highlight a command line
   ! Convert to subroutine to avoid allocatable string returns (flang-new workaround)
-  ! Takes input_len to avoid substring temporaries on stack
-  subroutine highlight_command_line(input, highlighted, actual_len, input_len)
+  subroutine highlight_command_line(input, highlighted, actual_len)
     character(len=*), intent(in) :: input
     character(len=MAX_HIGHLIGHT_LEN), intent(out) :: highlighted
     integer, intent(out), optional :: actual_len
-    integer, intent(in), optional :: input_len  ! Explicit length to avoid substrings
 
     ! Use allocatable to avoid stack overflow (25KB is too much for stack!)
     character(len=MAX_TOKEN_LEN), allocatable :: tokens(:)
     integer :: num_tokens
     character(len=32), allocatable :: token_colors(:)  ! Move to heap (3.2KB)
     integer :: len_used
-    integer :: actual_input_len
+    integer :: input_len
 
+    write(*, '(a)') '[TRACE: Entering highlight_command_line]'
+    flush(6)
 
     ! Allocate arrays on heap
+    write(*, '(a)') '[TRACE: About to allocate tokens]'
+    flush(6)
     allocate(tokens(MAX_TOKENS))
+    write(*, '(a)') '[TRACE: Allocated tokens]'
+    flush(6)
     allocate(token_colors(MAX_TOKENS))
+    write(*, '(a)') '[TRACE: Allocated token_colors]'
+    flush(6)
 
-    ! Use provided length if given, otherwise use full buffer length
-    if (present(input_len)) then
-      actual_input_len = input_len
-    else
-      actual_input_len = len(input)
-    end if
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: highlight_command_line called with input len=', len(input), ']'
 
-    if (actual_input_len < 0) actual_input_len = 0
-    if (actual_input_len > len(input)) actual_input_len = len(input)
+    ! Safety: check input length
+    ! Use len(input) not len_trim() to avoid walking garbage data
+    input_len = len(input)
+    if (input_len < 0) input_len = 0
 
-    if (.not. highlighting_enabled .or. actual_input_len == 0) then
-      if (actual_input_len > 0 .and. actual_input_len <= MAX_HIGHLIGHT_LEN) then
-        highlighted(1:actual_input_len) = input(1:actual_input_len)
-        if (actual_input_len < MAX_HIGHLIGHT_LEN) then
-          highlighted(actual_input_len+1:MAX_HIGHLIGHT_LEN) = ' '
+    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: input_len set to ', input_len, ']'
+
+    if (.not. highlighting_enabled .or. input_len == 0) then
+      if (input_len > 0 .and. input_len <= MAX_HIGHLIGHT_LEN) then
+        highlighted(1:input_len) = input(1:input_len)
+        if (input_len < MAX_HIGHLIGHT_LEN) then
+          highlighted(input_len+1:MAX_HIGHLIGHT_LEN) = ' '
         end if
       else
         highlighted = ' '
-        actual_input_len = 0
+        input_len = 0
       end if
-      len_used = actual_input_len
+      len_used = input_len
       if (present(actual_len)) actual_len = len_used
       return
     end if
 
-    ! Tokenize input (pass only the actual length we need)
-    call tokenize_for_highlighting(input(1:actual_input_len), tokens, num_tokens)
+    ! Tokenize input
+    write(*, '(a)') '[TRACE: About to call tokenize_for_highlighting]'
+    flush(6)
+    call tokenize_for_highlighting(input, tokens, num_tokens)
+    write(*, '(a)') '[TRACE: Returned from tokenize_for_highlighting]'
+    flush(6)
+
+    ! DEBUG: write(*, '(a)') '[DEBUG: About to check num_tokens == 0]'
 
     if (num_tokens == 0) then
-      if (actual_input_len > 0 .and. actual_input_len <= MAX_HIGHLIGHT_LEN) then
-        highlighted(1:actual_input_len) = input(1:actual_input_len)
-        if (actual_input_len < MAX_HIGHLIGHT_LEN) then
-          highlighted(actual_input_len+1:MAX_HIGHLIGHT_LEN) = ' '
+      ! DEBUG: write(*, '(a)') '[DEBUG: num_tokens is 0]'
+      if (input_len > 0 .and. input_len <= MAX_HIGHLIGHT_LEN) then
+        highlighted(1:input_len) = input(1:input_len)
+        if (input_len < MAX_HIGHLIGHT_LEN) then
+          highlighted(input_len+1:MAX_HIGHLIGHT_LEN) = ' '
         end if
       else
         highlighted = ' '
-        actual_input_len = 0
+        input_len = 0
       end if
-      len_used = actual_input_len
+      len_used = input_len
       if (present(actual_len)) actual_len = len_used
       return
     end if
 
+    write(*, '(a)') '[TRACE: About to call colorize_tokens]'
+    flush(6)
     call colorize_tokens(tokens, num_tokens, token_colors)
+    write(*, '(a)') '[TRACE: Returned from colorize_tokens]'
+    flush(6)
 
+    write(*, '(a)') '[TRACE: About to call build_highlighted_string]'
+    flush(6)
     call build_highlighted_string(input, tokens, num_tokens, token_colors, highlighted, len_used)
+    write(*, '(a)') '[TRACE: Returned from build_highlighted_string]'
+    flush(6)
     ! DEBUG: write(*, '(a)') '[DEBUG: Built highlighted string]'
 
     ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: len_used=', len_used, ']'
@@ -458,89 +478,177 @@ contains
     integer :: buffer_size
     logical :: in_token
 
+    write(*, '(a)') '[TRACE: build_highlighted_string: entered]'
+    flush(6)
 
     ! Allocate buffers on heap
+    write(*, '(a)') '[TRACE: build_highlighted_string: about to allocate buffers]'
+    flush(6)
     allocate(character(len=MAX_HIGHLIGHT_LEN) :: result_buffer)
     allocate(character(len=256) :: token_trimmed)
     allocate(character(len=32) :: color_str)
     allocate(character(len=32) :: reset_str)
+    write(*, '(a)') '[TRACE: build_highlighted_string: allocated all buffers]'
+    flush(6)
 
+    write(*, '(a)') '[TRACE: About to check len(input)]'
+    flush(6)
     ! Handle empty input
     if (len(input) == 0) then
       highlighted = ''
       actual_len = 0
       return
     end if
+    write(*, '(a)') '[TRACE: After len check]'
+    flush(6)
 
     ! Use fixed buffer
     buffer_size = MAX_HIGHLIGHT_LEN
+    write(*, '(a)') '[TRACE: Set buffer_size]'
+    flush(6)
 
     ! Initialize result buffer tracking
     result_pos = 1
     input_pos = 1
+    write(*, '(a)') '[TRACE: About to call color_code(COLOR_RESET)]'
+    flush(6)
     reset_str = color_code(COLOR_RESET)
+    write(*, '(a)') '[TRACE: Called color_code]'
+    flush(6)
     reset_len = len_trim(reset_str)
+    write(*, '(a)') '[TRACE: Initialized variables]'
+    flush(6)
 
+    write(*, '(a)') '[TRACE: About to enter main loop]'
+    flush(6)
     ! Walk through input character by character, preserving all spacing
     do while (input_pos <= len(input))
+      write(*, '(a,i0)') '[TRACE: Loop iteration, input_pos=', input_pos
+      flush(6)
       in_token = .false.
+      write(*, '(a)') '[TRACE: Set in_token to false]'
+      flush(6)
 
+      write(*, '(a,i0)') '[TRACE: About to loop through tokens, num_tokens=', num_tokens
+      flush(6)
       ! Check if current position starts a token
       do i = 1, num_tokens
+        write(*, '(a,i0)') '[TRACE: Checking token i=', i
+        flush(6)
         ! SAFETY: tokens are initialized to spaces, so len_trim is safe
         token_len = len_trim(tokens(i))
+        write(*, '(a,i0,a,i0)') '[TRACE: token_len=', token_len, ' for token i=', i
+        flush(6)
 
+        write(*, '(a)') '[TRACE: About to check token_len bounds]'
+        flush(6)
         if (token_len > 0 .and. token_len <= len(token_trimmed)) then
+          write(*, '(a)') '[TRACE: About to copy token substring]'
+          flush(6)
           token_trimmed(1:token_len) = tokens(i)(1:token_len)
+          write(*, '(a)') '[TRACE: Copied token substring]'
+          flush(6)
         else
           token_len = 0
         end if
 
+        write(*, '(a)') '[TRACE: About to check if token_len == 0]'
+        flush(6)
         ! Skip empty tokens to avoid infinite loop
         if (token_len == 0) cycle
 
+        write(*, '(a)') '[TRACE: About to check input bounds]'
+        flush(6)
         ! Try to match token at current position
         if (input_pos + token_len - 1 <= len(input)) then
+          write(*, '(a)') '[TRACE: Bounds OK, about to compare substrings]'
+          flush(6)
           if (input(input_pos:input_pos+token_len-1) == token_trimmed(1:token_len)) then
+            write(*, '(a)') '[TRACE: Token matched!]'
+            flush(6)
             ! Found a token - add color, token, and reset
+            write(*, '(a,i0)') '[TRACE: About to call len_trim on colors(', i
+            flush(6)
             color_len = len_trim(colors(i))
+            write(*, '(a,i0)') '[TRACE: color_len=', color_len
+            flush(6)
 
+            write(*, '(a)') '[TRACE: About to check color_len bounds]'
+            flush(6)
             if (color_len > 0 .and. color_len <= len(color_str)) then
+              write(*, '(a)') '[TRACE: Bounds OK, about to copy color]'
+              flush(6)
               color_str(1:color_len) = colors(i)(1:color_len)
+              write(*, '(a)') '[TRACE: Copied color]'
+              flush(6)
             else
               color_len = 0
             end if
 
+            write(*, '(a)') '[TRACE: About to do bounds check for result_buffer]'
+            flush(6)
+            write(*, '(a,i0,a,i0,a,i0,a,i0)') '[TRACE: result_pos=', result_pos, ' color_len=', color_len, ' token_len=', token_len, ' reset_len=', reset_len
+            flush(6)
 
             ! Bounds check before writing
             if (result_pos + color_len + token_len + reset_len - 1 <= buffer_size) then
+              write(*, '(a)') '[TRACE: Bounds check passed]'
+              flush(6)
               ! Add color code
               if (color_len > 0) then
+                write(*, '(a)') '[TRACE: About to write color to result_buffer]'
+                flush(6)
                 result_buffer(result_pos:result_pos+color_len-1) = color_str(1:color_len)
+                write(*, '(a)') '[TRACE: Wrote color to result_buffer]'
+                flush(6)
                 result_pos = result_pos + color_len
               end if
               ! Add token
               if (token_len > 0) then
+                write(*, '(a)') '[TRACE: About to write token to result_buffer]'
+                flush(6)
                 result_buffer(result_pos:result_pos+token_len-1) = token_trimmed(1:token_len)
+                write(*, '(a)') '[TRACE: Wrote token to result_buffer]'
+                flush(6)
                 result_pos = result_pos + token_len
               end if
               ! Add reset code
+              write(*, '(a)') '[TRACE: About to check if reset_len > 0]'
+              flush(6)
               if (reset_len > 0) then
+                write(*, '(a)') '[TRACE: About to write reset to result_buffer]'
+                flush(6)
                 result_buffer(result_pos:result_pos+reset_len-1) = reset_str(1:reset_len)
+                write(*, '(a)') '[TRACE: Wrote reset to result_buffer]'
+                flush(6)
                 result_pos = result_pos + reset_len
               end if
             end if
 
+            write(*, '(a)') '[TRACE: About to update input_pos]'
+            flush(6)
             input_pos = input_pos + token_len
+            write(*, '(a)') '[TRACE: About to set in_token=true]'
+            flush(6)
             in_token = .true.
+            write(*, '(a)') '[TRACE: About to exit inner loop]'
+            flush(6)
             exit
           end if
         end if
       end do
 
+      write(*, '(a)') '[TRACE: Exited inner token loop]'
+      flush(6)
+      write(*, '(a,l1)') '[TRACE: in_token=', in_token
+      flush(6)
 
       ! If not in a token, just copy the character (whitespace, etc.)
+      write(*, '(a)') '[TRACE: About to check if .not. in_token]'
+      flush(6)
       if (.not. in_token) then
+        write(*, '(a)') '[TRACE: Not in token, about to copy character]'
+        flush(6)
         ! DEBUG: write(*, '(a)') '[DEBUG build: not in token, copying character]'
         if (result_pos <= buffer_size) then
           result_buffer(result_pos:result_pos) = input(input_pos:input_pos)
@@ -548,8 +656,12 @@ contains
         end if
         input_pos = input_pos + 1
       end if
+      write(*, '(a,i0)') '[TRACE: End of outer loop iteration, input_pos=', input_pos
+      flush(6)
     end do
 
+    write(*, '(a)') '[TRACE: Exited outer loop]'
+    flush(6)
 
     ! DEBUG: write(*, '(a)') '[DEBUG build: exited outer loop]'
 
