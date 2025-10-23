@@ -312,9 +312,6 @@ contains
     write(unit, '(a)') ''
     write(unit, '(a)') '# ===== Shell Options ====='
     write(unit, '(a)') '# set -o emacs    # Emacs editing mode'
-    write(unit, '(a)') ''
-    write(unit, '(a)') '# ===== Welcome Message ====='
-    write(unit, '(a)') 'echo "Welcome to Fortran Shell!"'
 
     close(unit)
     write(output_unit, '(a)') 'Created: ~/.fortshrc'
