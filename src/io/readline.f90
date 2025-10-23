@@ -126,7 +126,8 @@ module readline
     logical :: vi_in_vi_search = .false.
 
     ! Autosuggestion support (fish-style)
-    character(len=:), allocatable :: suggestion  ! Current suggestion from history
+    ! CRITICAL: Must use fixed-length (NOT deferred-length) for flang-new compatibility
+    character(len=MAX_LINE_LEN) :: suggestion  ! Current suggestion from history (fixed-length to avoid flang-new bug)
     integer :: suggestion_length = 0  ! Length of suggestion
 
     ! Menu selection support (zsh/fish-style interactive completion)
@@ -155,7 +156,8 @@ module readline
 
   type :: history_t
     ! Use allocatable array to avoid stack allocation on macOS
-    character(len=:), allocatable :: lines(:)
+    ! CRITICAL: Must use fixed-length (NOT deferred-length) for flang-new compatibility
+    character(len=MAX_LINE_LEN), allocatable :: lines(:)
     integer :: count = 0
     integer :: current = 0  ! Current position in history navigation
     logical :: initialized = .false.
@@ -201,7 +203,7 @@ contains
     allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
     allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
     allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
-    allocate(character(len=MAX_LINE_LEN) :: state%suggestion)
+    ! suggestion is now fixed-length, no allocation needed
     allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
     allocate(character(len=256) :: state%selected_process_name)
 
@@ -262,7 +264,8 @@ contains
   ! Initialize history with allocated array
   subroutine init_history()
     if (.not. command_history%initialized) then
-      allocate(character(len=MAX_LINE_LEN) :: command_history%lines(MAX_HISTORY))
+      ! Type already specifies character(len=MAX_LINE_LEN), so just allocate array
+      allocate(command_history%lines(MAX_HISTORY))
       command_history%lines = ''
       command_history%count = 0
       command_history%current = 0
@@ -283,7 +286,7 @@ contains
       if (allocated(state%vi_command_buffer)) deallocate(state%vi_command_buffer)
       if (allocated(state%vi_yank_buffer)) deallocate(state%vi_yank_buffer)
       if (allocated(state%vi_search_pattern)) deallocate(state%vi_search_pattern)
-      if (allocated(state%suggestion)) deallocate(state%suggestion)
+      ! suggestion is now fixed-length, no deallocation needed
       if (allocated(state%menu_prefix)) deallocate(state%menu_prefix)
       if (allocated(state%selected_process_name)) deallocate(state%selected_process_name)
       ! menu_items and menu_prompt are now fixed-length, no deallocation needed
@@ -693,13 +696,12 @@ contains
                   if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
 
                   if (suggestion_display_len > 0) then
-                    ! TEMP: Commenting out suggestion write (same substring issue as buffer)
-                    ! write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
-                    ! ! Write character by character to avoid substring temporaries (flang-new crash)
-                    ! do i_redraw = 1, suggestion_display_len
-                    !   write(output_unit, '(a)', advance='no') module_input_state%suggestion(i_redraw:i_redraw)
-                    ! end do
-                    ! write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
+                    write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
+                    ! Write character by character to avoid substring temporaries (flang-new crash)
+                    do i_redraw = 1, suggestion_display_len
+                      write(output_unit, '(a)', advance='no') module_input_state%suggestion(i_redraw:i_redraw)
+                    end do
+                    write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
 
                     ! Move cursor back to correct position (after suggestion)
                     do i_redraw = 1, suggestion_display_len
@@ -986,6 +988,9 @@ contains
     integer :: unit, iostat
     character(len=MAX_LINE_LEN) :: line
     logical :: file_exists
+
+    ! Ensure history is initialized before loading
+    call init_history()
 
     ! Check if file exists
     inquire(file=filepath, exist=file_exists)
@@ -4390,7 +4395,7 @@ contains
     integer :: term_rows, term_cols, total_visual_chars
     integer :: prompt_visual_len, current_line, end_line
     integer :: cursor_visual_pos, cursor_line, cursor_col
-    integer :: i, suggestion_display_len, available_space
+    integer :: i, k, suggestion_display_len, available_space
     logical :: success
 
     ! Allocate and initialize buffers
@@ -4477,11 +4482,16 @@ contains
         if (suggestion_display_len > 0) then
           ! Gray color (ANSI code 90 or dim mode)
           write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
-          write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+
+          ! Display suggestion character-by-character (avoid substring)
+          do k = 1, suggestion_display_len
+            write(output_unit, '(a)', advance='no') input_state%suggestion(k:k)
+          end do
+
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
 
           ! Move cursor back to where it should be (after suggestion)
-          do i = 1, suggestion_display_len
+          do k = 1, suggestion_display_len
             write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
           end do
         end if
@@ -4742,7 +4752,12 @@ contains
         if (suggestion_display_len > 0) then
           ! Display suggestion in gray
           write(output_unit, '(a)', advance='no') char(27) // '[2m'
-          write(output_unit, '(a)', advance='no') input_state%suggestion(:suggestion_display_len)
+
+          ! Display suggestion character-by-character (avoid substring)
+          do i = 1, suggestion_display_len
+            write(output_unit, '(a)', advance='no') input_state%suggestion(i:i)
+          end do
+
           write(output_unit, '(a)', advance='no') char(27) // '[0m'
 
           ! Move cursor back to correct position after suggestion
@@ -5612,12 +5627,14 @@ contains
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, newline_pos, j
-    character(len=:), allocatable :: current_input  ! Heap allocation to avoid stack overflow
-    character(len=:), allocatable :: suggestion_candidate  ! Heap allocation to avoid stack overflow
+    logical :: matches
+    ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
+    character(len=MAX_LINE_LEN), allocatable :: current_input
+    character(len=MAX_LINE_LEN), allocatable :: suggestion_candidate
 
     ! Allocate buffers on heap
-    allocate(character(len=MAX_LINE_LEN) :: current_input)
-    allocate(character(len=MAX_LINE_LEN) :: suggestion_candidate)
+    allocate(current_input)
+    allocate(suggestion_candidate)
 
     ! Defensive check: ensure length and cursor_pos are valid
     if (input_state%length < 0 .or. input_state%length > MAX_LINE_LEN) then
@@ -5640,17 +5657,34 @@ contains
       return
     end if
 
-    ! Get current input (now safe after bounds check)
-    current_input = input_state%buffer(:input_state%length)
+    ! Get current input - copy character-by-character (avoid substring on allocatable)
+    current_input = ''
+    do j = 1, input_state%length
+      current_input(j:j) = input_state%buffer(j:j)
+    end do
 
     ! Search history backwards for matching command
     do i = command_history%count, 1, -1
       ! Check if history entry starts with current input
       if (len_trim(command_history%lines(i)) > input_state%length) then
-        if (command_history%lines(i)(:input_state%length) == current_input(:input_state%length)) then
+        ! Compare character-by-character (avoid substring on allocatable)
+        matches = .true.
+        do j = 1, input_state%length
+          if (command_history%lines(i)(j:j) /= current_input(j:j)) then
+            matches = .false.
+            exit
+          end if
+        end do
+
+        if (matches) then
           ! Found a match! Store the rest as suggestion
           ! CRITICAL FIX: Stop at first newline to avoid multi-line suggestions (heredocs, etc.)
-          suggestion_candidate = command_history%lines(i)(input_state%length+1:)
+          ! Copy remaining part character-by-character (avoid substring)
+          suggestion_candidate = ''
+          do j = input_state%length + 1, len_trim(command_history%lines(i))
+            suggestion_candidate(j - input_state%length:j - input_state%length) = &
+              command_history%lines(i)(j:j)
+          end do
 
           ! Find first newline character
           newline_pos = -1  ! Initialize to -1 to indicate not found
@@ -5664,17 +5698,23 @@ contains
           if (newline_pos >= 0) then
             ! Found newline - truncate before it (or clear if newline is first char)
             if (newline_pos > 0) then
-              input_state%suggestion = suggestion_candidate(:newline_pos)
+              ! Copy character-by-character to avoid substring
+              input_state%suggestion = ''
+              do j = 1, newline_pos
+                input_state%suggestion(j:j) = suggestion_candidate(j:j)
+              end do
               input_state%suggestion_length = newline_pos
-              !       trim(input_state%suggestion), "' length=", input_state%suggestion_length
             else
               ! Newline is first character - no suggestion
               input_state%suggestion = ''
               input_state%suggestion_length = 0
             end if
           else
-            ! No newline found, use full suggestion
-            input_state%suggestion = suggestion_candidate
+            ! No newline found, use full suggestion - copy character-by-character
+            input_state%suggestion = ''
+            do j = 1, len_trim(suggestion_candidate)
+              input_state%suggestion(j:j) = suggestion_candidate(j:j)
+            end do
             input_state%suggestion_length = len_trim(suggestion_candidate)
           end if
           if (allocated(current_input)) deallocate(current_input)
