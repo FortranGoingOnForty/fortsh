@@ -3528,7 +3528,14 @@ contains
     ! Build preview line character by character (copy to local vars first)
     preview_len = 0
     if (input_state%menu_prefix_len > 0) then
-      current_prefix = input_state%menu_prefix
+      ! IMPORTANT: Copy allocatable menu_prefix character-by-character to avoid flang-new bug
+      ! Direct assignment creates a temporary that gets corrupted
+      current_prefix = ''  ! Initialize
+      do i = 1, input_state%menu_prefix_len
+        current_prefix(i:i) = input_state%menu_prefix(i:i)
+      end do
+
+      ! Now copy to preview_line
       do i = 1, input_state%menu_prefix_len
         ch = current_prefix(i:i)
         preview_len = preview_len + 1
@@ -3559,9 +3566,13 @@ contains
     call highlight_command_line(preview_line, highlighted_preview, highlighted_len, preview_len)
 
     ! Redraw prompt character by character (copy to local var first)
-    current_prefix = input_state%menu_prompt
-    prompt_len = len_trim(current_prefix)
+    ! IMPORTANT: Copy allocatable menu_prompt character-by-character to avoid flang-new bug
+    current_prefix = ''
+    prompt_len = len_trim(input_state%menu_prompt)
     if (prompt_len > 0) then
+      do i = 1, prompt_len
+        current_prefix(i:i) = input_state%menu_prompt(i:i)
+      end do
       do i = 1, prompt_len
         ch = current_prefix(i:i)
         write(output_unit, '(a)', advance='no') ch
