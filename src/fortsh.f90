@@ -43,6 +43,9 @@ program fortran_shell
   ! Initialize control flow callbacks (breaks circular dependency)
   call init_control_flow_callbacks()
 
+  ! Initialize command history (needed even in non-interactive mode)
+  call init_history()
+
   ! Check for command-line arguments
   num_args = command_argument_count()
   execute_command_string = .false.
