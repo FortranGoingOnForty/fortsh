@@ -136,7 +136,7 @@ module readline
     integer :: menu_selection = 1  ! Currently selected item (1-based)
     character(len=:), allocatable :: menu_prefix  ! Command prefix before completion word
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
-    character(len=:), allocatable :: menu_prompt  ! Prompt when in menu mode (for live preview)
+    character(len=MAX_LINE_LEN) :: menu_prompt  ! Prompt when in menu mode (fixed-length to avoid flang-new bugs)
     logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
 
     ! Process kill mode support (Ctrl-X)
@@ -199,10 +199,9 @@ contains
     allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
     allocate(character(len=MAX_LINE_LEN) :: state%suggestion)
     allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
-    allocate(character(len=MAX_LINE_LEN) :: state%menu_prompt)
     allocate(character(len=256) :: state%selected_process_name)
 
-    ! menu_items is now fixed-length array, no allocation needed
+    ! menu_items and menu_prompt are now fixed-length, no allocation needed
 
     ! Initialize all strings to empty
     state%buffer = ''
@@ -282,9 +281,8 @@ contains
       if (allocated(state%vi_search_pattern)) deallocate(state%vi_search_pattern)
       if (allocated(state%suggestion)) deallocate(state%suggestion)
       if (allocated(state%menu_prefix)) deallocate(state%menu_prefix)
-      if (allocated(state%menu_prompt)) deallocate(state%menu_prompt)
       if (allocated(state%selected_process_name)) deallocate(state%selected_process_name)
-      ! menu_items is now fixed-length, no deallocation needed
+      ! menu_items and menu_prompt are now fixed-length, no deallocation needed
       state%initialized = .false.
     end if
   end subroutine
@@ -1884,7 +1882,6 @@ contains
 
   ! Enhanced tab completion with programmable completion system integration
   subroutine enhanced_tab_complete(partial_input, completions, num_completions, shell, input_len)
-    use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: partial_input
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
@@ -2869,7 +2866,6 @@ contains
   ! Separate tab completion handler to work around macOS ARM64 crash
   ! This modifies the SAVE'd input_state directly without problematic returns
   subroutine handle_tab_key_separate(input_state)
-    use iso_fortran_env, only: error_unit
     type(input_state_t), intent(inout) :: input_state
     integer :: tab_num_completions, i, j, last_space_pos, copy_len
     logical :: tab_completed, tab_made_progress, tab_buffer_changed
@@ -2889,9 +2885,17 @@ contains
     tab_partial_input = input_state%buffer(:input_state%length)
     tab_saved_input = tab_partial_input
 
-    ! Check if buffer has changed since we last showed completions
-    tab_buffer_changed = (trim(input_state%buffer(:input_state%length)) /= &
-                     trim(input_state%last_completion_buffer))
+    ! Check if buffer has changed since we last showed completions (avoid trim() on allocatables)
+    tab_buffer_changed = .true.
+    if (input_state%length == len_trim(input_state%last_completion_buffer)) then
+      tab_buffer_changed = .false.
+      do i = 1, input_state%length
+        if (input_state%buffer(i:i) /= input_state%last_completion_buffer(i:i)) then
+          tab_buffer_changed = .true.
+          exit
+        end if
+      end do
+    end if
 
     ! Attempt smart completion (pass input_state%length to preserve trailing spaces)
     call smart_tab_complete(tab_partial_input, tab_completions, &
@@ -2950,7 +2954,11 @@ contains
             end do
 
             if (last_space_pos > 0) then
-              input_state%menu_prefix = tab_partial_input(:last_space_pos)
+              ! Copy character by character to avoid substring on allocatable
+              input_state%menu_prefix = ''
+              do j = 1, last_space_pos
+                input_state%menu_prefix(j:j) = tab_partial_input(j:j)
+              end do
               input_state%menu_prefix_len = last_space_pos
             else
               input_state%menu_prefix = ''
@@ -3006,7 +3014,11 @@ contains
         end do
 
         if (last_space_pos > 0) then
-          input_state%menu_prefix = tab_partial_input(:last_space_pos)
+          ! Copy character by character to avoid substring on allocatable
+          input_state%menu_prefix = ''
+          do i = 1, last_space_pos
+            input_state%menu_prefix(i:i) = tab_partial_input(i:i)
+          end do
           input_state%menu_prefix_len = last_space_pos
         else
           input_state%menu_prefix = ''
@@ -3030,7 +3042,8 @@ contains
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_LINE_LEN) :: saved_input
-    integer :: num_completions, i, j
+    character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
+    integer :: num_completions, i, j, copy_len
     logical :: completed, made_progress, buffer_changed
 
     ! Exit history mode if we're browsing
@@ -3080,12 +3093,9 @@ contains
             ! Store completions for menu mode and draw once
             input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
-              ! Truncate to fit menu item buffer
-          ! Copy character by character to avoid substring temporaries (flang-new bug)
-          input_state%menu_items(i) = ' '  ! Initialize with spaces
-          do j = 1, min(MAX_MENU_ITEM_LEN, len_trim(completions(i)))
-            input_state%menu_items(i)(j:j) = completions(i)(j:j)
-          end do
+              ! Use temp_buffer and simple assignment to avoid substring operations
+              temp_buffer = completions(i)
+              input_state%menu_items(i) = temp_buffer
             end do
             input_state%menu_selection = 1
             call draw_completion_menu(input_state, .true.)
@@ -3108,12 +3118,9 @@ contains
         ! First tab - store completions and draw menu
         input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
-          ! Truncate to fit menu item buffer
-          ! Copy character by character to avoid substring temporaries (flang-new bug)
-          input_state%menu_items(i) = ' '  ! Initialize with spaces
-          do j = 1, min(MAX_MENU_ITEM_LEN, len_trim(completions(i)))
-            input_state%menu_items(i)(j:j) = completions(i)(j:j)
-          end do
+          ! Use temp_buffer and simple trim to avoid substring operations
+          temp_buffer = completions(i)
+          input_state%menu_items(i) = temp_buffer
         end do
         input_state%menu_selection = 1
         call draw_completion_menu(input_state, .true.)
@@ -3136,6 +3143,7 @@ contains
     character(len=MAX_LINE_LEN), intent(in) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(in) :: num_completions
     character(len=*), intent(in) :: current_input
+    character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
     integer :: i, last_space_pos
 
     ! Store menu items
@@ -3147,8 +3155,9 @@ contains
     input_state%suggestion_length = 0
 
     do i = 1, input_state%menu_num_items
-      ! Truncate to fit menu item buffer
-      input_state%menu_items(i) = completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(completions(i))))
+      ! Use temp_buffer and simple assignment
+      temp_buffer = completions(i)
+      input_state%menu_items(i) = temp_buffer
     end do
 
     ! Find the prefix (everything before the last word being completed)
@@ -3161,7 +3170,11 @@ contains
     end do
 
     if (last_space_pos > 0) then
-      input_state%menu_prefix = current_input(:last_space_pos)
+      ! Copy character by character to avoid substring on allocatable
+      input_state%menu_prefix = ''
+      do i = 1, last_space_pos
+        input_state%menu_prefix(i:i) = current_input(i:i)
+      end do
       input_state%menu_prefix_len = last_space_pos  ! Store length WITH the space
     else
       input_state%menu_prefix = ''
@@ -3181,7 +3194,6 @@ contains
   end subroutine
 
   subroutine draw_completion_menu(input_state, initial_draw)
-    use iso_fortran_env, only: error_unit
     type(input_state_t), intent(in) :: input_state
     logical, intent(in) :: initial_draw
     integer :: i, cols_per_item, items_per_row, row, col, item_idx
@@ -3197,7 +3209,6 @@ contains
     ! Add newline only on initial draw, not on redraw
     if (initial_draw) then
       write(output_unit, '()')  ! New line
-      write(output_unit, '(a)') '=== TAB COMPLETION MENU ==='  ! Visible marker
     end if
 
     ! Calculate layout - try to fit multiple items per row
@@ -3221,10 +3232,8 @@ contains
           write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
         end if
 
-        ! Write menu item character by character to avoid trim() creating stack temporary
-        do i = 1, len_trim(input_state%menu_items(item_idx))
-          write(output_unit, '(a)', advance='no') input_state%menu_items(item_idx)(i:i)
-        end do
+        ! Write menu item (menu_items is fixed-length, so trim is safe)
+        write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
 
         if (item_idx == input_state%menu_selection) then
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
@@ -3314,17 +3323,10 @@ contains
   subroutine accept_menu_selection(input_state)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: completed_line
-    integer :: i
 
-    ! Build completed command with selected item (avoid all substring operations to prevent heap corruption)
-    completed_line = ''
+    ! Build completed command with selected item (all fixed-length so simple concatenation is safe)
     if (input_state%menu_prefix_len > 0) then
-      ! Copy prefix character by character to avoid substring on allocatable
-      do i = 1, input_state%menu_prefix_len
-        completed_line(i:i) = input_state%menu_prefix(i:i)
-      end do
-      ! Append selected item (whole string assignment)
-      completed_line(input_state%menu_prefix_len+1:) = input_state%menu_items(input_state%menu_selection)
+      completed_line = trim(input_state%menu_prefix) // trim(input_state%menu_items(input_state%menu_selection))
     else
       completed_line = input_state%menu_items(input_state%menu_selection)
     end if
@@ -3452,11 +3454,10 @@ contains
     integer :: i, term_rows, term_cols, cols_per_item, items_per_row, num_menu_rows
     integer :: prompt_len, highlighted_len
     character(len=MAX_LINE_LEN) :: preview_line
-    character(len=:), allocatable :: highlighted_preview  ! Heap allocation to avoid stack overflow
+    character(len=MAX_HIGHLIGHT_LEN) :: highlighted_preview  ! Fixed-length to avoid flang-new bugs
     logical :: success
 
-    ! Allocate and initialize buffers
-    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted_preview)
+    ! Initialize buffer
     highlighted_preview = ' '
     highlighted_len = 0
 
@@ -3475,14 +3476,9 @@ contains
     items_per_row = max(1, term_cols / cols_per_item)
     num_menu_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
-    ! Build preview line: prefix + selected item (avoid all substring operations to prevent heap corruption)
-    preview_line = ''
+    ! Build preview line: prefix + selected item (all fixed-length so simple concatenation is safe)
     if (input_state%menu_prefix_len > 0) then
-      ! Copy prefix character by character to avoid substring on allocatable
-      do i = 1, input_state%menu_prefix_len
-        preview_line(i:i) = input_state%menu_prefix(i:i)
-      end do
-      preview_line(input_state%menu_prefix_len+1:) = input_state%menu_items(input_state%menu_selection)
+      preview_line = trim(input_state%menu_prefix) // trim(input_state%menu_items(input_state%menu_selection))
     else
       preview_line = input_state%menu_items(input_state%menu_selection)
     end if
@@ -3503,16 +3499,13 @@ contains
     ! Pass length explicitly to avoid trim() creating a temporary substring
     call highlight_command_line(preview_line, highlighted_preview, highlighted_len, len_trim(preview_line))
 
-    ! Calculate prompt length including trailing space if present
+    ! Calculate prompt length (skip trailing space check to avoid substring operations)
     prompt_len = len_trim(input_state%menu_prompt)
-    if (prompt_len < len(input_state%menu_prompt)) then
-      if (input_state%menu_prompt(prompt_len+1:prompt_len+1) == ' ') then
-        prompt_len = prompt_len + 1  ! Include one trailing space
-      end if
-    end if
 
-    ! Redraw: prompt + highlighted preview
-    write(output_unit, '(a)', advance='no') input_state%menu_prompt(:prompt_len)
+    ! Redraw: prompt + highlighted preview (safe now that both are fixed-length)
+    if (prompt_len > 0) then
+      write(output_unit, '(a)', advance='no') input_state%menu_prompt(:prompt_len)
+    end if
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
       write(output_unit, '(a)', advance='no') highlighted_preview(1:highlighted_len)
     end if
@@ -3526,9 +3519,7 @@ contains
     write(output_unit, '(a)', advance='no') char(13)
 
     flush(output_unit)
-
-    ! Deallocate heap-allocated buffer
-    if (allocated(highlighted_preview)) deallocate(highlighted_preview)
+    ! highlighted_preview is now fixed-length, no deallocation needed
   end subroutine
 
   ! ===========================================================================
