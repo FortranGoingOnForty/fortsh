@@ -696,7 +696,9 @@ contains
                   if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
 
                   if (suggestion_display_len > 0) then
-                    write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
+                    ! Use bright black (gray) color for suggestions - ANSI code 90
+                    ! This is more visible than dim mode and better supported across terminals
+                    write(output_unit, '(a)', advance='no') char(27) // '[90m'
                     ! Write character by character to avoid substring temporaries (flang-new crash)
                     do i_redraw = 1, suggestion_display_len
                       write(output_unit, '(a)', advance='no') module_input_state%suggestion(i_redraw:i_redraw)
@@ -4480,8 +4482,9 @@ contains
         if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
 
         if (suggestion_display_len > 0) then
-          ! Gray color (ANSI code 90 or dim mode)
-          write(output_unit, '(a)', advance='no') char(27) // '[2m'  ! Dim mode
+          ! Use bright black (gray) color for suggestions - ANSI code 90
+          ! This is more visible than dim mode and better supported across terminals
+          write(output_unit, '(a)', advance='no') char(27) // '[90m'
 
           ! Display suggestion character-by-character (avoid substring)
           do k = 1, suggestion_display_len
@@ -4589,15 +4592,18 @@ contains
   
   subroutine handle_kill_to_end(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     ! Save text from cursor to end of line in kill buffer
     if (input_state%cursor_pos < input_state%length) then
       input_state%kill_buffer = input_state%buffer(input_state%cursor_pos+1:input_state%length)
       input_state%kill_length = input_state%length - input_state%cursor_pos
-      
+
       ! Clear from cursor to end of line
       input_state%length = input_state%cursor_pos
       input_state%dirty = .true.
+
+      ! Update autosuggestion after killing to end
+      call update_autosuggestion(input_state)
     else
       ! Nothing to kill
       input_state%kill_length = 0
@@ -4606,16 +4612,21 @@ contains
   
   subroutine handle_kill_line(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+
     ! Save entire line in kill buffer
     if (input_state%length > 0) then
       input_state%kill_buffer = input_state%buffer(:input_state%length)
       input_state%kill_length = input_state%length
-      
+
       ! Clear the line
       input_state%buffer = ''
       input_state%length = 0
       input_state%cursor_pos = 0
+
+      ! Clear any autosuggestion
+      input_state%suggestion = ''
+      input_state%suggestion_length = 0
+
       input_state%dirty = .true.
     else
       input_state%kill_length = 0
@@ -4664,6 +4675,9 @@ contains
       input_state%length = input_state%length - (input_state%cursor_pos - word_start)
       input_state%cursor_pos = word_start
       input_state%dirty = .true.
+
+      ! Update autosuggestion after killing word
+      call update_autosuggestion(input_state)
     else
       input_state%kill_length = 0
     end if
@@ -4750,8 +4764,8 @@ contains
         suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
 
         if (suggestion_display_len > 0) then
-          ! Display suggestion in gray
-          write(output_unit, '(a)', advance='no') char(27) // '[2m'
+          ! Use bright black (gray) color for suggestions - ANSI code 90
+          write(output_unit, '(a)', advance='no') char(27) // '[90m'
 
           ! Display suggestion character-by-character (avoid substring)
           do i = 1, suggestion_display_len
