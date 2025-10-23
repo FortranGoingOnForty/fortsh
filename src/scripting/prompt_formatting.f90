@@ -317,28 +317,50 @@ contains
   ! Get pretty path with ~ for home directory and intelligent shortening
   function get_pretty_path(path) result(pretty)
     character(len=*), intent(in) :: path
-    character(len=:), allocatable :: pretty, home_dir
-    integer :: home_len
+    character(len=:), allocatable :: pretty, home_dir, temp_path
+    integer :: home_len, term_rows, term_cols, max_path_len
+    logical :: got_term_size
 
     home_dir = get_environment_var('HOME')
 
-    ! Replace HOME with ~ (skip shortening on macOS to avoid memory issues)
+    ! Replace HOME with ~
     if (allocated(home_dir) .and. len(home_dir) > 0) then
       home_len = len(home_dir)
       if (len_trim(path) >= home_len) then
         if (path(:home_len) == home_dir(:home_len)) then
           if (len_trim(path) == home_len) then
-            pretty = '~'
+            temp_path = '~'
           else
-            pretty = '~' // trim(path(home_len+1:))
+            temp_path = '~' // trim(path(home_len+1:))
           end if
-          return
+        else
+          temp_path = trim(path)
         end if
+      else
+        temp_path = trim(path)
       end if
+    else
+      temp_path = trim(path)
     end if
 
-    ! Return full path without shortening
-    pretty = trim(path)
+    ! Get terminal size to determine max path length
+    got_term_size = get_terminal_size(term_rows, term_cols)
+    if (got_term_size .and. term_cols > 0) then
+      ! Reserve space for prompt elements (username, hostname, etc)
+      ! Typical prompt: "user@host :: /path > " is about 20 chars + path
+      max_path_len = term_cols - 40  ! Reserve 40 chars for other prompt parts
+      if (max_path_len < 20) max_path_len = 20  ! Minimum 20 chars for path
+    else
+      ! Fallback if terminal size unavailable
+      max_path_len = 40
+    end if
+
+    ! Shorten path if needed
+    if (len_trim(temp_path) > max_path_len) then
+      pretty = shorten_path(temp_path, max_path_len)
+    else
+      pretty = temp_path
+    end if
   end function
 
   ! Intelligently shorten a path by abbreviating parent directories
