@@ -456,12 +456,17 @@ contains
 
     integer :: first_token_len, i, j, pos, color_len, reset_len
     character(len=32) :: color_str, reset_str
+    character(len=4096) :: local_buffer  ! Local copy to avoid substring on module variable
+    character(len=1) :: ch
 
     ! Initialize output buffer
     highlighted = ' '
     pos = 1
 
     if (num_tokens > 0 .and. input_len > 0) then
+      ! Copy module_working_buffer to local variable to avoid substring temporaries
+      local_buffer = module_working_buffer
+
       first_token_len = len_trim(tokens(1))
       color_str = trim(colors(1))
       reset_str = trim(color_code(COLOR_RESET))
@@ -497,7 +502,9 @@ contains
       ! 4. Copy rest of input after first token
       ! Skip whitespace and the first token in input, copy the rest
       j = first_token_len + 1
-      do while (j <= input_len .and. module_working_buffer(j:j) == ' ')
+      do while (j <= input_len)
+        ch = local_buffer(j:j)
+        if (ch /= ' ') exit  ! Exit when we hit non-whitespace
         ! Copy whitespace
         if (pos <= MAX_HIGHLIGHT_LEN) then
           highlighted(pos:pos) = ' '
@@ -508,8 +515,9 @@ contains
 
       ! Copy remaining characters
       do while (j <= input_len)
+        ch = local_buffer(j:j)
         if (pos <= MAX_HIGHLIGHT_LEN) then
-          highlighted(pos:pos) = module_working_buffer(j:j)
+          highlighted(pos:pos) = ch
           pos = pos + 1
         end if
         j = j + 1
@@ -517,11 +525,13 @@ contains
 
       actual_len = pos - 1
     else
-      ! No tokens or empty input - return plain
+      ! No tokens or empty input - copy from local buffer to avoid substring on input
+      local_buffer = module_working_buffer
       actual_len = input_len
       do i = 1, input_len
         if (i <= MAX_HIGHLIGHT_LEN) then
-          highlighted(i:i) = input(i:i)
+          ch = local_buffer(i:i)
+          highlighted(i:i) = ch
         end if
       end do
     end if
