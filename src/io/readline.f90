@@ -3387,38 +3387,17 @@ contains
     character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_MENU_ITEM_LEN) :: current_item
     character(len=1) :: ch
-    integer :: i, j, item_len, completed_len, debug_unit
+    integer :: i, j, item_len, completed_len
 
     ! Build completed command character by character (copy to local vars first)
     completed_line = ''
     completed_len = 0
 
-    ! DEBUG: Write to file
-    open(newunit=debug_unit, file='/tmp/fortsh_menu_debug.txt', position='append', action='write')
-    write(debug_unit, '(a)') '=== ACCEPT_MENU_SELECTION ==='
-    write(debug_unit, '(a,i0)') 'menu_prefix_len = ', input_state%menu_prefix_len
-    write(debug_unit, '(a,i0)') 'buffer length before = ', input_state%length
-    if (input_state%length > 0) then
-      write(debug_unit, '(a,a,a)') 'buffer before = "', input_state%buffer(:input_state%length), '"'
-    end if
-    if (input_state%menu_prefix_len > 0) then
-      write(debug_unit, '(a,a,a)') 'menu_prefix = "', &
-        input_state%menu_prefix(:input_state%menu_prefix_len), '"'
-      ! Show character codes
-      write(debug_unit, '(a)', advance='no') 'menu_prefix chars: '
-      do i = 1, input_state%menu_prefix_len
-        write(debug_unit, '(i0,1x)', advance='no') ichar(input_state%menu_prefix(i:i))
-      end do
-      write(debug_unit, '(a)') ''
-    end if
-    write(debug_unit, '(a,a,a)') 'selected item = "', &
-      trim(input_state%menu_items(input_state%menu_selection)), '"'
-
     if (input_state%menu_prefix_len > 0) then
       ! Copy directly from menu_prefix character-by-character (avoid temp assignment)
+      ! CRITICAL: Don't use intermediate variable - flang-new bug causes corruption
       do i = 1, input_state%menu_prefix_len
         ch = input_state%menu_prefix(i:i)
-        write(debug_unit, '(a,i0,a,i0,a,a)') 'Copy char ', i, ' (code=', ichar(ch), '): "', ch, '"'
         completed_len = completed_len + 1
         completed_line(completed_len:completed_len) = ch
       end do
@@ -3431,10 +3410,6 @@ contains
       completed_len = completed_len + 1
       completed_line(completed_len:completed_len) = ch
     end do
-
-    write(debug_unit, '(a,a,a)') 'completed_line = "', completed_line(:completed_len), '"'
-    write(debug_unit, '(a,i0)') 'completed_len = ', completed_len
-    close(debug_unit)
 
     ! Exit menu mode FIRST (clears menu from screen and positions cursor at start of command line)
     call exit_menu_select_mode(input_state)
@@ -4033,7 +4008,7 @@ contains
       case('1', '2', '3', '4', '5', '6')
         ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C)
         ! Parse it to check if it's a key we care about
-        call handle_extended_escape_sequence(input_state)
+        call handle_extended_escape_sequence(input_state, done)
       case default
         ! Unknown escape sequence - ignore it
         continue
@@ -4076,8 +4051,9 @@ contains
   end subroutine
 
   ! Handle extended escape sequences like ESC[1;5C (Ctrl+Right Arrow)
-  subroutine handle_extended_escape_sequence(input_state)
+  subroutine handle_extended_escape_sequence(input_state, done)
     type(input_state_t), intent(inout) :: input_state
+    logical, intent(inout) :: done
     character :: ch, modifier, terminator
     logical :: success
     integer :: count
@@ -4111,15 +4087,15 @@ contains
         ! Check for Alt+Up arrow (modifier=3, terminator=A)
         else if (modifier == '3' .and. terminator == 'A') then
           ! Alt+Up - Go to parent directory (cd ..)
-          call handle_alt_up(input_state)
+          call handle_alt_up(input_state, done)
         ! Check for Alt+Left arrow (modifier=3, terminator=D)
         else if (modifier == '3' .and. terminator == 'D') then
           ! Alt+Left - Go to previous directory (prevd)
-          call handle_alt_left(input_state)
+          call handle_alt_left(input_state, done)
         ! Check for Alt+Right arrow (modifier=3, terminator=C)
         else if (modifier == '3' .and. terminator == 'C') then
           ! Alt+Right - Go to next directory (nextd)
-          call handle_alt_right(input_state)
+          call handle_alt_right(input_state, done)
         end if
         ! For other extended sequences, we just consume them
         return
@@ -5037,9 +5013,10 @@ contains
     input_state%dirty = .true.
   end subroutine
 
-  ! Alt+Up: Replace line with "cd .." (Fish-style parent directory navigation)
-  subroutine handle_alt_up(input_state)
+  ! Alt+Up: Replace line with "cd .." and execute (Fish-style parent directory navigation)
+  subroutine handle_alt_up(input_state, done)
     type(input_state_t), intent(inout) :: input_state
+    logical, intent(inout) :: done
     character(len=5) :: cmd
 
     cmd = 'cd ..'
@@ -5056,12 +5033,20 @@ contains
     input_state%suggestion = ''
     input_state%suggestion_length = 0
 
-    input_state%dirty = .true.
+    ! Don't set dirty - we don't want to redraw, just execute silently (Fish behavior)
+    ! input_state%dirty = .true.
+
+    ! Print newline before execution (like pressing Enter)
+    write(output_unit, '()')
+
+    ! Auto-execute the command (Fish behavior)
+    done = .true.
   end subroutine
 
-  ! Alt+Left: Replace line with "prevd" (Fish-style previous directory)
-  subroutine handle_alt_left(input_state)
+  ! Alt+Left: Replace line with "prevd" and execute (Fish-style previous directory)
+  subroutine handle_alt_left(input_state, done)
     type(input_state_t), intent(inout) :: input_state
+    logical, intent(inout) :: done
     character(len=5) :: cmd
 
     cmd = 'prevd'
@@ -5078,12 +5063,20 @@ contains
     input_state%suggestion = ''
     input_state%suggestion_length = 0
 
-    input_state%dirty = .true.
+    ! Don't set dirty - we don't want to redraw, just execute silently (Fish behavior)
+    ! input_state%dirty = .true.
+
+    ! Print newline before execution (like pressing Enter)
+    write(output_unit, '()')
+
+    ! Auto-execute the command (Fish behavior)
+    done = .true.
   end subroutine
 
-  ! Alt+Right: Replace line with "nextd" (Fish-style next directory)
-  subroutine handle_alt_right(input_state)
+  ! Alt+Right: Replace line with "nextd" and execute (Fish-style next directory)
+  subroutine handle_alt_right(input_state, done)
     type(input_state_t), intent(inout) :: input_state
+    logical, intent(inout) :: done
     character(len=5) :: cmd
 
     cmd = 'nextd'
@@ -5100,7 +5093,14 @@ contains
     input_state%suggestion = ''
     input_state%suggestion_length = 0
 
-    input_state%dirty = .true.
+    ! Don't set dirty - we don't want to redraw, just execute silently (Fish behavior)
+    ! input_state%dirty = .true.
+
+    ! Print newline before execution (like pressing Enter)
+    write(output_unit, '()')
+
+    ! Auto-execute the command (Fish behavior)
+    done = .true.
   end subroutine
 
   ! Helper: Insert string at cursor position

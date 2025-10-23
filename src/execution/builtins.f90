@@ -281,8 +281,13 @@ contains
         ! Ignore error, not critical
       end if
 
-      ! Add new directory to history (Fish-style prevd/nextd)
-      call add_to_dir_history(shell, shell%cwd)
+      ! Add OLD directory to history so prevd can go back to it (Fish-style prevd/nextd)
+      write(error_unit, '(a,a,a)') '[CD] old_cwd="', trim(old_cwd), '"'
+      write(error_unit, '(a,a,a)') '[CD] new cwd="', trim(shell%cwd), '"'
+      write(error_unit, '(a,i0)') '[CD] history_size before=', shell%dir_history_size
+      call add_to_dir_history(shell, old_cwd)
+      write(error_unit, '(a,i0)') '[CD] history_size after=', shell%dir_history_size
+      write(error_unit, '(a,i0)') '[CD] history_index=', shell%dir_history_index
 
       ! Print new directory if cd -
       if (print_dir) then
@@ -3411,13 +3416,24 @@ contains
     character(len=*), intent(in) :: dir
     integer :: i
 
+    write(error_unit, '(a)') '[ADD_HISTORY] Entry'
+    write(error_unit, '(a,i0)') '[ADD_HISTORY] index=', shell%dir_history_index
+    write(error_unit, '(a,i0)') '[ADD_HISTORY] size=', shell%dir_history_size
+    write(error_unit, '(a,a,a)') '[ADD_HISTORY] dir="', trim(dir), '"'
+
     ! Don't add if it's the same as current position
     if (shell%dir_history_index > 0 .and. shell%dir_history_index <= shell%dir_history_size) then
-      if (trim(shell%dir_history(shell%dir_history_index)) == trim(dir)) return
+      if (trim(shell%dir_history(shell%dir_history_index)) == trim(dir)) then
+        ! Even though we're not adding, reset index to indicate "at current directory"
+        write(error_unit, '(a)') '[ADD_HISTORY] Duplicate detected, resetting index to 0'
+        shell%dir_history_index = 0
+        return
+      end if
     end if
 
-    ! If we're not at the end of history, truncate everything after current position
-    if (shell%dir_history_index < shell%dir_history_size) then
+    ! If we're browsing history (index > 0) and not at the end, truncate everything after current position
+    ! This implements browser-style history: go back, then do a new action = discard forward history
+    if (shell%dir_history_index > 0 .and. shell%dir_history_index < shell%dir_history_size) then
       shell%dir_history_size = shell%dir_history_index
     end if
 
@@ -3432,7 +3448,9 @@ contains
     end if
 
     shell%dir_history(shell%dir_history_size) = trim(dir)
-    shell%dir_history_index = shell%dir_history_size
+    ! Set index to 0 to indicate "at current directory, not browsing history"
+    ! prevd/nextd will handle this special case
+    shell%dir_history_index = 0
   end subroutine add_to_dir_history
 
   ! prevd builtin - go to previous directory in history
@@ -3440,13 +3458,27 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    if (shell%dir_history_index <= 1) then
-      write(error_unit, '(a)') 'prevd: no previous directory'
-      shell%last_exit_status = 1
-      return
-    end if
+    write(error_unit, '(a,i0)') '[PREVD] history_index=', shell%dir_history_index
+    write(error_unit, '(a,i0)') '[PREVD] history_size=', shell%dir_history_size
 
-    shell%dir_history_index = shell%dir_history_index - 1
+    ! Handle case where we're at current directory (not browsing history)
+    if (shell%dir_history_index == 0) then
+      if (shell%dir_history_size < 1) then
+        write(error_unit, '(a)') 'prevd: no previous directory'
+        shell%last_exit_status = 1
+        return
+      end if
+      ! Go to the most recent history entry
+      shell%dir_history_index = shell%dir_history_size
+    else
+      ! We're browsing history, check if we can go back further
+      if (shell%dir_history_index <= 1) then
+        write(error_unit, '(a)') 'prevd: no previous directory'
+        shell%last_exit_status = 1
+        return
+      end if
+      shell%dir_history_index = shell%dir_history_index - 1
+    end if
 
     if (change_directory(trim(shell%dir_history(shell%dir_history_index)))) then
       shell%oldpwd = shell%cwd
@@ -3465,6 +3497,14 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
+    ! Handle case where we're at current directory (not browsing history)
+    if (shell%dir_history_index == 0) then
+      write(error_unit, '(a)') 'nextd: no next directory'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! We're browsing history, check if we can go forward
     if (shell%dir_history_index >= shell%dir_history_size) then
       write(error_unit, '(a)') 'nextd: no next directory'
       shell%last_exit_status = 1
