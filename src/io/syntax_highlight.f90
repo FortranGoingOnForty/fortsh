@@ -444,7 +444,7 @@ contains
     ! DEBUG: write(*, '(a)') '[DEBUG colorize: exiting colorize_tokens]'
   end subroutine
 
-  ! Simple highlighting - just color the first token, avoid substring operations
+  ! Highlight all tokens, character-by-character to avoid substring operations
   subroutine build_simple_highlighted_string(input, tokens, num_tokens, colors, highlighted, actual_len, input_len)
     character(len=*), intent(in) :: input
     character(len=*), intent(in) :: tokens(:)
@@ -454,87 +454,107 @@ contains
     integer, intent(out) :: actual_len
     integer, intent(in) :: input_len
 
-    integer :: first_token_len, i, j, pos, color_len, reset_len
+    integer :: token_idx, token_len, i, j, pos, color_len, reset_len
+    integer :: input_pos, token_char_idx
     character(len=32) :: color_str, reset_str
     character(len=4096) :: local_buffer  ! Local copy to avoid substring on module variable
     character(len=1) :: ch
+    logical :: matched
 
     ! Initialize output buffer
     highlighted = ' '
     pos = 1
+    input_pos = 1
 
-    if (num_tokens > 0 .and. input_len > 0) then
-      ! Copy module_working_buffer to local variable to avoid substring temporaries
-      local_buffer = module_working_buffer
+    if (num_tokens == 0 .or. input_len == 0) then
+      actual_len = 0
+      return
+    end if
 
-      first_token_len = len_trim(tokens(1))
-      color_str = trim(colors(1))
-      reset_str = trim(color_code(COLOR_RESET))
-      color_len = len_trim(color_str)
-      reset_len = len_trim(reset_str)
+    ! Copy module_working_buffer to local variable to avoid substring temporaries
+    local_buffer = module_working_buffer
 
-      ! Write: color_code + first_token + reset_code + rest_of_input
+    reset_str = trim(color_code(COLOR_RESET))
+    reset_len = len_trim(reset_str)
 
-      ! 1. Copy color code
-      do i = 1, color_len
-        if (pos <= MAX_HIGHLIGHT_LEN) then
-          highlighted(pos:pos) = color_str(i:i)
-          pos = pos + 1
+    ! Process input character-by-character, matching against tokens
+    token_idx = 1
+
+    do while (input_pos <= input_len .and. pos <= MAX_HIGHLIGHT_LEN)
+      ch = local_buffer(input_pos:input_pos)
+
+      ! Skip whitespace between tokens
+      if (ch == ' ') then
+        highlighted(pos:pos) = ' '
+        pos = pos + 1
+        input_pos = input_pos + 1
+        cycle
+      end if
+
+      ! Try to match current position with next token
+      matched = .false.
+      if (token_idx <= num_tokens) then
+        token_len = len_trim(tokens(token_idx))
+
+        ! Check if this position matches the start of the next token
+        if (token_len > 0) then
+          ! Compare character-by-character
+          matched = .true.
+          do j = 1, token_len
+            if (input_pos + j - 1 > input_len) then
+              matched = .false.
+              exit
+            end if
+            if (local_buffer(input_pos + j - 1 : input_pos + j - 1) /= tokens(token_idx)(j:j)) then
+              matched = .false.
+              exit
+            end if
+          end do
+
+          if (matched) then
+            ! Output color code
+            color_str = trim(colors(token_idx))
+            color_len = len_trim(color_str)
+            do i = 1, color_len
+              if (pos <= MAX_HIGHLIGHT_LEN) then
+                highlighted(pos:pos) = color_str(i:i)
+                pos = pos + 1
+              end if
+            end do
+
+            ! Output token characters
+            do i = 1, token_len
+              if (pos <= MAX_HIGHLIGHT_LEN) then
+                highlighted(pos:pos) = tokens(token_idx)(i:i)
+                pos = pos + 1
+              end if
+            end do
+
+            ! Output reset code
+            do i = 1, reset_len
+              if (pos <= MAX_HIGHLIGHT_LEN) then
+                highlighted(pos:pos) = reset_str(i:i)
+                pos = pos + 1
+              end if
+            end do
+
+            input_pos = input_pos + token_len
+            token_idx = token_idx + 1
+          end if
         end if
-      end do
+      end if
 
-      ! 2. Copy first token (from tokens array, not input - avoids substring on input)
-      do i = 1, first_token_len
-        if (pos <= MAX_HIGHLIGHT_LEN) then
-          highlighted(pos:pos) = tokens(1)(i:i)
-          pos = pos + 1
-        end if
-      end do
-
-      ! 3. Copy reset code
-      do i = 1, reset_len
-        if (pos <= MAX_HIGHLIGHT_LEN) then
-          highlighted(pos:pos) = reset_str(i:i)
-          pos = pos + 1
-        end if
-      end do
-
-      ! 4. Copy rest of input after first token
-      ! Skip whitespace and the first token in input, copy the rest
-      j = first_token_len + 1
-      do while (j <= input_len)
-        ch = local_buffer(j:j)
-        if (ch /= ' ') exit  ! Exit when we hit non-whitespace
-        ! Copy whitespace
-        if (pos <= MAX_HIGHLIGHT_LEN) then
-          highlighted(pos:pos) = ' '
-          pos = pos + 1
-        end if
-        j = j + 1
-      end do
-
-      ! Copy remaining characters
-      do while (j <= input_len)
-        ch = local_buffer(j:j)
+      ! If no match, just copy the character as-is
+      if (.not. matched) then
         if (pos <= MAX_HIGHLIGHT_LEN) then
           highlighted(pos:pos) = ch
           pos = pos + 1
         end if
-        j = j + 1
-      end do
+        input_pos = input_pos + 1
+      end if
+    end do
 
-      actual_len = pos - 1
-    else
-      ! No tokens or empty input - copy from local buffer to avoid substring on input
-      local_buffer = module_working_buffer
-      actual_len = input_len
-      do i = 1, input_len
-        if (i <= MAX_HIGHLIGHT_LEN) then
-          ch = local_buffer(i:i)
-          highlighted(i:i) = ch
-        end if
-      end do
-    end if
+    actual_len = pos - 1
   end subroutine
 
   ! Build highlighted string with ANSI codes - preserves original spacing
@@ -757,7 +777,7 @@ contains
 
   ! Check if command exists in PATH
   function command_exists_in_path(command) result(exists)
-    use system_interface, only: file_is_executable
+    use system_interface, only: file_is_executable, get_environment_var
     character(len=*), intent(in) :: command
     logical :: exists
 
@@ -765,19 +785,17 @@ contains
     character(len=:), allocatable :: path_env, full_path, dir
     integer :: path_start, path_end, colon_pos
 
-    ! Allocate buffers on heap
-    allocate(character(len=MAX_PATH_LEN) :: path_env)
-    allocate(character(len=MAX_PATH_LEN) :: full_path)
-    allocate(character(len=1024) :: dir)
-
     exists = .false.
 
-    ! Get PATH environment variable using intrinsic
-    path_env = ''
-    call get_environment_variable('PATH', path_env)
+    ! Get PATH environment variable using system_interface (not intrinsic!)
+    path_env = get_environment_var('PATH')
     if (len_trim(path_env) == 0) then
       return
     end if
+
+    ! Allocate buffers on heap
+    allocate(character(len=MAX_PATH_LEN) :: full_path)
+    allocate(character(len=1024) :: dir)
 
     ! Search each directory in PATH
     path_start = 1
