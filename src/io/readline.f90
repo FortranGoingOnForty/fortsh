@@ -131,7 +131,7 @@ module readline
 
     ! Menu selection support (zsh/fish-style interactive completion)
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
-    character(len=:), allocatable :: menu_items(:)  ! Completion items for menu (allocatable array)
+    character(len=MAX_MENU_ITEM_LEN) :: menu_items(MAX_MENU_ITEMS)  ! Completion items for menu (fixed-length to avoid flang-new bug)
     integer :: menu_num_items = 0  ! Number of items in menu
     integer :: menu_selection = 1  ! Currently selected item (1-based)
     character(len=:), allocatable :: menu_prefix  ! Command prefix before completion word
@@ -202,8 +202,7 @@ contains
     allocate(character(len=MAX_LINE_LEN) :: state%menu_prompt)
     allocate(character(len=256) :: state%selected_process_name)
 
-    ! Allocate menu items array
-    allocate(character(len=MAX_MENU_ITEM_LEN) :: state%menu_items(MAX_MENU_ITEMS))
+    ! menu_items is now fixed-length array, no allocation needed
 
     ! Initialize all strings to empty
     state%buffer = ''
@@ -285,7 +284,7 @@ contains
       if (allocated(state%menu_prefix)) deallocate(state%menu_prefix)
       if (allocated(state%menu_prompt)) deallocate(state%menu_prompt)
       if (allocated(state%selected_process_name)) deallocate(state%selected_process_name)
-      if (allocated(state%menu_items)) deallocate(state%menu_items)
+      ! menu_items is now fixed-length, no deallocation needed
       state%initialized = .false.
     end if
   end subroutine
@@ -1884,24 +1883,33 @@ contains
   end subroutine
 
   ! Enhanced tab completion with programmable completion system integration
-  subroutine enhanced_tab_complete(partial_input, completions, num_completions, shell)
+  subroutine enhanced_tab_complete(partial_input, completions, num_completions, shell, input_len)
+    use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: partial_input
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     type(shell_state_t), intent(inout), optional :: shell
+    integer, intent(in), optional :: input_len
 
     character(len=MAX_LINE_LEN) :: last_word, prefix_part, command_name
     character(len=256) :: temp_completions(MAX_COMPLETIONS)  ! Must match completion module's expectation
-    integer :: last_space_pos, i, first_space_pos, temp_count
+    integer :: last_space_pos, i, first_space_pos, temp_count, actual_len
     logical :: is_command, used_programmable_completion
     type(completion_spec_t) :: spec
+
+    ! Use provided length if given, otherwise use len_trim
+    if (present(input_len)) then
+      actual_len = input_len
+    else
+      actual_len = len_trim(partial_input)
+    end if
 
     num_completions = 0
     used_programmable_completion = .false.
 
     ! Find the last word to complete
     last_space_pos = 0
-    do i = len_trim(partial_input), 1, -1
+    do i = actual_len, 1, -1
       if (partial_input(i:i) == ' ') then
         last_space_pos = i
         exit
@@ -2614,24 +2622,32 @@ contains
   end function
 
   ! Enhanced tab completion that handles partial completion
-  subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
+  subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed, input_len)
     character(len=*), intent(in) :: partial_input
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     character(len=*), intent(out) :: completed_line
     logical, intent(out) :: completed
+    integer, intent(in), optional :: input_len
 
     character(len=MAX_LINE_LEN) :: common_prefix, prefix_part, last_word
     character(len=4096) :: expanded_matches
-    integer :: last_space_pos, i, pos, j
+    integer :: last_space_pos, i, pos, j, actual_len
     logical :: is_glob_pattern
+
+    ! Use provided length if given, otherwise use len_trim
+    if (present(input_len)) then
+      actual_len = input_len
+    else
+      actual_len = len_trim(partial_input)
+    end if
 
     completed = .false.
     completed_line = partial_input
 
     ! Find the prefix (command and any earlier arguments)
     last_space_pos = 0
-    do i = len_trim(partial_input), 1, -1
+    do i = actual_len, 1, -1
       if (partial_input(i:i) == ' ') then
         last_space_pos = i
         exit
@@ -2649,7 +2665,8 @@ contains
     ! Check if we're completing a glob pattern
     is_glob_pattern = has_glob_chars(last_word)
 
-    call enhanced_tab_complete(partial_input, completions, num_completions)
+    ! Pass the actual length to preserve trailing spaces
+    call enhanced_tab_complete(partial_input, completions, num_completions, input_len=actual_len)
 
     if (num_completions == 0) then
       ! No completions found
@@ -2852,13 +2869,15 @@ contains
   ! Separate tab completion handler to work around macOS ARM64 crash
   ! This modifies the SAVE'd input_state directly without problematic returns
   subroutine handle_tab_key_separate(input_state)
+    use iso_fortran_env, only: error_unit
     type(input_state_t), intent(inout) :: input_state
-    integer :: tab_num_completions, i, last_space_pos
+    integer :: tab_num_completions, i, j, last_space_pos, copy_len
     logical :: tab_completed, tab_made_progress, tab_buffer_changed
     character(len=MAX_LINE_LEN) :: tab_completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: tab_partial_input
     character(len=MAX_LINE_LEN) :: tab_completed_line
     character(len=MAX_LINE_LEN) :: tab_saved_input
+    character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
 
     ! Exit history mode if we're browsing
     if (input_state%in_history) then
@@ -2874,9 +2893,9 @@ contains
     tab_buffer_changed = (trim(input_state%buffer(:input_state%length)) /= &
                      trim(input_state%last_completion_buffer))
 
-    ! Attempt smart completion
+    ! Attempt smart completion (pass input_state%length to preserve trailing spaces)
     call smart_tab_complete(tab_partial_input, tab_completions, &
-                           tab_num_completions, tab_completed_line, tab_completed)
+                           tab_num_completions, tab_completed_line, tab_completed, input_state%length)
 
     if (tab_num_completions == 0) then
       ! No completions found - ring bell
@@ -2899,14 +2918,19 @@ contains
             ! First tab - store completions and draw grid menu
             input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
-              ! Truncate to fit menu item buffer
-              input_state%menu_items(i) = tab_completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i))))
+              ! Copy via temp buffer to avoid flang-new bugs with allocatables
+              temp_buffer = ' '
+              copy_len = min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i)))
+              do j = 1, copy_len
+                temp_buffer(j:j) = tab_completions(i)(j:j)
+              end do
+              input_state%menu_items(i) = temp_buffer
             end do
             input_state%menu_selection = 1
             call draw_completion_menu(input_state, .true.)
             input_state%last_completion_buffer = input_state%buffer(:input_state%length)
             input_state%completions_shown = .true.
-            input_state%dirty = .true.
+            ! Don't set dirty - menu is already drawn, no need to redraw command line
           else
             ! Second tab - enter menu selection mode
             ! Activate menu mode (items already stored and displayed)
@@ -2950,8 +2974,13 @@ contains
         ! First tab - store completions and draw grid menu
         input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
-          ! Truncate to fit menu item buffer
-          input_state%menu_items(i) = tab_completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i))))
+          ! Copy via temp buffer to avoid flang-new bugs with allocatables
+          temp_buffer = ' '
+          copy_len = min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i)))
+          do j = 1, copy_len
+            temp_buffer(j:j) = tab_completions(i)(j:j)
+          end do
+          input_state%menu_items(i) = temp_buffer
         end do
         input_state%menu_selection = 1
         call draw_completion_menu(input_state, .true.)
@@ -3001,7 +3030,7 @@ contains
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_LINE_LEN) :: saved_input
-    integer :: num_completions, i
+    integer :: num_completions, i, j
     logical :: completed, made_progress, buffer_changed
 
     ! Exit history mode if we're browsing
@@ -3052,7 +3081,11 @@ contains
             input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
               ! Truncate to fit menu item buffer
-          input_state%menu_items(i) = completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(completions(i))))
+          ! Copy character by character to avoid substring temporaries (flang-new bug)
+          input_state%menu_items(i) = ' '  ! Initialize with spaces
+          do j = 1, min(MAX_MENU_ITEM_LEN, len_trim(completions(i)))
+            input_state%menu_items(i)(j:j) = completions(i)(j:j)
+          end do
             end do
             input_state%menu_selection = 1
             call draw_completion_menu(input_state, .true.)
@@ -3076,7 +3109,11 @@ contains
         input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
           ! Truncate to fit menu item buffer
-          input_state%menu_items(i) = completions(i)(1:min(MAX_MENU_ITEM_LEN, len_trim(completions(i))))
+          ! Copy character by character to avoid substring temporaries (flang-new bug)
+          input_state%menu_items(i) = ' '  ! Initialize with spaces
+          do j = 1, min(MAX_MENU_ITEM_LEN, len_trim(completions(i)))
+            input_state%menu_items(i)(j:j) = completions(i)(j:j)
+          end do
         end do
         input_state%menu_selection = 1
         call draw_completion_menu(input_state, .true.)
@@ -3144,6 +3181,7 @@ contains
   end subroutine
 
   subroutine draw_completion_menu(input_state, initial_draw)
+    use iso_fortran_env, only: error_unit
     type(input_state_t), intent(in) :: input_state
     logical, intent(in) :: initial_draw
     integer :: i, cols_per_item, items_per_row, row, col, item_idx
@@ -3159,6 +3197,7 @@ contains
     ! Add newline only on initial draw, not on redraw
     if (initial_draw) then
       write(output_unit, '()')  ! New line
+      write(output_unit, '(a)') '=== TAB COMPLETION MENU ==='  ! Visible marker
     end if
 
     ! Calculate layout - try to fit multiple items per row
@@ -3182,7 +3221,10 @@ contains
           write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
         end if
 
-        write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+        ! Write menu item character by character to avoid trim() creating stack temporary
+        do i = 1, len_trim(input_state%menu_items(item_idx))
+          write(output_unit, '(a)', advance='no') input_state%menu_items(item_idx)(i:i)
+        end do
 
         if (item_idx == input_state%menu_selection) then
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
@@ -3272,14 +3314,19 @@ contains
   subroutine accept_menu_selection(input_state)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: completed_line
+    integer :: i
 
-    ! Build completed command with selected item
+    ! Build completed command with selected item (avoid all substring operations to prevent heap corruption)
+    completed_line = ''
     if (input_state%menu_prefix_len > 0) then
-      ! Use stored prefix_len which includes the trailing space
-      completed_line = input_state%menu_prefix(:input_state%menu_prefix_len) // &
-                      trim(input_state%menu_items(input_state%menu_selection))
+      ! Copy prefix character by character to avoid substring on allocatable
+      do i = 1, input_state%menu_prefix_len
+        completed_line(i:i) = input_state%menu_prefix(i:i)
+      end do
+      ! Append selected item (whole string assignment)
+      completed_line(input_state%menu_prefix_len+1:) = input_state%menu_items(input_state%menu_selection)
     else
-      completed_line = trim(input_state%menu_items(input_state%menu_selection))
+      completed_line = input_state%menu_items(input_state%menu_selection)
     end if
 
     ! Exit menu mode FIRST (clears menu from screen and positions cursor at start of command line)
@@ -3428,12 +3475,16 @@ contains
     items_per_row = max(1, term_cols / cols_per_item)
     num_menu_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
-    ! Build preview line: prefix + selected item
+    ! Build preview line: prefix + selected item (avoid all substring operations to prevent heap corruption)
+    preview_line = ''
     if (input_state%menu_prefix_len > 0) then
-      preview_line = input_state%menu_prefix(:input_state%menu_prefix_len) // &
-                    trim(input_state%menu_items(input_state%menu_selection))
+      ! Copy prefix character by character to avoid substring on allocatable
+      do i = 1, input_state%menu_prefix_len
+        preview_line(i:i) = input_state%menu_prefix(i:i)
+      end do
+      preview_line(input_state%menu_prefix_len+1:) = input_state%menu_items(input_state%menu_selection)
     else
-      preview_line = trim(input_state%menu_items(input_state%menu_selection))
+      preview_line = input_state%menu_items(input_state%menu_selection)
     end if
 
     ! Move cursor up past menu to command line
@@ -3449,7 +3500,8 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
 
     ! Apply syntax highlighting to preview
-    call highlight_command_line(trim(preview_line), highlighted_preview, highlighted_len)
+    ! Pass length explicitly to avoid trim() creating a temporary substring
+    call highlight_command_line(preview_line, highlighted_preview, highlighted_len, len_trim(preview_line))
 
     ! Calculate prompt length including trailing space if present
     prompt_len = len_trim(input_state%menu_prompt)
