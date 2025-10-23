@@ -390,6 +390,7 @@ contains
 
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
+    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
     flush(output_unit)
 
     module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
@@ -664,6 +665,7 @@ contains
 
             ! Redraw prompt and buffer
             write(output_unit, '(a)', advance='no') prompt
+            write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
               call highlight_command_line(module_input_state%buffer, &
@@ -679,8 +681,8 @@ contains
               ! Display autosuggestion if present (only when cursor is at end)
               if (module_input_state%suggestion_length > 0 .and. &
                   module_input_state%cursor_pos == module_input_state%length) then
-                ! Calculate available space on current line
-                available_space = term_cols - mod(prompt_visual_len + module_input_state%length, term_cols)
+                ! Calculate available space on current line (add 1 for space after prompt)
+                available_space = term_cols - mod(prompt_visual_len + 1 + module_input_state%length, term_cols)
                 if (available_space < 0) available_space = 0
 
                 ! Truncate suggestion to fit
@@ -756,6 +758,7 @@ contains
 
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
+    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
     flush(output_unit)
 
     ! Read line using standard input (no special key handling yet)
@@ -770,13 +773,14 @@ contains
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
-    
+
     character(len=MAX_LINE_LEN) :: temp_line
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     integer :: num_completions, tab_pos
-    
+
     ! Print prompt
     write(output_unit, '(a)', advance='no') prompt
+    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
     flush(output_unit)
     
     ! Read line using standard input
@@ -4293,8 +4297,8 @@ contains
       prompt_visual_len = 0
     end if
 
-    ! Calculate current cursor position in visual characters
-    cursor_visual_pos = prompt_visual_len + input_state%cursor_pos
+    ! Calculate current cursor position in visual characters (add 1 for space after prompt)
+    cursor_visual_pos = prompt_visual_len + 1 + input_state%cursor_pos
 
     ! Calculate which line the cursor is currently on (0-indexed)
     ! Extra safety: ensure term_cols is positive before division
@@ -4324,6 +4328,7 @@ contains
 
     ! Redraw prompt and full buffer with syntax highlighting
     write(output_unit, '(a)', advance='no') prompt
+    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
     if (input_state%length > 0) then
       call highlight_command_line(input_state%buffer(:input_state%length), highlighted, highlighted_len)
       if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
@@ -4334,8 +4339,8 @@ contains
     ! Display autosuggestion if cursor is at end
     ! IMPORTANT: Truncate suggestion to prevent wrapping beyond terminal width
     if (input_state%suggestion_length > 0 .and. input_state%cursor_pos == input_state%length) then
-      ! Calculate available space on current line
-      available_space = term_cols - mod(prompt_visual_len + input_state%length, term_cols)
+      ! Calculate available space on current line (add 1 for space after prompt)
+      available_space = term_cols - mod(prompt_visual_len + 1 + input_state%length, term_cols)
 
       ! Safety check: ensure available_space is positive
       if (available_space < 0) available_space = 0
@@ -4582,6 +4587,7 @@ contains
 
     ! Draw prompt
     write(output_unit, '(a)', advance='no') prompt
+    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
 
     ! Draw the current buffer with syntax highlighting
     if (input_state%length > 0) then
