@@ -138,6 +138,10 @@ module readline
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
     character(len=MAX_LINE_LEN) :: menu_prompt  ! Prompt when in menu mode (fixed-length to avoid flang-new bugs)
     logical :: skip_cursor_up_on_redraw = .false.  ! Skip upward cursor movement on next redraw
+    ! Cached grid layout (avoid recalculating on every navigation)
+    integer :: menu_cols_per_item = 0
+    integer :: menu_items_per_row = 0
+    integer :: menu_num_rows = 0
 
     ! Process kill mode support (Ctrl-X)
     logical :: in_process_kill_mode = .false.  ! Currently in process kill mode
@@ -3194,10 +3198,12 @@ contains
   end subroutine
 
   subroutine draw_completion_menu(input_state, initial_draw)
-    type(input_state_t), intent(in) :: input_state
+    type(input_state_t), intent(inout) :: input_state  ! inout to cache layout
     logical, intent(in) :: initial_draw
-    integer :: i, cols_per_item, items_per_row, row, col, item_idx
-    integer :: term_rows, term_cols
+    integer :: i, j, cols_per_item, items_per_row, row, col, item_idx
+    integer :: term_rows, term_cols, item_len
+    character(len=MAX_MENU_ITEM_LEN) :: current_item
+    character(len=1) :: ch
     logical :: success
 
     ! Get terminal size
@@ -3211,14 +3217,26 @@ contains
       write(output_unit, '()')  ! New line
     end if
 
-    ! Calculate layout - try to fit multiple items per row
-    cols_per_item = 0
-    do i = 1, input_state%menu_num_items
-      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
-    end do
-    cols_per_item = cols_per_item + 2  ! Add spacing
+    ! Calculate layout only if not cached or on initial draw
+    if (initial_draw .or. input_state%menu_cols_per_item == 0) then
+      cols_per_item = 0
+      do i = 1, input_state%menu_num_items
+        current_item = input_state%menu_items(i)
+        item_len = len_trim(current_item)
+        cols_per_item = max(cols_per_item, item_len)
+      end do
+      cols_per_item = cols_per_item + 2  ! Add spacing
+      items_per_row = max(1, term_cols / cols_per_item)
 
-    items_per_row = max(1, term_cols / cols_per_item)
+      ! Cache the layout
+      input_state%menu_cols_per_item = cols_per_item
+      input_state%menu_items_per_row = items_per_row
+      input_state%menu_num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+    else
+      ! Use cached layout
+      cols_per_item = input_state%menu_cols_per_item
+      items_per_row = input_state%menu_items_per_row
+    end if
 
     ! Draw menu items
     item_idx = 1
@@ -3227,13 +3245,20 @@ contains
       do col = 1, items_per_row
         if (item_idx > input_state%menu_num_items) exit
 
+        ! Copy item to local variable to avoid substring operations on array element
+        current_item = input_state%menu_items(item_idx)
+        item_len = len_trim(current_item)
+
         ! Highlight selected item with reverse video
         if (item_idx == input_state%menu_selection) then
           write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
         end if
 
-        ! Write menu item (menu_items is fixed-length, so trim is safe)
-        write(output_unit, '(a)', advance='no') trim(input_state%menu_items(item_idx))
+        ! Write menu item character by character from local variable
+        do j = 1, item_len
+          ch = current_item(j:j)
+          write(output_unit, '(a)', advance='no') ch
+        end do
 
         if (item_idx == input_state%menu_selection) then
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
@@ -3242,7 +3267,7 @@ contains
         ! Pad to column width for alignment (except last column in row)
         if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
           ! Pad with spaces to reach full column width
-          do i = len_trim(input_state%menu_items(item_idx)) + 1, cols_per_item
+          do j = item_len + 1, cols_per_item
             write(output_unit, '(a)', advance='no') ' '
           end do
         end if
@@ -3260,39 +3285,69 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer, intent(in) :: key
     logical, intent(inout) :: done
-    integer :: old_selection
+    integer :: old_selection, new_selection
+    integer :: items_per_row
+    integer :: current_row, current_col, target_row, target_col
 
     if (.not. input_state%in_menu_select) return
 
     old_selection = input_state%menu_selection
 
     select case (key)
-    case (KEY_UP)
-      ! Move up (previous item)
+    case (KEY_UP, KEY_DOWN)
+      ! 2D navigation: move up/down by one row in the grid
+      ! Use cached layout from input_state (avoids repeated array iterations)
+      items_per_row = input_state%menu_items_per_row
+
+      ! Calculate current position in grid (1-indexed)
+      current_row = (input_state%menu_selection - 1) / items_per_row + 1
+      current_col = mod(input_state%menu_selection - 1, items_per_row) + 1
+
+      if (key == KEY_UP) then
+        ! Move up one row
+        target_row = current_row - 1
+        if (target_row < 1) then
+          ! Wrap to bottom row, same column
+          target_row = (input_state%menu_num_items - 1) / items_per_row + 1
+        end if
+      else  ! KEY_DOWN
+        ! Move down one row
+        target_row = current_row + 1
+        if ((target_row - 1) * items_per_row + current_col > input_state%menu_num_items) then
+          ! Wrap to top row, same column
+          target_row = 1
+        end if
+      end if
+
+      ! Calculate new selection
+      new_selection = (target_row - 1) * items_per_row + current_col
+      ! Clamp to valid range
+      if (new_selection < 1) new_selection = 1
+      if (new_selection > input_state%menu_num_items) then
+        ! If target position doesn't exist (incomplete last row), go to last item
+        new_selection = input_state%menu_num_items
+      end if
+      input_state%menu_selection = new_selection
+
+    case (KEY_LEFT)
+      ! Move left one item (same row)
       input_state%menu_selection = input_state%menu_selection - 1
       if (input_state%menu_selection < 1) then
         input_state%menu_selection = input_state%menu_num_items  ! Wrap to end
       end if
 
-    case (KEY_DOWN)
-      ! Move down (next item)
+    case (KEY_RIGHT)
+      ! Move right one item (same row)
       input_state%menu_selection = input_state%menu_selection + 1
       if (input_state%menu_selection > input_state%menu_num_items) then
         input_state%menu_selection = 1  ! Wrap to beginning
       end if
 
-    case (KEY_RIGHT, KEY_TAB)
-      ! Move to next item (like Tab cycling)
+    case (KEY_TAB)
+      ! Tab continues to cycle sequentially through all items
       input_state%menu_selection = input_state%menu_selection + 1
       if (input_state%menu_selection > input_state%menu_num_items) then
         input_state%menu_selection = 1
-      end if
-
-    case (KEY_LEFT)
-      ! Move to previous item
-      input_state%menu_selection = input_state%menu_selection - 1
-      if (input_state%menu_selection < 1) then
-        input_state%menu_selection = input_state%menu_num_items
       end if
 
     case (10, 13)  ! Enter (LF or CR)
@@ -3322,22 +3377,39 @@ contains
 
   subroutine accept_menu_selection(input_state)
     type(input_state_t), intent(inout) :: input_state
-    character(len=MAX_LINE_LEN) :: completed_line
+    character(len=MAX_LINE_LEN) :: completed_line, current_prefix
+    character(len=MAX_MENU_ITEM_LEN) :: current_item
+    character(len=1) :: ch
+    integer :: i, j, item_len, completed_len
 
-    ! Build completed command with selected item (all fixed-length so simple concatenation is safe)
+    ! Build completed command character by character (copy to local vars first)
+    completed_line = ''
+    completed_len = 0
+
     if (input_state%menu_prefix_len > 0) then
-      completed_line = trim(input_state%menu_prefix) // trim(input_state%menu_items(input_state%menu_selection))
-    else
-      completed_line = input_state%menu_items(input_state%menu_selection)
+      current_prefix = input_state%menu_prefix
+      do i = 1, input_state%menu_prefix_len
+        ch = current_prefix(i:i)
+        completed_len = completed_len + 1
+        completed_line(completed_len:completed_len) = ch
+      end do
     end if
+
+    current_item = input_state%menu_items(input_state%menu_selection)
+    item_len = len_trim(current_item)
+    do j = 1, item_len
+      ch = current_item(j:j)
+      completed_len = completed_len + 1
+      completed_line(completed_len:completed_len) = ch
+    end do
 
     ! Exit menu mode FIRST (clears menu from screen and positions cursor at start of command line)
     call exit_menu_select_mode(input_state)
 
     ! Update buffer after menu is cleared
     input_state%buffer = completed_line
-    input_state%length = len_trim(completed_line)
-    input_state%cursor_pos = input_state%length  ! Cursor at end
+    input_state%length = completed_len
+    input_state%cursor_pos = completed_len  ! Cursor at end
 
     ! CRITICAL: Set flag to skip upward cursor movement on redraw
     ! We're already on the first line after exit_menu_select_mode,
@@ -3398,26 +3470,13 @@ contains
   end subroutine
 
   subroutine update_menu_selection(input_state, old_selection)
-    type(input_state_t), intent(in) :: input_state
+    type(input_state_t), intent(inout) :: input_state  ! inout to pass to draw function
     integer, intent(in) :: old_selection
-    integer :: term_rows, term_cols, items_per_row, i, num_menu_rows
-    integer :: cols_per_item
+    integer :: i, num_menu_rows
     logical :: success
 
-    ! Calculate number of rows the menu occupies
-    success = get_terminal_size(term_rows, term_cols)
-    if (.not. success .or. term_cols <= 0) then
-      term_cols = 80
-    end if
-
-    ! Calculate how many items fit per row (same logic as draw_completion_menu)
-    cols_per_item = 0
-    do i = 1, input_state%menu_num_items
-      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
-    end do
-    cols_per_item = cols_per_item + 2  ! Add spacing
-    items_per_row = max(1, term_cols / cols_per_item)
-    num_menu_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+    ! Use cached layout from input_state (avoids repeated array iterations)
+    num_menu_rows = input_state%menu_num_rows
 
     ! Move cursor up to the beginning of the menu
     do i = 1, num_menu_rows
@@ -3451,37 +3510,38 @@ contains
 
   subroutine update_live_preview(input_state)
     type(input_state_t), intent(in) :: input_state
-    integer :: i, term_rows, term_cols, cols_per_item, items_per_row, num_menu_rows
-    integer :: prompt_len, highlighted_len
-    character(len=MAX_LINE_LEN) :: preview_line
+    integer :: i, j, num_menu_rows
+    integer :: prompt_len, highlighted_len, item_len, preview_len
+    character(len=MAX_LINE_LEN) :: preview_line, current_prefix
+    character(len=MAX_MENU_ITEM_LEN) :: current_item
     character(len=MAX_HIGHLIGHT_LEN) :: highlighted_preview  ! Fixed-length to avoid flang-new bugs
-    logical :: success
+    character(len=1) :: ch
 
     ! Initialize buffer
     highlighted_preview = ' '
     highlighted_len = 0
+    preview_line = ''
 
-    ! Calculate menu layout to know how many lines to navigate
-    success = get_terminal_size(term_rows, term_cols)
-    if (.not. success .or. term_cols <= 0) then
-      term_cols = 80
-    end if
+    ! Use cached menu layout (avoids repeated array iterations and len_trim calls)
+    num_menu_rows = input_state%menu_num_rows
 
-    ! Calculate menu dimensions (same logic as update_menu_selection)
-    cols_per_item = 0
-    do i = 1, input_state%menu_num_items
-      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
-    end do
-    cols_per_item = cols_per_item + 2
-    items_per_row = max(1, term_cols / cols_per_item)
-    num_menu_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
-
-    ! Build preview line: prefix + selected item (all fixed-length so simple concatenation is safe)
+    ! Build preview line character by character (copy to local vars first)
+    preview_len = 0
     if (input_state%menu_prefix_len > 0) then
-      preview_line = trim(input_state%menu_prefix) // trim(input_state%menu_items(input_state%menu_selection))
-    else
-      preview_line = input_state%menu_items(input_state%menu_selection)
+      current_prefix = input_state%menu_prefix
+      do i = 1, input_state%menu_prefix_len
+        ch = current_prefix(i:i)
+        preview_len = preview_len + 1
+        preview_line(preview_len:preview_len) = ch
+      end do
     end if
+    current_item = input_state%menu_items(input_state%menu_selection)
+    item_len = len_trim(current_item)
+    do j = 1, item_len
+      ch = current_item(j:j)
+      preview_len = preview_len + 1
+      preview_line(preview_len:preview_len) = ch
+    end do
 
     ! Move cursor up past menu to command line
     ! We need to go up: num_menu_rows (to get to start of menu) + 1 (to get to command line above menu)
@@ -3495,19 +3555,25 @@ contains
     ! Clear the entire line
     write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
 
-    ! Apply syntax highlighting to preview
-    ! Pass length explicitly to avoid trim() creating a temporary substring
-    call highlight_command_line(preview_line, highlighted_preview, highlighted_len, len_trim(preview_line))
+    ! Apply syntax highlighting to preview (use preview_len we calculated)
+    call highlight_command_line(preview_line, highlighted_preview, highlighted_len, preview_len)
 
-    ! Calculate prompt length (skip trailing space check to avoid substring operations)
-    prompt_len = len_trim(input_state%menu_prompt)
-
-    ! Redraw: prompt + highlighted preview (safe now that both are fixed-length)
+    ! Redraw prompt character by character (copy to local var first)
+    current_prefix = input_state%menu_prompt
+    prompt_len = len_trim(current_prefix)
     if (prompt_len > 0) then
-      write(output_unit, '(a)', advance='no') input_state%menu_prompt(:prompt_len)
+      do i = 1, prompt_len
+        ch = current_prefix(i:i)
+        write(output_unit, '(a)', advance='no') ch
+      end do
     end if
+
+    ! Redraw highlighted preview character by character (already local var)
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
-      write(output_unit, '(a)', advance='no') highlighted_preview(1:highlighted_len)
+      do i = 1, highlighted_len
+        ch = highlighted_preview(i:i)
+        write(output_unit, '(a)', advance='no') ch
+      end do
     end if
 
     ! Move cursor back down to menu
