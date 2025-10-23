@@ -3384,19 +3384,41 @@ contains
 
   subroutine accept_menu_selection(input_state)
     type(input_state_t), intent(inout) :: input_state
-    character(len=MAX_LINE_LEN) :: completed_line, current_prefix
+    character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_MENU_ITEM_LEN) :: current_item
     character(len=1) :: ch
-    integer :: i, j, item_len, completed_len
+    integer :: i, j, item_len, completed_len, debug_unit
 
     ! Build completed command character by character (copy to local vars first)
     completed_line = ''
     completed_len = 0
 
+    ! DEBUG: Write to file
+    open(newunit=debug_unit, file='/tmp/fortsh_menu_debug.txt', position='append', action='write')
+    write(debug_unit, '(a)') '=== ACCEPT_MENU_SELECTION ==='
+    write(debug_unit, '(a,i0)') 'menu_prefix_len = ', input_state%menu_prefix_len
+    write(debug_unit, '(a,i0)') 'buffer length before = ', input_state%length
+    if (input_state%length > 0) then
+      write(debug_unit, '(a,a,a)') 'buffer before = "', input_state%buffer(:input_state%length), '"'
+    end if
     if (input_state%menu_prefix_len > 0) then
-      current_prefix = input_state%menu_prefix
+      write(debug_unit, '(a,a,a)') 'menu_prefix = "', &
+        input_state%menu_prefix(:input_state%menu_prefix_len), '"'
+      ! Show character codes
+      write(debug_unit, '(a)', advance='no') 'menu_prefix chars: '
       do i = 1, input_state%menu_prefix_len
-        ch = current_prefix(i:i)
+        write(debug_unit, '(i0,1x)', advance='no') ichar(input_state%menu_prefix(i:i))
+      end do
+      write(debug_unit, '(a)') ''
+    end if
+    write(debug_unit, '(a,a,a)') 'selected item = "', &
+      trim(input_state%menu_items(input_state%menu_selection)), '"'
+
+    if (input_state%menu_prefix_len > 0) then
+      ! Copy directly from menu_prefix character-by-character (avoid temp assignment)
+      do i = 1, input_state%menu_prefix_len
+        ch = input_state%menu_prefix(i:i)
+        write(debug_unit, '(a,i0,a,i0,a,a)') 'Copy char ', i, ' (code=', ichar(ch), '): "', ch, '"'
         completed_len = completed_len + 1
         completed_line(completed_len:completed_len) = ch
       end do
@@ -3409,6 +3431,10 @@ contains
       completed_len = completed_len + 1
       completed_line(completed_len:completed_len) = ch
     end do
+
+    write(debug_unit, '(a,a,a)') 'completed_line = "', completed_line(:completed_len), '"'
+    write(debug_unit, '(a,i0)') 'completed_len = ', completed_len
+    close(debug_unit)
 
     ! Exit menu mode FIRST (clears menu from screen and positions cursor at start of command line)
     call exit_menu_select_mode(input_state)
