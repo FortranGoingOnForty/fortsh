@@ -101,6 +101,7 @@ module readline
     logical :: dirty = .false. ! Needs redraw
     logical :: in_history = .false. ! Currently browsing history
     logical :: completions_shown = .false. ! Have we shown completion list for current buffer?
+    integer :: last_completion_buffer_len = 0  ! Length of last_completion_buffer (includes trailing spaces!)
 
     ! Reverse-i-search state
     logical :: in_search = .false. ! Currently in i-search mode (forward or reverse)
@@ -2892,13 +2893,21 @@ contains
       input_state%history_pos = 0
     end if
 
+    ! Don't complete empty buffer - just ring bell
+    if (input_state%length == 0) then
+      write(output_unit, '(a)', advance='no') char(7)
+      flush(output_unit)
+      return
+    end if
+
     ! Get the current buffer content
     tab_partial_input = input_state%buffer(:input_state%length)
     tab_saved_input = tab_partial_input
 
-    ! Check if buffer has changed since we last showed completions (avoid trim() on allocatables)
+    ! Check if buffer has changed since we last showed completions
+    ! IMPORTANT: Compare actual length (NOT trimmed!) to handle trailing spaces correctly
     tab_buffer_changed = .true.
-    if (input_state%length == len_trim(input_state%last_completion_buffer)) then
+    if (input_state%length == input_state%last_completion_buffer_len) then
       tab_buffer_changed = .false.
       do i = 1, input_state%length
         if (input_state%buffer(i:i) /= input_state%last_completion_buffer(i:i)) then
@@ -2944,6 +2953,7 @@ contains
             input_state%menu_selection = 1
             call draw_completion_menu(input_state, .true.)
             input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+            input_state%last_completion_buffer_len = input_state%length
             input_state%completions_shown = .true.
             ! Don't set dirty - menu is already drawn, no need to redraw command line
           else
@@ -2955,9 +2965,9 @@ contains
             input_state%suggestion = ''
             input_state%suggestion_length = 0
 
-            ! Store menu prefix
+            ! Store menu prefix (use actual length, NOT trimmed!)
             last_space_pos = 0
-            do i = len_trim(tab_partial_input), 1, -1
+            do i = input_state%length, 1, -1
               if (tab_partial_input(i:i) == ' ') then
                 last_space_pos = i
                 exit
@@ -3004,6 +3014,7 @@ contains
         input_state%menu_selection = 1
         call draw_completion_menu(input_state, .true.)
         input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+        input_state%last_completion_buffer_len = input_state%length
         input_state%completions_shown = .true.
         ! Don't set dirty - command line is already displayed above menu
       else
@@ -3015,9 +3026,9 @@ contains
         input_state%suggestion = ''
         input_state%suggestion_length = 0
 
-        ! Store menu prefix
+        ! Store menu prefix (use actual length, NOT trimmed!)
         last_space_pos = 0
-        do i = len_trim(tab_partial_input), 1, -1
+        do i = input_state%length, 1, -1
           if (tab_partial_input(i:i) == ' ') then
             last_space_pos = i
             exit
@@ -3111,6 +3122,7 @@ contains
             input_state%menu_selection = 1
             call draw_completion_menu(input_state, .true.)
             input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+            input_state%last_completion_buffer_len = input_state%length
             input_state%completions_shown = .true.
             ! Don't set dirty - command line is already displayed above menu
           else
@@ -3136,6 +3148,7 @@ contains
         input_state%menu_selection = 1
         call draw_completion_menu(input_state, .true.)
         input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+        input_state%last_completion_buffer_len = input_state%length
         input_state%completions_shown = .true.
         ! Don't set dirty - command line is already displayed above menu
       else
@@ -4040,6 +4053,12 @@ contains
       case('c')
         ! Alt+c - Capitalize word (uppercase first char, lowercase rest)
         call handle_capitalize_word(input_state)
+      case('w')
+        ! Alt+w - Accept one word from autosuggestion
+        if (input_state%cursor_pos == input_state%length .and. &
+            input_state%suggestion_length > 0) then
+          call accept_autosuggestion_word(input_state)
+        end if
       case(char(127))
         ! Alt+Backspace - Delete word backward (same as Ctrl+W)
         call handle_kill_word(input_state)
