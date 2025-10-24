@@ -59,11 +59,13 @@ module readline
   integer, parameter :: KEY_LEFT = 68
   
   ! History and line management
-  ! EXTREMELY reduced sizes on macOS to avoid gfortran ARM64 stack corruption bug
-  ! The static command_history variable causes issues even at moderate sizes
+  ! MAX_LINE_LEN MUST stay at 128 on macOS - flang-new has FUNDAMENTAL 128-byte limit
+  ! Even heap-allocated buffers cause heap corruption above 128 bytes
+  ! IMPORTANT: Actual usable command length is 127 characters to prevent off-by-one errors
+  ! MAX_HISTORY can be increased safely because it uses array allocation, not per-element size
 #ifdef __APPLE__
-  integer, parameter :: MAX_HISTORY = 10       ! Drastically reduced for macOS (10 * 128 = 1.2KB)
-  integer, parameter :: MAX_LINE_LEN = 128     ! Drastically reduced for macOS
+  integer, parameter :: MAX_HISTORY = 100      ! Increased from 10 (heap-allocated array, safe)
+  integer, parameter :: MAX_LINE_LEN = 128     ! Buffer size - actual limit is 127 chars!
 #else
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
@@ -627,11 +629,20 @@ contains
           ! Variables moved to subroutine level
 
           ! Get terminal size for multiline handling
+#ifdef __APPLE__
             ! WORKAROUND: get_terminal_size crashes on flang-new
             ! Skip the call and use hard-coded values
-            ! success = get_terminal_size(term_rows, term_cols)
             term_cols = 80
             term_rows = 24
+#else
+            ! Linux: Use actual terminal size
+            success = get_terminal_size(term_rows, term_cols)
+            if (.not. success) then
+              ! Fallback to reasonable defaults
+              term_cols = 80
+              term_rows = 24
+            end if
+#endif
 
             ! Calculate visual length of prompt (excluding ANSI codes)
             prompt_visual_len = visual_length(prompt)
@@ -2342,7 +2353,8 @@ contains
     integer, intent(inout) :: num_completions
 
     character(len=1024) :: ls_command, expanded_dir  ! Large enough for command
-    character(len=:), allocatable :: ls_output  ! Allocatable to handle large output
+    character(len=:), allocatable :: ls_output_alloc  ! From execute_and_capture
+    character(len=2048) :: ls_output  ! 2KB buffer - large enough for ls but safe for stack
     character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
     character(len=MAX_LINE_LEN) :: full_path, check_path
     character(len=:), allocatable :: home_dir, debug_mode
@@ -2387,7 +2399,14 @@ contains
       write(error_unit, '(a)') 'DEBUG: ls command: ' // trim(ls_command)
     end if
 
-    ls_output = execute_and_capture(ls_command)
+    ! Get output from command (allocatable result)
+    ls_output_alloc = execute_and_capture(ls_command)
+
+    ! Copy to fixed buffer (avoids flang-new issues with allocatable strings)
+    ls_output = ls_output_alloc(:min(len(ls_output), len(ls_output_alloc)))
+
+    ! Clean up allocatable
+    if (allocated(ls_output_alloc)) deallocate(ls_output_alloc)
 
     ! Parse ls output into individual entries
     call parse_ls_output(ls_output, entries, num_entries)
@@ -2790,8 +2809,10 @@ contains
     ! Allocate temp buffer on heap
     allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
 
-    ! Check if we have room
-    if (input_state%length >= MAX_LINE_LEN) then
+    ! Check if we have room for one more character
+    ! CRITICAL: Must be >= MAX_LINE_LEN - 1 to prevent writing to position MAX_LINE_LEN + 1
+    ! during middle insertions which shift characters right
+    if (input_state%length >= MAX_LINE_LEN - 1) then
       if (allocated(temp_buffer)) deallocate(temp_buffer)
       return
     end if
@@ -2842,6 +2863,9 @@ contains
       input_state%dirty = .true.
     end if
 
+    ! Deallocate heap-allocated temp buffer
+    if (allocated(temp_buffer)) deallocate(temp_buffer)
+
     ! Update autosuggestion after inserting character
     call update_autosuggestion(input_state)
 
@@ -2849,9 +2873,6 @@ contains
     if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
       input_state%dirty = .true.
     end if
-
-    ! Deallocate heap-allocated temp buffer
-    if (allocated(temp_buffer)) deallocate(temp_buffer)
   end subroutine
 
   subroutine handle_backspace(input_state)
@@ -3012,11 +3033,16 @@ contains
             end do
 
             if (last_space_pos > 0) then
-              ! Copy character by character to avoid substring on allocatable
+#ifdef __APPLE__
+              ! Copy character by character to avoid substring on allocatable (flang-new bug)
               input_state%menu_prefix = ''
               do j = 1, last_space_pos
                 input_state%menu_prefix(j:j) = tab_partial_input(j:j)
               end do
+#else
+              ! Linux: Direct substring operation works fine
+              input_state%menu_prefix = tab_partial_input(:last_space_pos)
+#endif
               input_state%menu_prefix_len = last_space_pos
             else
               input_state%menu_prefix = ''
@@ -3074,11 +3100,16 @@ contains
         end do
 
         if (last_space_pos > 0) then
-          ! Copy character by character to avoid substring on allocatable
+#ifdef __APPLE__
+          ! Copy character by character to avoid substring on allocatable (flang-new bug)
           input_state%menu_prefix = ''
           do i = 1, last_space_pos
             input_state%menu_prefix(i:i) = tab_partial_input(i:i)
           end do
+#else
+          ! Linux: Direct substring operation works fine
+          input_state%menu_prefix = tab_partial_input(:last_space_pos)
+#endif
           input_state%menu_prefix_len = last_space_pos
         else
           input_state%menu_prefix = ''
