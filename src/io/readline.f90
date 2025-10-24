@@ -81,12 +81,12 @@ module readline
   integer, parameter :: VI_MODE_COMMAND = 2
 
   ! Reduced buffer sizes to prevent static storage issues
-  ! Was causing 204KB allocation (50*4096), now only 12.5KB (50*256)
+  ! Was causing 204KB allocation (50*4096), now only 25KB (40*256)
   integer, parameter :: MAX_MENU_ITEM_LEN = 256
-  integer, parameter :: MAX_MENU_ITEMS = 20  ! Reduced from 50
-  integer, parameter :: MAX_LOCAL_COMPLETIONS = 20  ! Max completions to process locally
+  integer, parameter :: MAX_MENU_ITEMS = 40  ! Increased from 20 for better usability
+  integer, parameter :: MAX_LOCAL_COMPLETIONS = 40  ! Max completions to process locally
   integer, parameter :: MAX_DIR_ENTRIES = 200  ! Max directory entries (increased for better completion)
-  integer, parameter :: MAX_SCORED_ITEMS = 30  ! Max scored completion items
+  integer, parameter :: MAX_SCORED_ITEMS = 50  ! Max scored completion items (increased from 30)
 
   type :: input_state_t
     ! Use allocatable strings to avoid stack allocation on macOS
@@ -135,6 +135,7 @@ module readline
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
     character(len=MAX_MENU_ITEM_LEN) :: menu_items(MAX_MENU_ITEMS)  ! Completion items for menu (fixed-length to avoid flang-new bug)
     integer :: menu_num_items = 0  ! Number of items in menu
+    integer :: menu_total_items = 0  ! Total number of completions available (before truncation)
     integer :: menu_selection = 1  ! Currently selected item (1-based)
     character(len=:), allocatable :: menu_prefix  ! Command prefix before completion word
     integer :: menu_prefix_len = 0  ! Actual length of prefix INCLUDING trailing space
@@ -240,6 +241,7 @@ contains
     state%vi_search_length = 0
     state%suggestion_length = 0
     state%menu_num_items = 0
+    state%menu_total_items = 0
     state%menu_selection = 1
     state%menu_prefix_len = 0
     state%selected_pid = 0
@@ -2940,6 +2942,7 @@ contains
         else
           if (.not. input_state%completions_shown .or. tab_buffer_changed) then
             ! First tab - store completions and draw grid menu
+            input_state%menu_total_items = tab_num_completions
             input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
               ! Copy via temp buffer to avoid flang-new bugs with allocatables
@@ -3001,6 +3004,7 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. tab_buffer_changed) then
         ! First tab - store completions and draw grid menu
+        input_state%menu_total_items = tab_num_completions
         input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
           ! Copy via temp buffer to avoid flang-new bugs with allocatables
@@ -3113,6 +3117,7 @@ contains
           ! At common prefix already - show available options only if not already shown
           if (.not. input_state%completions_shown .or. buffer_changed) then
             ! Store completions for menu mode and draw once
+            input_state%menu_total_items = num_completions
             input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
               ! Use temp_buffer and simple assignment to avoid substring operations
@@ -3139,6 +3144,7 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. buffer_changed) then
         ! First tab - store completions and draw menu
+        input_state%menu_total_items = num_completions
         input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
           ! Use temp_buffer and simple trim to avoid substring operations
@@ -3172,6 +3178,7 @@ contains
 
     ! Store menu items
     input_state%in_menu_select = .true.
+    input_state%menu_total_items = num_completions
     input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
 
     ! Clear autosuggestion when entering menu mode
@@ -3296,6 +3303,12 @@ contains
       end do
       write(output_unit, '()')  ! New line after each row
     end do
+
+    ! Show "more items" indicator if there are truncated completions
+    if (input_state%menu_total_items > input_state%menu_num_items) then
+      write(output_unit, '(a,i0,a)') &
+        '  ... ', input_state%menu_total_items - input_state%menu_num_items, ' more items available'
+    end if
 
     ! Mark that we need to redraw the command line
     flush(output_unit)
@@ -3484,6 +3497,7 @@ contains
 
     input_state%in_menu_select = .false.
     input_state%menu_num_items = 0
+    input_state%menu_total_items = 0
     input_state%menu_selection = 1
     input_state%menu_prefix_len = 0
     input_state%completions_shown = .false.
