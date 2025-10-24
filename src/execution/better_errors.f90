@@ -44,7 +44,7 @@ contains
     ! Print main error message in red (POSIX format)
     write(error_unit, '(a,a,a,a,a)') &
       trim(color_code(COLOR_RED)), &
-      trim(shell_name), ": line 1: ", trim(command), ": command not found"
+      trim(shell_name), ": ", trim(command), ": command not found"
 
     ! Only write color reset if using colors
     if (stderr_is_tty()) then

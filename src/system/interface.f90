@@ -135,26 +135,55 @@ module system_interface
   character(len=*), parameter :: ESC_SHOW_CURSOR = char(27) // '[?25h'
 
   ! stat structure (must be defined before interface block)
-  ! x86_64 Linux layout - field order matters!
+  ! Platform-specific layouts - field order matters!
   type, bind(c) :: stat_t
-    integer(c_long) :: st_dev      ! Device (8 bytes)
-    integer(c_long) :: st_ino      ! Inode (8 bytes)
-    integer(c_long) :: st_nlink    ! Number of hard links (8 bytes)
-    integer(c_int)  :: st_mode     ! Protection and file type (4 bytes)
-    integer(c_int)  :: st_uid      ! User ID (4 bytes)
-    integer(c_int)  :: st_gid      ! Group ID (4 bytes)
-    integer(c_int)  :: pad0        ! Padding (4 bytes)
-    integer(c_long) :: st_rdev     ! Device type (8 bytes)
-    integer(c_long) :: st_size     ! Total size in bytes (8 bytes)
-    integer(c_long) :: st_blksize  ! Block size (8 bytes)
-    integer(c_long) :: st_blocks   ! Number of blocks (8 bytes)
-    integer(c_long) :: st_atime    ! Access time (8 bytes)
-    integer(c_long) :: st_atime_nsec ! Access time nanoseconds
-    integer(c_long) :: st_mtime    ! Modification time (8 bytes)
-    integer(c_long) :: st_mtime_nsec ! Mod time nanoseconds
-    integer(c_long) :: st_ctime    ! Status change time (8 bytes)
-    integer(c_long) :: st_ctime_nsec ! Change time nanoseconds
-    integer(c_long) :: unused(3)   ! Reserved space
+#ifdef __APPLE__
+    ! macOS ARM64/x86_64 stat structure layout
+    integer(c_int)   :: st_dev      ! Device (4 bytes) - offset 0
+    integer(c_short) :: st_mode     ! File type and mode (2 bytes) - offset 4
+    integer(c_short) :: st_nlink    ! Number of hard links (2 bytes) - offset 6
+    integer(c_long)  :: st_ino      ! Inode (8 bytes) - offset 8
+    integer(c_int)   :: st_uid      ! User ID (4 bytes) - offset 16
+    integer(c_int)   :: st_gid      ! Group ID (4 bytes) - offset 20
+    integer(c_int)   :: st_rdev     ! Device type (4 bytes) - offset 24
+    ! Timespec structures (16 bytes each = 8 bytes + 8 bytes)
+    integer(c_long)  :: st_atimespec_sec    ! Access time seconds
+    integer(c_long)  :: st_atimespec_nsec   ! Access time nanoseconds
+    integer(c_long)  :: st_mtimespec_sec    ! Modification time seconds
+    integer(c_long)  :: st_mtimespec_nsec   ! Modification time nanoseconds
+    integer(c_long)  :: st_ctimespec_sec    ! Status change time seconds
+    integer(c_long)  :: st_ctimespec_nsec   ! Status change time nanoseconds
+    integer(c_long)  :: st_birthtimespec_sec ! Birth time seconds
+    integer(c_long)  :: st_birthtimespec_nsec ! Birth time nanoseconds
+    integer(c_long)  :: st_size      ! Total size in bytes (8 bytes)
+    integer(c_long)  :: st_blocks    ! Number of 512-byte blocks (8 bytes)
+    integer(c_int)   :: st_blksize   ! Optimal block size (4 bytes)
+    integer(c_int)   :: st_flags     ! User defined flags (4 bytes)
+    integer(c_int)   :: st_gen       ! File generation number (4 bytes)
+    integer(c_int)   :: st_lspare    ! Reserved (4 bytes)
+    integer(c_long)  :: st_qspare(2) ! Reserved (16 bytes)
+#else
+    ! Linux x86_64 stat structure layout
+    integer(c_long)  :: st_dev       ! Device (8 bytes)
+    integer(c_long)  :: st_ino       ! Inode (8 bytes)
+    integer(c_long)  :: st_nlink     ! Number of hard links (8 bytes)
+    integer(c_int)   :: st_mode      ! File type and mode (4 bytes)
+    integer(c_int)   :: st_uid       ! User ID (4 bytes)
+    integer(c_int)   :: st_gid       ! Group ID (4 bytes)
+    integer(c_int)   :: __pad0       ! Padding (4 bytes)
+    integer(c_long)  :: st_rdev      ! Device type (8 bytes)
+    integer(c_long)  :: st_size      ! Total size in bytes (8 bytes)
+    integer(c_long)  :: st_blksize   ! Optimal block size (8 bytes)
+    integer(c_long)  :: st_blocks    ! Number of 512-byte blocks (8 bytes)
+    ! Time fields
+    integer(c_long)  :: st_atime     ! Access time seconds
+    integer(c_long)  :: st_atime_nsec ! Access time nanoseconds
+    integer(c_long)  :: st_mtime     ! Modification time seconds
+    integer(c_long)  :: st_mtime_nsec ! Modification time nanoseconds
+    integer(c_long)  :: st_ctime     ! Status change time seconds
+    integer(c_long)  :: st_ctime_nsec ! Status change time nanoseconds
+    integer(c_long)  :: __glibc_reserved(3) ! Reserved
+#endif
   end type stat_t
 
   ! timeval structure for getrusage
@@ -1107,7 +1136,11 @@ contains
     c_path2 = trim(file2)//c_null_char
     ret1 = c_stat(c_loc(c_path1), stat1)
     ret2 = c_stat(c_loc(c_path2), stat2)
+#ifdef __APPLE__
+    is_newer = (ret1 == 0 .and. ret2 == 0 .and. stat1%st_mtimespec_sec > stat2%st_mtimespec_sec)
+#else
     is_newer = (ret1 == 0 .and. ret2 == 0 .and. stat1%st_mtime > stat2%st_mtime)
+#endif
   end function
 
   function file_is_older(file1, file2) result(is_older)
@@ -1121,7 +1154,11 @@ contains
     c_path2 = trim(file2)//c_null_char
     ret1 = c_stat(c_loc(c_path1), stat1)
     ret2 = c_stat(c_loc(c_path2), stat2)
+#ifdef __APPLE__
+    is_older = (ret1 == 0 .and. ret2 == 0 .and. stat1%st_mtimespec_sec < stat2%st_mtimespec_sec)
+#else
     is_older = (ret1 == 0 .and. ret2 == 0 .and. stat1%st_mtime < stat2%st_mtime)
+#endif
   end function
 
   function file_same_as(file1, file2) result(is_same)
