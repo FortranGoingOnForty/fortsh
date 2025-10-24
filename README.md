@@ -3,11 +3,11 @@
 
 A shell written in Fortran. Because we can.
 
-> **⚠️ macOS Users**: Due to a gfortran bug on ARM64 (Apple Silicon), fortsh currently runs with limited features on macOS. Basic shell operations work, but readline features (history, line editing, tab completion) are temporarily disabled to prevent crashes. We're actively investigating solutions to restore full functionality.
+> **Warning - macOS ARM64 Users**: Due to compiler limitations on apple silicon, command lines are limited to 127 characters. All features work (history, tab completion, syntax highlighting, etc.), but you can't type commands longer than 127 bytes. This is a fundamental limitation of both available compilers: gfortran has 7+ critical bugs (stack corruption, heap corruption, segfaults), while flang-new has a 127-byte string operation limit to prevent heap corruption. We see flang-new as the lesser evil. For details, see COMPILER_NOTES.md.
 
 ## Status
 
-**POSIX compliance: working on it, but farther than you'd think    
+**POSIX compliance**: working on it, but farther than you'd think    
 **bash compatibility**: ~99%  
 **Chance you'll miss the other 1%**: Low  
 
@@ -37,16 +37,17 @@ Pretty much everything:
 - Some advanced vi mode features (yank/put, marks)
 - Nested brace expansion (who uses this?)
 - Your expectations, probably
+- More?!
 
 ## Building
 
 Requires:
-- A Fortran 2018 compiler (gfortran 8+, ifort 19+)
+- A Fortran 2018 compiler (gfortran 8+, or LLVM flang-new for macOS ARM64)
 - GNU Make
 - POSIX system (Linux, BSD, macOS)
 - Realistic expectations
 
-**macOS ARM64 Note**: The gfortran stack corruption bug affects more than initially thought - we've had to temporarily disable readline entirely on macOS to prevent segfaults. The shell is fully functional for running commands and scripts, but interactive features are limited. See the warning at the top of this README.
+**macOS ARM64 Note**: Use `brew install llvm` to get flang-new. See the warning at the top or COMPILER_NOTES.md for details.
 
 ```bash
 git clone https://github.com/FortranGoingOnForty/fortsh.git
@@ -77,7 +78,7 @@ Login shell reads: `/etc/fortsh/profile`, `~/.fortsh_profile`
 Interactive shell reads: `/etc/fortsh/fortshrc`, `~/.fortshrc`
 Logout runs: `~/.fortsh_logout`
 
-First run offers to create default configs. Or don't. I'm not your supervisor.
+First run offers to create default configs. Or don't. I'm not your boss.
 
 ## Examples
 
