@@ -658,19 +658,20 @@ contains
       end if
     end if
 
-    ! Check for output redirection (>>)
-    pos = find_outside_quotes(working_input, '>>')
+    ! Check for force clobber FIRST (>|) before append (>>)
+    ! This prevents ">|" from matching ">>"
+    pos = find_outside_quotes(working_input, '>|')
     if (pos > 0) then
-      cmd%append_output = .true.
+      cmd%append_output = .false.
+      cmd%force_clobber = .true.
       call extract_filename(working_input(pos+2:), temp_str)
       cmd%output_file = trim(temp_str)
       working_input = working_input(:pos-1)
     else
-      ! Check for force clobber (>|)
-      pos = find_outside_quotes(working_input, '>|')
+      ! Check for output redirection (>>)
+      pos = find_outside_quotes(working_input, '>>')
       if (pos > 0) then
-        cmd%append_output = .false.
-        cmd%force_clobber = .true.
+        cmd%append_output = .true.
         call extract_filename(working_input(pos+2:), temp_str)
         cmd%output_file = trim(temp_str)
         working_input = working_input(:pos-1)

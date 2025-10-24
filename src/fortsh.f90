@@ -326,6 +326,9 @@ program fortran_shell
     write(output_unit, '(a)') 'Goodbye!'
   end if
 
+  ! Exit with the last command's exit status (preserves exit code from EXIT trap)
+  call c_exit(shell%last_exit_status)
+
 contains
 
   subroutine run_logout_scripts(shell)
