@@ -701,10 +701,10 @@ contains
     character(len=:), allocatable :: output
 
     type(c_ptr) :: pipe_ptr
-    character(kind=c_char), target :: buffer(1024)
-    character(len=8192) :: temp_output  ! Increased buffer size for more files
+    character(kind=c_char), target :: buffer(4096)  ! Larger buffer per read
+    character(len=65536) :: temp_output  ! 64KB buffer
     type(c_ptr) :: ret_ptr
-    integer :: i, pos
+    integer :: i, pos, bytes_read
     character(len=256), target :: c_command
     character(len=4), target :: c_mode
 
@@ -714,35 +714,45 @@ contains
 
     ! Open pipe to command
     pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
-    
+
     if (.not. c_associated(pipe_ptr)) then
       allocate(character(len=0) :: output)
       return
     end if
-    
+
     temp_output = ''
     pos = 1
-    
-    ! Read output
+
+    ! Read output with larger buffer
     do
-      ret_ptr = c_fgets(c_loc(buffer), 1024, pipe_ptr)
+      ! Initialize buffer for this read
+      buffer = c_null_char
+
+      ret_ptr = c_fgets(c_loc(buffer), int(4096, c_int), pipe_ptr)
       if (.not. c_associated(ret_ptr)) exit
-      
+
       ! Convert to Fortran string
-      do i = 1, 1024
+      bytes_read = 0
+      do i = 1, 4096
         if (buffer(i) == c_null_char) exit
-        if (pos <= len(temp_output)) then
-          if (buffer(i) /= char(10)) then  ! Skip newlines
-            temp_output(pos:pos) = buffer(i)
-            pos = pos + 1
-          else if (pos > 1 .and. temp_output(pos-1:pos-1) /= ' ') then
-            temp_output(pos:pos) = ' '
-            pos = pos + 1
-          end if
+        bytes_read = bytes_read + 1
+        if (pos > len(temp_output)) exit  ! Buffer full
+
+        if (buffer(i) /= char(10)) then  ! Skip newlines
+          temp_output(pos:pos) = buffer(i)
+          pos = pos + 1
+        else if (pos > 1 .and. temp_output(pos-1:pos-1) /= ' ') then
+          temp_output(pos:pos) = ' '
+          pos = pos + 1
         end if
       end do
+
+      ! Debug: Check if we should continue reading
+      ! Exit if we read less than expected OR hit buffer limit
+      if (pos > len(temp_output)) exit
+      if (bytes_read == 0) exit
     end do
-    
+
     ! Close pipe
     i = c_pclose(pipe_ptr)
 

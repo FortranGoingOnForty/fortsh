@@ -1954,10 +1954,10 @@ contains
         call generate_completions(trim(command_name), trim(last_word), temp_completions, temp_count, shell)
         if (temp_count > 0) then
           ! Copy completions (convert from 256 to MAX_LINE_LEN)
-          do i = 1, min(temp_count, 50)
+          do i = 1, min(temp_count, MAX_LOCAL_COMPLETIONS)
             completions(i) = trim(temp_completions(i))
           end do
-          num_completions = min(temp_count, 50)
+          num_completions = min(temp_count, MAX_LOCAL_COMPLETIONS)
           used_programmable_completion = .true.
         end if
       end if
@@ -2075,7 +2075,7 @@ contains
 
     ! Match entries against glob pattern
     do i = 1, num_entries
-      if (num_completions >= 50) exit
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
 
       ! Skip . and ..
       if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') cycle
@@ -2245,7 +2245,7 @@ contains
     prefix_len = len_trim(prefix)
 
     do i = 1, size(common_commands)
-      if (num_completions >= 50) exit
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
       if (prefix_len == 0 .or. &
           index(trim(common_commands(i)), prefix(1:prefix_len)) == 1) then
         num_completions = num_completions + 1
@@ -2341,7 +2341,8 @@ contains
     character(len=MAX_LINE_LEN), intent(inout) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(inout) :: num_completions
 
-    character(len=MAX_LINE_LEN) :: ls_command, ls_output, expanded_dir
+    character(len=1024) :: ls_command, expanded_dir  ! Large enough for command
+    character(len=:), allocatable :: ls_output  ! Allocatable to handle large output
     character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
     character(len=MAX_LINE_LEN) :: full_path, check_path
     character(len=:), allocatable :: home_dir, debug_mode
@@ -2355,7 +2356,7 @@ contains
     debug_enabled = (allocated(debug_mode) .and. trim(debug_mode) == '1')
 
     ! Allocate scored array
-    allocate(scored(100))
+    allocate(scored(MAX_SCORED_ITEMS))
 
     pattern_len = len_trim(pattern)
 
@@ -2377,42 +2378,69 @@ contains
       end if
     end if
 
-    ! Use ls command to get directory listing
-    ls_command = 'ls -1a "' // trim(expanded_dir) // '" 2>/dev/null'
+    ! Use ls command with -F flag to mark directories with / (avoids calling test -d for each file)
+    ! Use tr to convert newlines to spaces for easier parsing
+    ls_command = 'ls -1aF "' // trim(expanded_dir) // '" 2>/dev/null | tr ' // "'" // char(92) // 'n' // "' ' '"
+
+    ! Debug output
+    if (debug_enabled) then
+      write(error_unit, '(a)') 'DEBUG: ls command: ' // trim(ls_command)
+    end if
+
     ls_output = execute_and_capture(ls_command)
 
     ! Parse ls output into individual entries
     call parse_ls_output(ls_output, entries, num_entries)
 
+    ! Debug output
+    if (debug_enabled) then
+      write(error_unit, '(a,i0)') 'DEBUG: ls output length: ', len_trim(ls_output)
+      write(error_unit, '(a)') 'DEBUG: first 200 chars: ' // ls_output(:min(200,len_trim(ls_output)))
+      write(error_unit, '(a,i0)') 'DEBUG: num_entries parsed: ', num_entries
+      write(error_unit, '(a,i0)') 'DEBUG: pattern_len: ', pattern_len
+    end if
+
     ! Score entries using fuzzy matching
     num_scored = 0
     do i = 1, num_entries
-      if (num_scored >= 100) exit
+      if (num_scored >= MAX_SCORED_ITEMS) exit
 
-      ! Skip . and .. unless explicitly requested
-      if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
+      ! Skip . and .. unless explicitly requested (ls -F adds / to these too)
+      if (trim(entries(i)) == './' .or. trim(entries(i)) == '../' .or. &
+          trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
         if (pattern_len == 0 .or. (pattern_len > 0 .and. pattern(1:1) /= '.')) then
           cycle
         end if
       end if
 
-      ! Calculate fuzzy match score
-      score = fuzzy_match_score(pattern, trim(entries(i)))
-      if (score >= 0) then  ! Negative score = no match
-        ! Build full path for directory check (use original dir_path to preserve ~ in display)
-        if (trim(dir_path) == '.') then
-          full_path = trim(entries(i))
+      ! Check if entry is a directory (ls -F adds / to directories)
+      is_dir = .false.
+      if (len_trim(entries(i)) > 0) then
+        if (entries(i)(len_trim(entries(i)):len_trim(entries(i))) == '/') then
+          is_dir = .true.
+          ! Remove the trailing / for matching
+          full_path = entries(i)(:len_trim(entries(i))-1)
         else
-          full_path = trim(dir_path) // '/' // trim(entries(i))
+          ! Remove executable markers (*) and other ls -F markers (@, =, |, %)
+          if (index('*@=|%', entries(i)(len_trim(entries(i)):len_trim(entries(i)))) > 0) then
+            full_path = entries(i)(:len_trim(entries(i))-1)
+          else
+            full_path = trim(entries(i))
+          end if
         end if
+      else
+        full_path = trim(entries(i))
+      end if
 
-        ! Check if it's a directory using expanded path
-        if (trim(expanded_dir) == '.') then
-          check_path = trim(entries(i))
+      ! Calculate fuzzy match score (without the ls -F marker)
+      score = fuzzy_match_score(pattern, trim(full_path))
+      if (score >= 0) then  ! Negative score = no match
+        ! Build full path for display (use original dir_path to preserve ~ in display)
+        if (trim(dir_path) == '.') then
+          full_path = trim(full_path)
         else
-          check_path = trim(expanded_dir) // '/' // trim(entries(i))
+          full_path = trim(dir_path) // '/' // trim(full_path)
         end if
-        is_dir = is_directory(check_path)
 
         num_scored = num_scored + 1
         if (is_dir) then
@@ -2434,12 +2462,18 @@ contains
       call sort_completions_by_score(scored, num_scored)
     end if
 
-    ! Copy to output (add to existing completions, limit total to 50)
+    ! Copy to output (add to existing completions, limit to MAX_LOCAL_COMPLETIONS)
     do j = 1, num_scored
-      if (num_completions >= 50) exit
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
       num_completions = num_completions + 1
       completions(num_completions) = scored(j)%text
     end do
+
+    ! Debug output
+    if (debug_enabled) then
+      write(error_unit, '(a,i0)') 'DEBUG: num_scored: ', num_scored
+      write(error_unit, '(a,i0)') 'DEBUG: num_completions after scan: ', num_completions
+    end if
 
     ! Clean up allocatable arrays
     if (allocated(scored)) deallocate(scored)
