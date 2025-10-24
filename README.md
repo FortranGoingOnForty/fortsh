@@ -7,7 +7,7 @@ A shell written in Fortran. Because we can.
 
 ## Status
 
-**POSIX compliance**: 100% (well, I haven't run their test bench yet, but my tests are fairly robust)  
+**POSIX compliance: working on it, but farther than you'd think    
 **bash compatibility**: ~99%  
 **Chance you'll miss the other 1%**: Low  
 
