@@ -256,12 +256,19 @@ contains
     ! Initialize working buffer to spaces
     module_working_buffer = ' '
 
+#ifdef __APPLE__
     ! Copy input character by character to avoid substring temporaries (flang-new bug)
     if (input_len > 0 .and. input_len <= len(module_working_buffer)) then
       do j = 1, input_len
         module_working_buffer(j:j) = input(j:j)
       end do
     end if
+#else
+    ! Linux: Direct assignment works fine
+    if (input_len > 0 .and. input_len <= len(module_working_buffer)) then
+      module_working_buffer(:input_len) = input(:input_len)
+    end if
+#endif
 
     ! DEBUG: write(*, '(a)') '[DEBUG tokenize: copied input to working]'
 
