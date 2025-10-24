@@ -341,6 +341,41 @@ contains
     end if
   end subroutine
 
+#ifdef __APPLE__
+  ! Safe terminal size detection for macOS (avoids get_terminal_size crash on flang-new)
+  subroutine safe_get_terminal_size(rows, cols)
+    integer, intent(out) :: rows, cols
+    character(len=:), allocatable :: cols_str, rows_str
+    integer :: cols_val, rows_val, ios
+
+    ! Default fallback values
+    cols = 80
+    rows = 24
+
+    ! Try to get columns using tput
+    cols_str = execute_and_capture('tput cols 2>/dev/null')
+    if (allocated(cols_str) .and. len_trim(cols_str) > 0) then
+      read(cols_str, *, iostat=ios) cols_val
+      if (ios == 0 .and. cols_val > 0 .and. cols_val < 500) then
+        cols = cols_val
+      end if
+    end if
+
+    ! Try to get rows using tput
+    rows_str = execute_and_capture('tput lines 2>/dev/null')
+    if (allocated(rows_str) .and. len_trim(rows_str) > 0) then
+      read(rows_str, *, iostat=ios) rows_val
+      if (ios == 0 .and. rows_val > 0 .and. rows_val < 500) then
+        rows = rows_val
+      end if
+    end if
+
+    ! Clean up
+    if (allocated(cols_str)) deallocate(cols_str)
+    if (allocated(rows_str)) deallocate(rows_str)
+  end subroutine safe_get_terminal_size
+#endif
+
   ! Enhanced readline with character-by-character input processing
   subroutine readline_enhanced(prompt, line, iostat)
     character(len=*), intent(in) :: prompt
@@ -631,9 +666,8 @@ contains
           ! Get terminal size for multiline handling
 #ifdef __APPLE__
             ! WORKAROUND: get_terminal_size crashes on flang-new
-            ! Skip the call and use hard-coded values
-            term_cols = 80
-            term_rows = 24
+            ! Use tput command as a safe alternative
+            call safe_get_terminal_size(term_rows, term_cols)
 #else
             ! Linux: Use actual terminal size
             success = get_terminal_size(term_rows, term_cols)
@@ -651,20 +685,14 @@ contains
             end if
 
             ! Calculate current cursor position and line
-            ! WORKAROUND: Don't try to handle multiline with hardcoded term_cols
-            ! This avoids cursor positioning bugs when term_cols doesn't match actual terminal
-            ! Just assume single line for now
-            current_line = 0
-
-            ! Original multiline handling (disabled due to hardcoded term_cols)
-            ! cursor_visual_pos = prompt_visual_len + module_input_state%cursor_pos
-            ! if (term_cols > 0) then
-            !   current_line = cursor_visual_pos / term_cols
-            ! else
-            !   current_line = 0
-            ! end if
-            ! if (current_line < 0) current_line = 0
-            ! if (current_line > 100) current_line = 0
+            cursor_visual_pos = prompt_visual_len + module_input_state%cursor_pos
+            if (term_cols > 0) then
+              current_line = cursor_visual_pos / term_cols
+            else
+              current_line = 0
+            end if
+            if (current_line < 0) current_line = 0
+            if (current_line > 100) current_line = 0
 
             ! Move cursor up to the first line if we're on a wrapped line
             ! UNLESS we just exited menu mode (skip_cursor_up_on_redraw flag set)
