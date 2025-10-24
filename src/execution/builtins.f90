@@ -230,13 +230,21 @@ contains
   subroutine builtin_exit(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
+    integer :: exit_code, iostat
 
     ! Don't execute EXIT trap here - it's handled in main program (fortsh.f90)
     ! This ensures the trap runs in the current shell context with access to variables
 
     shell%running = .false.
     if (cmd%num_tokens > 1) then
-      read(cmd%tokens(2), *, iostat=shell%last_exit_status) shell%last_exit_status
+      ! Parse the exit code from the argument
+      read(cmd%tokens(2), *, iostat=iostat) exit_code
+      if (iostat == 0) then
+        shell%last_exit_status = exit_code
+      else
+        ! Invalid exit code argument - treat as syntax error (exit 2)
+        shell%last_exit_status = 2
+      end if
     end if
   end subroutine
 
