@@ -390,6 +390,7 @@ contains
     integer :: i_redraw, term_cols, term_rows
     integer :: prompt_visual_len, cursor_visual_pos, current_line
     integer :: suggestion_display_len, available_space
+    integer :: current_col, current_row
     integer :: highlighted_len  ! Actual length of highlighted string
     character(len=32) :: buffer_fmt  ! Dynamic format string for buffer write
     character(len=MAX_LINE_LEN) :: display_buffer  ! Temporary buffer for display
@@ -727,30 +728,60 @@ contains
               ! Display autosuggestion if present (only when cursor is at end)
               if (module_input_state%suggestion_length > 0 .and. &
                   module_input_state%cursor_pos == module_input_state%length) then
-                ! Calculate available space on current line (add 1 for space after prompt)
-                available_space = term_cols - mod(prompt_visual_len + 1 + module_input_state%length, term_cols)
-                if (available_space < 0) available_space = 0
+                ! Calculate column position after command (0-based)
+                cursor_visual_pos = prompt_visual_len + module_input_state%length
 
-                ! Truncate suggestion to fit
-                if (available_space > 2) then
-                  suggestion_display_len = min(module_input_state%suggestion_length, available_space - 1)
-                  if (suggestion_display_len < 0) suggestion_display_len = 0
-                  if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
+                ! Safety check for term_cols
+                if (term_cols > 0 .and. term_cols <= 500) then
+                  current_col = mod(cursor_visual_pos, term_cols)
+                  current_row = cursor_visual_pos / term_cols
 
-                  if (suggestion_display_len > 0) then
-                    ! Use bright black (gray) color for suggestions - ANSI code 90
-                    ! This is more visible than dim mode and better supported across terminals
-                    write(output_unit, '(a)', advance='no') char(27) // '[90m'
-                    ! Write character by character to avoid substring temporaries (flang-new crash)
-                    do i_redraw = 1, suggestion_display_len
-                      write(output_unit, '(a)', advance='no') module_input_state%suggestion(i_redraw:i_redraw)
-                    end do
-                    write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
+                  ! Additional safety: ensure current_col is reasonable
+                  if (current_col < 0) current_col = 0
+                  if (current_col >= term_cols) current_col = term_cols - 1
 
-                    ! Move cursor back to correct position (after suggestion)
-                    do i_redraw = 1, suggestion_display_len
-                      write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
-                    end do
+                  ! Calculate available space on current line
+                  available_space = term_cols - current_col
+                  if (available_space < 0) available_space = 0
+                  if (available_space > term_cols) available_space = 0
+
+                  ! CRITICAL: Prevent cursor jumping by ensuring suggestion never causes line wrap
+                  ! The bug: if (prompt + input + suggestion) wraps to next line, then cursor-left
+                  ! commands move cursor on the WRONG line, causing visible cursor jumping.
+                  !
+                  ! Solution:
+                  ! 1. NEVER show suggestions if input has already wrapped (current_row > 0)
+                  ! 2. Limit suggestion to fit on current line with safety margin
+                  ! 3. Leave 2 char margin for ANSI codes
+                  ! 4. Only show if we have at least 7 chars of space (worthwhile to display)
+                  if (current_row == 0 .and. available_space >= 7) then
+                    ! Limit suggestion to available space minus safety margin
+                    suggestion_display_len = min(module_input_state%suggestion_length, available_space - 2)
+
+                    if (suggestion_display_len < 0) suggestion_display_len = 0
+                    if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
+                    if (suggestion_display_len > module_input_state%suggestion_length) suggestion_display_len = 0
+
+                    ! Only show if we have at least 5 chars to make it worthwhile
+                    if (suggestion_display_len >= 5) then
+                      ! Use bright black (gray) color for suggestions - ANSI code 90
+                      write(output_unit, '(a)', advance='no') char(27) // '[90m'
+
+                      ! Write character by character to avoid substring temporaries (flang-new crash)
+                      do i_redraw = 1, suggestion_display_len
+                        if (i_redraw <= MAX_LINE_LEN) then
+                          write(output_unit, '(a)', advance='no') module_input_state%suggestion(i_redraw:i_redraw)
+                        end if
+                      end do
+
+                      write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
+
+                      ! Move cursor back using simple cursor-left commands
+                      ! This is safe because we've guaranteed no wrapping above
+                      do i_redraw = 1, suggestion_display_len
+                        write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+                      end do
+                    end if
                   end if
                 end if
               end if
@@ -4621,7 +4652,7 @@ contains
 
           write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
 
-          ! Move cursor back to where it should be (after suggestion)
+          ! Move cursor back using simple cursor-left commands
           do k = 1, suggestion_display_len
             write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
           end do
@@ -4902,7 +4933,7 @@ contains
 
           write(output_unit, '(a)', advance='no') char(27) // '[0m'
 
-          ! Move cursor back to correct position after suggestion
+          ! Move cursor back using simple cursor-left commands
           do i = 1, suggestion_display_len
             write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
           end do
