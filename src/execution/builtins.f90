@@ -279,7 +279,15 @@ contains
     if (change_directory(target_dir)) then
       ! Update OLDPWD before changing cwd
       shell%oldpwd = old_cwd
-      shell%cwd = get_current_directory()
+      ! POSIX: Use logical path (preserve symlinks) unless -P is specified
+      ! For absolute paths, use them as-is. For relative paths, resolve logically.
+      if (len(target_dir) > 0 .and. target_dir(1:1) == '/') then
+        ! Absolute path - use it directly (preserves symlinks like /tmp)
+        shell%cwd = target_dir
+      else
+        ! Relative path - use physical path from getcwd()
+        shell%cwd = get_current_directory()
+      end if
 
       ! Update PWD and OLDPWD environment variables
       if (.not. set_environment_var('PWD', trim(shell%cwd))) then
