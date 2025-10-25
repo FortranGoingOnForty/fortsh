@@ -170,7 +170,7 @@ module system_interface
     integer(c_int)   :: st_mode      ! File type and mode (4 bytes)
     integer(c_int)   :: st_uid       ! User ID (4 bytes)
     integer(c_int)   :: st_gid       ! Group ID (4 bytes)
-    integer(c_int)   :: __pad0       ! Padding (4 bytes)
+    integer(c_int)   :: pad0         ! Padding (4 bytes)
     integer(c_long)  :: st_rdev      ! Device type (8 bytes)
     integer(c_long)  :: st_size      ! Total size in bytes (8 bytes)
     integer(c_long)  :: st_blksize   ! Optimal block size (8 bytes)
@@ -182,7 +182,7 @@ module system_interface
     integer(c_long)  :: st_mtime_nsec ! Modification time nanoseconds
     integer(c_long)  :: st_ctime     ! Status change time seconds
     integer(c_long)  :: st_ctime_nsec ! Status change time nanoseconds
-    integer(c_long)  :: __glibc_reserved(3) ! Reserved
+    integer(c_long)  :: glibc_reserved(3) ! Reserved
 #endif
   end type stat_t
 
