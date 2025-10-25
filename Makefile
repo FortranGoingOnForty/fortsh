@@ -45,9 +45,9 @@ SRCDIR = src
 BUILDDIR = build
 BINDIR = bin
 
-# Conditionally add string pool if enabled
+# Conditionally add string pool and memory dashboard if enabled
 ifeq ($(MEMPOOL),1)
-    POOL_OBJECTS = $(BUILDDIR)/common/string_pool.o
+    POOL_OBJECTS = $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o
 else
     POOL_OBJECTS =
 endif
@@ -121,6 +121,10 @@ $(BUILDDIR)/common/performance.o: src/common/performance.f90 | $(BUILDDIR)/commo
 
 # String pool (optional, only when MEMPOOL=1)
 $(BUILDDIR)/common/string_pool.o: src/common/string_pool.f90 | $(BUILDDIR)/common
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+# Memory dashboard (optional, only when MEMPOOL=1)
+$(BUILDDIR)/common/memory_dashboard.o: src/common/memory_dashboard.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/system/interface.o: src/system/interface.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/system
