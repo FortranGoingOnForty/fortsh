@@ -583,14 +583,14 @@ contains
       if (input(i:i) == "'") then
         ! Ensure we have space for escape sequence
         if (out_pos + 4 > capacity) then
-          call grow_string_buffer_exp(temp_output, capacity, capacity * 2)
+          call grow_string_buffer_exp(temp_output, capacity, capacity * 2, out_pos - 1)
         end if
         ! Escape single quote: ' becomes '\''
         temp_output(out_pos:out_pos+3) = "'\'''"
         out_pos = out_pos + 4
       else
         if (out_pos > capacity) then
-          call grow_string_buffer_exp(temp_output, capacity, capacity * 2)
+          call grow_string_buffer_exp(temp_output, capacity, capacity * 2, out_pos - 1)
         end if
         temp_output(out_pos:out_pos) = input(i:i)
         out_pos = out_pos + 1
@@ -598,7 +598,7 @@ contains
     end do
 
     if (out_pos > capacity) then
-      call grow_string_buffer_exp(temp_output, capacity, capacity * 2)
+      call grow_string_buffer_exp(temp_output, capacity, capacity * 2, out_pos - 1)
     end if
     temp_output(out_pos:out_pos) = "'"
     output = temp_output(1:out_pos)
@@ -2481,7 +2481,8 @@ contains
       ! Grow buffer if needed
       if (final_result_len + len(temp_piece) > final_result_capacity) then
         call grow_string_buffer_exp(final_result, final_result_capacity, &
-                                     max(final_result_capacity * 2, final_result_len + len(temp_piece) + 256))
+                                     max(final_result_capacity * 2, final_result_len + len(temp_piece) + 256), &
+                                     final_result_len)
       end if
 
       ! Append the piece
@@ -2597,23 +2598,39 @@ contains
   end subroutine
 
   ! Helper to grow an allocatable string buffer
-  subroutine grow_string_buffer_exp(buffer, old_capacity, new_capacity)
+  subroutine grow_string_buffer_exp(buffer, old_capacity, new_capacity, content_len)
     character(len=:), allocatable, intent(inout) :: buffer
     integer, intent(inout) :: old_capacity
     integer, intent(in) :: new_capacity
+    integer, intent(in) :: content_len  ! Actual used length of buffer
     character(len=:), allocatable :: temp
 
-    ! Save current content
+    ! Validate content_len
+    if (content_len < 0 .or. content_len > old_capacity) then
+      ! Invalid content length - this is a bug, but don't crash
+      if (allocated(buffer)) deallocate(buffer)
+      allocate(character(len=new_capacity) :: buffer)
+      buffer = ''
+      old_capacity = new_capacity
+      return
+    end if
+
+    ! Allocate temp buffer and copy only actual content
     allocate(character(len=new_capacity) :: temp)
-    temp = ''
-    if (allocated(buffer)) then
-      temp(1:old_capacity) = buffer
+    temp = ''  ! Initialize entire buffer to prevent heap corruption
+
+    if (allocated(buffer) .and. content_len > 0) then
+      ! Only copy the actual content (content_len bytes), not uninitialized data
+      temp(1:content_len) = buffer(1:content_len)
       deallocate(buffer)
     end if
 
     ! Allocate new larger buffer
     allocate(character(len=new_capacity) :: buffer)
-    buffer = temp
+    buffer = ''  ! Initialize entire buffer
+    if (content_len > 0) then
+      buffer(1:content_len) = temp(1:content_len)
+    end if
     old_capacity = new_capacity
 
     deallocate(temp)
