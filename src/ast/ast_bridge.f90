@@ -125,9 +125,9 @@ contains
     call lex%init(command)
     call lex%tokenize()
 
-    write(output_unit, '(a,i0)') 'Tokens: ', lex%token_count
+    write(output_unit, '(a,i15)') 'Tokens: ', lex%token_count
     do i = 1, lex%token_count
-      write(output_unit, '(a,i0,a,i0,a,a)') &
+      write(output_unit, '(a,i15,a,i0,a,a)') &
         '  Token[', i, '] type=', lex%tokens(i)%type, &
         ' value=', lex%tokens(i)%value
     end do
@@ -138,9 +138,9 @@ contains
 
     write(output_unit, '(a)') 'AST Structure:'
     if (allocated(ast%statements)) then
-      write(output_unit, '(a,i0)') '  Statements: ', size(ast%statements)
+      write(output_unit, '(a,i15)') '  Statements: ', size(ast%statements)
       do i = 1, size(ast%statements)
-        write(output_unit, '(a,i0,a,i0)') &
+        write(output_unit, '(a,i15,a,i0)') &
           '    Statement[', i, '] type=', ast%statements(i)%node_type
         call print_node_info(ast%statements(i), 2)
       end do
@@ -189,7 +189,7 @@ contains
       write(output_unit, '(a,a)') trim(indent_str), 'Continue node'
 
     case default
-      write(output_unit, '(a,a,i0)') trim(indent_str), 'Node type: ', node%node_type
+      write(output_unit, '(a,a,i15)') trim(indent_str), 'Node type: ', node%node_type
     end select
 
   end subroutine print_node_info

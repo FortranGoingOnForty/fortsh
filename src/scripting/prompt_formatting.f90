@@ -236,11 +236,11 @@ contains
       ! History and command numbers
       case ('!')
         ! History number
-        write(replacement, '(i0)') prompt_history_number
+        write(replacement, '(i15)') prompt_history_number
 
       case ('#')
         ! Command number
-        write(replacement, '(i0)') shell%command_number
+        write(replacement, '(i15)') shell%command_number
 
       ! Special characters
       case ('$')
@@ -281,7 +281,7 @@ contains
 
       case ('j')
         ! Number of jobs
-        write(replacement, '(i0)') shell%num_jobs
+        write(replacement, '(i15)') shell%num_jobs
 
       case ('g')
         ! Git branch (if in git repo)

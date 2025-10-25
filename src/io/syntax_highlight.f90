@@ -179,14 +179,14 @@ contains
     call build_simple_highlighted_string(input, tokens, num_tokens, token_colors, highlighted, len_used, actual_input_len)
     ! DEBUG: write(*, '(a)') '[DEBUG: Built highlighted string]'
 
-    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: len_used=', len_used, ']'
+    ! DEBUG: write(*, '(a,i15,a)') '[DEBUG: len_used=', len_used, ']'
 
     ! Return actual length used
     ! DEBUG: write(*, '(a,l1,a)') '[DEBUG: present(actual_len)=', present(actual_len), ']'
     if (present(actual_len)) then
       ! DEBUG: write(*, '(a)') '[DEBUG: About to set actual_len]'
       actual_len = len_used
-      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG: Set actual_len to ', actual_len, ']'
+      ! DEBUG: write(*, '(a,i15,a)') '[DEBUG: Set actual_len to ', actual_len, ']'
     end if
 
     ! DEBUG: write(*, '(a)') '[DEBUG: Exiting highlight_command_line]'
@@ -226,7 +226,7 @@ contains
 
     ! Build the colored character
     if (color /= COLOR_RESET) then
-      write(colored_char, '(a,i0,a,a,a)') char(27) // '[', color, 'm', ch, char(27) // '[0m'
+      write(colored_char, '(a,i15,a,a,a)') char(27) // '[', color, 'm', ch, char(27) // '[0m'
       highlighted = trim(colored_char)
     else
       highlighted = ch
@@ -246,7 +246,7 @@ contains
 
     ! Use module-level working buffer (avoids stack overflow and substring temporaries)
 
-    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: input len=', len(input), ']'
+    ! DEBUG: write(*, '(a,i15,a)') '[DEBUG tokenize: input len=', len(input), ']'
 
     ! Initialize tokens array to all spaces to make len_trim safe
     do j = 1, size(tokens)
@@ -282,14 +282,14 @@ contains
     ! DEBUG: write(*, '(a)') '[DEBUG tokenize: entering main loop]'
 
     do while (i <= input_len)
-      ! DEBUG: write(*, '(a,i0,a,i0,a)') '[DEBUG tokenize: loop i=', i, ' input_len=', input_len, ']'
+      ! DEBUG: write(*, '(a,i15,a,i15,a)') '[DEBUG tokenize: loop i=', i, ' input_len=', input_len, ']'
 
       ! Skip whitespace
       ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to skip whitespace]'
       do while (i <= input_len .and. module_working_buffer(i:i) == ' ')
         i = i + 1
       end do
-      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: after whitespace skip, i=', i, ']'
+      ! DEBUG: write(*, '(a,i15,a)') '[DEBUG tokenize: after whitespace skip, i=', i, ']'
 
       if (i > input_len) exit
 
@@ -329,7 +329,7 @@ contains
       ! DEBUG: write(*, '(a)') '[DEBUG tokenize: not an operator, finding end of token]'
       ! Find end of token
       do while (i <= input_len)
-        ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: in end-of-token loop, i=', i, ']'
+        ! DEBUG: write(*, '(a,i15,a)') '[DEBUG tokenize: in end-of-token loop, i=', i, ']'
         if (.not. in_quotes) then
           if (module_working_buffer(i:i) == '"' .or. module_working_buffer(i:i) == "'") then
             in_quotes = .true.
@@ -353,7 +353,7 @@ contains
       ! Extract token
       token_end = i - 1
       if (token_end >= token_start) then
-        ! DEBUG: write(*, '(a,i0,a,i0,a)') '[DEBUG tokenize: token_start=', token_start, ' token_end=', token_end, ']'
+        ! DEBUG: write(*, '(a,i15,a,i15,a)') '[DEBUG tokenize: token_start=', token_start, ' token_end=', token_end, ']'
         num_tokens = num_tokens + 1
         if (num_tokens <= MAX_TOKENS) then
           ! DEBUG: write(*, '(a)') '[DEBUG tokenize: about to assign token - NO TRIM]'
@@ -368,7 +368,7 @@ contains
       end if
     end do
 
-    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG tokenize: exiting with num_tokens=', num_tokens, ']'
+    ! DEBUG: write(*, '(a,i15,a)') '[DEBUG tokenize: exiting with num_tokens=', num_tokens, ']'
 
     ! Deallocate heap-allocated working buffer
   end subroutine
@@ -385,11 +385,11 @@ contains
     ! DEBUG: write(*, '(a)') '[DEBUG colorize: entering colorize_tokens]'
 
     do i = 1, num_tokens
-      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: processing token ', i, ']'
+      ! DEBUG: write(*, '(a,i15,a)') '[DEBUG colorize: processing token ', i, ']'
 
       ! SAFETY: tokens array is initialized to spaces, so len_trim is safe here
       token_len = len_trim(tokens(i))
-      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: after len_trim, token_len=', token_len, ']'
+      ! DEBUG: write(*, '(a,i15,a)') '[DEBUG colorize: after len_trim, token_len=', token_len, ']'
 
       if (token_len > 0 .and. token_len <= len(token)) then
         token(1:token_len) = tokens(i)(1:token_len)
@@ -401,7 +401,7 @@ contains
         token_len = 0
       end if
 
-      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: final token_len=', token_len, ']'
+      ! DEBUG: write(*, '(a,i15,a)') '[DEBUG colorize: final token_len=', token_len, ']'
 
       if (token_len == 0) then
         colors(i) = color_code(COLOR_RESET)
@@ -445,7 +445,7 @@ contains
         colors(i) = color_code(COLOR_RESET)
       end if
 
-      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG colorize: finished processing token ', i, ']'
+      ! DEBUG: write(*, '(a,i15,a)') '[DEBUG colorize: finished processing token ', i, ']'
     end do
 
     ! DEBUG: write(*, '(a)') '[DEBUG colorize: exiting colorize_tokens]'
@@ -676,7 +676,7 @@ contains
 
     ! DEBUG: write(*, '(a)') '[DEBUG build: exited outer loop]'
 
-    ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: result_pos=', result_pos, ']'
+    ! DEBUG: write(*, '(a,i15,a)') '[DEBUG build: result_pos=', result_pos, ']'
 
     ! Extract final result (result_pos is one past the last character)
     if (result_pos > 1) then
@@ -685,7 +685,7 @@ contains
       ! Must use substring assignment to fixed-length string
       actual_len = result_pos - 1
 
-      ! DEBUG: write(*, '(a,i0,a)') '[DEBUG build: actual_len=', actual_len, ']'
+      ! DEBUG: write(*, '(a,i15,a)') '[DEBUG build: actual_len=', actual_len, ']'
 
       ! Safety check to prevent buffer overflow
       if (actual_len > 0 .and. actual_len <= MAX_HIGHLIGHT_LEN) then
@@ -864,7 +864,7 @@ contains
     if (color == COLOR_RESET) then
       code = char(27) // '[0m'
     else
-      write(code, '(a,i0,a)') char(27) // '[', color, 'm'
+      write(code, '(a,i15,a)') char(27) // '[', color, 'm'
     end if
     code = trim(code)
   end function

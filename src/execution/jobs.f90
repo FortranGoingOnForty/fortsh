@@ -87,12 +87,12 @@ contains
     do i = 1, MAX_JOBS
       if (shell%jobs(i)%job_id > 0 .and. .not. shell%jobs(i)%notified) then
         if (shell%jobs(i)%state == JOB_DONE) then
-          write(output_unit, '(a,i0,a,a)') '[', shell%jobs(i)%job_id, ']  Done                    ', &
+          write(output_unit, '(a,i15,a,a)') '[', shell%jobs(i)%job_id, ']  Done                    ', &
                 trim(shell%jobs(i)%command_line)
           shell%jobs(i)%notified = .true.
           call remove_job(shell, shell%jobs(i)%job_id)
         else if (shell%jobs(i)%state == JOB_STOPPED) then
-          write(output_unit, '(a,i0,a,a)') '[', shell%jobs(i)%job_id, ']  Stopped                 ', &
+          write(output_unit, '(a,i15,a,a)') '[', shell%jobs(i)%job_id, ']  Stopped                 ', &
                 trim(shell%jobs(i)%command_line)
           shell%jobs(i)%notified = .true.
         end if
@@ -215,13 +215,13 @@ contains
     
     job_index = find_job_by_id(shell, job_id)
     if (job_index == 0) then
-      write(error_unit, '(a,i0,a)') 'Job ', job_id, ' not found'
+      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' not found'
       shell%last_exit_status = 1
       return
     end if
     
     if (shell%jobs(job_index)%state == JOB_STOPPED) then
-      write(error_unit, '(a,i0,a)') 'Job ', job_id, ' already stopped'
+      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' already stopped'
       return
     end if
     
@@ -229,9 +229,9 @@ contains
     ret = c_kill(-shell%jobs(job_index)%pgid, SIGTSTP)
     if (ret == 0) then
       shell%jobs(job_index)%state = JOB_STOPPED
-      write(output_unit, '(a,i0,a)') '[', job_id, '] Suspended'
+      write(output_unit, '(a,i15,a)') '[', job_id, '] Suspended'
     else
-      write(error_unit, '(a,i0)') 'Failed to suspend job ', job_id
+      write(error_unit, '(a,i15)') 'Failed to suspend job ', job_id
       shell%last_exit_status = 1
     end if
   end subroutine
@@ -244,13 +244,13 @@ contains
     
     job_index = find_job_by_id(shell, job_id)
     if (job_index == 0) then
-      write(error_unit, '(a,i0,a)') 'Job ', job_id, ' not found'
+      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' not found'
       shell%last_exit_status = 1
       return
     end if
     
     if (shell%jobs(job_index)%state /= JOB_STOPPED) then
-      write(error_unit, '(a,i0,a)') 'Job ', job_id, ' is not stopped'
+      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' is not stopped'
       return
     end if
     
@@ -260,9 +260,9 @@ contains
       shell%jobs(job_index)%state = JOB_RUNNING
       shell%jobs(job_index)%foreground = .false.
       shell%jobs(job_index)%notified = .false.
-      write(output_unit, '(a,i0,a,a)') '[', job_id, '] ', trim(shell%jobs(job_index)%command_line), ' &'
+      write(output_unit, '(a,i15,a,a)') '[', job_id, '] ', trim(shell%jobs(job_index)%command_line), ' &'
     else
-      write(error_unit, '(a,i0)') 'Failed to resume job in background ', job_id
+      write(error_unit, '(a,i15)') 'Failed to resume job in background ', job_id
       shell%last_exit_status = 1
     end if
   end subroutine
@@ -276,13 +276,13 @@ contains
     
     job_index = find_job_by_id(shell, job_id)
     if (job_index == 0) then
-      write(error_unit, '(a,i0,a)') 'Job ', job_id, ' not found'
+      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' not found'
       shell%last_exit_status = 1
       return
     end if
     
     if (shell%jobs(job_index)%state /= JOB_STOPPED) then
-      write(error_unit, '(a,i0,a)') 'Job ', job_id, ' is not stopped'
+      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' is not stopped'
       return
     end if
     
@@ -317,7 +317,7 @@ contains
         write(output_unit, '(a)') 'Stopped'
       end if
     else
-      write(error_unit, '(a,i0)') 'Failed to resume job in foreground ', job_id
+      write(error_unit, '(a,i15)') 'Failed to resume job in foreground ', job_id
       shell%last_exit_status = 1
     end if
   end subroutine
@@ -331,7 +331,7 @@ contains
     
     job_index = find_job_by_id(shell, job_id)
     if (job_index == 0) then
-      write(error_unit, '(a,i0,a)') 'Job ', job_id, ' not found'
+      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' not found'
       shell%last_exit_status = 1
       return
     end if
@@ -346,9 +346,9 @@ contains
         shell%jobs(job_index)%state = JOB_DONE
         call remove_job(shell, job_id)
       end if
-      write(output_unit, '(a,i0,a)') '[', job_id, '] Terminated'
+      write(output_unit, '(a,i15,a)') '[', job_id, '] Terminated'
     else
-      write(error_unit, '(a,i0)') 'Failed to kill job ', job_id
+      write(error_unit, '(a,i15)') 'Failed to kill job ', job_id
       shell%last_exit_status = 1
     end if
   end subroutine
@@ -379,11 +379,11 @@ contains
         end select
         
         if (show_pid_info) then
-          write(output_unit, '(a,i0,a,i0,1x,a,1x,a)') &
+          write(output_unit, '(a,i15,a,i0,1x,a,1x,a)') &
             '[', shell%jobs(i)%job_id, ']  ', shell%jobs(i)%pgid, &
             trim(state_str), trim(shell%jobs(i)%command_line)
         else
-          write(output_unit, '(a,i0,a,a,1x,a)') &
+          write(output_unit, '(a,i15,a,a,1x,a)') &
             '[', shell%jobs(i)%job_id, ']  ', &
             trim(state_str), trim(shell%jobs(i)%command_line)
         end if

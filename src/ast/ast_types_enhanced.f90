@@ -360,6 +360,7 @@ contains
     class(ast_node_t), pointer :: clone
 
     allocate(ast_node_t :: clone)
+    ast_node_t :: clone = 0
     clone%node_type = self%node_type
     clone%line_number = self%line_number
     clone%column = self%column
@@ -372,6 +373,7 @@ contains
     integer :: i
 
     allocate(script_node_t :: typed_clone)
+    script_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -396,6 +398,7 @@ contains
     integer :: i
 
     allocate(command_node_t :: typed_clone)
+    command_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -441,6 +444,7 @@ contains
     integer :: i
 
     allocate(pipeline_node_t :: typed_clone)
+    pipeline_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -465,6 +469,7 @@ contains
     type(and_list_node_t), pointer :: typed_clone
 
     allocate(and_list_node_t :: typed_clone)
+    and_list_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -486,6 +491,7 @@ contains
     type(or_list_node_t), pointer :: typed_clone
 
     allocate(or_list_node_t :: typed_clone)
+    or_list_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -507,6 +513,7 @@ contains
     type(word_node_t), pointer :: typed_clone
 
     allocate(word_node_t :: typed_clone)
+    word_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -522,6 +529,7 @@ contains
     type(variable_node_t), pointer :: typed_clone
 
     allocate(variable_node_t :: typed_clone)
+    variable_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -541,6 +549,7 @@ contains
     type(redirection_node_t), pointer :: typed_clone
 
     allocate(redirection_node_t :: typed_clone)
+    redirection_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -569,6 +578,7 @@ contains
     type(command_subst_node_t), pointer :: typed_clone
 
     allocate(command_subst_node_t :: typed_clone)
+    command_subst_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -585,6 +595,7 @@ contains
     type(arithmetic_node_t), pointer :: typed_clone
 
     allocate(arithmetic_node_t :: typed_clone)
+    arithmetic_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -601,6 +612,7 @@ contains
     integer :: i
 
     allocate(for_node_t :: typed_clone)
+    for_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -636,6 +648,7 @@ contains
     integer :: i
 
     allocate(for_arith_node_t :: typed_clone)
+    for_arith_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -664,6 +677,7 @@ contains
     integer :: i
 
     allocate(while_node_t :: typed_clone)
+    while_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -692,6 +706,7 @@ contains
     integer :: i
 
     allocate(if_node_t :: typed_clone)
+    if_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -730,6 +745,7 @@ contains
     integer :: i, j
 
     allocate(case_node_t :: typed_clone)
+    case_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -774,6 +790,7 @@ contains
     type(break_node_t), pointer :: typed_clone
 
     allocate(break_node_t :: typed_clone)
+    break_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -788,6 +805,7 @@ contains
     type(continue_node_t), pointer :: typed_clone
 
     allocate(continue_node_t :: typed_clone)
+    continue_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -803,6 +821,7 @@ contains
     integer :: i
 
     allocate(function_node_t :: typed_clone)
+    function_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -831,6 +850,7 @@ contains
     integer :: i
 
     allocate(subshell_node_t :: typed_clone)
+    subshell_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -855,6 +875,7 @@ contains
     integer :: i
 
     allocate(group_node_t :: typed_clone)
+    group_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -878,6 +899,7 @@ contains
     type(cond_expr_node_t), pointer :: typed_clone
 
     allocate(cond_expr_node_t :: typed_clone)
+    cond_expr_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column
@@ -893,6 +915,7 @@ contains
     type(proc_subst_node_t), pointer :: typed_clone
 
     allocate(proc_subst_node_t :: typed_clone)
+    proc_subst_node_t :: typed_clone = 0
     typed_clone%node_type = self%node_type
     typed_clone%line_number = self%line_number
     typed_clone%column = self%column

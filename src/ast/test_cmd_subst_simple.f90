@@ -43,7 +43,7 @@ program test_cmd_subst_simple
 
   print *, "Tokens:"
   do i = 1, lex%token_count
-    print '(a,i0,a,i0,a,a)', "  Token ", i, " (type=", lex%tokens(i)%type, &
+    print '(a,i15,a,i15,a,a)', "  Token ", i, " (type=", lex%tokens(i)%type, &
            "): '", trim(lex%tokens(i)%value), "'"
   end do
 

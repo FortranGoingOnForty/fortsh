@@ -446,18 +446,18 @@ contains
     call set_shell_variable(shell, 'COMP_LINE', trim(comp_line), len_trim(comp_line))
 
     ! Set COMP_POINT - cursor position in the line
-    write(point_str, '(i0)') comp_point
+    write(point_str, '(i15)') comp_point
     call set_shell_variable(shell, 'COMP_POINT', trim(point_str), len_trim(point_str))
 
     ! Set COMP_CWORD - index of the word containing cursor
-    write(cword_str, '(i0)') comp_cword
+    write(cword_str, '(i15)') comp_cword
     call set_shell_variable(shell, 'COMP_CWORD', trim(cword_str), len_trim(cword_str))
 
     ! Set COMP_WORDS array (bash uses indexed array)
     ! For now, we'll set COMP_WORDS as individual variables COMP_WORDS_0, COMP_WORDS_1, etc.
     do i = 0, comp_cword
       if (i <= size(comp_words)) then
-        write(point_str, '(a,i0)') 'COMP_WORDS_', i
+        write(point_str, '(a,i15)') 'COMP_WORDS_', i
         call set_shell_variable(shell, trim(point_str), trim(comp_words(i+1)), len_trim(comp_words(i+1)))
       end if
     end do

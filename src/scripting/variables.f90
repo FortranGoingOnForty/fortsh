@@ -146,13 +146,13 @@ contains
     ! Handle special variables
     select case (trim(name))
       case ('$')
-        write(value, '(i0)') shell%shell_pid
+        write(value, '(i15)') shell%shell_pid
         return
       case ('!')
-        write(value, '(i0)') shell%last_bg_pid
+        write(value, '(i15)') shell%last_bg_pid
         return
       case ('?')
-        write(value, '(i0)') shell%last_exit_status
+        write(value, '(i15)') shell%last_exit_status
         return
       case ('0')
         value = trim(shell%shell_name)
@@ -166,13 +166,13 @@ contains
         value = get_shell_option_flags(shell)
         return
       case ('PPID')
-        write(value, '(i0)') shell%parent_pid
+        write(value, '(i15)') shell%parent_pid
         return
       case ('UID')
-        write(value, '(i0)') shell%uid
+        write(value, '(i15)') shell%uid
         return
       case ('EUID')
-        write(value, '(i0)') shell%euid
+        write(value, '(i15)') shell%euid
         return
       case ('PWD')
         value = trim(shell%cwd)
@@ -189,11 +189,11 @@ contains
         call get_seconds_since_start(shell, value)
         return
       case ('LINENO')
-        write(value, '(i0)') shell%current_line_number
+        write(value, '(i15)') shell%current_line_number
         return
       case ('#')
         ! Number of positional parameters
-        write(value, '(i0)') shell%num_positional
+        write(value, '(i15)') shell%num_positional
         return
       case ('*')
         ! All positional parameters as single word (IFS separated)
@@ -223,10 +223,10 @@ contains
         value = trim(shell%histfile)
         return
       case ('HISTSIZE')
-        write(value, '(i0)') shell%histsize
+        write(value, '(i15)') shell%histsize
         return
       case ('HISTFILESIZE')
-        write(value, '(i0)') shell%histfilesize
+        write(value, '(i15)') shell%histfilesize
         return
       case ('HISTCONTROL')
         value = trim(shell%histcontrol)
@@ -1425,7 +1425,7 @@ contains
 
     call random_number(rand_val)
     rand_int = int(rand_val * 32768.0)
-    write(value, '(i0)') rand_int
+    write(value, '(i15)') rand_int
   end subroutine
 
   subroutine get_seconds_since_start(shell, value)
@@ -1443,7 +1443,7 @@ contains
       elapsed = 0
     end if
 
-    write(value, '(i0)') elapsed
+    write(value, '(i15)') elapsed
   end subroutine
 
   ! Get the actual stored length of a variable (for ${#var} expansion)

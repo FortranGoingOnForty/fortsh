@@ -3,6 +3,9 @@
 ! Purpose: Lexical analyzer for fortsh - converts text to tokens
 ! ==============================================================================
 module lexer
+
+  ! Recursion depth limits
+  integer, parameter :: MAX_RECURSION_DEPTH = 1000
   use ast_types
   use iso_fortran_env, only: error_unit
   implicit none

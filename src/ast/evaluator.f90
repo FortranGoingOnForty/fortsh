@@ -3,6 +3,9 @@
 ! Purpose: AST evaluator for fortsh - executes the abstract syntax tree
 ! ==============================================================================
 module evaluator
+
+  ! Recursion depth limits
+  integer, parameter :: MAX_RECURSION_DEPTH = 1000
   use ast_types
   use shell_types
   use system_interface
@@ -226,7 +229,7 @@ contains
       exit_code = 0
 
     case default
-      write(error_unit, '(a,i0)') 'Unknown node type: ', node%node_type
+      write(error_unit, '(a,i15)') 'Unknown node type: ', node%node_type
       exit_code = 1
     end select
   end function evaluator_eval_node

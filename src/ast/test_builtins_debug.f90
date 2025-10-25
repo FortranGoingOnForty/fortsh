@@ -40,7 +40,7 @@ program test_builtins_debug
   ! Show tokens
   print *, "Tokens:"
   do i = 1, lex%token_count
-    print '(a,i0,a,a,a,a,a)', "  Token ", i, ": type=", trim(token_type_str(lex%tokens(i)%type)), &
+    print '(a,i15,a,a,a,a,a)', "  Token ", i, ": type=", trim(token_type_str(lex%tokens(i)%type)), &
                           ", text='", trim(lex%tokens(i)%value), "'"
   end do
 
@@ -72,7 +72,7 @@ program test_builtins_debug
   ! Show tokens
   print *, "Tokens:"
   do i = 1, lex%token_count
-    print '(a,i0,a,i0,a,a,a,a,a)', "  Token ", i, ": type=", lex%tokens(i)%type, &
+    print '(a,i15,a,i15,a,a,a,a,a)', "  Token ", i, ": type=", lex%tokens(i)%type, &
                               " (", trim(token_type_str(lex%tokens(i)%type)), &
                               "), text='", trim(lex%tokens(i)%value), "'"
   end do
@@ -103,7 +103,7 @@ program test_builtins_debug
   ! Show tokens
   print *, "Tokens:"
   do i = 1, lex%token_count
-    print '(a,i0,a,a,a,a,a)', "  Token ", i, ": type=", trim(token_type_str(lex%tokens(i)%type)), &
+    print '(a,i15,a,a,a,a,a)', "  Token ", i, ": type=", trim(token_type_str(lex%tokens(i)%type)), &
                           ", text='", trim(lex%tokens(i)%value), "'"
   end do
 

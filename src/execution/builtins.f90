@@ -775,7 +775,7 @@ contains
       
       ret = c_kill(int(target_pid, c_pid_t), int(signal_num, c_int))
       if (ret /= 0) then
-        write(error_unit, '(a,i0)') 'kill: failed to kill process ', target_pid
+        write(error_unit, '(a,i15)') 'kill: failed to kill process ', target_pid
         shell%last_exit_status = 1
       end if
     end do
@@ -835,7 +835,7 @@ contains
               shell%last_exit_status = 1
             end if
           else
-            write(error_unit, '(a,i0)') 'wait: pid ', target_pid, ' is not a child of this shell'
+            write(error_unit, '(a,i15)') 'wait: pid ', target_pid, ' is not a child of this shell'
             shell%last_exit_status = 1
           end if
         end if
@@ -1207,8 +1207,8 @@ contains
       else
         write(output_unit, '(a)') 'Performance monitoring: DISABLED'
       end if
-      write(output_unit, '(a,i0)') 'Commands processed: ', total_commands
-      write(output_unit, '(a,i0,a)') 'Memory usage: ', get_memory_usage(), ' KB'
+      write(output_unit, '(a,i15)') 'Commands processed: ', total_commands
+      write(output_unit, '(a,i15,a)') 'Memory usage: ', get_memory_usage(), ' KB'
     end if
     
     shell%last_exit_status = 0
@@ -1237,10 +1237,10 @@ contains
       ! Show memory status
       write(output_unit, '(a)') 'Memory Usage Summary:'
       write(output_unit, '(a)') '===================='
-      write(output_unit, '(a,i0)') 'Current allocations: ', current_allocations
-      write(output_unit, '(a,i0)') 'Peak allocations:    ', peak_allocations
-      write(output_unit, '(a,i0,a)') 'Current memory:      ', current_memory_used, ' bytes'
-      write(output_unit, '(a,i0,a)') 'Peak memory:         ', peak_memory_used, ' bytes'
+      write(output_unit, '(a,i15)') 'Current allocations: ', current_allocations
+      write(output_unit, '(a,i15)') 'Peak allocations:    ', peak_allocations
+      write(output_unit, '(a,i15,a)') 'Current memory:      ', current_memory_used, ' bytes'
+      write(output_unit, '(a,i15,a)') 'Peak memory:         ', peak_memory_used, ' bytes'
       
       if (needs_memory_optimization()) then
         write(output_unit, '(a)') ''
@@ -1286,11 +1286,11 @@ contains
         write(output_unit, '(a)', advance='no') 'ESC '
         success = read_single_char(ch)
         if (success) then
-          write(output_unit, '(a,i0)', advance='no') '[', iachar(ch)
+          write(output_unit, '(a,i15)', advance='no') '[', iachar(ch)
           if (ch == '[') then
             success = read_single_char(ch)
             if (success) then
-              write(output_unit, '(a,i0,a)', advance='no') '[', iachar(ch), '] = '
+              write(output_unit, '(a,i15,a)', advance='no') '[', iachar(ch), '] = '
               select case(ch)
               case('A')
                 write(output_unit, '(a)') 'UP ARROW'
@@ -1310,12 +1310,12 @@ contains
         end if
       else if (char_code < 32) then
         ! Control character
-        write(output_unit, '(a,i0,a)') 'CTRL+', char_code, ' (^', char(char_code + 64), ')'
+        write(output_unit, '(a,i15,a)') 'CTRL+', char_code, ' (^', char(char_code + 64), ')'
       else if (char_code == 127) then
         write(output_unit, '(a)') 'BACKSPACE/DELETE (127)'
       else
         ! Regular character
-        write(output_unit, '(a,a,a,i0,a)') 'Regular: ''', ch, ''' (', char_code, ')'
+        write(output_unit, '(a,a,a,i15,a)') 'Regular: ''', ch, ''' (', char_code, ')'
       end if
     end do
     
@@ -2386,7 +2386,7 @@ contains
         else
           display_value = limit_value
         end if
-        write(output_unit, '(i0)') display_value
+        write(output_unit, '(i15)') display_value
       end if
     end subroutine
 
@@ -2434,7 +2434,7 @@ contains
         else
           val = r%rlim_cur
         end if
-        write(str, '(i0)') val
+        write(str, '(i15)') val
       end if
     end function
 
@@ -2481,10 +2481,10 @@ contains
     children_sys_sec = children_sys_sec - (children_sys_min * 60.0)
 
     ! Print in bash format: user_time system_time (one line for shell, one for children)
-    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
+    write(output_unit, '(i15,a,f5.3,a,1x,i15,a,f5.3,a)') &
       self_user_min, 'm', self_user_sec, 's', &
       self_sys_min, 'm', self_sys_sec, 's'
-    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
+    write(output_unit, '(i15,a,f5.3,a,1x,i0,a,f5.3,a)') &
       children_user_min, 'm', children_user_sec, 's', &
       children_sys_min, 'm', children_sys_sec, 's'
 
@@ -2981,7 +2981,7 @@ contains
     end if
 
     ! Create temporary file with commands to edit
-    write(tmpfile, '(a,i0)') '/tmp/fortsh_fc_', c_getpid()
+    write(tmpfile, '(a,i15)') '/tmp/fortsh_fc_', c_getpid()
 
     open(newunit=tmp_unit, file=trim(tmpfile), status='replace', action='write', iostat=iostat)
     if (iostat /= 0) then
