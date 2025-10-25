@@ -25,10 +25,19 @@ else
     $(info Using gfortran on Linux)
 endif
 
+# Optional memory pooling (set MEMPOOL=1 to enable)
+ifeq ($(MEMPOOL),1)
+    POOL_FLAGS = -DUSE_MEMORY_POOL
+    $(info Memory pooling ENABLED - using string pool)
+else
+    POOL_FLAGS =
+    $(info Memory pooling DISABLED - using standard allocation)
+endif
+
 # Development flags (verbose warnings, debug symbols)
-FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS)
+FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 # Production flags (minimal warnings, optimized, no debug symbols)
-FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS)
+FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 LDFLAGS = 
 
 # Directory structure
@@ -36,10 +45,18 @@ SRCDIR = src
 BUILDDIR = build
 BINDIR = bin
 
+# Conditionally add string pool if enabled
+ifeq ($(MEMPOOL),1)
+    POOL_OBJECTS = $(BUILDDIR)/common/string_pool.o
+else
+    POOL_OBJECTS =
+endif
+
 # Object files in dependency order
 OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/common/error_handling.o \
           $(BUILDDIR)/common/performance.o \
+          $(POOL_OBJECTS) \
           $(BUILDDIR)/system/interface.o \
           $(BUILDDIR)/common/io_helpers.o \
           $(BUILDDIR)/system/signals.o \
@@ -100,6 +117,10 @@ $(BUILDDIR)/common/error_handling.o: src/common/error_handling.f90 | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/common/performance.o: src/common/performance.f90 | $(BUILDDIR)/common
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+# String pool (optional, only when MEMPOOL=1)
+$(BUILDDIR)/common/string_pool.o: src/common/string_pool.f90 | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/system/interface.o: src/system/interface.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/system
