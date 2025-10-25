@@ -5877,8 +5877,11 @@ contains
           ! Found a match! Store the rest as suggestion
           ! CRITICAL FIX: Stop at first newline to avoid multi-line suggestions (heredocs, etc.)
           ! Copy remaining part character-by-character (avoid substring)
+          ! CRITICAL FIX 2: Never write beyond MAX_LINE_LEN to prevent heap corruption
           suggestion_candidate = ''
           do j = input_state%length + 1, len_trim(command_history%lines(i))
+            ! Bounds check: ensure we don't write beyond MAX_LINE_LEN
+            if (j - input_state%length > MAX_LINE_LEN) exit
             suggestion_candidate(j - input_state%length:j - input_state%length) = &
               command_history%lines(i)(j:j)
           end do
@@ -5896,11 +5899,12 @@ contains
             ! Found newline - truncate before it (or clear if newline is first char)
             if (newline_pos > 0) then
               ! Copy character-by-character to avoid substring
+              ! Ensure we don't exceed MAX_LINE_LEN
               input_state%suggestion = ''
-              do j = 1, newline_pos
+              do j = 1, min(newline_pos, MAX_LINE_LEN)
                 input_state%suggestion(j:j) = suggestion_candidate(j:j)
               end do
-              input_state%suggestion_length = newline_pos
+              input_state%suggestion_length = min(newline_pos, MAX_LINE_LEN)
             else
               ! Newline is first character - no suggestion
               input_state%suggestion = ''
@@ -5908,11 +5912,12 @@ contains
             end if
           else
             ! No newline found, use full suggestion - copy character-by-character
+            ! Ensure we don't exceed MAX_LINE_LEN when copying
             input_state%suggestion = ''
-            do j = 1, len_trim(suggestion_candidate)
+            do j = 1, min(len_trim(suggestion_candidate), MAX_LINE_LEN)
               input_state%suggestion(j:j) = suggestion_candidate(j:j)
             end do
-            input_state%suggestion_length = len_trim(suggestion_candidate)
+            input_state%suggestion_length = min(len_trim(suggestion_candidate), MAX_LINE_LEN)
           end if
           if (allocated(current_input)) deallocate(current_input)
           if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
