@@ -580,14 +580,13 @@ contains
     else
       ! On subsequent calls, just reset the buffer and cursor
 #ifdef USE_MEMORY_POOL
-      ! Check if buffer_ref is still valid, reinitialize if not
-      if (.not. associated(module_input_state%buffer_ref%data)) then
-        call init_input_state(module_input_state)
-      else
-        module_input_state%buffer_ref%data = ''
-      end if
+      module_input_state%buffer_ref%data = ''
+#else
+#ifdef USE_MEMORY_POOL
+      module_input_state%buffer_ref%data = ''
 #else
       module_input_state%buffer = ''
+#endif
 #endif
       module_input_state%length = 0
       module_input_state%cursor_pos = 0
@@ -651,7 +650,11 @@ contains
 #ifdef USE_MEMORY_POOL
             module_input_state%buffer_ref%data = ''
 #else
+#ifdef USE_MEMORY_POOL
+            module_input_state%buffer_ref%data = ''
+#else
             module_input_state%buffer = ''
+#endif
 #endif
             module_input_state%length = 0
             module_input_state%cursor_pos = 0
@@ -816,7 +819,11 @@ contains
 #ifdef USE_MEMORY_POOL
             module_input_state%buffer_ref%data = ''
 #else
+#ifdef USE_MEMORY_POOL
+            module_input_state%buffer_ref%data = ''
+#else
             module_input_state%buffer = ''
+#endif
 #endif
             module_input_state%length = 0
             module_input_state%cursor_pos = 0
@@ -1878,11 +1885,7 @@ contains
     select case (motion)
     case ('d')
       ! dd - delete entire line
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
-#else
       input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
-#endif
       input_state%vi_yank_length = input_state%length
 #ifdef USE_MEMORY_POOL
       input_state%buffer_ref%data = ''
@@ -1962,11 +1965,7 @@ contains
     select case (motion)
     case ('y')
       ! yy - yank entire line
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
-#else
       input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
-#endif
       input_state%vi_yank_length = input_state%length
 
     case ('w')
@@ -2054,11 +2053,7 @@ contains
     ! Replace up to repeat_count characters
     do i = 1, repeat_count
       if (input_state%cursor_pos + i - 1 < input_state%length) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data(input_state%cursor_pos+i:input_state%cursor_pos+i) = replace_char
-#else
         input_state%buffer(input_state%cursor_pos+i:input_state%cursor_pos+i) = replace_char
-#endif
         input_state%dirty = .true.
       end if
     end do
@@ -2080,11 +2075,7 @@ contains
 
     yank_len = max(0, min(end_pos - start_pos, MAX_LINE_LEN))
     if (yank_len > 0 .and. start_pos >= 1 .and. start_pos <= input_state%length) then
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(start_pos:start_pos+yank_len-1)
-#else
       input_state%vi_yank_buffer = input_state%buffer(start_pos:start_pos+yank_len-1)
-#endif
       input_state%vi_yank_length = yank_len
     end if
   end subroutine
@@ -2101,11 +2092,7 @@ contains
     ! Shift remaining characters left
     do i = start_pos, input_state%length - delete_len
       if (end_pos + i - start_pos <= input_state%length) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data(i:i) = input_state%buffer_ref%data(end_pos+i-start_pos:end_pos+i-start_pos)
-#else
         input_state%buffer(i:i) = input_state%buffer(end_pos+i-start_pos:end_pos+i-start_pos)
-#endif
       end if
     end do
 
@@ -2122,20 +2109,12 @@ contains
     pos = input_state%cursor_pos + 1
 
     ! If on whitespace, skip to next word
-#ifdef USE_MEMORY_POOL
-    do while (pos <= input_state%length .and. input_state%buffer_ref%data(pos:pos) == ' ')
-#else
     do while (pos <= input_state%length .and. input_state%buffer(pos:pos) == ' ')
-#endif
       pos = pos + 1
     end do
 
     ! Find end of word
-#ifdef USE_MEMORY_POOL
-    do while (pos <= input_state%length .and. input_state%buffer_ref%data(pos:pos) /= ' ')
-#else
     do while (pos <= input_state%length .and. input_state%buffer(pos:pos) /= ' ')
-#endif
       pos = pos + 1
     end do
 
@@ -2148,22 +2127,14 @@ contains
     integer :: pos
     
     pos = input_state%cursor_pos + 1
-
+    
     ! Skip current word
-#ifdef USE_MEMORY_POOL
-    do while (pos <= input_state%length .and. input_state%buffer_ref%data(pos:pos) /= ' ')
-#else
     do while (pos <= input_state%length .and. input_state%buffer(pos:pos) /= ' ')
-#endif
       pos = pos + 1
     end do
-
+    
     ! Skip spaces
-#ifdef USE_MEMORY_POOL
-    do while (pos <= input_state%length .and. input_state%buffer_ref%data(pos:pos) == ' ')
-#else
     do while (pos <= input_state%length .and. input_state%buffer(pos:pos) == ' ')
-#endif
       pos = pos + 1
     end do
     
@@ -2178,22 +2149,14 @@ contains
     if (input_state%cursor_pos <= 0) return
     
     pos = input_state%cursor_pos - 1
-
+    
     ! Skip spaces
-#ifdef USE_MEMORY_POOL
-    do while (pos > 0 .and. input_state%buffer_ref%data(pos:pos) == ' ')
-#else
     do while (pos > 0 .and. input_state%buffer(pos:pos) == ' ')
-#endif
       pos = pos - 1
     end do
-
+    
     ! Find beginning of word
-#ifdef USE_MEMORY_POOL
-    do while (pos > 0 .and. input_state%buffer_ref%data(pos:pos) /= ' ')
-#else
     do while (pos > 0 .and. input_state%buffer(pos:pos) /= ' ')
-#endif
       pos = pos - 1
     end do
 
@@ -2212,19 +2175,11 @@ contains
     
     ! Shift characters left
     do i = input_state%cursor_pos + 1, input_state%length - 1
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data(i:i) = input_state%buffer_ref%data(i+1:i+1)
-#else
       input_state%buffer(i:i) = input_state%buffer(i+1:i+1)
-#endif
     end do
-
+    
     input_state%length = input_state%length - 1
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data(input_state%length+1:input_state%length+1) = ' '
-#else
     input_state%buffer(input_state%length+1:input_state%length+1) = ' '
-#endif
     input_state%dirty = .true.
   end subroutine
 
@@ -6154,11 +6109,7 @@ contains
 
     ! Simplified: yank entire line (yy behavior)
     if (input_state%length > 0) then
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
-#else
       input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
-#endif
       input_state%vi_yank_length = input_state%length
     else
 #ifdef USE_MEMORY_POOL
@@ -6385,11 +6336,7 @@ contains
 
     ! Find start of word (go backwards until space or beginning)
     do while (word_start > 0)
-#ifdef USE_MEMORY_POOL
-      if (input_state%buffer_ref%data(word_start:word_start) == ' ') then
-#else
       if (input_state%buffer(word_start:word_start) == ' ') then
-#endif
         word_start = word_start + 1
         exit
       end if
@@ -6400,11 +6347,7 @@ contains
 
     ! Extract the word
     if (word_end > word_start) then
-#ifdef USE_MEMORY_POOL
-      word_before_cursor = input_state%buffer_ref%data(word_start:word_end)
-#else
       word_before_cursor = input_state%buffer(word_start:word_end)
-#endif
     else
       if (allocated(word_before_cursor)) deallocate(word_before_cursor)
       return  ! No word to expand
@@ -6422,13 +6365,8 @@ contains
 
     ! First, remove the original word by shifting left
     do i = word_end + 1, input_state%length
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data(word_start + i - word_end - 1:word_start + i - word_end - 1) = &
-        input_state%buffer_ref%data(i:i)
-#else
       input_state%buffer(word_start + i - word_end - 1:word_start + i - word_end - 1) = &
         input_state%buffer(i:i)
-#endif
     end do
     input_state%length = input_state%length - (word_end - word_start + 1)
     input_state%cursor_pos = word_start - 1
@@ -6437,24 +6375,15 @@ contains
     ! Make room for expanded text
     do i = input_state%length, input_state%cursor_pos + 1, -1
       if (i + expanded_len <= MAX_LINE_LEN) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data(i + expanded_len:i + expanded_len) = input_state%buffer_ref%data(i:i)
-#else
         input_state%buffer(i + expanded_len:i + expanded_len) = input_state%buffer(i:i)
-#endif
       end if
     end do
 
     ! Insert expanded text
     do i = 1, expanded_len
       if (input_state%cursor_pos + i <= MAX_LINE_LEN) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data(input_state%cursor_pos + i:input_state%cursor_pos + i) = &
-          expanded_form(i:i)
-#else
         input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = &
           expanded_form(i:i)
-#endif
       end if
     end do
 
