@@ -11,6 +11,9 @@ module readline
   use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
+#ifdef USE_MEMORY_POOL
+  use string_pool
+#endif
   implicit none
 
   ! Module-level terminal state for FZF functions
@@ -156,6 +159,20 @@ module readline
 
     ! Track if initialized
     logical :: initialized = .false.
+
+#ifdef USE_MEMORY_POOL
+    ! Pool references for memory management
+    type(string_ref) :: buffer_ref
+    type(string_ref) :: original_buffer_ref
+    type(string_ref) :: kill_buffer_ref
+    type(string_ref) :: last_completion_buffer_ref
+    type(string_ref) :: search_string_ref
+    type(string_ref) :: vi_command_buffer_ref
+    type(string_ref) :: vi_yank_buffer_ref
+    type(string_ref) :: vi_search_pattern_ref
+    type(string_ref) :: menu_prefix_ref
+    type(string_ref) :: selected_process_name_ref
+#endif
   end type input_state_t
 
   type :: history_t
@@ -198,7 +215,35 @@ contains
   subroutine init_input_state(state)
     type(input_state_t), intent(out) :: state
 
-    ! Allocate all strings with initial capacity
+#ifdef USE_MEMORY_POOL
+    ! Initialize pool if needed
+    call pool_init()
+
+    ! Use pooled allocations for frequently-used buffers
+    state%buffer_ref = pool_get_string(MAX_LINE_LEN)
+    state%original_buffer_ref = pool_get_string(MAX_LINE_LEN)
+    state%kill_buffer_ref = pool_get_string(MAX_LINE_LEN)
+    state%last_completion_buffer_ref = pool_get_string(MAX_LINE_LEN)
+    state%search_string_ref = pool_get_string(MAX_LINE_LEN)
+    state%vi_command_buffer_ref = pool_get_string(MAX_LINE_LEN)
+    state%vi_yank_buffer_ref = pool_get_string(MAX_LINE_LEN)
+    state%vi_search_pattern_ref = pool_get_string(MAX_LINE_LEN)
+    state%menu_prefix_ref = pool_get_string(MAX_LINE_LEN)
+    state%selected_process_name_ref = pool_get_string(256)
+
+    ! Allocate the actual strings (still needed for compatibility)
+    allocate(character(len=MAX_LINE_LEN) :: state%buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%original_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%kill_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%last_completion_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
+    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
+    allocate(character(len=256) :: state%selected_process_name)
+#else
+    ! Traditional allocations
     allocate(character(len=MAX_LINE_LEN) :: state%buffer)
     allocate(character(len=MAX_LINE_LEN) :: state%original_buffer)
     allocate(character(len=MAX_LINE_LEN) :: state%kill_buffer)
@@ -210,6 +255,7 @@ contains
     ! suggestion is now fixed-length, no allocation needed
     allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
     allocate(character(len=256) :: state%selected_process_name)
+#endif
 
     ! menu_items and menu_prompt are now fixed-length, no allocation needed
 
@@ -283,6 +329,21 @@ contains
     type(input_state_t), intent(inout) :: state
 
     if (state%initialized) then
+#ifdef USE_MEMORY_POOL
+      ! Release pooled memory
+      call pool_release_string(state%buffer_ref)
+      call pool_release_string(state%original_buffer_ref)
+      call pool_release_string(state%kill_buffer_ref)
+      call pool_release_string(state%last_completion_buffer_ref)
+      call pool_release_string(state%search_string_ref)
+      call pool_release_string(state%vi_command_buffer_ref)
+      call pool_release_string(state%vi_yank_buffer_ref)
+      call pool_release_string(state%vi_search_pattern_ref)
+      call pool_release_string(state%menu_prefix_ref)
+      call pool_release_string(state%selected_process_name_ref)
+#endif
+
+      ! Deallocate strings
       if (allocated(state%buffer)) deallocate(state%buffer)
       if (allocated(state%original_buffer)) deallocate(state%original_buffer)
       if (allocated(state%kill_buffer)) deallocate(state%kill_buffer)
