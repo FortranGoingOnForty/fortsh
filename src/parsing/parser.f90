@@ -537,7 +537,7 @@ contains
     pos = find_outside_quotes(working_input, '>&')
     do while (pos > 0)
       ! Debug output
-      ! write(error_unit, '(a,i0,a,a)') 'DEBUG: Found >& at pos ', pos, ' in: ', trim(working_input)
+      ! write(error_unit, '(a,i15,a,a)') 'DEBUG: Found >& at pos ', pos, ' in: ', trim(working_input)
 
       ! Check what follows >&
       if (pos+2 <= len_trim(working_input)) then
@@ -546,13 +546,13 @@ contains
         if (working_input(pos+2:pos+2) >= '0' .and. working_input(pos+2:pos+2) <= '9') then
           ! Found >&n pattern - literal FD duplication
           read(working_input(pos+2:pos+2), *) end_pos
-          ! write(error_unit, '(a,i0)') 'DEBUG: Processing >&n where n=', end_pos
+          ! write(error_unit, '(a,i15)') 'DEBUG: Processing >&n where n=', end_pos
 
           ! Check if there's a source FD before >&
           source_fd = 1  ! Default to stdout
           if (pos > 1 .and. working_input(pos-1:pos-1) >= '0' .and. working_input(pos-1:pos-1) <= '9') then
             read(working_input(pos-1:pos-1), *) source_fd
-            ! write(error_unit, '(a,i0,a,i0)') 'DEBUG: Found source FD=', source_fd, ' redirecting to target FD=', end_pos
+            ! write(error_unit, '(a,i15,a,i15)') 'DEBUG: Found source FD=', source_fd, ' redirecting to target FD=', end_pos
           end if
 
           if (cmd%num_redirections < 10) then
@@ -1233,16 +1233,16 @@ contains
         
         ! Check for special variables
         if (working_token(i:i) == '?') then
-          write(result(j:), '(i0)') shell%last_exit_status
+          write(result(j:), '(i15)') shell%last_exit_status
           j = j + len_trim(result(j:))
           i = i + 1
         else if (working_token(i:i) == '$') then
-          write(pid_str, '(i0)') c_getpid()
+          write(pid_str, '(i15)') c_getpid()
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
         else if (working_token(i:i) == '!') then
-          write(pid_str, '(i0)') shell%last_bg_pid
+          write(pid_str, '(i15)') shell%last_bg_pid
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
@@ -2022,12 +2022,12 @@ contains
             if (is_associative_array(shell, trim(var_name))) then
               ! For associative arrays, count the keys
               call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
-              write(length_str, '(i0)') num_keys
+              write(length_str, '(I0)') num_keys
               result_value = trim(length_str)
             else
               ! For indexed arrays, use get_array_size
               array_sz = get_array_size(shell, trim(var_name))
-              write(length_str, '(i0)') array_sz
+              write(length_str, '(I0)') array_sz
               result_value = trim(length_str)
             end if
             return
@@ -2056,7 +2056,7 @@ contains
               ! Build indices with proper spacing
               do array_index = 1, array_sz
                 if (array_index > 1) result_value = result_value // ' '
-                write(length_str, '(i0)') array_index - 1  ! 0-indexed
+                write(length_str, '(i15)') array_index - 1  ! 0-indexed
                 result_value = result_value // trim(length_str)
               end do
               return
@@ -2110,7 +2110,7 @@ contains
       ! Get actual stored length from variable
       call get_variable_length(shell, trim(var_name), str_length)
       if (str_length >= 0) then
-        write(length_str, '(i0)') str_length
+        write(length_str, '(I0)') str_length
         result_value = trim(length_str)
       else
         ! Variable not found or is environment variable - use len_trim
@@ -2119,7 +2119,7 @@ contains
           current_value = get_environment_var(trim(var_name))
         end if
         if (allocated(current_value)) then
-          write(length_str, '(i0)') len_trim(current_value)
+          write(length_str, '(I0)') len_trim(current_value)
           result_value = trim(length_str)
         else
           result_value = '0'

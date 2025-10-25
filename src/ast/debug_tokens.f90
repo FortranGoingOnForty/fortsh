@@ -15,7 +15,7 @@ program debug_tokens
   print *, ""
   
   do i = 1, lex%token_count
-    write(*, '(a,i0,a,i0,a,a)') "Token ", i, ": type=", lex%tokens(i)%type, &
+    write(*, '(a,i15,a,i15,a,a)') "Token ", i, ": type=", lex%tokens(i)%type, &
                                 " value='", trim(lex%tokens(i)%value), "'"
   end do
 

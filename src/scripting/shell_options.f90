@@ -304,11 +304,11 @@ contains
     end do
     
     write(output_unit, '(a)') '# Special variables:'
-    write(output_unit, '(a,i0)') '$$=', shell%shell_pid
-    write(output_unit, '(a,i0)') '$!=', shell%last_bg_pid
+    write(output_unit, '(a,i15)') '$$=', shell%shell_pid
+    write(output_unit, '(a,i15)') '$!=', shell%last_bg_pid
     write(output_unit, '(a)') '$0=' // trim(shell%shell_name)
-    write(output_unit, '(a,i0)') '$PPID=', shell%parent_pid
-    write(output_unit, '(a,i0)') '$?=', shell%last_exit_status
+    write(output_unit, '(a,i15)') '$PPID=', shell%parent_pid
+    write(output_unit, '(a,i15)') '$?=', shell%last_exit_status
   end subroutine
 
   ! Check if errexit option is enabled and handle command failure
@@ -322,7 +322,7 @@ contains
     if (shell%evaluating_condition) return
 
     if (shell%option_errexit .and. exit_status /= 0) then
-      write(error_unit, '(a,i0,a)') 'fortsh: errexit: exiting due to command failure (status: ', exit_status, ')'
+      write(error_unit, '(a,i15,a)') 'fortsh: errexit: exiting due to command failure (status: ', exit_status, ')'
       shell%running = .false.
       shell%last_exit_status = exit_status
     end if

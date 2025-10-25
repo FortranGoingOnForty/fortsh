@@ -147,6 +147,7 @@ contains
       return
     case(TOKEN_BREAK)
       allocate(break_node_t :: node)
+      break_node_t :: node = 0
       select type(node)
       type is (break_node_t)
         node%node_type = NODE_BREAK
@@ -163,6 +164,7 @@ contains
       return
     case(TOKEN_CONTINUE)
       allocate(continue_node_t :: node)
+      continue_node_t :: node = 0
       select type(node)
       type is (continue_node_t)
         node%node_type = NODE_CONTINUE
@@ -181,6 +183,7 @@ contains
 
     ! Parse simple command
     allocate(cmd_node)
+    cmd_node = 0
     cmd_node%node_type = NODE_COMMAND
 
     ! Parse words (command and arguments)
@@ -197,6 +200,7 @@ contains
     type(token_t) :: tok
 
     allocate(for_node)
+    for_node = 0
     for_node%node_type = NODE_FOR
 
     ! Expect 'for'
@@ -248,6 +252,7 @@ contains
     type(token_t) :: tok
 
     allocate(if_node)
+    if_node = 0
     if_node%node_type = NODE_IF
 
     ! Expect 'if'
@@ -301,6 +306,7 @@ contains
     type(token_t) :: tok
 
     allocate(while_node)
+    while_node = 0
     while_node%node_type = NODE_WHILE
 
     ! Expect 'while'
@@ -342,6 +348,7 @@ contains
     type(token_t) :: tok
 
     allocate(word_node)
+    word_node = 0
     word_node%node_type = NODE_WORD
     tok = self%current_token()
     word_node%text = tok%value
@@ -396,7 +403,7 @@ contains
 
     tok = self%current_token()
     if (tok%type /= token_type) then
-      write(error_unit, '(a,i0,a,i0)') &
+      write(error_unit, '(a,i15,a,i0)') &
         'Parse error: expected token type ', token_type, &
         ' but got ', tok%type
       stop 1

@@ -3,6 +3,9 @@
 ! Purpose: Enhanced evaluator that works with pointer-based AST
 ! ==============================================================================
 module evaluator_enhanced
+
+  ! Recursion depth limits
+  integer, parameter :: MAX_RECURSION_DEPTH = 1000
   use ast_types_enhanced
   use shell_types
   use iso_fortran_env, only: output_unit, error_unit
@@ -191,7 +194,7 @@ contains
       exit_code = self%eval_continue(node)
 
     class default
-      write(error_unit, '(a,i0)') 'Unknown node type: ', node%node_type
+      write(error_unit, '(a,i15)') 'Unknown node type: ', node%node_type
       exit_code = 1
     end select
   end function evaluator_eval_node
@@ -409,7 +412,7 @@ contains
 
     self%context%break_requested = .true.
     self%context%break_levels = node%levels
-    write(output_unit, '(a,i0)') 'Break statement with levels: ', node%levels
+    write(output_unit, '(a,i15)') 'Break statement with levels: ', node%levels
     exit_code = 0
   end function evaluator_eval_break
 
@@ -421,7 +424,7 @@ contains
 
     self%context%continue_requested = .true.
     self%context%continue_levels = node%levels
-    write(output_unit, '(a,i0)') 'Continue statement with levels: ', node%levels
+    write(output_unit, '(a,i15)') 'Continue statement with levels: ', node%levels
     exit_code = 0
   end function evaluator_eval_continue
 

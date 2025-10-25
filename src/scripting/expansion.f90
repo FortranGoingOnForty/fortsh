@@ -9,6 +9,9 @@ module expansion
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
+  ! Recursion depth limits
+  integer, parameter :: MAX_RECURSION_DEPTH = 1000
+
 contains
 
   ! Parameter expansion: ${var:offset:length}
@@ -2307,7 +2310,7 @@ contains
         if (start_val <= end_val) then
           current_val = start_val
           do while (current_val <= end_val)
-            write(num_str, '(i0)') current_val
+            write(num_str, '(i15)') current_val
             if (len_trim(result_buf) > 0) then
               result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else
@@ -2319,7 +2322,7 @@ contains
           ! Descending range
           current_val = start_val
           do while (current_val >= end_val)
-            write(num_str, '(i0)') current_val
+            write(num_str, '(i15)') current_val
             if (len_trim(result_buf) > 0) then
               result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else

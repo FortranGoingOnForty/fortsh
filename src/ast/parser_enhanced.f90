@@ -119,6 +119,7 @@ contains
         right => self%parse_pipeline()
 
         allocate(and_node)
+        and_node = 0
         and_node%node_type = NODE_AND_LIST
         and_node%left%ptr => node
         and_node%right%ptr => right
@@ -130,6 +131,7 @@ contains
         right => self%parse_pipeline()
 
         allocate(or_node)
+        or_node = 0
         or_node%node_type = NODE_OR_LIST
         or_node%left%ptr => node
         or_node%right%ptr => right
@@ -169,6 +171,7 @@ contains
       if (tok%type == TOKEN_PIPE) then
         ! We have a pipeline
         allocate(pipeline_node_t :: pipe_node)
+        pipeline_node_t :: pipe_node = 0
         pipe_node%node_type = NODE_PIPELINE
 
         ! Add first command
@@ -270,6 +273,7 @@ contains
 
     case(TOKEN_BREAK)
       allocate(break_node_t :: node)
+      break_node_t :: node = 0
       select type(node)
       type is (break_node_t)
         node%node_type = NODE_BREAK
@@ -289,6 +293,7 @@ contains
 
     case(TOKEN_CONTINUE)
       allocate(continue_node_t :: node)
+      continue_node_t :: node = 0
       select type(node)
       type is (continue_node_t)
         node%node_type = NODE_CONTINUE
@@ -324,6 +329,7 @@ contains
 
     ! Parse simple command
     allocate(cmd_node)
+    cmd_node = 0
     cmd_node%node_type = NODE_COMMAND
     cmd_node%num_words = 0
     cmd_node%num_redirections = 0
@@ -396,6 +402,7 @@ contains
     class(ast_node_t), pointer :: word, stmt
 
     allocate(for_node)
+    for_node = 0
     for_node%node_type = NODE_FOR
 
     ! Expect 'for'
@@ -499,6 +506,7 @@ contains
     integer :: paren_depth
 
     allocate(for_arith_node)
+    for_arith_node = 0
     for_arith_node%node_type = NODE_FOR_ARITH
 
     ! Expect 'for'
@@ -617,6 +625,7 @@ contains
     class(ast_node_t), pointer :: stmt
 
     allocate(if_node)
+    if_node = 0
     if_node%node_type = NODE_IF
 
     ! Expect 'if'
@@ -712,6 +721,7 @@ contains
     class(ast_node_t), pointer :: stmt
 
     allocate(while_node)
+    while_node = 0
     while_node%node_type = NODE_WHILE
 
     ! Expect 'while'
@@ -775,6 +785,7 @@ contains
     integer :: item_count, pattern_count, i
 
     allocate(case_node)
+    case_node = 0
     case_node%node_type = NODE_CASE
 
     ! Expect 'case'
@@ -919,6 +930,7 @@ contains
     class(ast_node_t), pointer :: stmt
 
     allocate(func_node)
+    func_node = 0
     func_node%node_type = NODE_FUNCTION
 
     ! Two forms:
@@ -1053,6 +1065,7 @@ contains
     class(ast_node_t), pointer :: stmt
 
     allocate(subshell_node)
+    subshell_node = 0
     subshell_node%node_type = NODE_SUBSHELL
 
     ! Expect (
@@ -1104,6 +1117,7 @@ contains
     class(ast_node_t), pointer :: stmt
 
     allocate(group_node)
+    group_node = 0
     group_node%node_type = NODE_GROUP
 
     ! Expect {
@@ -1153,6 +1167,7 @@ contains
     type(token_t) :: tok
 
     allocate(word_node)
+    word_node = 0
     word_node%node_type = NODE_WORD
     tok = self%current_token()
     word_node%text = tok%value
@@ -1171,6 +1186,7 @@ contains
     integer :: i
 
     allocate(var_node)
+    var_node = 0
     var_node%node_type = NODE_VARIABLE
     tok = self%current_token()
     full_value = tok%value
@@ -1323,6 +1339,7 @@ contains
     type(token_t) :: tok
 
     allocate(redir_node)
+    redir_node = 0
     redir_node%node_type = NODE_REDIRECTION
 
     ! Set redirection type
@@ -1394,6 +1411,7 @@ contains
       tok = self%current_token()
       if (tok%type == TOKEN_WORD .or. tok%type == TOKEN_STRING) then
         allocate(word_node_t :: redir_node%target)
+        word_node_t :: redir_node%target = 0
         select type(target => redir_node%target)
         type is (word_node_t)
           target%node_type = NODE_WORD
@@ -1416,6 +1434,7 @@ contains
     character(:), allocatable :: subcommand
 
     allocate(subst_node)
+    subst_node = 0
     subst_node%node_type = NODE_COMMAND_SUBST
     subst_node%is_backtick = .false.
 
@@ -1449,6 +1468,7 @@ contains
     ! For now, create a simple command node with the content
     ! In a full implementation, we'd save/restore parser state and parse recursively
     allocate(command_node_t :: subst_node%command%ptr)
+    command_node_t :: subst_node%command%ptr = 0
     select type(cmd => subst_node%command%ptr)
     type is (command_node_t)
       cmd%node_type = NODE_COMMAND
@@ -1481,6 +1501,7 @@ contains
     character(:), allocatable :: expr
 
     allocate(arith_node)
+    arith_node = 0
     arith_node%node_type = NODE_ARITHMETIC
 
     ! Skip the $(( token
@@ -1512,6 +1533,7 @@ contains
     character(:), allocatable :: expr
 
     allocate(cond_node)
+    cond_node = 0
     cond_node%node_type = NODE_COND_EXPR
 
     ! Expect [[
@@ -1551,6 +1573,7 @@ contains
     character(:), allocatable :: subcommand
 
     allocate(proc_node)
+    proc_node = 0
     proc_node%node_type = NODE_PROC_SUBST
 
     ! Set input/output flag
@@ -1584,6 +1607,7 @@ contains
     ! Parse the command inside
     ! For now, create a simple command node with the content
     allocate(command_node_t :: proc_node%command%ptr)
+    command_node_t :: proc_node%command%ptr = 0
     select type(cmd => proc_node%command%ptr)
     type is (command_node_t)
       cmd%node_type = NODE_COMMAND
@@ -1633,7 +1657,7 @@ contains
 
     tok = self%current_token()
     if (tok%type /= token_type) then
-      write(error_unit, '(a,i0,a,i0)') &
+      write(error_unit, '(a,i15,a,i0)') &
         'Parse error: expected token type ', token_type, &
         ' but got ', tok%type
       stop 1

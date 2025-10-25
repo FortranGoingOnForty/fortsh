@@ -238,7 +238,7 @@ contains
     case(TRAP_RETURN)
       name = 'RETURN'
     case default
-      write(name, '(i0)') signum
+      write(name, '(i15)') signum
     end select
   end function
 
@@ -290,7 +290,7 @@ contains
       ! Register the signal handler
       ret = c_sigaction(int(signum, c_int), sa, old_sa)
       if (ret /= 0) then
-        write(error_unit, '(a,i0)') 'trap: failed to set signal handler for signal ', signum
+        write(error_unit, '(a,i15)') 'trap: failed to set signal handler for signal ', signum
       end if
     end if
   end subroutine
@@ -319,7 +319,7 @@ contains
 
           ret = c_sigaction(int(signum, c_int), sa, old_sa)
           if (ret /= 0) then
-            write(error_unit, '(a,i0)') 'trap: failed to reset signal handler for signal ', signum
+            write(error_unit, '(a,i15)') 'trap: failed to reset signal handler for signal ', signum
           end if
         end if
 

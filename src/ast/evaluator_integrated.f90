@@ -3,6 +3,9 @@
 ! Purpose: AST evaluator integrated with real shell execution
 ! ==============================================================================
 module evaluator_integrated
+
+  ! Recursion depth limits
+  integer, parameter :: MAX_RECURSION_DEPTH = 1000
   use ast_types
   use shell_types  ! Use the actual shell_types module
   use iso_fortran_env, only: output_unit, error_unit
@@ -212,7 +215,7 @@ contains
       exit_code = self%eval_continue(node)
 
     case default
-      write(error_unit, '(a,i0)') 'Unknown node type: ', node%node_type
+      write(error_unit, '(a,i15)') 'Unknown node type: ', node%node_type
       exit_code = 1
     end select
   end function evaluator_eval_node

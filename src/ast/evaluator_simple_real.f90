@@ -3,6 +3,9 @@
 ! Purpose: Simplified real evaluator with basic built-ins and system execution
 ! ==============================================================================
 module evaluator_simple_real
+
+  ! Recursion depth limits
+  integer, parameter :: MAX_RECURSION_DEPTH = 1000
   use ast_types_enhanced
   use shell_types
   use iso_fortran_env, only: output_unit, error_unit, input_unit
@@ -571,7 +574,7 @@ contains
         ! Concatenate all indices as strings
         do j = 1, self%shell%variables(i)%num_elements
           if (j > 1) value = trim(value) // ' '
-          write(index_str, '(i0)') self%shell%variables(i)%elements(j)%index
+          write(index_str, '(i15)') self%shell%variables(i)%elements(j)%index
           value = trim(value) // trim(index_str)
         end do
         return
@@ -853,7 +856,7 @@ contains
             case(4, 5)  ! Here document (<<) or here string (<<<)
               ! Create temporary file for here document/string content
               call random_number(rnum)
-              write(pid_str, '(i0)') int(rnum * 99999) + 10000
+              write(pid_str, '(i15)') int(rnum * 99999) + 10000
               redir_file = '/tmp/fortsh_heredoc_' // trim(pid_str) // c_null_char
               flags = ior(O_WRONLY, ior(O_CREAT, O_TRUNC))
               new_fd = c_open(redir_file, flags, int(o'644', c_int))
@@ -1349,7 +1352,7 @@ contains
               call evaluate_arithmetic_expr(trim(cmd_str), status, rnum)
               if (status == 0) then
                 ! Set the variable to the result
-                write(cwd_buffer, '(i0)') int(rnum)
+                write(cwd_buffer, '(i15)') int(rnum)
                 call self%context%set_var(trim(word_value), trim(cwd_buffer))
               else
                 exit_code = 1
@@ -1518,7 +1521,7 @@ contains
           end if
 
           ! Update OPTIND
-          write(tmp, '(i0)') j
+          write(tmp, '(i15)') j
           call self%context%set_var('OPTIND', trim(tmp))
         end if
       else
@@ -2217,7 +2220,7 @@ contains
       end do
 
       ! Evaluate using bash
-      write(temp_file, '(a,i0,a)') '/tmp/fortsh_arith_', getpid(), '.tmp'
+      write(temp_file, '(a,i15,a)') '/tmp/fortsh_arith_', getpid(), '.tmp'
       c_cmd = 'echo $((' // trim(expanded_expr) // ')) > ' // trim(temp_file) // ' 2>/dev/null' // c_null_char
       status = c_system(c_cmd)
 
@@ -2694,7 +2697,7 @@ contains
     case('?')
       ! Last exit status
       if (associated(self%context%shell)) then
-        write(tmp, '(i0)') self%context%shell%last_exit_status
+        write(tmp, '(i15)') self%context%shell%last_exit_status
         var_value = trim(tmp)
       else
         var_value = '0'
@@ -2704,7 +2707,7 @@ contains
     case('#')
       ! Number of positional parameters
       if (associated(self%context%shell)) then
-        write(tmp, '(i0)') self%context%shell%num_positional
+        write(tmp, '(i15)') self%context%shell%num_positional
         var_value = trim(tmp)
       else
         var_value = '0'
@@ -2871,16 +2874,16 @@ contains
         if (trim(node%index_expr) == '@' .or. trim(node%index_expr) == '*') then
           ! ${#array[@]} - array element count
           elem_count = self%context%get_array_count(trim(node%name))
-          write(tmp, '(i0)') elem_count
+          write(tmp, '(i15)') elem_count
           result = trim(tmp)
         else
           ! ${#array[0]} - length of specific element
-          write(tmp, '(i0)') len_trim(var_value)
+          write(tmp, '(i15)') len_trim(var_value)
           result = trim(tmp)
         end if
       else
         ! ${#var} - string length
-        write(tmp, '(i0)') len_trim(var_value)
+        write(tmp, '(i15)') len_trim(var_value)
         result = trim(tmp)
       end if
 
@@ -3034,7 +3037,7 @@ contains
 
     ! Execute command and capture output using a temp file
     ! Generate temp filename
-    write(temp_file, '(a,i0)') '/tmp/fortsh_subst_', getpid()
+    write(temp_file, '(a,i15)') '/tmp/fortsh_subst_', getpid()
 
     ! Execute command with output redirection
     cmd_str = trim(cmd_str) // ' > ' // trim(temp_file) // ' 2>&1'
@@ -3144,7 +3147,7 @@ contains
 
     ! Now evaluate the arithmetic expression
     ! Try using expr, bash arithmetic, or awk
-    write(temp_file, '(a,i0,a)') '/tmp/fortsh_arith_', getpid(), '.tmp'
+    write(temp_file, '(a,i15,a)') '/tmp/fortsh_arith_', getpid(), '.tmp'
 
     ! Try using bash arithmetic expansion first
     c_cmd = 'echo $((' // trim(expanded_expr) // ')) > ' // trim(temp_file) // ' 2>/dev/null' // c_null_char
@@ -3171,7 +3174,7 @@ contains
       ! Very simple fallback - just try to parse as integer
       read(expanded_expr, *, iostat=ios) value
       if (ios == 0) then
-        write(line, '(i0)') value
+        write(line, '(i15)') value
         output = trim(line)
       else
         output = '0'
@@ -3683,7 +3686,7 @@ contains
 
     ! Generate unique pipe path
     call random_number(rnum)
-    write(pipe_path, '(a,i0)') '/tmp/fortsh_proc_', int(rnum * 999999) + 100000
+    write(pipe_path, '(a,i15)') '/tmp/fortsh_proc_', int(rnum * 999999) + 100000
 
     ! Create named pipe (FIFO)
     ret = c_mkfifo(trim(pipe_path) // c_null_char, int(o'666', c_int))
@@ -4411,7 +4414,7 @@ contains
         if (start_val <= end_val) then
           current_val = start_val
           do while (current_val <= end_val)
-            write(num_str, '(i0)') current_val
+            write(num_str, '(i15)') current_val
             if (len_trim(result_buf) > 0) then
               result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else
@@ -4423,7 +4426,7 @@ contains
           ! Descending range
           current_val = start_val
           do while (current_val >= end_val)
-            write(num_str, '(i0)') current_val
+            write(num_str, '(i15)') current_val
             if (len_trim(result_buf) > 0) then
               result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else

@@ -309,7 +309,7 @@ contains
   ! Generate ANSI color code
   function color_code(color) result(code)
     integer, intent(in) :: color
-    character(len=16) :: code
+    character(len=20) :: code  ! Increased to handle i15 format + escape sequences
 
     ! Only use colors if stderr is a TTY
     if (.not. stderr_is_tty()) then
@@ -320,7 +320,7 @@ contains
     if (color == COLOR_RESET) then
       code = char(27) // '[0m'
     else
-      write(code, '(a,i0,a)') char(27) // '[', color, 'm'
+      write(code, '(a,i15,a)') char(27) // '[', color, 'm'
     end if
   end function
 

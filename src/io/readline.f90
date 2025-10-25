@@ -2472,10 +2472,10 @@ contains
 
     ! Debug output
     if (debug_enabled) then
-      write(error_unit, '(a,i0)') 'DEBUG: ls output length: ', len_trim(ls_output)
+      write(error_unit, '(a,i15)') 'DEBUG: ls output length: ', len_trim(ls_output)
       write(error_unit, '(a)') 'DEBUG: first 200 chars: ' // ls_output(:min(200,len_trim(ls_output)))
-      write(error_unit, '(a,i0)') 'DEBUG: num_entries parsed: ', num_entries
-      write(error_unit, '(a,i0)') 'DEBUG: pattern_len: ', pattern_len
+      write(error_unit, '(a,i15)') 'DEBUG: num_entries parsed: ', num_entries
+      write(error_unit, '(a,i15)') 'DEBUG: pattern_len: ', pattern_len
     end if
 
     ! Score entries using fuzzy matching
@@ -2549,8 +2549,8 @@ contains
 
     ! Debug output
     if (debug_enabled) then
-      write(error_unit, '(a,i0)') 'DEBUG: num_scored: ', num_scored
-      write(error_unit, '(a,i0)') 'DEBUG: num_completions after scan: ', num_completions
+      write(error_unit, '(a,i15)') 'DEBUG: num_scored: ', num_scored
+      write(error_unit, '(a,i15)') 'DEBUG: num_completions after scan: ', num_completions
     end if
 
     ! Clean up allocatable arrays
@@ -3430,7 +3430,7 @@ contains
 
     ! Show "more items" indicator if there are truncated completions
     if (input_state%menu_total_items > input_state%menu_num_items) then
-      write(output_unit, '(a,i0,a)') &
+      write(output_unit, '(a,i15,a)') &
         '  ... ', input_state%menu_total_items - input_state%menu_num_items, ' more items available'
     end if
 
@@ -3934,7 +3934,7 @@ contains
     character(len=512) :: signal_prompt
 
     ! Build signal prompt: (signal: PID 1234 firefox):
-    write(signal_prompt, '(a,i0,a,a,a)') '(signal: PID ', input_state%selected_pid, ' ', &
+    write(signal_prompt, '(a,i15,a,a,a)') '(signal: PID ', input_state%selected_pid, ' ', &
           trim(input_state%selected_process_name), '): '
 
     ! Clear line and redraw with signal prompt
@@ -3994,14 +3994,14 @@ contains
         write(output_unit, '(a)', advance='no') char(27) // '[1;32m'  ! Bold green
         write(output_unit, '(a)', advance='no') ' ✓ '
         write(output_unit, '(a)', advance='no') char(27) // '[0m'
-        write(output_unit, '(a,i0,a,i0)') 'Sent signal ', signal_num, &
+        write(output_unit, '(a,i15,a,i15)') 'Sent signal ', signal_num, &
           ' to PID ', input_state%selected_pid
       else
         ! Failure - red
         write(output_unit, '(a)', advance='no') char(27) // '[1;31m'  ! Bold red
         write(output_unit, '(a)', advance='no') ' ✗ '
         write(output_unit, '(a)', advance='no') char(27) // '[0m'
-        write(output_unit, '(a,i0,a,i0)') 'Failed to send signal ', signal_num, &
+        write(output_unit, '(a,i15,a,i0)') 'Failed to send signal ', signal_num, &
           ' to PID ', input_state%selected_pid
         write(output_unit, '(a)', advance='no') char(27) // '[33m'    ! Yellow
         write(output_unit, '(a)') ' (permission denied or process not found)'
@@ -4723,7 +4723,7 @@ contains
   function int_to_str(n) result(str)
     integer, intent(in) :: n
     character(len=20) :: str
-    write(str, '(i0)') n
+    write(str, '(i15)') n
   end function
 
   ! Advanced line editing functions for Phase 5
@@ -5831,7 +5831,9 @@ contains
 
     ! Allocate buffers on heap
     allocate(current_input)
+    current_input = ''
     allocate(suggestion_candidate)
+    suggestion_candidate = ''
 
     ! Defensive check: ensure length and cursor_pos are valid
     if (input_state%length < 0 .or. input_state%length > MAX_LINE_LEN) then

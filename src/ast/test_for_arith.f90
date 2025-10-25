@@ -123,7 +123,7 @@ program test_for_arith
   call pars%destroy()
 
   print *, "========================================="
-  write(*, '(a,i0,a,i0,a)') " Tests passed: ", pass_count, " / ", test_count, " total"
+  write(*, '(a,i15,a,i15,a)') " Tests passed: ", pass_count, " / ", test_count, " total"
   print *, "========================================="
 
 end program test_for_arith

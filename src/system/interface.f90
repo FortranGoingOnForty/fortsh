@@ -784,7 +784,7 @@ contains
     ! Get current terminal settings
     ret = c_tcgetattr(STDIN_FD, original_termios)
     if (ret /= 0) then
-      write(*, '(a,i0)') '[ERROR: tcgetattr failed: ', ret, ']'
+      write(*, '(a,i15)') '[ERROR: tcgetattr failed: ', ret, ']'
       return
     end if
 
@@ -900,10 +900,10 @@ contains
     if (success) then
       ch = c_ch
       ! DEBUG: Commented out - too noisy for normal use
-      ! write(*, '(a,i0)') '[read_single_char: got char ', ichar(ch), ']'
+      ! write(*, '(a,i15)') '[read_single_char: got char ', ichar(ch), ']'
     else
       ch = char(0)
-      write(*, '(a,i0)') '[read_single_char: FAILED, bytes_read=', int(bytes_read), ']'
+      write(*, '(a,i15)') '[read_single_char: FAILED, bytes_read=', int(bytes_read), ']'
     end if
   end function
 

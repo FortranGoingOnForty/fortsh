@@ -79,11 +79,11 @@ contains
     
     ! Print error message
     if (severity >= ERR_ERROR) then
-      write(error_unit, '(a,a,a,a,a,i0,a,a,a,a,a)') &
+      write(error_unit, '(a,a,a,a,a,i15,a,a,a,a,a)') &
         '[', trim(severity_str), '] ', trim(category_str), ' (', code, ') in ', &
         trim(loc_str), ': ', trim(message)
     else if (verbose_errors .or. debug_mode) then
-      write(output_unit, '(a,a,a,a,a,i0,a,a,a,a,a)') &
+      write(output_unit, '(a,a,a,a,a,i15,a,a,a,a,a)') &
         '[', trim(severity_str), '] ', trim(category_str), ' (', code, ') in ', &
         trim(loc_str), ': ', trim(message)
     end if
@@ -269,10 +269,10 @@ contains
     if (error_count > 0) then
       write(output_unit, '(a)') ''
       write(output_unit, '(a)') 'Error Summary:'
-      write(output_unit, '(a,i0)') '  Warnings: ', warn_count
-      write(output_unit, '(a,i0)') '  Errors:   ', error_count_local
-      write(output_unit, '(a,i0)') '  Fatal:    ', fatal_count
-      write(output_unit, '(a,i0)') '  Total:    ', min(error_count, max_error_count)
+      write(output_unit, '(a,i15)') '  Warnings: ', warn_count
+      write(output_unit, '(a,i15)') '  Errors:   ', error_count_local
+      write(output_unit, '(a,i15)') '  Fatal:    ', fatal_count
+      write(output_unit, '(a,i15)') '  Total:    ', min(error_count, max_error_count)
     end if
   end subroutine
 

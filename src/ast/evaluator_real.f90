@@ -3,6 +3,9 @@
 ! Purpose: Real evaluator that executes actual commands
 ! ==============================================================================
 module evaluator_real
+
+  ! Recursion depth limits
+  integer, parameter :: MAX_RECURSION_DEPTH = 1000
   use ast_types_enhanced
   use shell_types
   use builtins
@@ -230,7 +233,7 @@ contains
       exit_code = self%eval_continue(node)
 
     class default
-      write(error_unit, '(a,i0)') 'Unknown node type: ', node%node_type
+      write(error_unit, '(a,i15)') 'Unknown node type: ', node%node_type
       exit_code = 127
     end select
   end function evaluator_eval_node
@@ -552,7 +555,7 @@ contains
     ! Handle special variables
     if (trim(node%name) == '?') then
       if (associated(self%context%shell)) then
-        write(result, '(i0)') self%context%shell%last_exit_status
+        write(result, '(i15)') self%context%shell%last_exit_status
       else
         result = '0'
       end if
@@ -560,7 +563,7 @@ contains
       result = '0'  ! Argument count
     else if (trim(node%name) == '$') then
       if (associated(self%context%shell)) then
-        write(result, '(i0)') self%context%shell%shell_pgid
+        write(result, '(i15)') self%context%shell%shell_pgid
       else
         result = '0'
       end if

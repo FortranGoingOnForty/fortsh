@@ -88,7 +88,7 @@ contains
     total_time = total_time + elapsed
     
     if (perf_monitoring_enabled) then
-      write(output_unit, '(a,a,a,i0,a)') '[PERF] ', timer_id, ' took ', elapsed, ' ticks'
+      write(output_unit, '(a,a,a,i15,a)') '[PERF] ', timer_id, ' took ', elapsed, ' ticks'
     end if
   end subroutine
 
@@ -113,7 +113,7 @@ contains
     end if
     
     if (perf_monitoring_enabled .and. present(location)) then
-      write(output_unit, '(a,i0,a,a)') '[MEM] Allocated ', size_bytes, ' bytes at ', location
+      write(output_unit, '(a,i15,a,a)') '[MEM] Allocated ', size_bytes, ' bytes at ', location
     end if
   end subroutine
 
@@ -128,7 +128,7 @@ contains
     current_memory_used = current_memory_used - size_bytes
     
     if (perf_monitoring_enabled .and. present(location)) then
-      write(output_unit, '(a,i0,a,a)') '[MEM] Deallocated ', size_bytes, ' bytes at ', location
+      write(output_unit, '(a,i15,a,a)') '[MEM] Deallocated ', size_bytes, ' bytes at ', location
     end if
   end subroutine
 
@@ -250,7 +250,7 @@ contains
     
     ! Runtime statistics
     write(output_unit, '(a,f0.3,a)') 'Uptime:           ', real(uptime)/real(count_rate), ' seconds'
-    write(output_unit, '(a,i0)') 'Total commands:   ', total_commands
+    write(output_unit, '(a,i15)') 'Total commands:   ', total_commands
     
     ! Performance timings
     if (total_commands > 0) then
@@ -266,12 +266,12 @@ contains
     write(output_unit, '(a)') ''
     write(output_unit, '(a)') 'MEMORY STATISTICS'
     write(output_unit, '(a)') '===================================='
-    write(output_unit, '(a,i0)') 'Total allocations:  ', total_allocations
-    write(output_unit, '(a,i0)') 'Current allocations:', current_allocations
-    write(output_unit, '(a,i0)') 'Peak allocations:   ', peak_allocations
-    write(output_unit, '(a,i0,a)') 'Total memory used:  ', total_memory_used, ' bytes'
-    write(output_unit, '(a,i0,a)') 'Current memory:     ', current_memory_used, ' bytes'
-    write(output_unit, '(a,i0,a)') 'Peak memory:        ', peak_memory_used, ' bytes'
+    write(output_unit, '(a,i15)') 'Total allocations:  ', total_allocations
+    write(output_unit, '(a,i15)') 'Current allocations:', current_allocations
+    write(output_unit, '(a,i15)') 'Peak allocations:   ', peak_allocations
+    write(output_unit, '(a,i15,a)') 'Total memory used:  ', total_memory_used, ' bytes'
+    write(output_unit, '(a,i15,a)') 'Current memory:     ', current_memory_used, ' bytes'
+    write(output_unit, '(a,i15,a)') 'Peak memory:        ', peak_memory_used, ' bytes'
     
     ! Memory pool statistics
     call print_pool_stats()
@@ -300,9 +300,9 @@ contains
     write(output_unit, '(a)') ''
     write(output_unit, '(a)') 'TOKEN POOL STATISTICS'
     write(output_unit, '(a)') '===================================='
-    write(output_unit, '(a,i0)') 'Active pools:       ', active_pools
-    write(output_unit, '(a,i0)') 'Total capacity:     ', total_capacity
-    write(output_unit, '(a,i0)') 'Used capacity:      ', used_capacity
+    write(output_unit, '(a,i15)') 'Active pools:       ', active_pools
+    write(output_unit, '(a,i15)') 'Total capacity:     ', total_capacity
+    write(output_unit, '(a,i15)') 'Used capacity:      ', used_capacity
     if (total_capacity > 0) then
       write(output_unit, '(a,f0.1,a)') 'Pool utilization:   ', &
         real(used_capacity)/real(total_capacity)*100.0, '%'

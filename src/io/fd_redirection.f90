@@ -214,7 +214,7 @@ contains
         end if
         
       case default
-        write(error_unit, '(a,i0)') 'fortsh: unknown redirection type: ', redir%type
+        write(error_unit, '(a,i15)') 'fortsh: unknown redirection type: ', redir%type
         success = .false.
     end select
   end subroutine
