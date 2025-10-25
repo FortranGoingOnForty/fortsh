@@ -25,13 +25,13 @@ else
     $(info Using gfortran on Linux)
 endif
 
-# Optional memory pooling (set MEMPOOL=1 to enable)
-ifeq ($(MEMPOOL),1)
-    POOL_FLAGS = -DUSE_MEMORY_POOL
-    $(info Memory pooling ENABLED - using string pool)
-else
+# Memory pooling (enabled by default, set NO_MEMPOOL=1 to disable)
+ifeq ($(NO_MEMPOOL),1)
     POOL_FLAGS =
     $(info Memory pooling DISABLED - using standard allocation)
+else
+    POOL_FLAGS = -DUSE_MEMORY_POOL
+    $(info Memory pooling ENABLED - using zero-copy string pool [DEFAULT])
 endif
 
 # Development flags (verbose warnings, debug symbols)
@@ -45,11 +45,11 @@ SRCDIR = src
 BUILDDIR = build
 BINDIR = bin
 
-# Conditionally add string pool and memory dashboard if enabled
-ifeq ($(MEMPOOL),1)
-    POOL_OBJECTS = $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o
-else
+# Conditionally add string pool and memory dashboard (included by default)
+ifeq ($(NO_MEMPOOL),1)
     POOL_OBJECTS =
+else
+    POOL_OBJECTS = $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o
 endif
 
 # Object files in dependency order
@@ -119,11 +119,11 @@ $(BUILDDIR)/common/error_handling.o: src/common/error_handling.f90 | $(BUILDDIR)
 $(BUILDDIR)/common/performance.o: src/common/performance.f90 | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-# String pool (optional, only when MEMPOOL=1)
+# String pool (included by default unless NO_MEMPOOL=1)
 $(BUILDDIR)/common/string_pool.o: src/common/string_pool.f90 | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-# Memory dashboard (optional, only when MEMPOOL=1)
+# Memory dashboard (included by default unless NO_MEMPOOL=1)
 $(BUILDDIR)/common/memory_dashboard.o: src/common/memory_dashboard.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
@@ -290,11 +290,15 @@ help:
 	@echo "==================================="
 	@echo ""
 	@echo "Build targets:"
-	@echo "  all           - Build fortsh (default, development mode)"
+	@echo "  all           - Build fortsh (default, with memory pooling)"
 	@echo "  release       - Build optimized production binary"
 	@echo "  debug         - Build with extra debug flags and checks"
 	@echo "  clean         - Remove build artifacts"
 	@echo "  distclean     - Remove all generated files"
+	@echo ""
+	@echo "Memory pooling options:"
+	@echo "  make          - Build with memory pooling (DEFAULT)"
+	@echo "  NO_MEMPOOL=1 make - Build without memory pooling"
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test          - Run basic functionality test"
