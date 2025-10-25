@@ -6,6 +6,9 @@ module completion
   use shell_types
   use iso_fortran_env, only: output_unit, error_unit
   use iso_c_binding, only: c_ptr, c_null_char, c_associated
+#ifdef USE_MEMORY_POOL
+  use string_pool
+#endif
   implicit none
 
   ! Forward declarations for optional dependencies
@@ -331,6 +334,9 @@ contains
     integer :: i, prefix_len, word_len, compare_len
     logical :: matches
     character(len=256) :: word, prefix_trimmed
+#ifdef USE_MEMORY_POOL
+    type(string_ref) :: word_ref, prefix_ref
+#endif
 
     count = 0
     prefix_trimmed = trim(prefix)
