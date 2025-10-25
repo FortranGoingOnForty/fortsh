@@ -15,7 +15,7 @@ module memory_dashboard
   public :: dashboard_cleanup, dashboard_export_csv, dashboard_summary
   public :: module_stats  ! Export type for testing
   public :: MOD_READLINE, MOD_COMPLETION, MOD_PARSER, MOD_EXECUTOR, MOD_EXPANSION
-  public :: MOD_BUILTIN, MOD_AST, MOD_LEXER, MOD_EVALUATOR, MOD_HISTORY
+  public :: MOD_BUILTIN, MOD_AST, MOD_LEXER, MOD_EVALUATOR, MOD_HISTORY, MOD_VARIABLES
 
   ! Module tracking
   integer, parameter :: MAX_MODULES = 50
@@ -32,6 +32,7 @@ module memory_dashboard
   integer, parameter :: MOD_LEXER = 8
   integer, parameter :: MOD_EVALUATOR = 9
   integer, parameter :: MOD_HISTORY = 10
+  integer, parameter :: MOD_VARIABLES = 11
   integer, parameter :: MOD_UNKNOWN = 99
 
   ! Module statistics
@@ -97,6 +98,7 @@ contains
     call dashboard_register_module(MOD_LEXER, "lexer")
     call dashboard_register_module(MOD_EVALUATOR, "evaluator")
     call dashboard_register_module(MOD_HISTORY, "history")
+    call dashboard_register_module(MOD_VARIABLES, "variables")
 
   end subroutine dashboard_init
 
@@ -195,9 +197,12 @@ contains
 
     ! Print header
     write(output_unit,'(a)') ""
-    write(output_unit,'(a)') BOLD//CYAN//"┌─────────────────────────────────────────────────────────────────────┐"//RESET
-    write(output_unit,'(a)') BOLD//CYAN//"│              FORTSH MEMORY POOL STATISTICS DASHBOARD               │"//RESET
-    write(output_unit,'(a)') BOLD//CYAN//"└─────────────────────────────────────────────────────────────────────┘"//RESET
+    write(output_unit,'(a)') BOLD//CYAN// &
+      "======================================================================"//RESET
+    write(output_unit,'(a)') BOLD//CYAN// &
+      "           FORTSH MEMORY POOL STATISTICS DASHBOARD"//RESET
+    write(output_unit,'(a)') BOLD//CYAN// &
+      "======================================================================"//RESET
     write(output_unit,'(a)') ""
 
     ! Overall statistics
@@ -228,7 +233,8 @@ contains
     ! Per-module statistics
     write(output_unit,'(a)') BOLD//"═══ Module Memory Usage ═══"//RESET
     write(output_unit,'(a)') "  Module          Allocs    Deallocs  Current   Peak     Bytes"
-    write(output_unit,'(a)') "  ─────────────────────────────────────────────────────────────"
+    write(output_unit,'(a)') &
+      "  ---------------------------------------------------------------"
 
     total_current = 0
     total_peak = 0
@@ -250,7 +256,8 @@ contains
       end if
     end do
 
-    write(output_unit,'(a)') "  ─────────────────────────────────────────────────────────────"
+    write(output_unit,'(a)') &
+      "  ---------------------------------------------------------------"
     write(output_unit,'(a,a)') "  Total Current Memory:                                ", &
       format_bytes(total_current)
     write(output_unit,'(a,a)') "  Total Peak Memory:                                   ", &
@@ -261,7 +268,8 @@ contains
       write(output_unit,'(a)') ""
       write(output_unit,'(a)') BOLD//"═══ Bucket Distribution ═══"//RESET
       write(output_unit,'(a)') "  Size     Module          Allocations   Current Bytes"
-      write(output_unit,'(a)') "  ──────────────────────────────────────────────────────"
+      write(output_unit,'(a)') &
+        "  --------------------------------------------------------"
 
       do j = 1, 5
         select case(j)
@@ -289,7 +297,8 @@ contains
     end if
 
     write(output_unit,'(a)') ""
-    write(output_unit,'(a)') BOLD//CYAN//"─────────────────────────────────────────────────────────────────────"//RESET
+    write(output_unit,'(a)') BOLD//CYAN// &
+      "======================================================================"//RESET
     write(output_unit,'(a)') ""
 
   end subroutine dashboard_display
