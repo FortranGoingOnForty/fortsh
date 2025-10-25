@@ -24,7 +24,16 @@ module builtins
   use iso_fortran_env, only: output_unit, error_unit
   use completion
   use iso_c_binding
+#ifdef USE_MEMORY_POOL
+  use string_pool
+  use memory_dashboard
+#endif
   implicit none
+
+  ! Module constant for dashboard tracking
+#ifdef USE_MEMORY_POOL
+  integer, parameter :: MOD_BUILTINS = 7  ! Module ID for dashboard
+#endif
 
   ! C interface for system() call
   interface
@@ -251,7 +260,12 @@ contains
   subroutine builtin_cd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
+#ifdef USE_MEMORY_POOL
+    type(string_ref) :: target_dir_ref
+    character(len=:), allocatable :: temp_str
+#else
     character(len=:), allocatable :: target_dir
+#endif
     character(len=MAX_PATH_LEN) :: old_cwd
     logical :: print_dir
 
@@ -260,30 +274,64 @@ contains
     ! Save current directory for OLDPWD
     old_cwd = shell%cwd
 
+#ifdef USE_MEMORY_POOL
+    ! Get pooled buffer for target directory
+    target_dir_ref = pool_get_string(MAX_PATH_LEN)
+    call dashboard_track_allocation(MOD_BUILTINS, MAX_PATH_LEN, 4)
+#endif
+
     if (cmd%num_tokens == 1) then
       ! cd with no arguments goes to HOME
+#ifdef USE_MEMORY_POOL
+      temp_str = get_environment_var('HOME')
+      target_dir_ref%data = temp_str
+      if (allocated(temp_str)) deallocate(temp_str)
+#else
       target_dir = get_environment_var('HOME')
+#endif
     else if (trim(cmd%tokens(2)) == '-') then
       ! cd - goes to OLDPWD and prints it
       if (len_trim(shell%oldpwd) == 0) then
         write(error_unit, '(a)') 'cd: OLDPWD not set'
         shell%last_exit_status = 1
+#ifdef USE_MEMORY_POOL
+        call pool_release_string(target_dir_ref)
+        call dashboard_track_deallocation(MOD_BUILTINS, MAX_PATH_LEN, 4)
+#endif
         return
       end if
+#ifdef USE_MEMORY_POOL
+      target_dir_ref%data = trim(shell%oldpwd)
+#else
       target_dir = trim(shell%oldpwd)
+#endif
       print_dir = .true.
     else
+#ifdef USE_MEMORY_POOL
+      target_dir_ref%data = trim(cmd%tokens(2))
+#else
       target_dir = trim(cmd%tokens(2))
+#endif
     end if
 
+#ifdef USE_MEMORY_POOL
+    if (change_directory(target_dir_ref%data)) then
+#else
     if (change_directory(target_dir)) then
+#endif
       ! Update OLDPWD before changing cwd
       shell%oldpwd = old_cwd
       ! POSIX: Use logical path (preserve symlinks) unless -P is specified
       ! For absolute paths, use them as-is. For relative paths, resolve logically.
+#ifdef USE_MEMORY_POOL
+      if (len(target_dir_ref%data) > 0 .and. target_dir_ref%data(1:1) == '/') then
+        ! Absolute path - use it directly (preserves symlinks like /tmp)
+        shell%cwd = target_dir_ref%data
+#else
       if (len(target_dir) > 0 .and. target_dir(1:1) == '/') then
         ! Absolute path - use it directly (preserves symlinks like /tmp)
         shell%cwd = target_dir
+#endif
       else
         ! Relative path - use physical path from getcwd()
         shell%cwd = get_current_directory()
@@ -310,10 +358,21 @@ contains
 
       shell%last_exit_status = 0
     else
+#ifdef USE_MEMORY_POOL
+      write(error_unit, '(a)') 'cd: cannot access ' // trim(target_dir_ref%data) // &
+                              ': No such file or directory. Use "pwd" to see current location.'
+#else
       write(error_unit, '(a)') 'cd: cannot access ' // trim(target_dir) // &
                               ': No such file or directory. Use "pwd" to see current location.'
+#endif
       shell%last_exit_status = 1
     end if
+
+#ifdef USE_MEMORY_POOL
+    ! Release pooled buffer
+    call pool_release_string(target_dir_ref)
+    call dashboard_track_deallocation(MOD_BUILTINS, MAX_PATH_LEN, 4)
+#endif
   end subroutine
 
   subroutine builtin_pwd(cmd, shell)
@@ -2735,7 +2794,12 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i
+#ifdef USE_MEMORY_POOL
+    type(string_ref) :: env_value_ref
+    character(len=:), allocatable :: temp_str
+#else
     character(len=:), allocatable :: env_value
+#endif
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all environment variables
@@ -2748,15 +2812,29 @@ contains
       shell%last_exit_status = 0
     else
       ! Print specific environment variable(s)
+#ifdef USE_MEMORY_POOL
+      env_value_ref = pool_get_string(1024)
+      call dashboard_track_allocation(MOD_BUILTINS, 1024, 3)
+#endif
       do i = 2, cmd%num_tokens
+#ifdef USE_MEMORY_POOL
+        temp_str = get_environment_var(trim(cmd%tokens(i)))
+        if (allocated(temp_str) .and. len(temp_str) > 0) then
+          env_value_ref%data = temp_str
+          write(output_unit, '(a)') trim(env_value_ref%data)
+        end if
+        if (allocated(temp_str)) deallocate(temp_str)
+#else
         env_value = get_environment_var(trim(cmd%tokens(i)))
         if (allocated(env_value) .and. len(env_value) > 0) then
           write(output_unit, '(a)') env_value
-        else
-          ! Variable not found - bash printenv doesn't error, just prints nothing
-          continue
         end if
+#endif
       end do
+#ifdef USE_MEMORY_POOL
+      call pool_release_string(env_value_ref)
+      call dashboard_track_deallocation(MOD_BUILTINS, 1024, 3)
+#endif
       shell%last_exit_status = 0
     end if
   end subroutine

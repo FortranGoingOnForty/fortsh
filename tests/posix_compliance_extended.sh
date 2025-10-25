@@ -221,7 +221,7 @@ section "35. EXTENDED PARAMETER EXPANSION - STRING LENGTH"
 
 compare_posix_output "length empty" 'VAR=; echo "${#VAR}"'
 compare_posix_output "length short" 'VAR=hi; echo "${#VAR}"'
-compare_posix_output "length long" 'VAR=hello world; echo "${#VAR}"'
+compare_posix_output "length long" 'VAR="hello world"; echo "${#VAR}"'
 compare_posix_output "length special chars" 'VAR="a b c"; echo "${#VAR}"'
 
 section "36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL"
