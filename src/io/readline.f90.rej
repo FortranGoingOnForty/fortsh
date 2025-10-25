@@ -1,0 +1,26 @@
+--- src/io/readline.f90
++++ src/io/readline.f90
+@@ -6388,7 +6401,11 @@
+       ! Shift existing content to the right
+       if (input_state%length > word_start - 1) then
+         do i = input_state%length, word_start, -1
++#ifdef USE_MEMORY_POOL
++          input_state%buffer_ref%data(i + expanded_len:i + expanded_len) = input_state%buffer_ref%data(i:i)
++#else
+           input_state%buffer(i + expanded_len:i + expanded_len) = input_state%buffer(i:i)
++#endif
+         end do
+       end if
+ 
+@@ -6396,7 +6413,11 @@
+ 
+     ! Insert the expanded form
+     do i = 1, expanded_len
++#ifdef USE_MEMORY_POOL
++      input_state%buffer_ref%data(word_start + i - 1:word_start + i - 1) = expanded_form(i:i)
++#else
+       input_state%buffer(word_start + i - 1:word_start + i - 1) = expanded_form(i:i)
++#endif
+     end do
+ 
+ 
