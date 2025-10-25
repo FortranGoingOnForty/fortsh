@@ -5,6 +5,9 @@
 module syntax_highlight
   use iso_fortran_env, only: error_unit
   use system_interface, only: c_access, X_OK
+#ifdef USE_MEMORY_POOL
+  use string_pool
+#endif
   implicit none
   private
 
@@ -15,6 +18,7 @@ module syntax_highlight
   public :: init_syntax_highlighting
   public :: clear_command_cache
   public :: MAX_HIGHLIGHT_LEN  ! Export buffer size for callers
+  public :: cleanup_syntax_highlighting
 
   ! ANSI color codes
   integer, parameter :: COLOR_RESET = 0
@@ -89,9 +93,38 @@ contains
     ! Clear cache
     call clear_command_cache()
 
+#ifdef USE_MEMORY_POOL
+    ! Initialize string pool if using memory pooling
+    call pool_init()
+#endif
+
     ! Check if terminal supports colors
     ! For now, assume yes (can enhance with terminfo later)
     highlighting_enabled = .true.
+  end subroutine
+
+  ! Cleanup syntax highlighting system
+  subroutine cleanup_syntax_highlighting()
+#ifdef USE_MEMORY_POOL
+    integer :: allocs, deallocs, current, peak
+    real :: hit_rate
+
+    ! Get final statistics before cleanup
+    call pool_statistics(allocs, deallocs, current, peak, hit_rate)
+
+    ! Only print stats in debug mode
+    ! write(error_unit, '(a)') 'String pool statistics:'
+    ! write(error_unit, '(a,i0)') '  Total allocations: ', allocs
+    ! write(error_unit, '(a,i0)') '  Total deallocations: ', deallocs
+    ! write(error_unit, '(a,i0)') '  Peak strings: ', peak
+    ! write(error_unit, '(a,f5.1,a)') '  Cache hit rate: ', hit_rate * 100.0, '%'
+
+    ! Clean up the pool
+    call pool_cleanup()
+#endif
+
+    ! Clear the command cache
+    call clear_command_cache()
   end subroutine
 
   ! Clear command validation cache
@@ -122,10 +155,22 @@ contains
     character(len=32), allocatable :: token_colors(:)  ! Move to heap (3.2KB)
     integer :: len_used
     integer :: actual_input_len
+#ifdef USE_MEMORY_POOL
+    type(string_ref) :: tokens_ref, colors_ref
+#endif
 
     ! Allocate arrays on heap
+#ifdef USE_MEMORY_POOL
+    ! Use pooled allocation for frequently called function
+    tokens_ref = pool_get_string(MAX_TOKEN_LEN * MAX_TOKENS)
+    colors_ref = pool_get_string(32 * MAX_TOKENS)
+    ! Map pooled memory to our arrays (pseudo-mapping, we'll still use allocate)
     allocate(tokens(MAX_TOKENS))
     allocate(token_colors(MAX_TOKENS))
+#else
+    allocate(tokens(MAX_TOKENS))
+    allocate(token_colors(MAX_TOKENS))
+#endif
 
     ! Use provided length if given, otherwise use full buffer length
     if (present(input_len)) then
@@ -192,6 +237,11 @@ contains
     ! DEBUG: write(*, '(a)') '[DEBUG: Exiting highlight_command_line]'
 
     ! Deallocate heap-allocated arrays
+#ifdef USE_MEMORY_POOL
+    ! Release pooled memory
+    call pool_release_string(tokens_ref)
+    call pool_release_string(colors_ref)
+#endif
     if (allocated(tokens)) deallocate(tokens)
     if (allocated(token_colors)) deallocate(token_colors)
   end subroutine
@@ -791,6 +841,9 @@ contains
     ! Use allocatable to avoid 9KB stack allocation
     character(len=:), allocatable :: path_env, full_path, dir
     integer :: path_start, path_end, colon_pos
+#ifdef USE_MEMORY_POOL
+    type(string_ref) :: path_ref, full_path_ref, dir_ref
+#endif
 
     exists = .false.
 
@@ -801,8 +854,16 @@ contains
     end if
 
     ! Allocate buffers on heap
+#ifdef USE_MEMORY_POOL
+    ! Use pooled allocation for path operations
+    full_path_ref = pool_get_string(MAX_PATH_LEN)
+    dir_ref = pool_get_string(1024)
     allocate(character(len=MAX_PATH_LEN) :: full_path)
     allocate(character(len=1024) :: dir)
+#else
+    allocate(character(len=MAX_PATH_LEN) :: full_path)
+    allocate(character(len=1024) :: dir)
+#endif
 
     ! Search each directory in PATH
     path_start = 1
@@ -834,6 +895,11 @@ contains
     end do
 
     ! Deallocate heap-allocated buffers
+#ifdef USE_MEMORY_POOL
+    ! Release pooled memory
+    call pool_release_string(full_path_ref)
+    call pool_release_string(dir_ref)
+#endif
     if (allocated(path_env)) deallocate(path_env)
     if (allocated(full_path)) deallocate(full_path)
     if (allocated(dir)) deallocate(dir)
