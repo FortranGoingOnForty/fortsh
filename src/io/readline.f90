@@ -5827,7 +5827,11 @@ contains
 #endif
 
     ! Insert "cd .."
+#ifdef USE_MEMORY_POOL
+    input_state%buffer_ref%data(1:5) = cmd
+#else
     input_state%buffer(1:5) = cmd
+#endif
     input_state%length = 5
     input_state%cursor_pos = 5
 
@@ -5861,7 +5865,11 @@ contains
 #endif
 
     ! Insert "prevd"
+#ifdef USE_MEMORY_POOL
+    input_state%buffer_ref%data(1:5) = cmd
+#else
     input_state%buffer(1:5) = cmd
+#endif
     input_state%length = 5
     input_state%cursor_pos = 5
 
@@ -5895,7 +5903,11 @@ contains
 #endif
 
     ! Insert "nextd"
+#ifdef USE_MEMORY_POOL
+    input_state%buffer_ref%data(1:5) = cmd
+#else
     input_state%buffer(1:5) = cmd
+#endif
     input_state%length = 5
     input_state%cursor_pos = 5
 
