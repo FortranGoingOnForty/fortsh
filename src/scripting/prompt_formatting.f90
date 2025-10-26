@@ -347,12 +347,13 @@ contains
     got_term_size = get_terminal_size(term_rows, term_cols)
     if (got_term_size .and. term_cols > 0) then
       ! Reserve space for prompt elements (username, hostname, etc)
-      ! Typical prompt: "user@host :: /path > " is about 20 chars + path
-      max_path_len = term_cols - 40  ! Reserve 40 chars for other prompt parts
-      if (max_path_len < 20) max_path_len = 20  ! Minimum 20 chars for path
+      ! Calculate based on actual prompt format: user@host :: path [branch] >
+      ! Assume ~50 chars for username, hostname, decorators, git branch
+      max_path_len = term_cols - 50  ! Be conservative to ensure readability
+      if (max_path_len < 15) max_path_len = 15  ! Minimum 15 chars for path
     else
-      ! Fallback if terminal size unavailable
-      max_path_len = 40
+      ! Fallback if terminal size unavailable - assume narrow terminal
+      max_path_len = 25  ! More aggressive default shortening
     end if
 
     ! Shorten path if needed
