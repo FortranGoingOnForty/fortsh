@@ -155,22 +155,10 @@ contains
     character(len=32), allocatable :: token_colors(:)  ! Move to heap (3.2KB)
     integer :: len_used
     integer :: actual_input_len
-#ifdef USE_MEMORY_POOL
-    type(string_ref) :: tokens_ref, colors_ref
-#endif
 
-    ! Allocate arrays on heap
-#ifdef USE_MEMORY_POOL
-    ! Use pooled allocation for frequently called function
-    tokens_ref = pool_get_string(MAX_TOKEN_LEN * MAX_TOKENS)
-    colors_ref = pool_get_string(32 * MAX_TOKENS)
-    ! Map pooled memory to our arrays (pseudo-mapping, we'll still use allocate)
+    ! Allocate arrays on heap (not using pool - too complex for mixed allocation)
     allocate(tokens(MAX_TOKENS))
     allocate(token_colors(MAX_TOKENS))
-#else
-    allocate(tokens(MAX_TOKENS))
-    allocate(token_colors(MAX_TOKENS))
-#endif
 
     ! Use provided length if given, otherwise use full buffer length
     if (present(input_len)) then
@@ -237,11 +225,6 @@ contains
     ! DEBUG: write(*, '(a)') '[DEBUG: Exiting highlight_command_line]'
 
     ! Deallocate heap-allocated arrays
-#ifdef USE_MEMORY_POOL
-    ! Release pooled memory
-    call pool_release_string(tokens_ref)
-    call pool_release_string(colors_ref)
-#endif
     if (allocated(tokens)) deallocate(tokens)
     if (allocated(token_colors)) deallocate(token_colors)
   end subroutine
@@ -841,9 +824,6 @@ contains
     ! Use allocatable to avoid 9KB stack allocation
     character(len=:), allocatable :: path_env, full_path, dir
     integer :: path_start, path_end, colon_pos
-#ifdef USE_MEMORY_POOL
-    type(string_ref) :: path_ref, full_path_ref, dir_ref
-#endif
 
     exists = .false.
 
@@ -853,17 +833,9 @@ contains
       return
     end if
 
-    ! Allocate buffers on heap
-#ifdef USE_MEMORY_POOL
-    ! Use pooled allocation for path operations
-    full_path_ref = pool_get_string(MAX_PATH_LEN)
-    dir_ref = pool_get_string(1024)
+    ! Allocate buffers on heap (not using pool - too complex for mixed allocation)
     allocate(character(len=MAX_PATH_LEN) :: full_path)
     allocate(character(len=1024) :: dir)
-#else
-    allocate(character(len=MAX_PATH_LEN) :: full_path)
-    allocate(character(len=1024) :: dir)
-#endif
 
     ! Search each directory in PATH
     path_start = 1
@@ -895,11 +867,6 @@ contains
     end do
 
     ! Deallocate heap-allocated buffers
-#ifdef USE_MEMORY_POOL
-    ! Release pooled memory
-    call pool_release_string(full_path_ref)
-    call pool_release_string(dir_ref)
-#endif
     if (allocated(path_env)) deallocate(path_env)
     if (allocated(full_path)) deallocate(full_path)
     if (allocated(dir)) deallocate(dir)
