@@ -1236,10 +1236,31 @@ contains
     type(winsize_t), target :: ws
     integer(c_int) :: ret
 
+    ! Initialize structure to zero
+    ws%ws_row = 0
+    ws%ws_col = 0
+    ws%ws_xpixel = 0
+    ws%ws_ypixel = 0
+
     ! Try to get window size using ioctl
+    ! Try stdout first, then stderr if stdout gives 0 dimensions
     ret = c_ioctl(STDOUT_FD, TIOCGWINSZ, c_loc(ws))
 
-    if (ret == 0) then
+    ! If stdout doesn't give valid dimensions, try stderr
+    if (ret /= 0 .or. ws%ws_row == 0 .or. ws%ws_col == 0) then
+      ws%ws_row = 0
+      ws%ws_col = 0
+      ret = c_ioctl(STDERR_FD, TIOCGWINSZ, c_loc(ws))
+    end if
+
+    ! If stderr also doesn't work, try stdin
+    if (ret /= 0 .or. ws%ws_row == 0 .or. ws%ws_col == 0) then
+      ws%ws_row = 0
+      ws%ws_col = 0
+      ret = c_ioctl(STDIN_FD, TIOCGWINSZ, c_loc(ws))
+    end if
+
+    if (ret == 0 .and. ws%ws_row > 0 .and. ws%ws_col > 0) then
       rows = int(ws%ws_row)
       cols = int(ws%ws_col)
       success = .true.
