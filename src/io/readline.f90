@@ -3844,9 +3844,6 @@ contains
         '  ... ', input_state%menu_total_items - input_state%menu_num_items, ' more items available'
     end if
 
-    write(error_unit, '(a)') '[DRAW_MENU: cursor should be on new line after last menu row]'
-    flush(error_unit)
-
     ! Mark that we need to redraw the command line
     flush(output_unit)
   end subroutine
@@ -3978,7 +3975,11 @@ contains
     call exit_menu_select_mode(input_state)
 
     ! Update buffer after menu is cleared
+#ifdef USE_MEMORY_POOL
+    input_state%buffer_ref%data = completed_line
+#else
     input_state%buffer = completed_line
+#endif
     input_state%length = completed_len
     input_state%cursor_pos = completed_len  ! Cursor at end
 
@@ -4024,14 +4025,16 @@ contains
       end if
 
       ! Move cursor up to where the command line was (before the blank line and menu)
-      ! Cursor is currently after the menu rows + extra lines
-      ! Move up: num_rows (menu content) + extra_lines (more items) + 1 (blank line before menu)
-      do i = 1, num_rows + extra_lines + 1
+      ! Cursor is currently on empty line after the menu rows + extra lines
+      ! Layout: [cmd][blank][row1]...[rowN][extra?][cursor here]
+      ! Move up: num_rows (menu content) + extra_lines (more items) + 1 (blank line) + 1 (to command line)
+      do i = 1, num_rows + extra_lines + 2
         write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
       end do
 
       ! Now at command line - clear from next line down to remove menu
       write(output_unit, '(a)', advance='no') char(13)  ! Carriage return (start of command line)
+      write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear current line (remove old command)
       write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Move down to first menu line
       write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down (all menu)
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Move back up to command line
@@ -4124,14 +4127,6 @@ contains
       extra_lines = 1
     end if
 
-    ! Calculate which row the current selection is in
-    items_per_row = input_state%menu_items_per_row
-    current_row = (input_state%menu_selection - 1) / items_per_row + 1
-
-    write(error_unit, '(a,i0,a,i0,a,i0,a,i0,a,i0)') '[PREVIEW: sel=', input_state%menu_selection, &
-      ' row=', current_row, ' rows=', num_menu_rows, ' extra=', extra_lines, ' moving_up=', num_menu_rows + extra_lines + 2
-    flush(error_unit)
-
     ! Save current cursor position (after menu) - ESC[s
     write(output_unit, '(a)', advance='no') char(27) // '[s'
 
@@ -4162,8 +4157,6 @@ contains
 
     ! Move cursor up past menu to command line
     ! We need to go up: num_menu_rows + extra_lines (menu content) + 1 (blank line before menu) + 1 (to command line)
-    write(error_unit, '(a)') '[PREVIEW: about to move up to command line]'
-    flush(error_unit)
     do i = 1, num_menu_rows + extra_lines + 2
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
     end do
@@ -4172,8 +4165,6 @@ contains
     write(output_unit, '(a)', advance='no') char(13)  ! CR
 
     ! Clear the entire line
-    write(error_unit, '(a)') '[PREVIEW: clearing command line]'
-    flush(error_unit)
     write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
 
     ! Apply syntax highlighting to preview (use preview_len we calculated)
@@ -4194,22 +4185,15 @@ contains
     end if
 
     ! Redraw highlighted preview character by character (already local var)
-    write(error_unit, '(a,i0)') '[PREVIEW: about to write preview, len=', highlighted_len
-    flush(error_unit)
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
       do i = 1, highlighted_len
         ch = highlighted_preview(i:i)
         write(output_unit, '(a)', advance='no') ch
       end do
     end if
-    write(error_unit, '(a)') '[PREVIEW: preview written]'
-    flush(error_unit)
 
     ! Restore cursor position (back to after menu) - ESC[u
     write(output_unit, '(a)', advance='no') char(27) // '[u'
-
-    write(error_unit, '(a)') '[PREVIEW: complete, restored cursor position]'
-    flush(error_unit)
 
     flush(output_unit)
     ! highlighted_preview is now fixed-length, no deallocation needed
