@@ -897,7 +897,7 @@ contains
     if (color == COLOR_RESET) then
       code = char(27) // '[0m'
     else
-      write(code, '(a,i15,a)') char(27) // '[', color, 'm'
+      write(code, '(a,i0,a)') char(27) // '[', color, 'm'
     end if
     code = trim(code)
   end function
