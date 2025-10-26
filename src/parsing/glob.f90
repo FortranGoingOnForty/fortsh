@@ -151,12 +151,12 @@ contains
     character(len=*), intent(in) :: pattern
     character(len=MAX_TOKEN_LEN), intent(out) :: matches(:)
     integer, intent(out) :: match_count
-    
+
     character(len=MAX_FILENAME_LEN) :: directory_path, filename
     character(len=MAX_FILENAME_LEN) :: full_pattern
     integer :: dir_pos, i
     logical :: is_dir_pattern
-    
+
     match_count = 0
     full_pattern = trim(pattern)
     
@@ -192,14 +192,14 @@ contains
     logical, intent(in) :: include_dir_path
     character(len=MAX_TOKEN_LEN), intent(out) :: matches(:)
     integer, intent(out) :: match_count
-    
+
     ! Simple implementation - in a full shell this would use opendir/readdir
-    character(len=MAX_FILENAME_LEN) :: test_files(20)
+    character(len=MAX_FILENAME_LEN) :: test_files(500)  ! Increased from 20 to 500
     integer :: num_test_files, i
     character(len=MAX_FILENAME_LEN) :: full_path
-    
+
     match_count = 0
-    
+
     ! For now, simulate some common files for testing
     ! In a real implementation, this would read the actual directory
     call get_simulated_directory_contents(dir_path, test_files, num_test_files)
