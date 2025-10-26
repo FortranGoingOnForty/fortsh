@@ -6614,9 +6614,6 @@ contains
     input_len = len_trim(current_input)
     if (input_len == 0) return
 
-    ! DEBUG
-    write(error_unit, '(a,a,a)') 'DEBUG: try_path_suggestion called with input="', trim(current_input), '"'
-
     ! Find the last word (what user is currently typing)
     last_space_pos = 0
     do i = input_len, 1, -1
@@ -6636,21 +6633,10 @@ contains
 
     ! Check if last word looks like a path
     if (len_trim(last_word) == 0) return
-
-    ! DEBUG
-    write(error_unit, '(a,a,a)') 'DEBUG: last_word="', trim(last_word), '"'
-    write(error_unit, '(a,l)') 'DEBUG: looks_like_path=', looks_like_path_for_suggestion(last_word)
-
     if (.not. looks_like_path_for_suggestion(last_word)) return
 
     ! Get completions for this path fragment
     call complete_files_enhanced(trim(last_word), completions, num_completions)
-
-    ! DEBUG
-    write(error_unit, '(a,i0)') 'DEBUG: num_completions=', num_completions
-    if (num_completions > 0) then
-      write(error_unit, '(a,a,a)') 'DEBUG: first completion="', trim(completions(1)), '"'
-    end if
 
     ! If exactly one completion, suggest it
     if (num_completions == 1) then
@@ -6660,11 +6646,6 @@ contains
         ! Copy the part that extends beyond what user typed
         input_state%suggestion = suggestion_text(len_trim(last_word)+1:len_trim(suggestion_text))
         input_state%suggestion_length = len_trim(suggestion_text) - len_trim(last_word)
-
-        ! DEBUG
-        write(error_unit, '(a,a,a,i0)') 'DEBUG: SET suggestion="', &
-          trim(input_state%suggestion(1:input_state%suggestion_length)), &
-          '" length=', input_state%suggestion_length
       end if
     else if (num_completions > 1) then
       ! Multiple completions - find common prefix
