@@ -571,6 +571,23 @@ contains
     ! Handle eval builtin directly (to avoid circular dependency with builtins)
     else if (trim(cmd%tokens(1)) == 'eval') then
       call execute_eval_builtin(cmd, shell)
+    ! Check for cd-less navigation: if single token is a directory, treat as 'cd'
+    else if (cmd%num_tokens == 1 .and. file_is_directory(trim(cmd%tokens(1)))) then
+      ! Create synthetic cd command by properly reallocating tokens array
+      block
+        character(len=:), allocatable :: dir_path, old_tokens(:)
+        integer :: token_len
+        ! Save the directory path
+        dir_path = trim(cmd%tokens(1))
+        token_len = len(cmd%tokens)
+        ! Deallocate old tokens and allocate new array with size 2
+        deallocate(cmd%tokens)
+        allocate(character(len=token_len) :: cmd%tokens(2))
+        cmd%tokens(1) = 'cd'
+        cmd%tokens(2) = dir_path
+        cmd%num_tokens = 2
+      end block
+      call execute_builtin_with_redirects(cmd, shell)
     else if (is_builtin(cmd%tokens(1))) then
       call execute_builtin_with_redirects(cmd, shell)
     else
