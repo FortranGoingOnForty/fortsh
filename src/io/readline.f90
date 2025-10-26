@@ -2358,8 +2358,20 @@ contains
     ! Fall back to default completion if programmable completion didn't produce results
     if (.not. used_programmable_completion) then
       if (is_command) then
-        ! Complete commands (builtins + PATH executables)
-        call complete_commands_enhanced(last_word, completions, num_completions)
+        ! Check if this looks like a directory path for cd-less navigation
+        if (looks_like_directory_path(last_word)) then
+          ! Complete as directories for cd-less navigation
+          if (has_glob_chars(last_word)) then
+            call expand_glob_for_completion(last_word, completions, num_completions)
+          else
+            call complete_files_enhanced(last_word, completions, num_completions)
+          end if
+          ! Filter to directories only for cd-less navigation
+          call filter_directories_only(completions, num_completions)
+        else
+          ! Complete commands (builtins + PATH executables)
+          call complete_commands_enhanced(last_word, completions, num_completions)
+        end if
 
         ! Add prefix back to completions
         do i = 1, num_completions
@@ -2424,6 +2436,29 @@ contains
                  index(str, '?') > 0 .or. &
                  index(str, '[') > 0)
   end function has_glob_chars
+
+  ! Check if a string looks like a directory path (for cd-less navigation)
+  function looks_like_directory_path(str) result(looks_like_path)
+    character(len=*), intent(in) :: str
+    logical :: looks_like_path
+    character(len=:), allocatable :: trimmed
+
+    trimmed = trim(str)
+    if (len(trimmed) == 0) then
+      looks_like_path = .false.
+      return
+    end if
+
+    ! Check for path indicators:
+    ! - Starts with / (absolute path)
+    ! - Starts with ~ (home directory)
+    ! - Starts with . (current/parent directory)
+    ! - Contains / anywhere (path separator)
+    looks_like_path = (trimmed(1:1) == '/' .or. &
+                       trimmed(1:1) == '~' .or. &
+                       trimmed(1:1) == '.' .or. &
+                       index(trimmed, '/') > 0)
+  end function looks_like_directory_path
 
   ! Expand glob pattern for tab completion using real filesystem
   subroutine expand_glob_for_completion(pattern, completions, num_completions)
