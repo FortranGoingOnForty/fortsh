@@ -5890,13 +5890,21 @@ contains
     ! Shift existing text right to make room
     do i = input_state%length, input_state%cursor_pos + 1, -1
       if (i + insert_len <= MAX_LINE_LEN) then
+#ifdef USE_MEMORY_POOL
+        input_state%buffer_ref%data(i + insert_len:i + insert_len) = input_state%buffer_ref%data(i:i)
+#else
         input_state%buffer(i + insert_len:i + insert_len) = input_state%buffer(i:i)
+#endif
       end if
     end do
 
     ! Insert string at cursor position
     do i = 1, insert_len
+#ifdef USE_MEMORY_POOL
+      input_state%buffer_ref%data(input_state%cursor_pos + i:input_state%cursor_pos + i) = str(i:i)
+#else
       input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = str(i:i)
+#endif
     end do
 
     ! Update length and cursor position
@@ -6808,8 +6816,15 @@ contains
     logical :: first_line
     integer :: i, moves
 
+    write(error_unit, '(a)') '[DEBUG] launch_fzf_file_browser called'
+    flush(error_unit)
+
     ! Check if fzf is installed
+    write(error_unit, '(a)') '[DEBUG] Calling safe_execute_command to check for fzf'
+    flush(error_unit)
     call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
+    write(error_unit, '(a,i0)') '[DEBUG] fzf check returned: ', exit_status
+    flush(error_unit)
     if (exit_status /= 0) then
       write(output_unit, '()')
       write(output_unit, '(a)') 'Error: fzf is not installed. Please install fzf first.'
@@ -6984,7 +6999,11 @@ contains
 
           if (iostat == 0 .and. len_trim(selected_cmd) > 0) then
             ! Replace entire line with selected command
+#ifdef USE_MEMORY_POOL
+            input_state%buffer_ref%data = trim(selected_cmd)
+#else
             input_state%buffer = trim(selected_cmd)
+#endif
             input_state%length = len_trim(selected_cmd)
             input_state%cursor_pos = input_state%length
           end if
@@ -7058,8 +7077,13 @@ contains
 
           if (iostat == 0 .and. len_trim(selected_dir) > 0) then
             ! Replace line with cd command
+#ifdef USE_MEMORY_POOL
+            input_state%buffer_ref%data = 'cd ' // trim(selected_dir)
+            input_state%length = len_trim(input_state%buffer_ref%data)
+#else
             input_state%buffer = 'cd ' // trim(selected_dir)
             input_state%length = len_trim(input_state%buffer)
+#endif
             input_state%cursor_pos = input_state%length
           end if
         end if
@@ -7072,7 +7096,11 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[H'
     write(output_unit, '(a)', advance='no') trim(input_state%menu_prompt)
     if (input_state%length > 0) then
+#ifdef USE_MEMORY_POOL
+      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
+#else
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+#endif
     end if
     flush(output_unit)
 
