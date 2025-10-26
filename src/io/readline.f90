@@ -576,6 +576,8 @@ contains
     if (.not. module_input_state_initialized) then
       ! Initialize input state with allocated strings (only on first use)
       call init_input_state(module_input_state)
+      ! Initialize syntax highlighting
+      call init_syntax_highlighting()
       module_input_state_initialized = .true.
     else
       ! On subsequent calls, just reset the buffer and cursor
@@ -786,8 +788,10 @@ contains
           call handle_yank(module_input_state)
           
         case(KEY_CTRL_L)
-          ! Clear screen and redraw
-          call handle_clear_screen(module_input_state, prompt)
+          ! Clear screen and redraw (not allowed in menu mode)
+          if (.not. module_input_state%in_menu_select) then
+            call handle_clear_screen(module_input_state, prompt)
+          end if
 
         case(KEY_CTRL_R)
           ! Reverse-i-search
@@ -861,7 +865,8 @@ contains
 
         ! Redraw line if needed
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
-        if (module_input_state%dirty) then
+        ! Skip redraw when in menu selection mode - menu handles its own display
+        if (module_input_state%dirty .and. .not. module_input_state%in_menu_select) then
           ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
           ! Variables moved to subroutine level
 
@@ -917,11 +922,11 @@ contains
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
 #ifdef USE_MEMORY_POOL
-              call highlight_command_line(module_input_state%buffer_ref%data, &
+              call highlight_command_line(module_input_state%buffer_ref%data(:module_input_state%length), &
                                           module_highlighted_buffer, module_highlighted_len, &
                                           module_input_state%length)
 #else
-              call highlight_command_line(module_input_state%buffer, &
+              call highlight_command_line(module_input_state%buffer(:module_input_state%length), &
                                           module_highlighted_buffer, module_highlighted_len, &
                                           module_input_state%length)
 #endif
@@ -3426,6 +3431,7 @@ contains
               input_state%menu_items(i) = temp_buffer
             end do
             input_state%menu_selection = 1
+            write(output_unit, '()')  ! Blank line before menu
             call draw_completion_menu(input_state, .true.)
 #ifdef USE_MEMORY_POOL
             input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
@@ -3438,6 +3444,8 @@ contains
           else
             ! Second tab - enter menu selection mode
             ! Activate menu mode (items already stored and displayed)
+            write(error_unit, '(a)') '[ENTERING_MENU_SELECT_MODE]'
+            flush(error_unit)
             input_state%in_menu_select = .true.
 
             ! Clear autosuggestion when entering menu mode
@@ -3512,8 +3520,13 @@ contains
           input_state%menu_items(i) = temp_buffer
         end do
         input_state%menu_selection = 1
+        write(output_unit, '()')  ! Blank line before menu
         call draw_completion_menu(input_state, .true.)
+#ifdef USE_MEMORY_POOL
+        input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
+#else
         input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+#endif
         input_state%last_completion_buffer_len = input_state%length
         input_state%completions_shown = .true.
         ! Don't set dirty - command line is already displayed above menu
@@ -3565,6 +3578,8 @@ contains
         if (input_state%menu_num_items > 1) then
           input_state%menu_selection = 2  ! Change from 1 to 2
           call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+          ! Update command line preview with selected item
+          call update_live_preview(input_state)
         end if
         flush(output_unit)
       end if
@@ -3634,6 +3649,7 @@ contains
               input_state%menu_items(i) = temp_buffer
             end do
             input_state%menu_selection = 1
+            write(output_unit, '()')  ! Blank line before menu
             call draw_completion_menu(input_state, .true.)
 #ifdef USE_MEMORY_POOL
             input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
@@ -3665,8 +3681,13 @@ contains
           input_state%menu_items(i) = temp_buffer
         end do
         input_state%menu_selection = 1
+        write(output_unit, '()')  ! Blank line before menu
         call draw_completion_menu(input_state, .true.)
+#ifdef USE_MEMORY_POOL
+        input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
+#else
         input_state%last_completion_buffer = input_state%buffer(:input_state%length)
+#endif
         input_state%last_completion_buffer_len = input_state%length
         input_state%completions_shown = .true.
         ! Don't set dirty - command line is already displayed above menu
@@ -3740,6 +3761,8 @@ contains
       input_state%menu_selection = 2  ! Change from 1 to 2
       call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
       ! Show initial preview
+      write(error_unit, '(a)') '[CALLING_PREVIEW_FROM_ENTER_MENU]'
+      flush(error_unit)
       call update_live_preview(input_state)
     end if
     flush(output_unit)
@@ -3760,31 +3783,21 @@ contains
       term_cols = 80
     end if
 
-    ! Add newline only on initial draw, not on redraw
-    if (initial_draw) then
-      write(output_unit, '()')  ! New line
-    end if
+    ! Calculate layout (ALWAYS recalculate to ensure correctness)
+    ! Note: Caller is responsible for outputting initial newline before calling with initial_draw=true
+    cols_per_item = 0
+    do i = 1, input_state%menu_num_items
+      current_item = input_state%menu_items(i)
+      item_len = len_trim(current_item)
+      cols_per_item = max(cols_per_item, item_len)
+    end do
+    cols_per_item = cols_per_item + 2  ! Add spacing
+    items_per_row = max(1, term_cols / cols_per_item)
 
-    ! Calculate layout only if not cached or on initial draw
-    if (initial_draw .or. input_state%menu_cols_per_item == 0) then
-      cols_per_item = 0
-      do i = 1, input_state%menu_num_items
-        current_item = input_state%menu_items(i)
-        item_len = len_trim(current_item)
-        cols_per_item = max(cols_per_item, item_len)
-      end do
-      cols_per_item = cols_per_item + 2  ! Add spacing
-      items_per_row = max(1, term_cols / cols_per_item)
-
-      ! Cache the layout
-      input_state%menu_cols_per_item = cols_per_item
-      input_state%menu_items_per_row = items_per_row
-      input_state%menu_num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
-    else
-      ! Use cached layout
-      cols_per_item = input_state%menu_cols_per_item
-      items_per_row = input_state%menu_items_per_row
-    end if
+    ! Cache the layout (always update cache for use by update_live_preview and navigation)
+    input_state%menu_cols_per_item = cols_per_item
+    input_state%menu_items_per_row = items_per_row
+    input_state%menu_num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
     ! Draw menu items
     item_idx = 1
@@ -3830,6 +3843,9 @@ contains
       write(output_unit, '(a,i15,a)') &
         '  ... ', input_state%menu_total_items - input_state%menu_num_items, ' more items available'
     end if
+
+    write(error_unit, '(a)') '[DRAW_MENU: cursor should be on new line after last menu row]'
+    flush(error_unit)
 
     ! Mark that we need to redraw the command line
     flush(output_unit)
@@ -3980,7 +3996,7 @@ contains
 
   subroutine exit_menu_select_mode(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, num_rows, term_rows, term_cols, cols_per_item, items_per_row
+    integer :: i, num_rows, term_rows, term_cols, cols_per_item, items_per_row, extra_lines
     logical :: success
 
     ! Clear the menu from screen before exiting
@@ -4001,10 +4017,16 @@ contains
       items_per_row = max(1, term_cols / cols_per_item)
       num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
-      ! Move cursor up to where the command line was (before the menu)
-      ! Need to account for: initial newline (1) + menu rows (num_rows) + final newline (1)
-      ! Since we're on the line after the final newline, we're (num_rows + 1) lines down
-      do i = 1, num_rows + 1
+      ! Account for "more items" indicator line if present
+      extra_lines = 0
+      if (input_state%menu_total_items > input_state%menu_num_items) then
+        extra_lines = 1
+      end if
+
+      ! Move cursor up to where the command line was (before the blank line and menu)
+      ! Cursor is currently after the menu rows + extra lines
+      ! Move up: num_rows (menu content) + extra_lines (more items) + 1 (blank line before menu)
+      do i = 1, num_rows + extra_lines + 1
         write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
       end do
 
@@ -4028,35 +4050,49 @@ contains
   subroutine update_menu_selection(input_state, old_selection)
     type(input_state_t), intent(inout) :: input_state  ! inout to pass to draw function
     integer, intent(in) :: old_selection
-    integer :: i, num_menu_rows
+    integer :: i, num_menu_rows, extra_lines, total_lines
     logical :: success
 
     ! Use cached layout from input_state (avoids repeated array iterations)
     num_menu_rows = input_state%menu_num_rows
 
-    ! Move cursor up to the beginning of the menu
-    do i = 1, num_menu_rows
+    ! Account for "more items" indicator line if present
+    extra_lines = 0
+    if (input_state%menu_total_items > input_state%menu_num_items) then
+      extra_lines = 1
+    end if
+    total_lines = num_menu_rows + extra_lines
+
+    ! Move cursor up to the blank line before menu
+    ! Cursor is currently on new line after last menu row (each row ends with newline)
+    ! Menu layout: [blank line] [row 1] [row 2] ... [row N] [more items?] [cursor on new line]
+    ! So we move up: num_menu_rows + extra_lines + 1 to get to blank line
+    do i = 1, total_lines + 1
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
     end do
     write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
 
-    ! Clear the menu area (clear num_menu_rows lines)
-    do i = 1, num_menu_rows
+    ! Clear the menu area including blank line (clear all lines including extra and blank)
+    do i = 1, total_lines + 1
       write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear line
-      if (i < num_menu_rows) then
+      if (i < total_lines + 1) then
         write(output_unit, '()')  ! Move to next line
       end if
     end do
 
-    ! Move back up to start of menu
-    if (num_menu_rows > 1) then
-      do i = 1, num_menu_rows - 1
+    ! Move back up to start (the blank line before menu)
+    if (total_lines > 0) then
+      do i = 1, total_lines
         write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
       end do
       write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
     else
       write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
     end if
+
+    ! We're now positioned at the START of the blank line
+    ! Output a blank line (to match initial draw spacing)
+    write(output_unit, '()')  ! Blank line before menu
 
     ! Redraw the menu with the new selection highlighted
     call draw_completion_menu(input_state, .false.)
@@ -4066,12 +4102,13 @@ contains
 
   subroutine update_live_preview(input_state)
     type(input_state_t), intent(in) :: input_state
-    integer :: i, j, num_menu_rows
+    integer :: i, j, num_menu_rows, extra_lines
     integer :: prompt_len, highlighted_len, item_len, preview_len
     character(len=MAX_LINE_LEN) :: preview_line, current_prefix
     character(len=MAX_MENU_ITEM_LEN) :: current_item
     character(len=MAX_HIGHLIGHT_LEN) :: highlighted_preview  ! Fixed-length to avoid flang-new bugs
     character(len=1) :: ch
+    integer :: current_row, items_per_row
 
     ! Initialize buffer
     highlighted_preview = ' '
@@ -4080,6 +4117,23 @@ contains
 
     ! Use cached menu layout (avoids repeated array iterations and len_trim calls)
     num_menu_rows = input_state%menu_num_rows
+
+    ! Account for "more items" indicator line if present
+    extra_lines = 0
+    if (input_state%menu_total_items > input_state%menu_num_items) then
+      extra_lines = 1
+    end if
+
+    ! Calculate which row the current selection is in
+    items_per_row = input_state%menu_items_per_row
+    current_row = (input_state%menu_selection - 1) / items_per_row + 1
+
+    write(error_unit, '(a,i0,a,i0,a,i0,a,i0,a,i0)') '[PREVIEW: sel=', input_state%menu_selection, &
+      ' row=', current_row, ' rows=', num_menu_rows, ' extra=', extra_lines, ' moving_up=', num_menu_rows + extra_lines + 2
+    flush(error_unit)
+
+    ! Save current cursor position (after menu) - ESC[s
+    write(output_unit, '(a)', advance='no') char(27) // '[s'
 
     ! Build preview line character by character (copy to local vars first)
     preview_len = 0
@@ -4107,8 +4161,10 @@ contains
     end do
 
     ! Move cursor up past menu to command line
-    ! We need to go up: num_menu_rows (to get to start of menu) + 1 (to get to command line above menu)
-    do i = 1, num_menu_rows + 1
+    ! We need to go up: num_menu_rows + extra_lines (menu content) + 1 (blank line before menu) + 1 (to command line)
+    write(error_unit, '(a)') '[PREVIEW: about to move up to command line]'
+    flush(error_unit)
+    do i = 1, num_menu_rows + extra_lines + 2
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
     end do
 
@@ -4116,6 +4172,8 @@ contains
     write(output_unit, '(a)', advance='no') char(13)  ! CR
 
     ! Clear the entire line
+    write(error_unit, '(a)') '[PREVIEW: clearing command line]'
+    flush(error_unit)
     write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
 
     ! Apply syntax highlighting to preview (use preview_len we calculated)
@@ -4136,20 +4194,22 @@ contains
     end if
 
     ! Redraw highlighted preview character by character (already local var)
+    write(error_unit, '(a,i0)') '[PREVIEW: about to write preview, len=', highlighted_len
+    flush(error_unit)
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
       do i = 1, highlighted_len
         ch = highlighted_preview(i:i)
         write(output_unit, '(a)', advance='no') ch
       end do
     end if
+    write(error_unit, '(a)') '[PREVIEW: preview written]'
+    flush(error_unit)
 
-    ! Move cursor back down to menu
-    do i = 1, num_menu_rows + 1
-      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Cursor down
-    end do
+    ! Restore cursor position (back to after menu) - ESC[u
+    write(output_unit, '(a)', advance='no') char(27) // '[u'
 
-    ! Move to start of line (we're back after the menu now)
-    write(output_unit, '(a)', advance='no') char(13)
+    write(error_unit, '(a)') '[PREVIEW: complete, restored cursor position]'
+    flush(error_unit)
 
     flush(output_unit)
     ! highlighted_preview is now fixed-length, no deallocation needed
@@ -4342,7 +4402,11 @@ contains
     write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
     write(output_unit, '(a)', advance='no') trim(signal_prompt)
     if (input_state%length > 0) then
+#ifdef USE_MEMORY_POOL
+      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
+#else
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+#endif
     end if
     flush(output_unit)
   end subroutine
@@ -5017,7 +5081,11 @@ contains
     write(output_unit, '(a)', advance='no') prompt
     write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
     if (input_state%length > 0) then
+#ifdef USE_MEMORY_POOL
+      call highlight_command_line(input_state%buffer_ref%data(:input_state%length), highlighted, highlighted_len)
+#else
       call highlight_command_line(input_state%buffer(:input_state%length), highlighted, highlighted_len)
+#endif
       if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
         write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
       end if
@@ -5104,7 +5172,11 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[K'
 
     ! Redraw buffer with highlighting
+#ifdef USE_MEMORY_POOL
+    call highlight_command_line(input_state%buffer_ref%data(:input_state%length), highlighted, highlighted_len)
+#else
     call highlight_command_line(input_state%buffer(:input_state%length), highlighted, highlighted_len)
+#endif
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
       write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
     end if
@@ -5332,7 +5404,11 @@ contains
 
     ! Draw the current buffer with syntax highlighting
     if (input_state%length > 0) then
+#ifdef USE_MEMORY_POOL
+      call highlight_command_line(input_state%buffer_ref%data(:input_state%length), highlighted, highlighted_len)
+#else
       call highlight_command_line(input_state%buffer(:input_state%length), highlighted, highlighted_len)
+#endif
       if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
         write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
       end if
@@ -6139,7 +6215,11 @@ contains
     write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
     write(output_unit, '(a)', advance='no') trim(search_prompt)
     if (input_state%length > 0) then
+#ifdef USE_MEMORY_POOL
+      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
+#else
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+#endif
     end if
     flush(output_unit)
   end subroutine
@@ -6825,7 +6905,11 @@ contains
 
     ! Redraw current line
     if (input_state%length > 0) then
+#ifdef USE_MEMORY_POOL
+      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
+#else
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+#endif
       ! Move cursor to correct position (if not at end)
       if (input_state%cursor_pos < input_state%length) then
         ! Move cursor back from end to cursor position using ANSI escape codes
@@ -6918,7 +7002,11 @@ contains
 
     ! Redraw current line
     if (input_state%length > 0) then
+#ifdef USE_MEMORY_POOL
+      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
+#else
       write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+#endif
     end if
     flush(output_unit)
 
