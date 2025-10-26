@@ -969,8 +969,8 @@ contains
                   ! 1. NEVER show suggestions if input has already wrapped (current_row > 0)
                   ! 2. Limit suggestion to fit on current line with safety margin
                   ! 3. Leave 2 char margin for ANSI codes
-                  ! 4. Only show if we have at least 7 chars of space (worthwhile to display)
-                  if (current_row == 0 .and. available_space >= 7) then
+                  ! 4. Show if we have at least 3 chars of space (enough for 1 char + ANSI codes)
+                  if (current_row == 0 .and. available_space >= 3) then
                     ! Limit suggestion to available space minus safety margin
                     suggestion_display_len = min(module_input_state%suggestion_length, available_space - 2)
 
@@ -978,8 +978,8 @@ contains
                     if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
                     if (suggestion_display_len > module_input_state%suggestion_length) suggestion_display_len = 0
 
-                    ! Only show if we have at least 5 chars to make it worthwhile
-                    if (suggestion_display_len >= 5) then
+                    ! Show suggestion if we have at least 1 character
+                    if (suggestion_display_len >= 1) then
                       ! Use bright black (gray) color for suggestions - ANSI code 90
                       write(output_unit, '(a)', advance='no') char(27) // '[90m'
 
@@ -2882,6 +2882,9 @@ contains
         ! Build full path for display (use original dir_path to preserve ~ in display)
         if (trim(dir_path) == '.') then
           full_path = trim(full_path)
+        else if (trim(dir_path) == '/') then
+          ! Root directory - don't add extra slash
+          full_path = '/' // trim(full_path)
         else
           full_path = trim(dir_path) // '/' // trim(full_path)
         end if
@@ -6593,6 +6596,123 @@ contains
   ! ============================================================================
 
   ! Update autosuggestion based on current input
+  ! Try to suggest path completion (fish-style lookahead)
+  subroutine try_path_suggestion(current_input, input_state)
+    character(len=*), intent(in) :: current_input
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: last_word, prefix_part
+    character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
+    integer :: num_completions, last_space_pos, i, j
+    integer :: common_prefix_len, input_len
+    logical :: all_match
+    character(len=MAX_LINE_LEN) :: suggestion_text
+
+    ! Clear any existing suggestion
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
+    input_len = len_trim(current_input)
+    if (input_len == 0) return
+
+    ! DEBUG
+    write(error_unit, '(a,a,a)') 'DEBUG: try_path_suggestion called with input="', trim(current_input), '"'
+
+    ! Find the last word (what user is currently typing)
+    last_space_pos = 0
+    do i = input_len, 1, -1
+      if (current_input(i:i) == ' ') then
+        last_space_pos = i
+        exit
+      end if
+    end do
+
+    if (last_space_pos > 0) then
+      last_word = trim(current_input(last_space_pos+1:))
+      prefix_part = current_input(:last_space_pos)
+    else
+      last_word = trim(current_input)
+      prefix_part = ''
+    end if
+
+    ! Check if last word looks like a path
+    if (len_trim(last_word) == 0) return
+
+    ! DEBUG
+    write(error_unit, '(a,a,a)') 'DEBUG: last_word="', trim(last_word), '"'
+    write(error_unit, '(a,l)') 'DEBUG: looks_like_path=', looks_like_path_for_suggestion(last_word)
+
+    if (.not. looks_like_path_for_suggestion(last_word)) return
+
+    ! Get completions for this path fragment
+    call complete_files_enhanced(trim(last_word), completions, num_completions)
+
+    ! DEBUG
+    write(error_unit, '(a,i0)') 'DEBUG: num_completions=', num_completions
+    if (num_completions > 0) then
+      write(error_unit, '(a,a,a)') 'DEBUG: first completion="', trim(completions(1)), '"'
+    end if
+
+    ! If exactly one completion, suggest it
+    if (num_completions == 1) then
+      ! Build suggestion: remove the part user already typed
+      suggestion_text = trim(completions(1))
+      if (len_trim(suggestion_text) > len_trim(last_word)) then
+        ! Copy the part that extends beyond what user typed
+        input_state%suggestion = suggestion_text(len_trim(last_word)+1:len_trim(suggestion_text))
+        input_state%suggestion_length = len_trim(suggestion_text) - len_trim(last_word)
+
+        ! DEBUG
+        write(error_unit, '(a,a,a,i0)') 'DEBUG: SET suggestion="', &
+          trim(input_state%suggestion(1:input_state%suggestion_length)), &
+          '" length=', input_state%suggestion_length
+      end if
+    else if (num_completions > 1) then
+      ! Multiple completions - find common prefix
+      common_prefix_len = len_trim(completions(1))
+
+      do i = 2, num_completions
+        ! Find how much of completions(1) matches completions(i)
+        do j = 1, min(common_prefix_len, len_trim(completions(i)))
+          if (completions(1)(j:j) /= completions(i)(j:j)) then
+            common_prefix_len = j - 1
+            exit
+          end if
+        end do
+        if (common_prefix_len == 0) exit
+      end do
+
+      ! If common prefix is longer than what user typed, suggest the difference
+      if (common_prefix_len > len_trim(last_word)) then
+        input_state%suggestion = completions(1)(len_trim(last_word)+1:common_prefix_len)
+        input_state%suggestion_length = common_prefix_len - len_trim(last_word)
+      end if
+    end if
+  end subroutine try_path_suggestion
+
+  ! Check if a string looks like a path for suggestion purposes
+  function looks_like_path_for_suggestion(str) result(looks_like_path)
+    character(len=*), intent(in) :: str
+    logical :: looks_like_path
+    integer :: str_len
+
+    str_len = len_trim(str)
+    if (str_len == 0) then
+      looks_like_path = .false.
+      return
+    end if
+
+    ! More aggressive than tab completion - suggest for any path hint
+    ! - Starts with / (absolute)
+    ! - Starts with ~ (home)
+    ! - Starts with . (relative)
+    ! - Contains / (path separator)
+    ! - Ends with partial directory name that could be a path
+    looks_like_path = (str(1:1) == '/' .or. &
+                       str(1:1) == '~' .or. &
+                       str(1:1) == '.' .or. &
+                       index(trim(str), '/') > 0)
+  end function looks_like_path_for_suggestion
+
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, newline_pos, j
@@ -6704,9 +6824,8 @@ contains
       end if
     end do
 
-    ! No match found
-    input_state%suggestion = ''
-    input_state%suggestion_length = 0
+    ! No history match found - try path completion (fish-style)
+    call try_path_suggestion(current_input(1:input_state%length), input_state)
 
     ! Deallocate heap-allocated buffers
     if (allocated(current_input)) deallocate(current_input)
@@ -6728,13 +6847,14 @@ contains
       new_length = input_state%length + input_state%suggestion_length
     end if
 
-    ! Append suggestion to buffer
-    do i = 1, input_state%suggestion_length
-      if (input_state%length + i <= MAX_LINE_LEN) then
-        input_state%buffer(input_state%length + i:input_state%length + i) = &
-          input_state%suggestion(i:i)
-      end if
-    end do
+    ! Append suggestion to buffer using substring assignment (safer and more efficient)
+#ifdef USE_MEMORY_POOL
+    input_state%buffer_ref%data(input_state%length+1:new_length) = &
+      input_state%suggestion(1:input_state%suggestion_length)
+#else
+    input_state%buffer(input_state%length+1:new_length) = &
+      input_state%suggestion(1:input_state%suggestion_length)
+#endif
 
     input_state%length = new_length
     input_state%cursor_pos = input_state%length
