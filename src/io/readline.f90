@@ -3363,8 +3363,8 @@ contains
       write(output_unit, '(a)', advance='no') char(8) // ' ' // char(8)  ! BS + space + BS
       flush(output_unit)
 
-      ! Don't mark as dirty - we handled it inline
-      input_state%dirty = .false.
+      ! Mark as dirty to ensure suggestions are redrawn
+      input_state%dirty = .true.
     else
       ! Delete in middle - shift characters left
       do i = input_state%cursor_pos, input_state%length - 1
