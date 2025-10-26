@@ -4743,17 +4743,24 @@ contains
               input_state%suggestion_length > 0) then
             call accept_autosuggestion_word(input_state)
           end if
-        ! Check for Alt+Up arrow (modifier=3, terminator=A)
-        else if (modifier == '3' .and. terminator == 'A') then
-          ! Alt+Up - Go to parent directory (cd ..)
-          call handle_alt_up(input_state, done)
-        ! Check for Alt+Left arrow (modifier=3, terminator=D)
+        ! Check for Alt+Left/Right for word movement (modifier=3)
         else if (modifier == '3' .and. terminator == 'D') then
-          ! Alt+Left - Go to previous directory (prevd)
-          call handle_alt_left(input_state, done)
-        ! Check for Alt+Right arrow (modifier=3, terminator=C)
+          ! Alt+Left - Move cursor backward one word (standard behavior)
+          call move_to_previous_word(input_state)
         else if (modifier == '3' .and. terminator == 'C') then
-          ! Alt+Right - Go to next directory (nextd)
+          ! Alt+Right - Move cursor forward one word (standard behavior)
+          call move_to_next_word(input_state)
+        ! Check for Alt+Shift+Up arrow (modifier=4, terminator=A)
+        else if (modifier == '4' .and. terminator == 'A') then
+          ! Alt+Shift+Up - Go to parent directory (cd ..)
+          call handle_alt_up(input_state, done)
+        ! Check for Alt+Shift+Left arrow (modifier=4, terminator=D)
+        else if (modifier == '4' .and. terminator == 'D') then
+          ! Alt+Shift+Left - Go to previous directory (prevd)
+          call handle_alt_left(input_state, done)
+        ! Check for Alt+Shift+Right arrow (modifier=4, terminator=C)
+        else if (modifier == '4' .and. terminator == 'C') then
+          ! Alt+Shift+Right - Go to next directory (nextd)
           call handle_alt_right(input_state, done)
         end if
         ! For other extended sequences, we just consume them
