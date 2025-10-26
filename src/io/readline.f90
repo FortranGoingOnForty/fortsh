@@ -2432,7 +2432,9 @@ contains
     integer, intent(out) :: num_completions
 
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
-    character(len=MAX_LINE_LEN) :: ls_command, ls_output
+    character(len=1024) :: ls_command
+    character(len=:), allocatable :: ls_output_alloc
+    character(len=8192) :: ls_output  ! Large buffer for ls output (8KB)
     character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
     integer :: num_entries, i, last_slash_pos
     character(len=MAX_LINE_LEN) :: full_path
@@ -2460,7 +2462,14 @@ contains
 
     ! Use ls command to get directory listing (same as scan_directory)
     ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
-    ls_output = execute_and_capture(ls_command)
+    ls_output_alloc = execute_and_capture(ls_command)
+
+    ! Copy to fixed buffer (use larger buffer to avoid truncation)
+    if (allocated(ls_output_alloc)) then
+      ls_output = ls_output_alloc(:min(len(ls_output), len(ls_output_alloc)))
+    else
+      ls_output = ''
+    end if
 
     ! Parse ls output into individual entries
     call parse_ls_output(ls_output, entries, num_entries)
@@ -3402,7 +3411,10 @@ contains
       flush(output_unit)
     else if (tab_completed) then
       ! We have a completed line - update buffer
-      tab_made_progress = (len_trim(tab_completed_line) > len_trim(tab_saved_input))
+      ! For glob patterns, always consider it as progress (inline expansion happened)
+      ! For regular completion, check if line got longer
+      tab_made_progress = (len_trim(tab_completed_line) > len_trim(tab_saved_input)) .or. &
+                         has_glob_chars(tab_partial_input)
 
 #ifdef USE_MEMORY_POOL
       input_state%buffer_ref%data = tab_completed_line
@@ -4183,6 +4195,9 @@ contains
         write(output_unit, '(a)', advance='no') ch
       end do
     end if
+
+    ! Write space after prompt (to match the original spacing)
+    write(output_unit, '(a)', advance='no') ' '
 
     ! Redraw highlighted preview character by character (already local var)
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
