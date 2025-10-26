@@ -303,8 +303,8 @@ program fortran_shell
   ! Execute EXIT trap if one is set
   call execute_trap_for_signal(shell, 0)  ! 0 is TRAP_EXIT
 
-  ! Save command history to file (if histfile is set)
-  if (len_trim(shell%histfile) > 0 .and. get_history_count() > 0) then
+  ! Save command history to file (only in interactive mode)
+  if (shell%is_interactive .and. len_trim(shell%histfile) > 0 .and. get_history_count() > 0) then
     call save_history_to_file(trim(shell%histfile), shell%histfilesize)
   end if
 
@@ -449,12 +449,11 @@ contains
 
       ! Normal line processing (not in a function)
       ! Expand history if needed, then expand aliases
+      ! NOTE: We do NOT add sourced file commands to history (only interactive commands)
       if (needs_history_expansion(input_line)) then
         history_expanded = expand_history(input_line)
-        call add_to_history(history_expanded)
         call expand_alias(shell, trim(history_expanded), expanded_line)
       else
-        call add_to_history(input_line)
         call expand_alias(shell, trim(input_line), expanded_line)
       end if
 
