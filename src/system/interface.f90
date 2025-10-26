@@ -66,12 +66,16 @@ module system_interface
     ! Total: 72 bytes
 #else
     ! Linux: tcflag_t is unsigned int (4 bytes)
-    integer(c_int) :: c_iflag     ! input flags (4 bytes)
-    integer(c_int) :: c_oflag     ! output flags (4 bytes)
-    integer(c_int) :: c_cflag     ! control flags (4 bytes)
-    integer(c_int) :: c_lflag     ! local flags (4 bytes)
+    integer(c_int) :: c_iflag       ! input flags (4 bytes)
+    integer(c_int) :: c_oflag       ! output flags (4 bytes)
+    integer(c_int) :: c_cflag       ! control flags (4 bytes)
+    integer(c_int) :: c_lflag       ! local flags (4 bytes)
+    character(c_char) :: c_line     ! line discipline (1 byte)
     character(c_char) :: c_cc(NCCS) ! control characters (32 bytes)
-    ! Total: 48 bytes
+    character(c_char) :: padding(3) ! padding for alignment (3 bytes)
+    integer(c_int) :: c_ispeed      ! input speed (4 bytes)
+    integer(c_int) :: c_ospeed      ! output speed (4 bytes)
+    ! Total: 60 bytes (matches actual Linux struct termios)
 #endif
   end type termios_t
   
