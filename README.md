@@ -80,6 +80,77 @@ Logout runs: `~/.fortsh_logout`
 
 First run offers to create default configs. Or don't. I'm not your boss.
 
+## Modern Shell Features
+
+fish and zsh have some nice things. We have them too now.
+
+### Autosuggestions
+
+Greyed-out suggestions appear as you type:
+
+- History-based (commands you've run)
+- Path-based (file/directory completions)
+- Accept with **Right Arrow** or **Ctrl-F**
+
+### cd-less Navigation
+
+Type a directory path, press Enter. That's it.
+
+```bash
+/tmp/              # Navigate to /tmp
+../                # Go up
+~/Documents/       # Go to ~/Documents
+```
+
+Works with Tab completion.
+
+### Keybindings
+
+**Directory navigation:**
+
+| Key | Action |
+|-----|--------|
+| Alt+Shift+Up | Go to parent directory |
+| Alt+Shift+Left | Previous directory |
+| Alt+Shift+Right | Next directory |
+
+**Fuzzy search:**
+
+| Key | Action |
+|-----|--------|
+| Ctrl-F | Search files |
+| Alt-J | Search directories |
+| Ctrl-H | Search history |
+| Alt-G | Search git files |
+
+### Tab Completion
+
+Works for commands, paths, variables, and command-specific options.
+
+### Syntax Highlighting
+
+Colors update as you type:
+- Green = valid commands
+- Red = invalid commands
+- Cyan = numbers
+- Yellow = strings
+- Grey = comments
+
+### History
+
+Persists across sessions. Only saves interactive commands (not scripts or .fortshrc).
+
+- **Ctrl-R**: search history
+- **Up/Down**: navigate history
+
+Configuration in `~/.fortshrc`:
+```bash
+export HISTFILE=~/.fortsh_history
+export HISTSIZE=1000
+export HISTFILESIZE=2000
+export HISTCONTROL=ignoredups
+```
+
 ## Examples
 
 ### Basic Variables
