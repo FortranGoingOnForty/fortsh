@@ -903,15 +903,8 @@ contains
     success = (bytes_read == 1)
     if (success) then
       ch = c_ch
-      ! DEBUG: Temporarily enabled to debug arrow keys
-      if (ichar(ch) < 32 .or. ichar(ch) == 127) then
-        write(error_unit, '(a,i0)') 'DEBUG [read_single_char]: got control char code=', ichar(ch)
-        flush(error_unit)
-      end if
     else
       ch = char(0)
-      write(error_unit, '(a,i0)') 'DEBUG [read_single_char]: FAILED, bytes_read=', int(bytes_read)
-      flush(error_unit)
     end if
   end function
 
