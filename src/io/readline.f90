@@ -616,11 +616,7 @@ contains
       raw_enabled = .true.
       ! Terminal state already in module_original_termios
       module_termios_saved = .true.
-      write(error_unit, *) "DEBUG: Raw mode enabled successfully"
-      flush(error_unit)
     else
-      write(error_unit, *) "DEBUG: Raw mode NOT enabled - falling back to line mode"
-      flush(error_unit)
     end if
 
 
@@ -643,13 +639,8 @@ contains
 
         char_code = iachar(ch)
 
-        ! DEBUG: Log all received characters (but not normal printable chars to avoid spam)
         if (char_code == 27) then
-          write(error_unit, *) "DEBUG: Got ESC character (27)"
-          flush(error_unit)
         else if (char_code < 32 .or. char_code == 127) then
-          write(error_unit, *) "DEBUG: Got control char, code=", char_code
-          flush(error_unit)
         end if
 
         select case(char_code)
@@ -756,7 +747,6 @@ contains
 
         case(KEY_ESC)
           ! Escape sequence - parse it (will route to menu if needed)
-          write(error_unit, *) "DEBUG: KEY_ESC detected, calling handle_escape_sequence"
           call handle_escape_sequence(module_input_state, done)
           
         case(KEY_CTRL_A)
@@ -2834,7 +2824,6 @@ contains
 
     ! Debug output
     if (debug_enabled) then
-      write(error_unit, '(a)') 'DEBUG: ls command: ' // trim(ls_command)
     end if
 
     ! Get output from command (allocatable result)
@@ -2851,10 +2840,6 @@ contains
 
     ! Debug output
     if (debug_enabled) then
-      write(error_unit, '(a,i15)') 'DEBUG: ls output length: ', len_trim(ls_output)
-      write(error_unit, '(a)') 'DEBUG: first 200 chars: ' // ls_output(:min(200,len_trim(ls_output)))
-      write(error_unit, '(a,i15)') 'DEBUG: num_entries parsed: ', num_entries
-      write(error_unit, '(a,i15)') 'DEBUG: pattern_len: ', pattern_len
     end if
 
     ! Score entries using fuzzy matching
@@ -2931,8 +2916,6 @@ contains
 
     ! Debug output
     if (debug_enabled) then
-      write(error_unit, '(a,i15)') 'DEBUG: num_scored: ', num_scored
-      write(error_unit, '(a,i15)') 'DEBUG: num_completions after scan: ', num_completions
     end if
 
     ! Clean up allocatable arrays
@@ -3508,7 +3491,6 @@ contains
             ! Second tab - enter menu selection mode
             ! Activate menu mode (items already stored and displayed)
             write(error_unit, '(a)') '[ENTERING_MENU_SELECT_MODE]'
-            flush(error_unit)
             input_state%in_menu_select = .true.
 
             ! Clear autosuggestion when entering menu mode
@@ -3825,7 +3807,6 @@ contains
       call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
       ! Show initial preview
       write(error_unit, '(a)') '[CALLING_PREVIEW_FROM_ENTER_MENU]'
-      flush(error_unit)
       call update_live_preview(input_state)
     end if
     flush(output_unit)
@@ -4614,7 +4595,6 @@ contains
     character :: ch1, ch2
     logical :: success
 
-    write(error_unit, *) "DEBUG: handle_escape_sequence called"
 
     ! Check if we're in menu select mode - route arrow keys to menu navigation
     if (input_state%in_menu_select) then
@@ -4651,36 +4631,27 @@ contains
     ! Check if we're in Vi insert mode - ESC switches to command mode
     if (input_state%editing_mode == EDITING_MODE_VI .and. &
         input_state%vi_mode == VI_MODE_INSERT) then
-      write(error_unit, *) "DEBUG: Vi insert mode, switching to command mode"
       call handle_vi_mode_switch(input_state, KEY_ESC)
       return
     end if
 
     ! Try to read the next character
-    write(error_unit, *) "DEBUG: Trying to read next char after ESC"
     success = read_single_char(ch1)
-    write(error_unit, *) "DEBUG: read_single_char success=", success, " ch1=", ichar(ch1)
     if (.not. success) then
-      write(error_unit, *) "DEBUG: read_single_char failed, returning"
       return
     end if
 
     if (ch1 == '[') then
-      write(error_unit, *) "DEBUG: Got '[', reading next char for arrow key"
       ! ANSI escape sequence
       success = read_single_char(ch2)
-      write(error_unit, *) "DEBUG: read_single_char success=", success, " ch2=", ichar(ch2)
       if (.not. success) then
-        write(error_unit, *) "DEBUG: Failed to read ch2, returning"
         return
       end if
 
       select case(ch2)
       case('A')  ! Up arrow
-        write(error_unit, *) "DEBUG: Got 'A' - calling handle_history_up"
         call handle_history_up(input_state)
       case('B')  ! Down arrow
-        write(error_unit, *) "DEBUG: Got 'B' - calling handle_history_down"
         call handle_history_down(input_state)
       case('C')  ! Right arrow
         call handle_cursor_right(input_state)
@@ -4830,7 +4801,6 @@ contains
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
 
-    write(error_unit, *) "DEBUG: handle_history_up called, count=", command_history%count
 
     ! If not currently browsing history, save the current input
     if (.not. input_state%in_history) then
@@ -4841,31 +4811,24 @@ contains
 #endif
       input_state%history_pos = command_history%count + 1
       input_state%in_history = .true.
-      write(error_unit, *) "DEBUG: Entering history mode, pos=", input_state%history_pos
     end if
 
     ! Move up in history
     if (input_state%history_pos > 1) then
       input_state%history_pos = input_state%history_pos - 1
-      write(error_unit, *) "DEBUG: Moving to history pos=", input_state%history_pos
       call get_history_line(input_state%history_pos, history_line, found)
-      write(error_unit, *) "DEBUG: get_history_line found=", found, " line=", trim(history_line)
 
       if (found) then
 #ifdef USE_MEMORY_POOL
         input_state%buffer_ref%data = history_line
-        write(error_unit, *) "DEBUG: Set buffer_ref%data to: ", trim(input_state%buffer_ref%data)
 #else
         input_state%buffer = history_line
-        write(error_unit, *) "DEBUG: Set buffer to: ", trim(input_state%buffer)
 #endif
         input_state%length = len_trim(history_line)
         input_state%cursor_pos = input_state%length
         input_state%dirty = .true.
-        write(error_unit, *) "DEBUG: Updated length=", input_state%length, " cursor=", input_state%cursor_pos
       end if
     else
-      write(error_unit, *) "DEBUG: Already at oldest history entry"
     end if
   end subroutine
   
@@ -6813,7 +6776,17 @@ contains
 #endif
     end do
 
-    ! Search history backwards for matching command
+    ! Check if user is currently typing a path (last word looks like a path)
+    ! If so, prioritize path completion over history
+    call try_path_suggestion(current_input(1:input_state%length), input_state)
+    if (input_state%suggestion_length > 0) then
+      ! Path suggestion found - use it instead of history
+      if (allocated(current_input)) deallocate(current_input)
+      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
+      return
+    end if
+
+    ! No path suggestion - search history backwards for matching command
     do i = command_history%count, 1, -1
       ! Check if history entry starts with current input
       if (len_trim(command_history%lines(i)) > input_state%length) then
@@ -6879,9 +6852,7 @@ contains
       end if
     end do
 
-    ! No history match found - try path completion (fish-style)
-    call try_path_suggestion(current_input(1:input_state%length), input_state)
-
+    ! No history or path match found - suggestion remains empty
     ! Deallocate heap-allocated buffers
     if (allocated(current_input)) deallocate(current_input)
     if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
@@ -6969,7 +6940,6 @@ contains
 
     ! Flush all I/O before system() call
     flush(output_unit)
-    flush(error_unit)
     flush(0)  ! stdin
 
     ! CRITICAL: Must restore terminal to cooked mode before fork/exec
@@ -7026,15 +6996,9 @@ contains
     logical :: first_line
     integer :: i, moves
 
-    write(error_unit, '(a)') '[DEBUG] launch_fzf_file_browser called'
-    flush(error_unit)
 
     ! Check if fzf is installed
-    write(error_unit, '(a)') '[DEBUG] Calling safe_execute_command to check for fzf'
-    flush(error_unit)
     call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
-    write(error_unit, '(a,i0)') '[DEBUG] fzf check returned: ', exit_status
-    flush(error_unit)
     if (exit_status /= 0) then
       write(output_unit, '()')
       write(output_unit, '(a)') 'Error: fzf is not installed. Please install fzf first.'
