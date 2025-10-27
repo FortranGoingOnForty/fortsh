@@ -6668,11 +6668,11 @@ contains
       prefix_part = ''
     end if
 
-    ! Check if last word looks like a path
+    ! Skip if last word is empty
     if (len_trim(last_word) == 0) return
-    if (.not. looks_like_path_for_suggestion(last_word)) return
 
-    ! Get completions for this path fragment
+    ! Always try path completion for the last word (fish-style aggressive suggestions)
+    ! This enables suggestions for things like "cd bi" -> "bin/", "ls bin/fo" -> "bin/fortsh"
     call complete_files_enhanced(trim(last_word), completions, num_completions)
 
     ! If exactly one completion, suggest it
@@ -6706,30 +6706,6 @@ contains
       end if
     end if
   end subroutine try_path_suggestion
-
-  ! Check if a string looks like a path for suggestion purposes
-  function looks_like_path_for_suggestion(str) result(looks_like_path)
-    character(len=*), intent(in) :: str
-    logical :: looks_like_path
-    integer :: str_len
-
-    str_len = len_trim(str)
-    if (str_len == 0) then
-      looks_like_path = .false.
-      return
-    end if
-
-    ! More aggressive than tab completion - suggest for any path hint
-    ! - Starts with / (absolute)
-    ! - Starts with ~ (home)
-    ! - Starts with . (relative)
-    ! - Contains / (path separator)
-    ! - Ends with partial directory name that could be a path
-    looks_like_path = (str(1:1) == '/' .or. &
-                       str(1:1) == '~' .or. &
-                       str(1:1) == '.' .or. &
-                       index(trim(str), '/') > 0)
-  end function looks_like_path_for_suggestion
 
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
