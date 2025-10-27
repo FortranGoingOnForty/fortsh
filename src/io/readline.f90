@@ -616,7 +616,11 @@ contains
       raw_enabled = .true.
       ! Terminal state already in module_original_termios
       module_termios_saved = .true.
+      write(error_unit, *) "DEBUG: Raw mode enabled successfully"
+      flush(error_unit)
     else
+      write(error_unit, *) "DEBUG: Raw mode NOT enabled - falling back to line mode"
+      flush(error_unit)
     end if
 
 
@@ -639,6 +643,14 @@ contains
 
         char_code = iachar(ch)
 
+        ! DEBUG: Log all received characters (but not normal printable chars to avoid spam)
+        if (char_code == 27) then
+          write(error_unit, *) "DEBUG: Got ESC character (27)"
+          flush(error_unit)
+        else if (char_code < 32 .or. char_code == 127) then
+          write(error_unit, *) "DEBUG: Got control char, code=", char_code
+          flush(error_unit)
+        end if
 
         select case(char_code)
         case(KEY_ENTER)
@@ -744,6 +756,7 @@ contains
 
         case(KEY_ESC)
           ! Escape sequence - parse it (will route to menu if needed)
+          write(error_unit, *) "DEBUG: KEY_ESC detected, calling handle_escape_sequence"
           call handle_escape_sequence(module_input_state, done)
           
         case(KEY_CTRL_A)
@@ -4601,6 +4614,8 @@ contains
     character :: ch1, ch2
     logical :: success
 
+    write(error_unit, *) "DEBUG: handle_escape_sequence called"
+
     ! Check if we're in menu select mode - route arrow keys to menu navigation
     if (input_state%in_menu_select) then
       ! Try to read the next character to see if it's an arrow key
@@ -4636,23 +4651,36 @@ contains
     ! Check if we're in Vi insert mode - ESC switches to command mode
     if (input_state%editing_mode == EDITING_MODE_VI .and. &
         input_state%vi_mode == VI_MODE_INSERT) then
+      write(error_unit, *) "DEBUG: Vi insert mode, switching to command mode"
       call handle_vi_mode_switch(input_state, KEY_ESC)
       return
     end if
 
     ! Try to read the next character
+    write(error_unit, *) "DEBUG: Trying to read next char after ESC"
     success = read_single_char(ch1)
-    if (.not. success) return
+    write(error_unit, *) "DEBUG: read_single_char success=", success, " ch1=", ichar(ch1)
+    if (.not. success) then
+      write(error_unit, *) "DEBUG: read_single_char failed, returning"
+      return
+    end if
 
     if (ch1 == '[') then
+      write(error_unit, *) "DEBUG: Got '[', reading next char for arrow key"
       ! ANSI escape sequence
       success = read_single_char(ch2)
-      if (.not. success) return
+      write(error_unit, *) "DEBUG: read_single_char success=", success, " ch2=", ichar(ch2)
+      if (.not. success) then
+        write(error_unit, *) "DEBUG: Failed to read ch2, returning"
+        return
+      end if
 
       select case(ch2)
       case('A')  ! Up arrow
+        write(error_unit, *) "DEBUG: Got 'A' - calling handle_history_up"
         call handle_history_up(input_state)
       case('B')  ! Down arrow
+        write(error_unit, *) "DEBUG: Got 'B' - calling handle_history_down"
         call handle_history_down(input_state)
       case('C')  ! Right arrow
         call handle_cursor_right(input_state)
@@ -4801,25 +4829,43 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
-    
+
+    write(error_unit, *) "DEBUG: handle_history_up called, count=", command_history%count
+
     ! If not currently browsing history, save the current input
     if (.not. input_state%in_history) then
+#ifdef USE_MEMORY_POOL
+      input_state%original_buffer_ref%data = input_state%buffer_ref%data
+#else
       input_state%original_buffer = input_state%buffer
+#endif
       input_state%history_pos = command_history%count + 1
       input_state%in_history = .true.
+      write(error_unit, *) "DEBUG: Entering history mode, pos=", input_state%history_pos
     end if
-    
+
     ! Move up in history
     if (input_state%history_pos > 1) then
       input_state%history_pos = input_state%history_pos - 1
+      write(error_unit, *) "DEBUG: Moving to history pos=", input_state%history_pos
       call get_history_line(input_state%history_pos, history_line, found)
-      
+      write(error_unit, *) "DEBUG: get_history_line found=", found, " line=", trim(history_line)
+
       if (found) then
+#ifdef USE_MEMORY_POOL
+        input_state%buffer_ref%data = history_line
+        write(error_unit, *) "DEBUG: Set buffer_ref%data to: ", trim(input_state%buffer_ref%data)
+#else
         input_state%buffer = history_line
+        write(error_unit, *) "DEBUG: Set buffer to: ", trim(input_state%buffer)
+#endif
         input_state%length = len_trim(history_line)
         input_state%cursor_pos = input_state%length
         input_state%dirty = .true.
+        write(error_unit, *) "DEBUG: Updated length=", input_state%length, " cursor=", input_state%cursor_pos
       end if
+    else
+      write(error_unit, *) "DEBUG: Already at oldest history entry"
     end if
   end subroutine
   
@@ -4827,25 +4873,34 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
-    
+
     ! Only navigate down if we're currently in history
     if (.not. input_state%in_history) return
-    
+
     ! Move down in history
     if (input_state%history_pos < command_history%count) then
       input_state%history_pos = input_state%history_pos + 1
       call get_history_line(input_state%history_pos, history_line, found)
-      
+
       if (found) then
+#ifdef USE_MEMORY_POOL
+        input_state%buffer_ref%data = history_line
+#else
         input_state%buffer = history_line
+#endif
         input_state%length = len_trim(history_line)
         input_state%cursor_pos = input_state%length
         input_state%dirty = .true.
       end if
     else if (input_state%history_pos <= command_history%count) then
       ! Reached the end of history, restore original input
+#ifdef USE_MEMORY_POOL
+      input_state%buffer_ref%data = input_state%original_buffer_ref%data
+      input_state%length = len_trim(input_state%original_buffer_ref%data)
+#else
       input_state%buffer = input_state%original_buffer
       input_state%length = len_trim(input_state%original_buffer)
+#endif
       input_state%cursor_pos = input_state%length
       input_state%history_pos = command_history%count + 1
       input_state%in_history = .false.
