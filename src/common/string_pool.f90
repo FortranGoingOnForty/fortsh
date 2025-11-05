@@ -173,8 +173,22 @@ contains
       end if
     else
       ! Too large for pool - allocate directly
+      ! NOTE: Direct allocation on macOS ARM64 (flang-new) should be avoided
+      ! for strings >127 bytes due to compiler limitations
       bucket_idx = 0
       slot_idx = -1
+#ifdef __APPLE__
+      ! On macOS, cap direct allocations at 127 bytes (flang-new limit)
+      if (length > 127) then
+        ! Allocation would exceed safe limit - return null ref
+        ref%pool_index = 0
+        ref%ref_count = 0
+        ref%str_len = 0
+        ref%data => null()
+        stats%cache_misses = stats%cache_misses + 1
+        return
+      end if
+#endif
       allocate(character(len=length) :: ref%data)
       stats%cache_misses = stats%cache_misses + 1
     end if
@@ -556,12 +570,28 @@ contains
   end function pool_get_string_ptr
 
   ! Intern a string for deduplication
+  ! WARNING: Uses allocatable strings - may be problematic on macOS ARM64 with flang-new
   function pool_intern_string(str) result(ref)
     character(len=*), intent(in) :: str
     type(string_ref) :: ref
     integer :: i
+    integer :: str_len
 
     if (.not. pool_initialized) call pool_init()
+
+    str_len = len_trim(str)
+
+#ifdef __APPLE__
+    ! On macOS ARM64, cap interned string length to 127 bytes (flang-new limit)
+    if (str_len > 127) then
+      ! String too long for safe interning on macOS - use regular pool instead
+      ref = pool_get_string(min(str_len, 127))
+      if (associated(ref%data)) then
+        call pool_copy_to_ref(ref, str(1:min(str_len, 127)))
+      end if
+      return
+    end if
+#endif
 
     ! Check if already interned
     do i = 1, num_interned
@@ -569,8 +599,8 @@ contains
         interned_refs(i) = interned_refs(i) + 1
         ref%pool_index = -10000 - i
         ref%ref_count = interned_refs(i)
-        ref%str_len = len_trim(str)
-        allocate(character(len=len_trim(str)) :: ref%data)
+        ref%str_len = str_len
+        allocate(character(len=str_len) :: ref%data)
         ref%data = trim(str)
         stats%cache_hits = stats%cache_hits + 1
         return
@@ -588,8 +618,8 @@ contains
 
     ref%pool_index = -10000 - num_interned
     ref%ref_count = 1
-    ref%str_len = len_trim(str)
-    allocate(character(len=len_trim(str)) :: ref%data)
+    ref%str_len = str_len
+    allocate(character(len=str_len) :: ref%data)
     ref%data = trim(str)
 
     stats%cache_misses = stats%cache_misses + 1

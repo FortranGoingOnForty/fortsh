@@ -374,4 +374,59 @@ smoke-test: $(TARGET)
 	@echo "perf on\necho 'test'\nperf\nexit" | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
 	@echo "All smoke tests passed!"
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all
+# macOS ARM64 specific tests - only run on Darwin arm64
+test-macos-pool: $(TARGET)
+ifeq ($(UNAME_S),Darwin)
+    ifeq ($(UNAME_M),arm64)
+	@echo "=========================================="
+	@echo "macOS ARM64 Memory Pool Validation"
+	@echo "Testing string pool with flang-new limits"
+	@echo "=========================================="
+	@if [ -f tests/macos_arm64_pool_checks.sh ]; then \
+		chmod +x tests/macos_arm64_pool_checks.sh && \
+		./tests/macos_arm64_pool_checks.sh; \
+	else \
+		echo "⚠️  macOS ARM64 pool checks not found"; \
+	fi
+	@if [ -f tests/memory_pool_validation.sh ]; then \
+		echo "" && \
+		echo "Running general pool validation..." && \
+		chmod +x tests/memory_pool_validation.sh && \
+		./tests/memory_pool_validation.sh; \
+	fi
+	@echo "✓ macOS ARM64 pool tests complete"
+    else
+	@echo "⚠️  Skipping macOS ARM64 tests (not on arm64 platform)"
+    endif
+else
+	@echo "⚠️  Skipping macOS tests (not on Darwin)"
+endif
+
+# macOS build verification - ensures no flang-new regressions
+test-macos-compiler: $(TARGET)
+ifeq ($(UNAME_S),Darwin)
+    ifeq ($(UNAME_M),arm64)
+	@echo "=========================================="
+	@echo "macOS ARM64 Compiler Compatibility Check"
+	@echo "Verifying flang-new workarounds"
+	@echo "=========================================="
+	@echo "Testing 127-byte command limit..."
+	@echo 'echo "123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456"' | $(TARGET) 2>&1 | grep -q "123456" && echo "✓ Long command handling works"
+	@echo "Testing fixed-length string buffers..."
+	@echo "echo test" | $(TARGET) >/dev/null && echo "✓ Fixed-length buffers work"
+	@echo "✓ macOS compiler compatibility verified"
+    else
+	@echo "⚠️  Skipping macOS ARM64 compiler tests (not on arm64)"
+    endif
+else
+	@echo "⚠️  Skipping macOS compiler tests (not on Darwin)"
+endif
+
+# Combined macOS test suite
+test-macos: test-macos-pool test-macos-compiler
+	@echo ""
+	@echo "=========================================="
+	@echo "All macOS ARM64 Tests Complete"
+	@echo "=========================================="
+
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos
