@@ -11,6 +11,7 @@ BuildRequires:  gfortran >= 11.0
 BuildRequires:  gcc
 BuildRequires:  make
 Requires:       glibc
+Recommends:     fzf
 
 %description
 Fortsh (Fortran Shell) is a modern Unix shell implementation written in Fortran 2018
@@ -28,6 +29,7 @@ Features:
 - Pattern matching and globbing (*,?,[]) with brace expansion
 - Performance monitoring and memory management with optimization
 - Compatible with bash/zsh scripts and modern shell workflows
+- Interactive fzf keybinds (Ctrl+F file browser, Ctrl+R history, Alt+j directory jump, Alt+g git browser)
 
 %prep
 %autosetup
