@@ -324,7 +324,8 @@ help:
 
 # Package information
 PACKAGE = fortsh
-VERSION = 6.0.6
+VERSION = 0.8.0
+# Legacy version (pre-semver reset): 6.0.6
 
 # Distribution and packaging targets
 dist: clean
