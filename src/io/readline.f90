@@ -491,9 +491,23 @@ contains
 
   ! Initialize input_state_t with allocated strings
   subroutine init_input_state(state)
-    type(input_state_t), intent(out) :: state
+    type(input_state_t), intent(inout) :: state
 
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    ! C strings take precedence on macOS ARM64 (flang-new workaround)
+    ! C string buffer allocations - bypass flang-new 128-byte bug
+    state%buffer_c = c_string_create(MAX_LINE_LEN)
+    state%original_buffer_c = c_string_create(MAX_LINE_LEN)
+    state%kill_buffer_c = c_string_create(MAX_LINE_LEN)
+    state%last_completion_buffer_c = c_string_create(MAX_LINE_LEN)
+    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
+    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
+    allocate(character(len=256) :: state%selected_process_name)
+#elif defined(USE_MEMORY_POOL)
+    ! Memory pool path for Linux
     ! Initialize pool if needed
     call pool_init()
 
@@ -541,19 +555,6 @@ contains
     ! allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
     ! allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
     ! allocate(character(len=256) :: state%selected_process_name)
-#elif defined(USE_C_STRINGS)
-    ! C string buffer allocations - bypass flang-new 128-byte bug
-    ! These allow unlimited string length without heap corruption on macOS ARM64
-    state%buffer_c = c_string_create(MAX_LINE_LEN)
-    state%original_buffer_c = c_string_create(MAX_LINE_LEN)
-    state%kill_buffer_c = c_string_create(MAX_LINE_LEN)
-    state%last_completion_buffer_c = c_string_create(MAX_LINE_LEN)
-    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
-    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
-    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
-    allocate(character(len=256) :: state%selected_process_name)
 #else
     ! Traditional allocations
     allocate(character(len=MAX_LINE_LEN) :: state%buffer)
