@@ -539,12 +539,20 @@ module system_interface
   ! Signal handler types (initialized in module initialization)
   type(c_funptr) :: SIG_DFL, SIG_IGN
 
-  ! File flags for open() - macOS values
+  ! File flags for open() - platform-specific values
   integer(c_int), parameter :: O_RDONLY = 0
   integer(c_int), parameter :: O_WRONLY = 1
-  integer(c_int), parameter :: O_CREAT = 512   ! 0x200 on macOS
-  integer(c_int), parameter :: O_TRUNC = 1024  ! 0x400 on macOS
-  integer(c_int), parameter :: O_APPEND = 8    ! 0x8 on macOS
+#ifdef __APPLE__
+  ! macOS/Darwin values
+  integer(c_int), parameter :: O_CREAT = 512   ! 0x200
+  integer(c_int), parameter :: O_TRUNC = 1024  ! 0x400
+  integer(c_int), parameter :: O_APPEND = 8    ! 0x8
+#else
+  ! Linux values
+  integer(c_int), parameter :: O_CREAT = 64    ! 0x40
+  integer(c_int), parameter :: O_TRUNC = 512   ! 0x200
+  integer(c_int), parameter :: O_APPEND = 1024 ! 0x400
+#endif
 
   ! File descriptors
   integer(c_int), parameter :: STDIN_FD = 0
