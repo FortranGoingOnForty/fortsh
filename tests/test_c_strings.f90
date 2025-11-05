@@ -5,6 +5,7 @@
 ! on macOS ARM64 without heap corruption.
 !===============================================================================
 program test_c_strings
+  use, intrinsic :: iso_c_binding
   use fortsh_c_strings
   implicit none
 

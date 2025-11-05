@@ -11,6 +11,9 @@ module readline
   use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
+#ifdef USE_C_STRINGS
+  use fortsh_c_strings
+#endif
 #ifdef USE_MEMORY_POOL
   use string_pool
   use memory_dashboard
@@ -95,11 +98,20 @@ module readline
   integer, parameter :: MAX_SCORED_ITEMS = 50  ! Max scored completion items (increased from 30)
 
   type :: input_state_t
+#ifdef USE_C_STRINGS
+    ! C string buffers - bypass flang-new 128-byte bug on macOS ARM64
+    ! These allow unlimited string length without heap corruption
+    type(c_string_buffer) :: buffer_c
+    type(c_string_buffer) :: original_buffer_c
+    type(c_string_buffer) :: kill_buffer_c
+    type(c_string_buffer) :: last_completion_buffer_c
+#else
     ! Use allocatable strings to avoid stack allocation on macOS
     character(len=:), allocatable :: buffer
     character(len=:), allocatable :: original_buffer  ! Save original input during history navigation
     character(len=:), allocatable :: kill_buffer      ! Kill ring buffer for cut/paste
     character(len=:), allocatable :: last_completion_buffer  ! Buffer when we last showed completions
+#endif
     integer :: length = 0
     integer :: cursor_pos = 0  ! 0-based position in buffer
     integer :: history_pos = 0  ! Current position in history (0 = not browsing)
@@ -264,6 +276,19 @@ contains
     ! allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
     ! allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
     ! allocate(character(len=256) :: state%selected_process_name)
+#elif defined(USE_C_STRINGS)
+    ! C string buffer allocations - bypass flang-new 128-byte bug
+    ! These allow unlimited string length without heap corruption on macOS ARM64
+    state%buffer_c = c_string_create(MAX_LINE_LEN)
+    state%original_buffer_c = c_string_create(MAX_LINE_LEN)
+    state%kill_buffer_c = c_string_create(MAX_LINE_LEN)
+    state%last_completion_buffer_c = c_string_create(MAX_LINE_LEN)
+    allocate(character(len=MAX_LINE_LEN) :: state%search_string)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_command_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_yank_buffer)
+    allocate(character(len=MAX_LINE_LEN) :: state%vi_search_pattern)
+    allocate(character(len=MAX_LINE_LEN) :: state%menu_prefix)
+    allocate(character(len=256) :: state%selected_process_name)
 #else
     ! Traditional allocations
     allocate(character(len=MAX_LINE_LEN) :: state%buffer)
@@ -294,6 +319,19 @@ contains
     state%vi_search_pattern_ref%data = ''
     state%menu_prefix_ref%data = ''
     state%selected_process_name_ref%data = ''
+#else
+#ifdef USE_C_STRINGS
+    ! Initialize C string buffers to empty
+    call c_string_clear(state%buffer_c)
+    call c_string_clear(state%original_buffer_c)
+    call c_string_clear(state%kill_buffer_c)
+    call c_string_clear(state%last_completion_buffer_c)
+    state%search_string = ''
+    state%vi_command_buffer = ''
+    state%vi_yank_buffer = ''
+    state%vi_search_pattern = ''
+    state%menu_prefix = ''
+    state%selected_process_name = ''
 #else
 #ifdef USE_MEMORY_POOL
     state%buffer_ref%data = ''
@@ -455,6 +493,18 @@ contains
 
       call pool_release_string(state%selected_process_name_ref)
       call dashboard_track_deallocation(MOD_READLINE, 256, 2)
+#elif defined(USE_C_STRINGS)
+      ! Destroy C string buffers
+      call c_string_destroy(state%buffer_c)
+      call c_string_destroy(state%original_buffer_c)
+      call c_string_destroy(state%kill_buffer_c)
+      call c_string_destroy(state%last_completion_buffer_c)
+      if (allocated(state%search_string)) deallocate(state%search_string)
+      if (allocated(state%vi_command_buffer)) deallocate(state%vi_command_buffer)
+      if (allocated(state%vi_yank_buffer)) deallocate(state%vi_yank_buffer)
+      if (allocated(state%vi_search_pattern)) deallocate(state%vi_search_pattern)
+      if (allocated(state%menu_prefix)) deallocate(state%menu_prefix)
+      if (allocated(state%selected_process_name)) deallocate(state%selected_process_name)
 #else
       ! CHUNK 2: Only deallocate allocatable strings when NOT using pooling
       ! Deallocate strings
