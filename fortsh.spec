@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        6.0.6
+Version:        0.8.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -57,11 +57,14 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
-* Sat Oct 18 2025 mfw <espadon@outlook.com> - 6.0.6-1
-- Disabled advanced readline features on macOS
-- Workaround for macOS segfault issues
-- Simplified input handling for macOS stability
-- Basic shell functionality maintained on macOS
+* Sat Oct 18 2025 mfw <espadon@outlook.com> - 0.8.0-1
+- Version number reset for more realistic versioning
+- Major performance: String pooling implementation
+- Memory profiler and dashboard for optimization
+- Pooled implementations for lexer, parser, executor
+- Enhanced readline with extensive refactoring
+- New memory pool validation and testing suite
+- POSIX compliance test improvements
 
 * Sat Oct 18 2025 mfw <espadon@outlook.com> - 6.0.5-1
 - Additional macOS segfault workarounds
