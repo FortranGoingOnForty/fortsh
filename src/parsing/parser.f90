@@ -1233,16 +1233,28 @@ contains
         
         ! Check for special variables
         if (working_token(i:i) == '?') then
-          write(result(j:), '(i15)') shell%last_exit_status
-          j = j + len_trim(result(j:))
+          write(pid_str, '(i15)') shell%last_exit_status
+          pid_str = adjustl(pid_str)  ! Left-justify to remove leading spaces
+          result(j:j+len_trim(pid_str)-1) = trim(pid_str)
+          j = j + len_trim(pid_str)
           i = i + 1
         else if (working_token(i:i) == '$') then
           write(pid_str, '(i15)') c_getpid()
+          pid_str = adjustl(pid_str)  ! Left-justify to remove leading spaces
+          result(j:j+len_trim(pid_str)-1) = trim(pid_str)
+          j = j + len_trim(pid_str)
+          i = i + 1
+        else if (working_token(i:i) == '\' .and. i < len_trim(working_token) .and. working_token(i+1:i+1) == '!') then
+          ! Handle bash-escaped $\! (bash adds backslash before ! in some contexts)
+          i = i + 1  ! Skip the backslash
+          write(pid_str, '(i15)') shell%last_bg_pid
+          pid_str = adjustl(pid_str)  ! Left-justify to remove leading spaces
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
         else if (working_token(i:i) == '!') then
           write(pid_str, '(i15)') shell%last_bg_pid
+          pid_str = adjustl(pid_str)  ! Left-justify to remove leading spaces
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1

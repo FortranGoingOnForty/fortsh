@@ -2048,19 +2048,32 @@ contains
         end if
         
       else if (input(i:i) == '$') then
-        ! Simple variable expansion $var
+        ! Simple variable expansion $var or special parameters
         start_pos = i + 1
         i = i + 1
-        
-        do while (i <= len_trim(input) .and. (is_alnum(input(i:i)) .or. input(i:i) == '_'))
-          i = i + 1
-        end do
-        
-        if (i > start_pos) then
-          var_expr = input(start_pos:i-1)
-          var_value = get_shell_variable(shell, trim(var_expr))
-          result = trim(result) // trim(var_value)
+
+        ! Check for special parameters first (single character)
+        if (i <= len_trim(input)) then
+          ! POSIX special parameters: $, !, ?, 0, -, _, #, *, @
+          if (index('$!?0-_#*@', input(i:i)) > 0) then
+            var_expr = input(i:i)
+            var_value = get_shell_variable(shell, trim(var_expr))
+            result = trim(result) // trim(var_value)
+            i = i + 1
+          else if (is_alnum(input(i:i)) .or. input(i:i) == '_') then
+            ! Regular variable name (alphanumeric + underscore)
+            do while (i <= len_trim(input) .and. (is_alnum(input(i:i)) .or. input(i:i) == '_'))
+              i = i + 1
+            end do
+            var_expr = input(start_pos:i-1)
+            var_value = get_shell_variable(shell, trim(var_expr))
+            result = trim(result) // trim(var_value)
+          else
+            ! Just a lone $
+            result = trim(result) // '$'
+          end if
         else
+          ! $ at end of string
           result = trim(result) // '$'
         end if
         
