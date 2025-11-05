@@ -44,11 +44,24 @@ FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 
 # C string library (for flang-new workaround)
+# Automatically enable on macOS ARM64 unless explicitly disabled
+ifeq ($(UNAME_S),Darwin)
+  ifeq ($(UNAME_M),arm64)
+    ifeq ($(NO_C_STRINGS),1)
+      USE_C_STRINGS = 0
+    else
+      USE_C_STRINGS = 1
+    endif
+  endif
+endif
+
 ifeq ($(USE_C_STRINGS),1)
   C_STRING_LIB = $(BUILDDIR)/c_interop/libfortsh_strings.a
   C_STRING_OBJ = $(BUILDDIR)/c_interop/fortsh_c_strings.o
   C_STRING_FLAGS = -DUSE_C_STRINGS
   LDFLAGS = $(C_STRING_LIB)
+  FCFLAGS += $(C_STRING_FLAGS)
+  FCFLAGS_RELEASE += $(C_STRING_FLAGS)
   $(info C string library ENABLED - workaround for flang-new >128 byte bug)
 else
   C_STRING_LIB =
@@ -232,7 +245,7 @@ $(BUILDDIR)/scripting/completion.o: src/scripting/completion.f90 $(BUILDDIR)/com
 $(BUILDDIR)/io/syntax_highlight.o: src/io/syntax_highlight.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o | $(BUILDDIR)/io
+$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(C_STRING_OBJ) | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
@@ -262,7 +275,7 @@ $(BUILDDIR)/c_interop/fortsh_c_strings.o: src/c_interop/fortsh_c_strings.f90 | $
 
 # Standalone test program for C string library
 $(BUILDDIR)/test_c_strings: tests/test_c_strings.f90 $(BUILDDIR)/c_interop/fortsh_c_strings.o $(BUILDDIR)/c_interop/libfortsh_strings.a | $(BUILDDIR)
-	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/c_interop/fortsh_c_strings.o -o $@ $(C_STRING_LIB)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/c_interop/fortsh_c_strings.o $(BUILDDIR)/c_interop/libfortsh_strings.a -o $@
 
 # ============================================================================
 
