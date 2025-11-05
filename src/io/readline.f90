@@ -6338,6 +6338,15 @@ contains
       insert_pos = min(input_state%cursor_pos + 1, input_state%length)
     end if
 
+    ! Insert yanked text at insertion position
+#ifdef USE_C_STRINGS
+    ! Use C string API for insertion
+    if (.not. c_string_insert(input_state%buffer_c, insert_pos + 1, &
+                               input_state%vi_yank_buffer(:insert_len))) then
+      ! Insertion failed, silently ignore
+      return
+    end if
+#else
     ! Shift existing text right to make room
     do i = input_state%length, insert_pos + 1, -1
       if (i + insert_len <= MAX_LINE_LEN) then
@@ -6349,6 +6358,7 @@ contains
     do i = 1, insert_len
       input_state%buffer(insert_pos + i:insert_pos + i) = input_state%vi_yank_buffer(i:i)
     end do
+#endif
 
     ! Update length and cursor position
     input_state%length = input_state%length + insert_len
@@ -6830,12 +6840,20 @@ contains
     end if
 
     ! Append first word to buffer
+#ifdef USE_C_STRINGS
+    ! Use C string API to append
+    if (.not. c_string_append(input_state%buffer_c, input_state%suggestion(:word_end))) then
+      ! Append failed, silently ignore
+      return
+    end if
+#else
     do i = 1, word_end
       if (input_state%length + i <= MAX_LINE_LEN) then
         input_state%buffer(input_state%length + i:input_state%length + i) = &
           input_state%suggestion(i:i)
       end if
     end do
+#endif
 
     input_state%length = input_state%length + word_end
     input_state%cursor_pos = input_state%length
@@ -7196,6 +7214,7 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=1024) :: fzf_cmd, selected_item, git_cmd
     character(len=512) :: preview_cmd
+    character(len=MAX_LINE_LEN) :: temp_buf
     integer :: unit, iostat, exit_status
     logical :: file_exists, in_git_repo
     ! Variables for block construct workaround (flang-new compatibility)
@@ -7271,7 +7290,8 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[H'
     write(output_unit, '(a)', advance='no') trim(input_state%menu_prompt)
     if (input_state%length > 0) then
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
+      call state_buffer_get(input_state, temp_buf)
+      write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
       ! Move cursor to correct position
       if (input_state%cursor_pos < input_state%length) then
         ! WORKAROUND: Removed block construct for flang-new compatibility

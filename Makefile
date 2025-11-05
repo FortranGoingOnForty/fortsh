@@ -142,8 +142,8 @@ $(BUILDDIR)/common $(BUILDDIR)/system $(BUILDDIR)/parsing $(BUILDDIR)/execution 
 	mkdir -p $@
 
 # Build target
-$(TARGET): $(OBJECTS) $(C_STRING_LIB) | $(BINDIR)
-	$(FC) $(OBJECTS) -o $@ $(LDFLAGS)
+$(TARGET): $(OBJECTS) $(C_STRING_OBJ) $(C_STRING_LIB) | $(BINDIR)
+	$(FC) $(C_STRING_OBJ) $(OBJECTS) -o $@ $(LDFLAGS)
 	@echo "Fortsh built successfully!"
 
 # Individual compilation rules with proper dependencies
