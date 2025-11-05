@@ -95,8 +95,8 @@ program test_c_strings
   buf3 = c_string_create(2048)
   success = c_string_set(buf3, 'Hello World')
 
-  ! Insert " Beautiful" at position 6 (after "Hello")
-  success = c_string_insert(buf3, 7, ' Beautiful')
+  ! Insert "Beautiful " at position 7 (after "Hello ", before "World")
+  success = c_string_insert(buf3, 7, 'Beautiful ')
   if (.not. success) then
     print *, 'FAIL: Could not insert text'
     stop 1
