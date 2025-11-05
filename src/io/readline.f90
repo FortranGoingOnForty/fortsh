@@ -4503,27 +4503,27 @@ contains
     close(unit)
 
     ! Execute ps and capture output - filter to current user
+#ifdef __APPLE__
+    ! macOS uses BSD ps which doesn't support --no-headers
+    if (len_trim(username) > 0) then
+      call execute_command_line('ps -u ' // trim(username) // &
+                               ' -o pid= -o comm= > /tmp/fortsh_procs.tmp 2>/dev/null', &
+                               exitstat=iostat)
+    else
+      call execute_command_line('ps -ax -o pid= -o comm= > /tmp/fortsh_procs.tmp 2>/dev/null', &
+                               exitstat=iostat)
+    end if
+#else
+    ! Linux uses GNU ps with --no-headers
     if (len_trim(username) > 0) then
       call execute_command_line('ps -u ' // trim(username) // &
                                ' -o pid,comm --no-headers > /tmp/fortsh_procs.tmp 2>/dev/null', &
                                exitstat=iostat)
     else
-      ! Fallback: show all processes if no USER env var
       call execute_command_line('ps -eo pid,comm --no-headers > /tmp/fortsh_procs.tmp 2>/dev/null', &
                                exitstat=iostat)
     end if
-
-    if (iostat /= 0) then
-      ! Try BSD-style ps (for macOS)
-      if (len_trim(username) > 0) then
-        call execute_command_line('ps -u ' // trim(username) // &
-                                 ' -o pid,comm > /tmp/fortsh_procs.tmp 2>/dev/null', &
-                                 exitstat=iostat)
-      else
-        call execute_command_line('ps -ax -o pid,comm > /tmp/fortsh_procs.tmp 2>/dev/null', &
-                                 exitstat=iostat)
-      end if
-    end if
+#endif
 
     if (iostat == 0) then
       ! Read the process list
