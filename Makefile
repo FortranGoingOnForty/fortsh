@@ -93,6 +93,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/common/error_handling.o \
           $(BUILDDIR)/common/performance.o \
           $(POOL_OBJECTS) \
+          $(BUILDDIR)/common/buffer_ops.o \
           $(BUILDDIR)/system/interface.o \
           $(BUILDDIR)/common/io_helpers.o \
           $(BUILDDIR)/system/signals.o \
@@ -161,6 +162,10 @@ $(BUILDDIR)/common/string_pool.o: src/common/string_pool.f90 | $(BUILDDIR)/commo
 
 # Memory dashboard (included by default unless NO_MEMPOOL=1)
 $(BUILDDIR)/common/memory_dashboard.o: src/common/memory_dashboard.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)/common
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+# Buffer operations abstraction (depends on C strings if enabled)
+$(BUILDDIR)/common/buffer_ops.o: src/common/buffer_ops.f90 $(C_STRING_OBJ) | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/system/interface.o: src/system/interface.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/system
@@ -250,7 +255,7 @@ $(BUILDDIR)/scripting/completion.o: src/scripting/completion.f90 $(BUILDDIR)/com
 $(BUILDDIR)/io/syntax_highlight.o: src/io/syntax_highlight.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(C_STRING_OBJ) | $(BUILDDIR)/io
+$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(C_STRING_OBJ) | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io

@@ -11,6 +11,7 @@ module readline
   use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
+  use buffer_ops
 #ifdef USE_C_STRINGS
   use fortsh_c_strings
 #endif
@@ -333,26 +334,27 @@ contains
     state%menu_prefix = ''
     state%selected_process_name = ''
 #else
-#ifdef USE_MEMORY_POOL
+  #ifdef USE_MEMORY_POOL
     state%buffer_ref%data = ''
-#else
+  #else
     state%buffer = ''
-#endif
-#ifdef USE_MEMORY_POOL
+  #endif
+  #ifdef USE_MEMORY_POOL
     state%original_buffer_ref%data = ''
-#else
+  #else
     state%original_buffer = ''
-#endif
-#ifdef USE_MEMORY_POOL
+  #endif
+  #ifdef USE_MEMORY_POOL
     state%kill_buffer_ref%data = ''
-#else
+  #else
     state%kill_buffer = ''
-#endif
-#ifdef USE_MEMORY_POOL
+  #endif
+  #ifdef USE_MEMORY_POOL
     state%last_completion_buffer_ref%data = ''
-#else
+  #else
     state%last_completion_buffer = ''
-#endif
+  #endif
+#endif  ! USE_C_STRINGS
 #ifdef USE_MEMORY_POOL
     state%search_string_ref%data = ''
 #else
@@ -383,8 +385,7 @@ contains
 #else
     state%selected_process_name = ''
 #endif
-#endif  ! Close USE_C_STRINGS block
-#endif  ! Close USE_MEMORY_POOL block
+#endif  ! Close USE_C_STRINGS/MEMORY_POOL buffer initialization
     ! These are fixed-length, initialize regardless of pooling
     state%suggestion = ''
     state%menu_prompt = ''
