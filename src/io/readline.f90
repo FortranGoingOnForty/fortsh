@@ -225,6 +225,269 @@ module readline
   integer, save :: module_highlighted_len
 
 contains
+
+  !============================================================================
+  ! BUFFER OPERATION WRAPPERS - Platform abstraction layer
+  !============================================================================
+  ! These wrappers handle three platforms:
+  !   1. USE_C_STRINGS (macOS ARM64) - C string buffers for >128 byte support
+  !   2. USE_MEMORY_POOL (Linux with pooling) - Pooled string references
+  !   3. Default - Standard Fortran allocatable strings
+  !
+  ! This abstraction keeps the main code clean and platform-agnostic.
+  !============================================================================
+
+  ! Clear main buffer
+  subroutine state_buffer_clear(state)
+    type(input_state_t), intent(inout) :: state
+#ifdef USE_C_STRINGS
+    call c_string_clear(state%buffer_c)
+#else
+#ifdef USE_MEMORY_POOL
+    state%buffer_ref%data = ''
+#else
+    state%buffer = ''
+#endif
+#endif
+  end subroutine state_buffer_clear
+
+  ! Set main buffer from string
+  subroutine state_buffer_set(state, str)
+    type(input_state_t), intent(inout) :: state
+    character(len=*), intent(in) :: str
+    logical :: success
+#ifdef USE_C_STRINGS
+    success = c_string_set(state%buffer_c, str)
+    if (.not. success) then
+      ! Fallback: truncate to buffer size
+      ! This maintains old behavior on overflow
+    end if
+#else
+#ifdef USE_MEMORY_POOL
+    state%buffer_ref%data = str
+#else
+    state%buffer = str
+#endif
+#endif
+  end subroutine state_buffer_set
+
+  ! Get main buffer as string
+  subroutine state_buffer_get(state, str, actual_len)
+    type(input_state_t), intent(in) :: state
+    character(len=*), intent(out) :: str
+    integer, intent(out), optional :: actual_len
+    integer :: len_out
+#ifdef USE_C_STRINGS
+    call c_string_to_fortran(state%buffer_c, str, len_out)
+    if (present(actual_len)) actual_len = len_out
+#else
+#ifdef USE_MEMORY_POOL
+    str = state%buffer_ref%data
+    if (present(actual_len)) actual_len = len_trim(state%buffer_ref%data)
+#else
+    str = state%buffer
+    if (present(actual_len)) actual_len = len_trim(state%buffer)
+#endif
+#endif
+  end subroutine state_buffer_get
+
+  ! Get character at position (1-based)
+  function state_buffer_get_char(state, pos) result(ch)
+    type(input_state_t), intent(in) :: state
+    integer, intent(in) :: pos
+    character(len=1) :: ch
+#ifdef USE_C_STRINGS
+    ch = c_string_get_char(state%buffer_c, pos)
+#else
+#ifdef USE_MEMORY_POOL
+    if (pos >= 1 .and. pos <= len(state%buffer_ref%data)) then
+      ch = state%buffer_ref%data(pos:pos)
+    else
+      ch = ' '
+    end if
+#else
+    if (pos >= 1 .and. pos <= len(state%buffer)) then
+      ch = state%buffer(pos:pos)
+    else
+      ch = ' '
+    end if
+#endif
+#endif
+  end function state_buffer_get_char
+
+  ! Set character at position (1-based)
+  subroutine state_buffer_set_char(state, pos, ch)
+    type(input_state_t), intent(inout) :: state
+    integer, intent(in) :: pos
+    character(len=1), intent(in) :: ch
+    logical :: success
+#ifdef USE_C_STRINGS
+    success = c_string_set_char(state%buffer_c, pos, ch)
+#else
+#ifdef USE_MEMORY_POOL
+    if (pos >= 1 .and. pos <= len(state%buffer_ref%data)) then
+      state%buffer_ref%data(pos:pos) = ch
+    end if
+#else
+    if (pos >= 1 .and. pos <= len(state%buffer)) then
+      state%buffer(pos:pos) = ch
+    end if
+#endif
+#endif
+  end subroutine state_buffer_set_char
+
+  ! Copy main buffer to original_buffer
+  subroutine state_buffer_save(state)
+    type(input_state_t), intent(inout) :: state
+    logical :: success
+#ifdef USE_C_STRINGS
+    success = c_string_copy(state%original_buffer_c, state%buffer_c)
+#else
+#ifdef USE_MEMORY_POOL
+    state%original_buffer_ref%data = state%buffer_ref%data
+#else
+    state%original_buffer = state%buffer
+#endif
+#endif
+  end subroutine state_buffer_save
+
+  ! Restore main buffer from original_buffer
+  subroutine state_buffer_restore(state)
+    type(input_state_t), intent(inout) :: state
+    logical :: success
+#ifdef USE_C_STRINGS
+    success = c_string_copy(state%buffer_c, state%original_buffer_c)
+#else
+#ifdef USE_MEMORY_POOL
+    state%buffer_ref%data = state%original_buffer_ref%data
+#else
+    state%buffer = state%original_buffer
+#endif
+#endif
+  end subroutine state_buffer_restore
+
+  ! Clear original buffer
+  subroutine state_original_buffer_clear(state)
+    type(input_state_t), intent(inout) :: state
+#ifdef USE_C_STRINGS
+    call c_string_clear(state%original_buffer_c)
+#else
+#ifdef USE_MEMORY_POOL
+    state%original_buffer_ref%data = ''
+#else
+    state%original_buffer = ''
+#endif
+#endif
+  end subroutine state_original_buffer_clear
+
+  ! Clear kill buffer
+  subroutine state_kill_buffer_clear(state)
+    type(input_state_t), intent(inout) :: state
+#ifdef USE_C_STRINGS
+    call c_string_clear(state%kill_buffer_c)
+#else
+#ifdef USE_MEMORY_POOL
+    state%kill_buffer_ref%data = ''
+#else
+    state%kill_buffer = ''
+#endif
+#endif
+  end subroutine state_kill_buffer_clear
+
+  ! Set kill buffer from string
+  subroutine state_kill_buffer_set(state, str)
+    type(input_state_t), intent(inout) :: state
+    character(len=*), intent(in) :: str
+    logical :: success
+#ifdef USE_C_STRINGS
+    success = c_string_set(state%kill_buffer_c, str)
+#else
+#ifdef USE_MEMORY_POOL
+    state%kill_buffer_ref%data = str
+#else
+    state%kill_buffer = str
+#endif
+#endif
+  end subroutine state_kill_buffer_set
+
+  ! Get kill buffer as string
+  subroutine state_kill_buffer_get(state, str)
+    type(input_state_t), intent(in) :: state
+    character(len=*), intent(out) :: str
+#ifdef USE_C_STRINGS
+    call c_string_to_fortran(state%kill_buffer_c, str)
+#else
+#ifdef USE_MEMORY_POOL
+    str = state%kill_buffer_ref%data
+#else
+    str = state%kill_buffer
+#endif
+#endif
+  end subroutine state_kill_buffer_get
+
+  ! Clear last completion buffer
+  subroutine state_last_completion_buffer_clear(state)
+    type(input_state_t), intent(inout) :: state
+#ifdef USE_C_STRINGS
+    call c_string_clear(state%last_completion_buffer_c)
+#else
+#ifdef USE_MEMORY_POOL
+    state%last_completion_buffer_ref%data = ''
+#else
+    state%last_completion_buffer = ''
+#endif
+#endif
+  end subroutine state_last_completion_buffer_clear
+
+  ! Set last completion buffer from main buffer
+  subroutine state_last_completion_buffer_set_from_buffer(state)
+    type(input_state_t), intent(inout) :: state
+    logical :: success
+#ifdef USE_C_STRINGS
+    success = c_string_copy(state%last_completion_buffer_c, state%buffer_c)
+#else
+#ifdef USE_MEMORY_POOL
+    state%last_completion_buffer_ref%data = state%buffer_ref%data(:state%length)
+#else
+    state%last_completion_buffer = state%buffer(:state%length)
+#endif
+#endif
+  end subroutine state_last_completion_buffer_set_from_buffer
+
+  ! Compare buffer with last completion buffer
+  function state_buffer_equals_last_completion(state) result(equals)
+    type(input_state_t), intent(in) :: state
+    logical :: equals
+    character(len=MAX_LINE_LEN) :: buf, last_buf
+    integer :: i
+#ifdef USE_C_STRINGS
+    call c_string_to_fortran(state%buffer_c, buf)
+    call c_string_to_fortran(state%last_completion_buffer_c, last_buf)
+    equals = (trim(buf) == trim(last_buf))
+#else
+#ifdef USE_MEMORY_POOL
+    equals = (trim(state%buffer_ref%data(:state%length)) == &
+              trim(state%last_completion_buffer_ref%data(:state%last_completion_buffer_len)))
+#else
+    equals = .true.
+    if (state%length /= state%last_completion_buffer_len) then
+      equals = .false.
+      return
+    end if
+    do i = 1, state%length
+      if (state%buffer(i:i) /= state%last_completion_buffer(i:i)) then
+        equals = .false.
+        return
+      end if
+    end do
+#endif
+#endif
+  end function state_buffer_equals_last_completion
+
+  !============================================================================
+  ! END BUFFER OPERATION WRAPPERS
+  !============================================================================
+
   ! Initialize input_state_t with allocated strings
   subroutine init_input_state(state)
     type(input_state_t), intent(out) :: state
@@ -334,26 +597,26 @@ contains
     state%menu_prefix = ''
     state%selected_process_name = ''
 #else
-  #ifdef USE_MEMORY_POOL
+#ifdef USE_MEMORY_POOL
     state%buffer_ref%data = ''
-  #else
+#else
     state%buffer = ''
-  #endif
-  #ifdef USE_MEMORY_POOL
+#endif
+#ifdef USE_MEMORY_POOL
     state%original_buffer_ref%data = ''
-  #else
+#else
     state%original_buffer = ''
-  #endif
-  #ifdef USE_MEMORY_POOL
+#endif
+#ifdef USE_MEMORY_POOL
     state%kill_buffer_ref%data = ''
-  #else
+#else
     state%kill_buffer = ''
-  #endif
-  #ifdef USE_MEMORY_POOL
+#endif
+#ifdef USE_MEMORY_POOL
     state%last_completion_buffer_ref%data = ''
-  #else
+#else
     state%last_completion_buffer = ''
-  #endif
+#endif
 #endif  ! USE_C_STRINGS
 #ifdef USE_MEMORY_POOL
     state%search_string_ref%data = ''
@@ -638,10 +901,10 @@ contains
       if (.not. associated(module_input_state%buffer_ref%data)) then
         call init_input_state(module_input_state)
       else
-        module_input_state%buffer_ref%data = ''
+        call state_buffer_clear(module_input_state)
       end if
 #else
-      module_input_state%buffer = ''
+      call state_buffer_clear(module_input_state)
 #endif
       module_input_state%length = 0
       module_input_state%cursor_pos = 0
@@ -705,11 +968,7 @@ contains
             ! Exit signal mode and return to normal prompt
             module_input_state%in_signal_input = .false.
             module_input_state%in_process_kill_mode = .false.
-#ifdef USE_MEMORY_POOL
-            module_input_state%buffer_ref%data = ''
-#else
-            module_input_state%buffer = ''
-#endif
+            call state_buffer_clear(module_input_state)
             module_input_state%length = 0
             module_input_state%cursor_pos = 0
             done = .true.
@@ -872,11 +1131,7 @@ contains
             module_input_state%search_match_index = 0
 
             ! Clear buffer and return empty line
-#ifdef USE_MEMORY_POOL
-            module_input_state%buffer_ref%data = ''
-#else
-            module_input_state%buffer = ''
-#endif
+            call state_buffer_clear(module_input_state)
             module_input_state%length = 0
             module_input_state%cursor_pos = 0
             done = .true.
@@ -1822,12 +2077,15 @@ contains
     ! Undo
     case (ichar('u'))
       ! Undo (simplified)
+      call state_buffer_restore(input_state)
 #ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data = input_state%original_buffer_ref%data
       input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
-      input_state%buffer = input_state%original_buffer
+#ifdef USE_C_STRINGS
+      input_state%length = c_string_length(input_state%original_buffer_c)
+#else
       input_state%length = len_trim(input_state%original_buffer)
+#endif
 #endif
       input_state%cursor_pos = min(input_state%cursor_pos, input_state%length)
       input_state%dirty = .true.
@@ -1947,7 +2205,7 @@ contains
 #ifdef USE_MEMORY_POOL
       input_state%buffer_ref%data = ''
 #else
-      input_state%buffer = ''
+      call state_buffer_clear(input_state)
 #endif
       input_state%length = 0
       input_state%cursor_pos = 0
@@ -3344,11 +3602,7 @@ contains
       temp_buffer(input_state%cursor_pos+1:input_state%cursor_pos+1) = ch
 
       ! Copy result back to buffer
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data = temp_buffer
-#else
-      input_state%buffer = temp_buffer
-#endif
+      call state_buffer_set(input_state, temp_buffer)
       input_state%length = input_state%length + 1
       input_state%cursor_pos = input_state%cursor_pos + 1
 
@@ -3502,11 +3756,7 @@ contains
       tab_made_progress = (len_trim(tab_completed_line) > len_trim(tab_saved_input)) .or. &
                          has_glob_chars(tab_partial_input)
 
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data = tab_completed_line
-#else
-      input_state%buffer = tab_completed_line
-#endif
+      call state_buffer_set(input_state, tab_completed_line)
       input_state%length = len_trim(tab_completed_line)
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
@@ -3720,7 +3970,7 @@ contains
       made_progress = (len_trim(completed_line) > len_trim(saved_input))
 
       ! Update the input buffer with completion
-      input_state%buffer = completed_line
+      call state_buffer_set(input_state, completed_line)
       input_state%length = len_trim(completed_line)
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
@@ -4071,11 +4321,7 @@ contains
     call exit_menu_select_mode(input_state)
 
     ! Update buffer after menu is cleared
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data = completed_line
-#else
-    input_state%buffer = completed_line
-#endif
+    call state_buffer_set(input_state, completed_line)
     input_state%length = completed_len
     input_state%cursor_pos = completed_len  ! Cursor at end
 
@@ -4458,7 +4704,7 @@ contains
 #ifdef USE_MEMORY_POOL
         input_state%buffer_ref%data = ''
 #else
-        input_state%buffer = ''
+        call state_buffer_clear(input_state)
 #endif
         input_state%length = 0
         input_state%cursor_pos = 0
@@ -4856,11 +5102,7 @@ contains
 
     ! If not currently browsing history, save the current input
     if (.not. input_state%in_history) then
-#ifdef USE_MEMORY_POOL
-      input_state%original_buffer_ref%data = input_state%buffer_ref%data
-#else
-      input_state%original_buffer = input_state%buffer
-#endif
+      call state_buffer_save(input_state)
       input_state%history_pos = command_history%count + 1
       input_state%in_history = .true.
     end if
@@ -4871,11 +5113,7 @@ contains
       call get_history_line(input_state%history_pos, history_line, found)
 
       if (found) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data = history_line
-#else
-        input_state%buffer = history_line
-#endif
+        call state_buffer_set(input_state, history_line)
         input_state%length = len_trim(history_line)
         input_state%cursor_pos = input_state%length
         input_state%dirty = .true.
@@ -4898,23 +5136,22 @@ contains
       call get_history_line(input_state%history_pos, history_line, found)
 
       if (found) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data = history_line
-#else
-        input_state%buffer = history_line
-#endif
+        call state_buffer_set(input_state, history_line)
         input_state%length = len_trim(history_line)
         input_state%cursor_pos = input_state%length
         input_state%dirty = .true.
       end if
     else if (input_state%history_pos <= command_history%count) then
       ! Reached the end of history, restore original input
+      call state_buffer_restore(input_state)
 #ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data = input_state%original_buffer_ref%data
       input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
-      input_state%buffer = input_state%original_buffer
+#ifdef USE_C_STRINGS
+      input_state%length = c_string_length(input_state%original_buffer_c)
+#else
       input_state%length = len_trim(input_state%original_buffer)
+#endif
 #endif
       input_state%cursor_pos = input_state%length
       input_state%history_pos = command_history%count + 1
@@ -5379,7 +5616,7 @@ contains
 #ifdef USE_MEMORY_POOL
       input_state%buffer_ref%data = ''
 #else
-      input_state%buffer = ''
+      call state_buffer_clear(input_state)
 #endif
 #endif
       input_state%length = 0
@@ -5900,7 +6137,7 @@ contains
 #ifdef USE_MEMORY_POOL
     input_state%buffer_ref%data = ''
 #else
-    input_state%buffer = ''
+    call state_buffer_clear(input_state)
 #endif
 
     ! Insert "cd .."
@@ -5938,7 +6175,7 @@ contains
 #ifdef USE_MEMORY_POOL
     input_state%buffer_ref%data = ''
 #else
-    input_state%buffer = ''
+    call state_buffer_clear(input_state)
 #endif
 
     ! Insert "prevd"
@@ -5976,7 +6213,7 @@ contains
 #ifdef USE_MEMORY_POOL
     input_state%buffer_ref%data = ''
 #else
-    input_state%buffer = ''
+    call state_buffer_clear(input_state)
 #endif
 
     ! Insert "nextd"
@@ -6076,7 +6313,7 @@ contains
 
     ! Save current buffer if entering search for first time
     if (.not. input_state%in_search) then
-      input_state%original_buffer = input_state%buffer(:input_state%length)
+      call state_buffer_save(input_state)
       input_state%in_search = .true.
       input_state%search_forward = forward
 #ifdef USE_MEMORY_POOL
@@ -6115,11 +6352,7 @@ contains
       do i = input_state%search_match_index + 1, command_history%count
         if (index(command_history%lines(i), trim(search_str)) > 0) then
           input_state%search_match_index = i
-#ifdef USE_MEMORY_POOL
-          input_state%buffer_ref%data = command_history%lines(i)
-#else
-          input_state%buffer = command_history%lines(i)
-#endif
+          call state_buffer_set(input_state, command_history%lines(i))
           input_state%length = len_trim(command_history%lines(i))
           input_state%cursor_pos = input_state%length
           return
@@ -6131,11 +6364,7 @@ contains
         do i = 1, input_state%search_match_index - 1
           if (index(command_history%lines(i), trim(search_str)) > 0) then
             input_state%search_match_index = i
-#ifdef USE_MEMORY_POOL
-            input_state%buffer_ref%data = command_history%lines(i)
-#else
-            input_state%buffer = command_history%lines(i)
-#endif
+            call state_buffer_set(input_state, command_history%lines(i))
             input_state%length = len_trim(command_history%lines(i))
             input_state%cursor_pos = input_state%length
             return
@@ -6147,11 +6376,7 @@ contains
       do i = input_state%search_match_index - 1, 1, -1
         if (index(command_history%lines(i), trim(search_str)) > 0) then
           input_state%search_match_index = i
-#ifdef USE_MEMORY_POOL
-          input_state%buffer_ref%data = command_history%lines(i)
-#else
-          input_state%buffer = command_history%lines(i)
-#endif
+          call state_buffer_set(input_state, command_history%lines(i))
           input_state%length = len_trim(command_history%lines(i))
           input_state%cursor_pos = input_state%length
           return
@@ -6163,11 +6388,7 @@ contains
         do i = command_history%count, input_state%search_match_index + 1, -1
           if (index(command_history%lines(i), trim(search_str)) > 0) then
             input_state%search_match_index = i
-#ifdef USE_MEMORY_POOL
-            input_state%buffer_ref%data = command_history%lines(i)
-#else
-            input_state%buffer = command_history%lines(i)
-#endif
+            call state_buffer_set(input_state, command_history%lines(i))
             input_state%length = len_trim(command_history%lines(i))
             input_state%cursor_pos = input_state%length
             return
@@ -6201,11 +6422,7 @@ contains
         do i = 1, command_history%count
           if (index(command_history%lines(i), trim(search_str)) > 0) then
             input_state%search_match_index = i
-#ifdef USE_MEMORY_POOL
-            input_state%buffer_ref%data = command_history%lines(i)
-#else
-            input_state%buffer = command_history%lines(i)
-#endif
+            call state_buffer_set(input_state, command_history%lines(i))
             input_state%length = len_trim(command_history%lines(i))
             input_state%cursor_pos = input_state%length
             exit
@@ -6216,11 +6433,7 @@ contains
         do i = command_history%count, 1, -1
           if (index(command_history%lines(i), trim(search_str)) > 0) then
             input_state%search_match_index = i
-#ifdef USE_MEMORY_POOL
-            input_state%buffer_ref%data = command_history%lines(i)
-#else
-            input_state%buffer = command_history%lines(i)
-#endif
+            call state_buffer_set(input_state, command_history%lines(i))
             input_state%length = len_trim(command_history%lines(i))
             input_state%cursor_pos = input_state%length
             exit
@@ -6250,7 +6463,7 @@ contains
           do i = 1, command_history%count
             if (index(command_history%lines(i), trim(search_str)) > 0) then
               input_state%search_match_index = i
-              input_state%buffer = command_history%lines(i)
+              call state_buffer_set(input_state, command_history%lines(i))
               input_state%length = len_trim(command_history%lines(i))
               input_state%cursor_pos = input_state%length
               exit
@@ -6261,7 +6474,7 @@ contains
           do i = command_history%count, 1, -1
             if (index(command_history%lines(i), trim(search_str)) > 0) then
               input_state%search_match_index = i
-              input_state%buffer = command_history%lines(i)
+              call state_buffer_set(input_state, command_history%lines(i))
               input_state%length = len_trim(command_history%lines(i))
               input_state%cursor_pos = input_state%length
               exit
@@ -6273,7 +6486,7 @@ contains
 #ifdef USE_MEMORY_POOL
         input_state%buffer_ref%data = ''
 #else
-        input_state%buffer = ''
+        call state_buffer_clear(input_state)
 #endif
         input_state%length = 0
         input_state%cursor_pos = 0
@@ -6288,8 +6501,16 @@ contains
     type(input_state_t), intent(inout) :: input_state
 
     ! Restore original buffer
-    input_state%buffer = input_state%original_buffer
+    call state_buffer_restore(input_state)
+#ifdef USE_MEMORY_POOL
+    input_state%length = len_trim(input_state%original_buffer_ref%data)
+#else
+#ifdef USE_C_STRINGS
+    input_state%length = c_string_length(input_state%original_buffer_c)
+#else
     input_state%length = len_trim(input_state%original_buffer)
+#endif
+#endif
     input_state%cursor_pos = input_state%length
     input_state%in_search = .false.
 #ifdef USE_MEMORY_POOL
@@ -7201,11 +7422,7 @@ contains
 
           if (iostat == 0 .and. len_trim(selected_cmd) > 0) then
             ! Replace entire line with selected command
-#ifdef USE_MEMORY_POOL
-            input_state%buffer_ref%data = trim(selected_cmd)
-#else
-            input_state%buffer = trim(selected_cmd)
-#endif
+            call state_buffer_set(input_state, trim(selected_cmd))
             input_state%length = len_trim(selected_cmd)
             input_state%cursor_pos = input_state%length
           end if
@@ -7283,7 +7500,7 @@ contains
             input_state%buffer_ref%data = 'cd ' // trim(selected_dir)
             input_state%length = len_trim(input_state%buffer_ref%data)
 #else
-            input_state%buffer = 'cd ' // trim(selected_dir)
+            call state_buffer_set(input_state, 'cd ' // trim(selected_dir))
             input_state%length = len_trim(input_state%buffer)
 #endif
             input_state%cursor_pos = input_state%length
