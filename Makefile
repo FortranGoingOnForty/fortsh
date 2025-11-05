@@ -43,10 +43,19 @@ else
   CFLAGS = -Wall -Wextra -fPIC -g -O2
 endif
 
+# Warning flags (flang-new doesn't support -Wall/-Wextra)
+ifeq ($(FC),flang-new)
+    WARN_FLAGS =
+    WARN_FLAGS_RELEASE =
+else
+    WARN_FLAGS = -Wall -Wextra
+    WARN_FLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation
+endif
+
 # Development flags (verbose warnings, debug symbols)
-FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
+FCFLAGS = $(WARN_FLAGS) -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 # Production flags (minimal warnings, optimized, no debug symbols)
-FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
+FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 
 # C string library (for flang-new workaround)
 # Automatically enable on macOS ARM64 unless explicitly disabled
