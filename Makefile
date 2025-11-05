@@ -34,11 +34,29 @@ else
     $(info Memory pooling ENABLED - using zero-copy string pool [DEFAULT])
 endif
 
+# C compiler for string operations library
+CC = gcc
+CFLAGS = -Wall -Wextra -fPIC -g -O2 $(PLATFORM_FLAGS)
+
 # Development flags (verbose warnings, debug symbols)
 FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 # Production flags (minimal warnings, optimized, no debug symbols)
 FCFLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
-LDFLAGS = 
+
+# C string library (for flang-new workaround)
+ifeq ($(USE_C_STRINGS),1)
+  C_STRING_LIB = $(BUILDDIR)/c_interop/libfortsh_strings.a
+  C_STRING_OBJ = $(BUILDDIR)/c_interop/fortsh_c_strings.o
+  C_STRING_FLAGS = -DUSE_C_STRINGS
+  LDFLAGS = $(C_STRING_LIB)
+  $(info C string library ENABLED - workaround for flang-new >128 byte bug)
+else
+  C_STRING_LIB =
+  C_STRING_OBJ =
+  C_STRING_FLAGS =
+  LDFLAGS =
+  $(info C string library DISABLED - using native Fortran strings)
+endif 
 
 # Directory structure
 SRCDIR = src
@@ -101,11 +119,11 @@ all: $(TARGET)
 $(BUILDDIR) $(BINDIR):
 	mkdir -p $@
 
-$(BUILDDIR)/common $(BUILDDIR)/system $(BUILDDIR)/parsing $(BUILDDIR)/execution $(BUILDDIR)/scripting $(BUILDDIR)/io: | $(BUILDDIR)
+$(BUILDDIR)/common $(BUILDDIR)/system $(BUILDDIR)/parsing $(BUILDDIR)/execution $(BUILDDIR)/scripting $(BUILDDIR)/io $(BUILDDIR)/c_interop: | $(BUILDDIR)
 	mkdir -p $@
 
 # Build target
-$(TARGET): $(OBJECTS) | $(BINDIR)
+$(TARGET): $(OBJECTS) $(C_STRING_LIB) | $(BINDIR)
 	$(FC) $(OBJECTS) -o $@ $(LDFLAGS)
 	@echo "Fortsh built successfully!"
 
@@ -226,6 +244,28 @@ $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/ty
 $(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
+# ============================================================================
+# C string library (flang-new workaround for macOS ARM64)
+# ============================================================================
+
+# Compile C string operations library
+$(BUILDDIR)/c_interop/fortsh_strings.o: src/c_interop/fortsh_strings.c src/c_interop/fortsh_strings.h | $(BUILDDIR)/c_interop
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Create static library from C objects
+$(BUILDDIR)/c_interop/libfortsh_strings.a: $(BUILDDIR)/c_interop/fortsh_strings.o
+	ar rcs $@ $<
+
+# Compile Fortran wrapper module (depends on C library for testing)
+$(BUILDDIR)/c_interop/fortsh_c_strings.o: src/c_interop/fortsh_c_strings.f90 | $(BUILDDIR)/c_interop
+	$(FC) $(FCFLAGS) $(C_STRING_FLAGS) -J$(BUILDDIR) -c $< -o $@
+
+# Standalone test program for C string library
+$(BUILDDIR)/test_c_strings: tests/test_c_strings.f90 $(BUILDDIR)/c_interop/fortsh_c_strings.o $(BUILDDIR)/c_interop/libfortsh_strings.a | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/c_interop/fortsh_c_strings.o -o $@ $(C_STRING_LIB)
+
+# ============================================================================
+
 # Clean targets
 clean:
 	rm -rf $(BUILDDIR) $(BINDIR)
@@ -299,6 +339,11 @@ help:
 	@echo "Memory pooling options:"
 	@echo "  make          - Build with memory pooling (DEFAULT)"
 	@echo "  NO_MEMPOOL=1 make - Build without memory pooling"
+	@echo ""
+	@echo "C string library (flang-new workaround):"
+	@echo "  c-strings     - Build C string library test"
+	@echo "  test-c-strings - Test C string library (>128 byte strings)"
+	@echo "  USE_C_STRINGS=1 make - Enable C strings in fortsh (experimental)"
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test          - Run basic functionality test"
@@ -430,4 +475,21 @@ test-macos: test-macos-pool test-macos-compiler
 	@echo "All macOS ARM64 Tests Complete"
 	@echo "=========================================="
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos
+# Test C string library (flang-new workaround)
+test-c-strings: $(BUILDDIR)/test_c_strings
+	@echo "=========================================="
+	@echo "Testing C String Library"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_c_strings
+	@echo ""
+	@echo "✓ C string library test passed!"
+	@echo "This proves we can handle >128 byte strings"
+	@echo "without triggering flang-new heap corruption!"
+	@echo "=========================================="
+
+# Build just the C string library and test
+c-strings: $(BUILDDIR)/test_c_strings
+	@echo "C string library built successfully!"
+	@echo "Run 'make test-c-strings' to test it"
+
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings
