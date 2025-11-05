@@ -36,7 +36,12 @@ endif
 
 # C compiler for string operations library
 CC = gcc
-CFLAGS = -Wall -Wextra -fPIC -g -O2 $(PLATFORM_FLAGS)
+# Note: Don't use $(PLATFORM_FLAGS) here - it contains Fortran flags like -cpp
+ifeq ($(UNAME_S),Darwin)
+  CFLAGS = -Wall -Wextra -fPIC -g -O2 -D__APPLE__
+else
+  CFLAGS = -Wall -Wextra -fPIC -g -O2
+endif
 
 # Development flags (verbose warnings, debug symbols)
 FCFLAGS = -Wall -Wextra -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)

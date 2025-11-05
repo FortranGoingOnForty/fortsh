@@ -383,7 +383,8 @@ contains
 #else
     state%selected_process_name = ''
 #endif
-#endif
+#endif  ! Close USE_C_STRINGS block
+#endif  ! Close USE_MEMORY_POOL block
     ! These are fixed-length, initialize regardless of pooling
     state%suggestion = ''
     state%menu_prompt = ''
