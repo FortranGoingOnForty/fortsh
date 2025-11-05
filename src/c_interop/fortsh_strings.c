@@ -48,7 +48,7 @@ fortsh_buffer_t* fortsh_buffer_create(size_t capacity) {
 void fortsh_buffer_destroy(fortsh_buffer_t* buf) {
     if (buf) {
         if (buf->data) {
-            free(buf);
+            free(buf->data);
         }
         free(buf);
     }
