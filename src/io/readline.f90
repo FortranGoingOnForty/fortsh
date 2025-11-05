@@ -449,7 +449,7 @@ contains
 #ifdef USE_MEMORY_POOL
     state%last_completion_buffer_ref%data = state%buffer_ref%data(:state%length)
 #else
-    state%last_completion_buffer = state%buffer(:state%length)
+    call state_last_completion_buffer_set_from_buffer(state)
 #endif
 #endif
   end subroutine state_last_completion_buffer_set_from_buffer
@@ -2196,10 +2196,16 @@ contains
     select case (motion)
     case ('d')
       ! dd - delete entire line
+#ifdef USE_C_STRINGS
+      ! Extract buffer content to vi_yank_buffer (Fortran string)
+      call c_string_to_fortran(input_state%buffer_c, input_state%vi_yank_buffer)
+      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
 #else
       input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
+#endif
 #endif
       input_state%vi_yank_length = input_state%length
 #ifdef USE_MEMORY_POOL
@@ -2280,10 +2286,15 @@ contains
     select case (motion)
     case ('y')
       ! yy - yank entire line
+#ifdef USE_C_STRINGS
+      call c_string_to_fortran(input_state%buffer_c, input_state%vi_yank_buffer)
+      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
 #else
       input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
+#endif
 #endif
       input_state%vi_yank_length = input_state%length
 
@@ -2398,10 +2409,17 @@ contains
 
     yank_len = max(0, min(end_pos - start_pos, MAX_LINE_LEN))
     if (yank_len > 0 .and. start_pos >= 1 .and. start_pos <= input_state%length) then
+#ifdef USE_C_STRINGS
+      ! Extract buffer to temp, then substring
+      character(len=MAX_LINE_LEN) :: temp_buf
+      call c_string_to_fortran(input_state%buffer_c, temp_buf)
+      input_state%vi_yank_buffer = temp_buf(start_pos:start_pos+yank_len-1)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%vi_yank_buffer = input_state%buffer_ref%data(start_pos:start_pos+yank_len-1)
 #else
       input_state%vi_yank_buffer = input_state%buffer(start_pos:start_pos+yank_len-1)
+#endif
 #endif
       input_state%vi_yank_length = yank_len
     end if
@@ -5578,10 +5596,16 @@ contains
 
     ! Save text from cursor to end of line in kill buffer
     if (input_state%cursor_pos < input_state%length) then
+#ifdef USE_C_STRINGS
+      ! Extract substring from cursor+1 to end
+      call c_string_substring(input_state%kill_buffer_c, input_state%buffer_c, &
+                              input_state%cursor_pos+1, input_state%length)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%kill_buffer_ref%data = input_state%buffer_ref%data(input_state%cursor_pos+1:input_state%length)
 #else
       input_state%kill_buffer = input_state%buffer(input_state%cursor_pos+1:input_state%length)
+#endif
 #endif
       input_state%kill_length = input_state%length - input_state%cursor_pos
 
@@ -5602,10 +5626,15 @@ contains
 
     ! Save entire line in kill buffer
     if (input_state%length > 0) then
+#ifdef USE_C_STRINGS
+      ! Copy entire buffer to kill buffer
+      call c_string_copy(input_state%kill_buffer_c, input_state%buffer_c)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%kill_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
 #else
       input_state%kill_buffer = input_state%buffer(:input_state%length)
+#endif
 #endif
       input_state%kill_length = input_state%length
 
@@ -5665,10 +5694,15 @@ contains
     ! word_start is now at space before word, or 0 if at beginning
     if (word_start < input_state%cursor_pos) then
       ! Save killed text
+#ifdef USE_C_STRINGS
+      call c_string_substring(input_state%kill_buffer_c, input_state%buffer_c, &
+                              word_start+1, input_state%cursor_pos)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%kill_buffer_ref%data = input_state%buffer_ref%data(word_start+1:input_state%cursor_pos)
 #else
       input_state%kill_buffer = input_state%buffer(word_start+1:input_state%cursor_pos)
+#endif
 #endif
       input_state%kill_length = input_state%cursor_pos - word_start
 
@@ -5932,10 +5966,15 @@ contains
 
     if (word_end > input_state%cursor_pos + 1) then
       ! Save deleted text to kill buffer
+#ifdef USE_C_STRINGS
+      call c_string_substring(input_state%kill_buffer_c, input_state%buffer_c, &
+                              input_state%cursor_pos+1, word_end-1)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%kill_buffer_ref%data = input_state%buffer_ref%data(input_state%cursor_pos+1:word_end-1)
 #else
       input_state%kill_buffer = input_state%buffer(input_state%cursor_pos+1:word_end-1)
+#endif
 #endif
       input_state%kill_length = word_end - input_state%cursor_pos - 1
 
@@ -6589,10 +6628,15 @@ contains
 
     ! Simplified: yank entire line (yy behavior)
     if (input_state%length > 0) then
+#ifdef USE_C_STRINGS
+      call c_string_to_fortran(input_state%buffer_c, input_state%vi_yank_buffer)
+      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+#else
 #ifdef USE_MEMORY_POOL
       input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
 #else
       input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
+#endif
 #endif
       input_state%vi_yank_length = input_state%length
     else
