@@ -449,9 +449,10 @@ contains
 #ifdef USE_MEMORY_POOL
     state%last_completion_buffer_ref%data = state%buffer_ref%data(:state%length)
 #else
-    call state_last_completion_buffer_set_from_buffer(state)
+    state%last_completion_buffer = state%buffer(:state%length)
 #endif
 #endif
+    state%last_completion_buffer_len = state%length
   end subroutine state_last_completion_buffer_set_from_buffer
 
   ! Compare buffer with last completion buffer
@@ -1232,15 +1233,7 @@ contains
             write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
-#ifdef USE_C_STRINGS
-              call c_string_to_fortran(module_input_state%buffer_c, temp_buf)
-#else
-#ifdef USE_MEMORY_POOL
-              temp_buf = module_input_state%buffer_ref%data
-#else
-              temp_buf = module_input_state%buffer
-#endif
-#endif
+              call state_buffer_get(module_input_state, temp_buf)
               call highlight_command_line(temp_buf(:module_input_state%length), &
                                           module_highlighted_buffer, module_highlighted_len, &
                                           module_input_state%length)
@@ -1355,16 +1348,8 @@ contains
 
     ! Return the result
     if (iostat == 0) then
-#ifdef USE_C_STRINGS
-      call c_string_to_fortran(module_input_state%buffer_c, temp_buf)
+      call state_buffer_get(module_input_state, temp_buf)
       line = temp_buf(:module_input_state%length)
-#else
-#ifdef USE_MEMORY_POOL
-      line = module_input_state%buffer_ref%data(:module_input_state%length)
-#else
-      line = module_input_state%buffer(:module_input_state%length)
-#endif
-#endif
       ! Note: History addition is now handled in the main loop AFTER expansion
       ! This prevents history expansion commands like !! from referencing themselves
     else
@@ -2212,23 +2197,10 @@ contains
     select case (motion)
     case ('d')
       ! dd - delete entire line
-#ifdef USE_C_STRINGS
-      ! Extract buffer content to vi_yank_buffer (Fortran string)
-      call c_string_to_fortran(input_state%buffer_c, input_state%vi_yank_buffer)
+      call state_buffer_get(input_state, input_state%vi_yank_buffer)
       input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
-#else
-      input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
-#endif
-#endif
       input_state%vi_yank_length = input_state%length
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data = ''
-#else
       call state_buffer_clear(input_state)
-#endif
       input_state%length = 0
       input_state%cursor_pos = 0
       input_state%dirty = .true.
@@ -2302,16 +2274,8 @@ contains
     select case (motion)
     case ('y')
       ! yy - yank entire line
-#ifdef USE_C_STRINGS
-      call c_string_to_fortran(input_state%buffer_c, input_state%vi_yank_buffer)
+      call state_buffer_get(input_state, input_state%vi_yank_buffer)
       input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
-#else
-      input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
-#endif
-#endif
       input_state%vi_yank_length = input_state%length
 
     case ('w')
@@ -2418,20 +2382,13 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer, intent(in) :: start_pos, end_pos
     integer :: yank_len
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     yank_len = max(0, min(end_pos - start_pos, MAX_LINE_LEN))
     if (yank_len > 0 .and. start_pos >= 1 .and. start_pos <= input_state%length) then
-#ifdef USE_C_STRINGS
       ! Extract buffer to temp, then substring
-      call c_string_to_fortran(input_state%buffer_c, temp_buf)
+      call state_buffer_get(input_state, temp_buf)
       input_state%vi_yank_buffer = temp_buf(start_pos:start_pos+yank_len-1)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(start_pos:start_pos+yank_len-1)
-#else
-      input_state%vi_yank_buffer = input_state%buffer(start_pos:start_pos+yank_len-1)
-#endif
-#endif
       input_state%vi_yank_length = yank_len
     end if
   end subroutine
@@ -3570,21 +3527,12 @@ contains
     else
       ! Insert in middle - use temp to avoid substring overlap issues
       ! Initialize temp with current buffer
-#ifdef USE_MEMORY_POOL
-      temp_buffer = input_state%buffer_ref%data
-#else
-      temp_buffer = input_state%buffer
-#endif
+      call state_buffer_get(input_state, temp_buffer)
 
       ! Shift part after cursor one position right in temp
       if (input_state%cursor_pos < input_state%length) then
-#ifdef USE_MEMORY_POOL
         temp_buffer(input_state%cursor_pos+2:input_state%length+1) = &
-          input_state%buffer_ref%data(input_state%cursor_pos+1:input_state%length)
-#else
-        temp_buffer(input_state%cursor_pos+2:input_state%length+1) = &
-          input_state%buffer(input_state%cursor_pos+1:input_state%length)
-#endif
+          temp_buffer(input_state%cursor_pos+1:input_state%length)
       end if
 
       ! Insert new character at cursor+1
@@ -3694,29 +3642,13 @@ contains
     end if
 
     ! Get the current buffer content
-#ifdef USE_MEMORY_POOL
-    tab_partial_input = input_state%buffer_ref%data(:input_state%length)
-#else
-    tab_partial_input = input_state%buffer(:input_state%length)
-#endif
+    call state_buffer_get(input_state, tab_partial_input)
+    tab_partial_input = tab_partial_input(:input_state%length)
     tab_saved_input = tab_partial_input
 
     ! Check if buffer has changed since we last showed completions
     ! IMPORTANT: Compare actual length (NOT trimmed!) to handle trailing spaces correctly
-    tab_buffer_changed = .true.
-    if (input_state%length == input_state%last_completion_buffer_len) then
-      tab_buffer_changed = .false.
-      do i = 1, input_state%length
-#ifdef USE_MEMORY_POOL
-        if (input_state%buffer_ref%data(i:i) /= input_state%last_completion_buffer_ref%data(i:i)) then
-#else
-        if (input_state%buffer(i:i) /= input_state%last_completion_buffer(i:i)) then
-#endif
-          tab_buffer_changed = .true.
-          exit
-        end if
-      end do
-    end if
+    tab_buffer_changed = .not. state_buffer_equals_last_completion(input_state)
 
     ! Attempt smart completion (pass input_state%length to preserve trailing spaces)
     call smart_tab_complete(tab_partial_input, tab_completions, &
@@ -3758,12 +3690,7 @@ contains
             input_state%menu_selection = 1
             write(output_unit, '()')  ! Blank line before menu
             call draw_completion_menu(input_state, .true.)
-#ifdef USE_MEMORY_POOL
-            input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
-#else
-            input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-#endif
-            input_state%last_completion_buffer_len = input_state%length
+            call state_last_completion_buffer_set_from_buffer(input_state)
             input_state%completions_shown = .true.
             ! Don't set dirty - menu is already drawn, no need to redraw command line
           else
@@ -3846,12 +3773,7 @@ contains
         input_state%menu_selection = 1
         write(output_unit, '()')  ! Blank line before menu
         call draw_completion_menu(input_state, .true.)
-#ifdef USE_MEMORY_POOL
-        input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
-#else
-        input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-#endif
-        input_state%last_completion_buffer_len = input_state%length
+        call state_last_completion_buffer_set_from_buffer(input_state)
         input_state%completions_shown = .true.
         ! Don't set dirty - command line is already displayed above menu
       else
@@ -3927,12 +3849,12 @@ contains
     end if
 
     ! Get the current buffer content
-    partial_input = input_state%buffer(:input_state%length)
+    call state_buffer_get(input_state, partial_input)
+    partial_input = partial_input(:input_state%length)
     saved_input = partial_input
 
     ! Check if buffer has changed since we last showed completions
-    buffer_changed = (trim(input_state%buffer(:input_state%length)) /= &
-                     trim(input_state%last_completion_buffer))
+    buffer_changed = .not. state_buffer_equals_last_completion(input_state)
 
     ! Attempt smart completion
     call smart_tab_complete(partial_input, completions, num_completions, completed_line, completed)
@@ -3975,12 +3897,7 @@ contains
             input_state%menu_selection = 1
             write(output_unit, '()')  ! Blank line before menu
             call draw_completion_menu(input_state, .true.)
-#ifdef USE_MEMORY_POOL
-            input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
-#else
-            input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-#endif
-            input_state%last_completion_buffer_len = input_state%length
+            call state_last_completion_buffer_set_from_buffer(input_state)
             input_state%completions_shown = .true.
             ! Don't set dirty - command line is already displayed above menu
           else
@@ -4007,12 +3924,7 @@ contains
         input_state%menu_selection = 1
         write(output_unit, '()')  ! Blank line before menu
         call draw_completion_menu(input_state, .true.)
-#ifdef USE_MEMORY_POOL
-        input_state%last_completion_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
-#else
-        input_state%last_completion_buffer = input_state%buffer(:input_state%length)
-#endif
-        input_state%last_completion_buffer_len = input_state%length
+        call state_last_completion_buffer_set_from_buffer(input_state)
         input_state%completions_shown = .true.
         ! Don't set dirty - command line is already displayed above menu
       else
@@ -4678,11 +4590,7 @@ contains
         input_state%in_signal_input = .true.
 
         ! Clear the buffer for signal input
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data = ''
-#else
         call state_buffer_clear(input_state)
-#endif
         input_state%length = 0
         input_state%cursor_pos = 0
 
@@ -4709,15 +4617,7 @@ contains
     write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
     write(output_unit, '(a)', advance='no') trim(signal_prompt)
     if (input_state%length > 0) then
-#ifdef USE_C_STRINGS
-      call c_string_to_fortran(input_state%buffer_c, temp_buf)
-#else
-#ifdef USE_MEMORY_POOL
-      temp_buf = input_state%buffer_ref%data
-#else
-      temp_buf = input_state%buffer
-#endif
-#endif
+      call state_buffer_get(input_state, temp_buf)
       write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
     end if
     flush(output_unit)
@@ -4731,7 +4631,7 @@ contains
     ! Don't use insert_char() to avoid setting dirty flag
     if (input_state%length < MAX_LINE_LEN) then
       input_state%length = input_state%length + 1
-      input_state%buffer(input_state%length:input_state%length) = ch
+      call state_buffer_set_char(input_state, input_state%length, ch)
       input_state%cursor_pos = input_state%length
     end if
 
@@ -4752,7 +4652,8 @@ contains
     end interface
 
     ! Parse signal from buffer (can be number or SIG<name>)
-    signal_str = input_state%buffer(:input_state%length)
+    call state_buffer_get(input_state, signal_str)
+    signal_str = signal_str(:input_state%length)
 
     ! Try to parse as number first
     read(signal_str, *, iostat=iostat) signal_num
@@ -5417,15 +5318,7 @@ contains
     write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
     if (input_state%length > 0) then
       ! Extract buffer for highlighting
-#ifdef USE_C_STRINGS
-      call c_string_to_fortran(input_state%buffer_c, temp_buf)
-#else
-#ifdef USE_MEMORY_POOL
-      temp_buf = input_state%buffer_ref%data
-#else
-      temp_buf = input_state%buffer
-#endif
-#endif
+      call state_buffer_get(input_state, temp_buf)
       call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len)
       if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
         write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
@@ -5514,15 +5407,7 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[K'
 
     ! Redraw buffer with highlighting
-#ifdef USE_C_STRINGS
-    call c_string_to_fortran(input_state%buffer_c, temp_buf)
-#else
-#ifdef USE_MEMORY_POOL
-    temp_buf = input_state%buffer_ref%data
-#else
-    temp_buf = input_state%buffer
-#endif
-#endif
+    call state_buffer_get(input_state, temp_buf)
     call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len)
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
       write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
@@ -5571,20 +5456,13 @@ contains
   
   subroutine handle_kill_to_end(input_state)
     type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Save text from cursor to end of line in kill buffer
     if (input_state%cursor_pos < input_state%length) then
-#ifdef USE_C_STRINGS
-      ! Extract substring from cursor+1 to end
-      call c_string_substring(input_state%kill_buffer_c, input_state%buffer_c, &
-                              input_state%cursor_pos+1, input_state%length)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%kill_buffer_ref%data = input_state%buffer_ref%data(input_state%cursor_pos+1:input_state%length)
-#else
-      input_state%kill_buffer = input_state%buffer(input_state%cursor_pos+1:input_state%length)
-#endif
-#endif
+      ! Extract substring and save to kill buffer
+      call state_buffer_get(input_state, temp_buf)
+      call state_kill_buffer_set(input_state, temp_buf(input_state%cursor_pos+1:input_state%length))
       input_state%kill_length = input_state%length - input_state%cursor_pos
 
       ! Clear from cursor to end of line
@@ -5601,31 +5479,17 @@ contains
   
   subroutine handle_kill_line(input_state)
     type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Save entire line in kill buffer
     if (input_state%length > 0) then
-#ifdef USE_C_STRINGS
-      ! Copy entire buffer to kill buffer
-      call c_string_copy(input_state%kill_buffer_c, input_state%buffer_c)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%kill_buffer_ref%data = input_state%buffer_ref%data(:input_state%length)
-#else
-      input_state%kill_buffer = input_state%buffer(:input_state%length)
-#endif
-#endif
+      ! Copy buffer to kill buffer via temp
+      call state_buffer_get(input_state, temp_buf)
+      call state_kill_buffer_set(input_state, temp_buf(:input_state%length))
       input_state%kill_length = input_state%length
 
       ! Clear the line
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data = ''
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data = ''
-#else
       call state_buffer_clear(input_state)
-#endif
-#endif
       input_state%length = 0
       input_state%cursor_pos = 0
 
@@ -5642,6 +5506,7 @@ contains
   subroutine handle_kill_word(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: word_start, i
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     if (input_state%cursor_pos == 0) then
       input_state%kill_length = 0
@@ -5652,54 +5517,28 @@ contains
     word_start = input_state%cursor_pos
 
     ! Skip any trailing whitespace
-#ifdef USE_MEMORY_POOL
-    do while (word_start > 0 .and. input_state%buffer_ref%data(word_start:word_start) == ' ')
-#else
-    do while (word_start > 0 .and. input_state%buffer(word_start:word_start) == ' ')
-#endif
+    do while (word_start > 0 .and. state_buffer_get_char(input_state, word_start) == ' ')
       word_start = word_start - 1
     end do
 
     ! Find beginning of word (non-space characters)
-#ifdef USE_MEMORY_POOL
-    do while (word_start > 0 .and. input_state%buffer_ref%data(word_start:word_start) /= ' ')
-#else
-    do while (word_start > 0 .and. input_state%buffer(word_start:word_start) /= ' ')
-#endif
+    do while (word_start > 0 .and. state_buffer_get_char(input_state, word_start) /= ' ')
       word_start = word_start - 1
     end do
 
     ! word_start is now at space before word, or 0 if at beginning
     if (word_start < input_state%cursor_pos) then
       ! Save killed text
-#ifdef USE_C_STRINGS
-      call c_string_substring(input_state%kill_buffer_c, input_state%buffer_c, &
-                              word_start+1, input_state%cursor_pos)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%kill_buffer_ref%data = input_state%buffer_ref%data(word_start+1:input_state%cursor_pos)
-#else
-      input_state%kill_buffer = input_state%buffer(word_start+1:input_state%cursor_pos)
-#endif
-#endif
+      call state_buffer_get(input_state, temp_buf)
+      call state_kill_buffer_set(input_state, temp_buf(word_start+1:input_state%cursor_pos))
       input_state%kill_length = input_state%cursor_pos - word_start
 
       ! Shift remaining text left
       do i = word_start + 1, input_state%length - input_state%cursor_pos + word_start
         if (input_state%cursor_pos + i - word_start <= input_state%length) then
-#ifdef USE_MEMORY_POOL
-          input_state%buffer_ref%data(i:i) = input_state%buffer_ref%data(input_state%cursor_pos + i - word_start: &
-                                                        input_state%cursor_pos + i - word_start)
-#else
-          input_state%buffer(i:i) = input_state%buffer(input_state%cursor_pos + i - word_start: &
-                                                        input_state%cursor_pos + i - word_start)
-#endif
+          call state_buffer_set_char(input_state, i, state_buffer_get_char(input_state, input_state%cursor_pos + i - word_start))
         else
-#ifdef USE_MEMORY_POOL
-          input_state%buffer_ref%data(i:i) = ' '
-#else
-          input_state%buffer(i:i) = ' '
-#endif
+          call state_buffer_set_char(input_state, i, ' ')
         end if
       end do
 
@@ -5727,14 +5566,21 @@ contains
     ! Shift existing text right to make room
     do i = input_state%length, input_state%cursor_pos + 1, -1
       if (i + insert_len <= MAX_LINE_LEN) then
-        input_state%buffer(i + insert_len:i + insert_len) = input_state%buffer(i:i)
+        call state_buffer_set_char(input_state, i + insert_len, state_buffer_get_char(input_state, i))
       end if
     end do
-    
+
     ! Insert killed text at cursor position
     do i = 1, insert_len
-      input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = &
-        input_state%kill_buffer(i:i)
+#ifdef USE_C_STRINGS
+      call state_buffer_set_char(input_state, input_state%cursor_pos + i, c_string_get_char(input_state%kill_buffer_c, i))
+#else
+#ifdef USE_MEMORY_POOL
+      call state_buffer_set_char(input_state, input_state%cursor_pos + i, input_state%kill_buffer_ref%data(i:i))
+#else
+      call state_buffer_set_char(input_state, input_state%cursor_pos + i, input_state%kill_buffer(i:i))
+#endif
+#endif
     end do
     
     ! Update length and cursor position
@@ -5768,15 +5614,7 @@ contains
 
     ! Draw the current buffer with syntax highlighting
     if (input_state%length > 0) then
-#ifdef USE_C_STRINGS
-      call c_string_to_fortran(input_state%buffer_c, temp_buf)
-#else
-#ifdef USE_MEMORY_POOL
-      temp_buf = input_state%buffer_ref%data
-#else
-      temp_buf = input_state%buffer
-#endif
-#endif
+      call state_buffer_get(input_state, temp_buf)
       call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len)
       if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
         write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
@@ -5842,17 +5680,9 @@ contains
     ! If at end of line, transpose last two chars
     if (input_state%cursor_pos >= input_state%length) then
       if (input_state%length >= 2) then
-#ifdef USE_MEMORY_POOL
-        temp = input_state%buffer_ref%data(input_state%length:input_state%length)
-        input_state%buffer_ref%data(input_state%length:input_state%length) = &
-          input_state%buffer_ref%data(input_state%length-1:input_state%length-1)
-        input_state%buffer_ref%data(input_state%length-1:input_state%length-1) = temp
-#else
-        temp = input_state%buffer(input_state%length:input_state%length)
-        input_state%buffer(input_state%length:input_state%length) = &
-          input_state%buffer(input_state%length-1:input_state%length-1)
-        input_state%buffer(input_state%length-1:input_state%length-1) = temp
-#endif
+        temp = state_buffer_get_char(input_state, input_state%length)
+        call state_buffer_set_char(input_state, input_state%length, state_buffer_get_char(input_state, input_state%length-1))
+        call state_buffer_set_char(input_state, input_state%length-1, temp)
         input_state%dirty = .true.
       end if
     ! If at beginning, do nothing
@@ -5860,17 +5690,9 @@ contains
       return
     ! Normal case: swap char at cursor with previous char, move cursor forward
     else
-#ifdef USE_MEMORY_POOL
-      temp = input_state%buffer_ref%data(input_state%cursor_pos+1:input_state%cursor_pos+1)
-      input_state%buffer_ref%data(input_state%cursor_pos+1:input_state%cursor_pos+1) = &
-        input_state%buffer_ref%data(input_state%cursor_pos:input_state%cursor_pos)
-      input_state%buffer_ref%data(input_state%cursor_pos:input_state%cursor_pos) = temp
-#else
-      temp = input_state%buffer(input_state%cursor_pos+1:input_state%cursor_pos+1)
-      input_state%buffer(input_state%cursor_pos+1:input_state%cursor_pos+1) = &
-        input_state%buffer(input_state%cursor_pos:input_state%cursor_pos)
-      input_state%buffer(input_state%cursor_pos:input_state%cursor_pos) = temp
-#endif
+      temp = state_buffer_get_char(input_state, input_state%cursor_pos+1)
+      call state_buffer_set_char(input_state, input_state%cursor_pos+1, state_buffer_get_char(input_state, input_state%cursor_pos))
+      call state_buffer_set_char(input_state, input_state%cursor_pos, temp)
       input_state%cursor_pos = input_state%cursor_pos + 1
       input_state%dirty = .true.
     end if
@@ -5921,65 +5743,36 @@ contains
   subroutine handle_delete_word_forward(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: word_end, i
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     if (input_state%cursor_pos >= input_state%length) return
 
     word_end = input_state%cursor_pos + 1
 
     ! Skip any leading whitespace
-#ifdef USE_MEMORY_POOL
     do while (word_end <= input_state%length .and. &
-              input_state%buffer_ref%data(word_end:word_end) == ' ')
-#else
-    do while (word_end <= input_state%length .and. &
-              input_state%buffer(word_end:word_end) == ' ')
-#endif
+              state_buffer_get_char(input_state, word_end) == ' ')
       word_end = word_end + 1
     end do
 
     ! Find end of word (non-space characters)
-#ifdef USE_MEMORY_POOL
     do while (word_end <= input_state%length .and. &
-              input_state%buffer_ref%data(word_end:word_end) /= ' ')
-#else
-    do while (word_end <= input_state%length .and. &
-              input_state%buffer(word_end:word_end) /= ' ')
-#endif
+              state_buffer_get_char(input_state, word_end) /= ' ')
       word_end = word_end + 1
     end do
 
     if (word_end > input_state%cursor_pos + 1) then
       ! Save deleted text to kill buffer
-#ifdef USE_C_STRINGS
-      call c_string_substring(input_state%kill_buffer_c, input_state%buffer_c, &
-                              input_state%cursor_pos+1, word_end-1)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%kill_buffer_ref%data = input_state%buffer_ref%data(input_state%cursor_pos+1:word_end-1)
-#else
-      input_state%kill_buffer = input_state%buffer(input_state%cursor_pos+1:word_end-1)
-#endif
-#endif
+      call state_buffer_get(input_state, temp_buf)
+      call state_kill_buffer_set(input_state, temp_buf(input_state%cursor_pos+1:word_end-1))
       input_state%kill_length = word_end - input_state%cursor_pos - 1
 
       ! Shift remaining text left
       do i = input_state%cursor_pos + 1, input_state%length - (word_end - input_state%cursor_pos - 1)
         if (word_end + i - input_state%cursor_pos - 1 <= input_state%length) then
-#ifdef USE_MEMORY_POOL
-          input_state%buffer_ref%data(i:i) = &
-            input_state%buffer_ref%data(word_end + i - input_state%cursor_pos - 1: &
-                              word_end + i - input_state%cursor_pos - 1)
-#else
-          input_state%buffer(i:i) = &
-            input_state%buffer(word_end + i - input_state%cursor_pos - 1: &
-                              word_end + i - input_state%cursor_pos - 1)
-#endif
+          call state_buffer_set_char(input_state, i, state_buffer_get_char(input_state, word_end + i - input_state%cursor_pos - 1))
         else
-#ifdef USE_MEMORY_POOL
-          input_state%buffer_ref%data(i:i) = ' '
-#else
-          input_state%buffer(i:i) = ' '
-#endif
+          call state_buffer_set_char(input_state, i, ' ')
         end if
       end do
 
@@ -6000,32 +5793,18 @@ contains
     pos = input_state%cursor_pos + 1
 
     ! Skip any leading whitespace
-#ifdef USE_MEMORY_POOL
     do while (pos <= input_state%length .and. &
-              input_state%buffer_ref%data(pos:pos) == ' ')
-#else
-    do while (pos <= input_state%length .and. &
-              input_state%buffer(pos:pos) == ' ')
-#endif
+              state_buffer_get_char(input_state, pos) == ' ')
       pos = pos + 1
     end do
 
     ! Uppercase characters until end of word
-#ifdef USE_MEMORY_POOL
     do while (pos <= input_state%length .and. &
-              input_state%buffer_ref%data(pos:pos) /= ' ')
-      ch = input_state%buffer_ref%data(pos:pos)
+              state_buffer_get_char(input_state, pos) /= ' ')
+      ch = state_buffer_get_char(input_state, pos)
       if (ch >= 'a' .and. ch <= 'z') then
-        input_state%buffer_ref%data(pos:pos) = char(ichar(ch) - 32)
+        call state_buffer_set_char(input_state, pos, char(ichar(ch) - 32))
       end if
-#else
-    do while (pos <= input_state%length .and. &
-              input_state%buffer(pos:pos) /= ' ')
-      ch = input_state%buffer(pos:pos)
-      if (ch >= 'a' .and. ch <= 'z') then
-        input_state%buffer(pos:pos) = char(ichar(ch) - 32)
-      end if
-#endif
       pos = pos + 1
     end do
 
@@ -6045,32 +5824,18 @@ contains
     pos = input_state%cursor_pos + 1
 
     ! Skip any leading whitespace
-#ifdef USE_MEMORY_POOL
     do while (pos <= input_state%length .and. &
-              input_state%buffer_ref%data(pos:pos) == ' ')
-#else
-    do while (pos <= input_state%length .and. &
-              input_state%buffer(pos:pos) == ' ')
-#endif
+              state_buffer_get_char(input_state, pos) == ' ')
       pos = pos + 1
     end do
 
     ! Lowercase characters until end of word
-#ifdef USE_MEMORY_POOL
     do while (pos <= input_state%length .and. &
-              input_state%buffer_ref%data(pos:pos) /= ' ')
-      ch = input_state%buffer_ref%data(pos:pos)
+              state_buffer_get_char(input_state, pos) /= ' ')
+      ch = state_buffer_get_char(input_state, pos)
       if (ch >= 'A' .and. ch <= 'Z') then
-        input_state%buffer_ref%data(pos:pos) = char(ichar(ch) + 32)
+        call state_buffer_set_char(input_state, pos, char(ichar(ch) + 32))
       end if
-#else
-    do while (pos <= input_state%length .and. &
-              input_state%buffer(pos:pos) /= ' ')
-      ch = input_state%buffer(pos:pos)
-      if (ch >= 'A' .and. ch <= 'Z') then
-        input_state%buffer(pos:pos) = char(ichar(ch) + 32)
-      end if
-#endif
       pos = pos + 1
     end do
 
@@ -6091,54 +5856,30 @@ contains
     pos = input_state%cursor_pos + 1
 
     ! Skip any leading whitespace
-#ifdef USE_MEMORY_POOL
     do while (pos <= input_state%length .and. &
-              input_state%buffer_ref%data(pos:pos) == ' ')
-#else
-    do while (pos <= input_state%length .and. &
-              input_state%buffer(pos:pos) == ' ')
-#endif
+              state_buffer_get_char(input_state, pos) == ' ')
       pos = pos + 1
     end do
 
     first_char = .true.
 
     ! Capitalize first character, lowercase rest until end of word
-#ifdef USE_MEMORY_POOL
     do while (pos <= input_state%length .and. &
-              input_state%buffer_ref%data(pos:pos) /= ' ')
-      ch = input_state%buffer_ref%data(pos:pos)
+              state_buffer_get_char(input_state, pos) /= ' ')
+      ch = state_buffer_get_char(input_state, pos)
 
       if (first_char) then
         ! Uppercase first character
         if (ch >= 'a' .and. ch <= 'z') then
-          input_state%buffer_ref%data(pos:pos) = char(ichar(ch) - 32)
+          call state_buffer_set_char(input_state, pos, char(ichar(ch) - 32))
         end if
         first_char = .false.
       else
         ! Lowercase remaining characters
         if (ch >= 'A' .and. ch <= 'Z') then
-          input_state%buffer_ref%data(pos:pos) = char(ichar(ch) + 32)
+          call state_buffer_set_char(input_state, pos, char(ichar(ch) + 32))
         end if
       end if
-#else
-    do while (pos <= input_state%length .and. &
-              input_state%buffer(pos:pos) /= ' ')
-      ch = input_state%buffer(pos:pos)
-
-      if (first_char) then
-        ! Uppercase first character
-        if (ch >= 'a' .and. ch <= 'z') then
-          input_state%buffer(pos:pos) = char(ichar(ch) - 32)
-        end if
-        first_char = .false.
-      else
-        ! Lowercase remaining characters
-        if (ch >= 'A' .and. ch <= 'Z') then
-          input_state%buffer(pos:pos) = char(ichar(ch) + 32)
-        end if
-      end if
-#endif
 
       pos = pos + 1
     end do
@@ -6156,19 +5897,8 @@ contains
 
     cmd = 'cd ..'
 
-    ! Clear current buffer
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data = ''
-#else
-    call state_buffer_clear(input_state)
-#endif
-
-    ! Insert "cd .."
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data(1:5) = cmd
-#else
-    input_state%buffer(1:5) = cmd
-#endif
+    ! Clear current buffer and insert "cd .."
+    call state_buffer_set(input_state, cmd)
     input_state%length = 5
     input_state%cursor_pos = 5
 
@@ -6194,19 +5924,8 @@ contains
 
     cmd = 'prevd'
 
-    ! Clear current buffer
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data = ''
-#else
-    call state_buffer_clear(input_state)
-#endif
-
-    ! Insert "prevd"
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data(1:5) = cmd
-#else
-    input_state%buffer(1:5) = cmd
-#endif
+    ! Clear current buffer and insert "prevd"
+    call state_buffer_set(input_state, cmd)
     input_state%length = 5
     input_state%cursor_pos = 5
 
@@ -6232,19 +5951,8 @@ contains
 
     cmd = 'nextd'
 
-    ! Clear current buffer
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data = ''
-#else
-    call state_buffer_clear(input_state)
-#endif
-
-    ! Insert "nextd"
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data(1:5) = cmd
-#else
-    input_state%buffer(1:5) = cmd
-#endif
+    ! Clear current buffer and insert "nextd"
+    call state_buffer_set(input_state, cmd)
     input_state%length = 5
     input_state%cursor_pos = 5
 
@@ -6277,21 +5985,13 @@ contains
     ! Shift existing text right to make room
     do i = input_state%length, input_state%cursor_pos + 1, -1
       if (i + insert_len <= MAX_LINE_LEN) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data(i + insert_len:i + insert_len) = input_state%buffer_ref%data(i:i)
-#else
-        input_state%buffer(i + insert_len:i + insert_len) = input_state%buffer(i:i)
-#endif
+        call state_buffer_set_char(input_state, i + insert_len, state_buffer_get_char(input_state, i))
       end if
     end do
 
     ! Insert string at cursor position
     do i = 1, insert_len
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data(input_state%cursor_pos + i:input_state%cursor_pos + i) = str(i:i)
-#else
-      input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = str(i:i)
-#endif
+      call state_buffer_set_char(input_state, input_state%cursor_pos + i, str(i:i))
     end do
 
     ! Update length and cursor position
@@ -6506,11 +6206,7 @@ contains
         end if
       else
         ! Empty search - clear buffer
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data = ''
-#else
         call state_buffer_clear(input_state)
-#endif
         input_state%length = 0
         input_state%cursor_pos = 0
         input_state%search_match_index = 0
@@ -6573,6 +6269,7 @@ contains
     character(len=*), intent(in) :: prompt
     character(len=512) :: search_prompt
     character(len=32) :: direction_str
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Determine search direction string
     if (input_state%search_forward) then
@@ -6593,11 +6290,8 @@ contains
     write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
     write(output_unit, '(a)', advance='no') trim(search_prompt)
     if (input_state%length > 0) then
-#ifdef USE_MEMORY_POOL
-      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
-#else
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
-#endif
+      call state_buffer_get(input_state, temp_buf)
+      write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
     end if
     flush(output_unit)
   end subroutine
@@ -6612,16 +6306,8 @@ contains
 
     ! Simplified: yank entire line (yy behavior)
     if (input_state%length > 0) then
-#ifdef USE_C_STRINGS
-      call c_string_to_fortran(input_state%buffer_c, input_state%vi_yank_buffer)
+      call state_buffer_get(input_state, input_state%vi_yank_buffer)
       input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
-#else
-#ifdef USE_MEMORY_POOL
-      input_state%vi_yank_buffer = input_state%buffer_ref%data(:input_state%length)
-#else
-      input_state%vi_yank_buffer = input_state%buffer(:input_state%length)
-#endif
-#endif
       input_state%vi_yank_length = input_state%length
     else
 #ifdef USE_MEMORY_POOL
@@ -6749,6 +6435,7 @@ contains
     logical, intent(in) :: forward
     integer :: i, match_pos
     logical :: found
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     if (input_state%vi_search_length == 0) return
 
@@ -6759,13 +6446,9 @@ contains
       ! Search in same direction as original
       if (input_state%vi_search_forward) then
         ! Search forward from current position
-#ifdef USE_MEMORY_POOL
-        match_pos = index(input_state%buffer_ref%data(input_state%cursor_pos+2:input_state%length), &
-                         input_state%vi_search_pattern_ref%data(:input_state%vi_search_length))
-#else
-        match_pos = index(input_state%buffer(input_state%cursor_pos+2:input_state%length), &
+        call state_buffer_get(input_state, temp_buf)
+        match_pos = index(temp_buf(input_state%cursor_pos+2:input_state%length), &
                          input_state%vi_search_pattern(:input_state%vi_search_length))
-#endif
         if (match_pos > 0) then
           input_state%cursor_pos = input_state%cursor_pos + 1 + match_pos
           found = .true.
@@ -6773,14 +6456,10 @@ contains
       else
         ! Search backward from current position
         ! Simplified: search from beginning to current position
+        call state_buffer_get(input_state, temp_buf)
         do i = input_state%cursor_pos - 1, 1, -1
-#ifdef USE_MEMORY_POOL
-          match_pos = index(input_state%buffer_ref%data(i:input_state%cursor_pos-1), &
-                           input_state%vi_search_pattern_ref%data(:input_state%vi_search_length))
-#else
-          match_pos = index(input_state%buffer(i:input_state%cursor_pos-1), &
+          match_pos = index(temp_buf(i:input_state%cursor_pos-1), &
                            input_state%vi_search_pattern(:input_state%vi_search_length))
-#endif
           if (match_pos > 0) then
             input_state%cursor_pos = i + match_pos - 1
             found = .true.
@@ -6792,14 +6471,10 @@ contains
       ! Search in opposite direction
       if (input_state%vi_search_forward) then
         ! Original was forward, now search backward
+        call state_buffer_get(input_state, temp_buf)
         do i = input_state%cursor_pos - 1, 1, -1
-#ifdef USE_MEMORY_POOL
-          match_pos = index(input_state%buffer_ref%data(i:input_state%cursor_pos-1), &
-                           input_state%vi_search_pattern_ref%data(:input_state%vi_search_length))
-#else
-          match_pos = index(input_state%buffer(i:input_state%cursor_pos-1), &
+          match_pos = index(temp_buf(i:input_state%cursor_pos-1), &
                            input_state%vi_search_pattern(:input_state%vi_search_length))
-#endif
           if (match_pos > 0) then
             input_state%cursor_pos = i + match_pos - 1
             found = .true.
@@ -6808,13 +6483,9 @@ contains
         end do
       else
         ! Original was backward, now search forward
-#ifdef USE_MEMORY_POOL
-        match_pos = index(input_state%buffer_ref%data(input_state%cursor_pos+2:input_state%length), &
-                         input_state%vi_search_pattern_ref%data(:input_state%vi_search_length))
-#else
-        match_pos = index(input_state%buffer(input_state%cursor_pos+2:input_state%length), &
+        call state_buffer_get(input_state, temp_buf)
+        match_pos = index(temp_buf(input_state%cursor_pos+2:input_state%length), &
                          input_state%vi_search_pattern(:input_state%vi_search_length))
-#endif
         if (match_pos > 0) then
           input_state%cursor_pos = input_state%cursor_pos + 1 + match_pos
           found = .true.
@@ -6837,6 +6508,7 @@ contains
     character(len=:), allocatable :: word_before_cursor  ! Heap allocation to avoid stack overflow
     character(len=:), allocatable :: expanded_form
     integer :: word_start, word_end, i, expanded_len
+    character(len=MAX_LINE_LEN) :: temp_buf
 
 
     ! Allocate buffer on heap
@@ -6848,11 +6520,7 @@ contains
 
     ! Find start of word (go backwards until space or beginning)
     do while (word_start > 0)
-#ifdef USE_MEMORY_POOL
-      if (input_state%buffer_ref%data(word_start:word_start) == ' ') then
-#else
-      if (input_state%buffer(word_start:word_start) == ' ') then
-#endif
+      if (state_buffer_get_char(input_state, word_start) == ' ') then
         word_start = word_start + 1
         exit
       end if
@@ -6863,11 +6531,8 @@ contains
 
     ! Extract the word
     if (word_end > word_start) then
-#ifdef USE_MEMORY_POOL
-      word_before_cursor = input_state%buffer_ref%data(word_start:word_end)
-#else
-      word_before_cursor = input_state%buffer(word_start:word_end)
-#endif
+      call state_buffer_get(input_state, temp_buf)
+      word_before_cursor = temp_buf(word_start:word_end)
     else
       if (allocated(word_before_cursor)) deallocate(word_before_cursor)
       return  ! No word to expand
@@ -6885,13 +6550,7 @@ contains
 
     ! First, remove the original word by shifting left
     do i = word_end + 1, input_state%length
-#ifdef USE_MEMORY_POOL
-      input_state%buffer_ref%data(word_start + i - word_end - 1:word_start + i - word_end - 1) = &
-        input_state%buffer_ref%data(i:i)
-#else
-      input_state%buffer(word_start + i - word_end - 1:word_start + i - word_end - 1) = &
-        input_state%buffer(i:i)
-#endif
+      call state_buffer_set_char(input_state, word_start + i - word_end - 1, state_buffer_get_char(input_state, i))
     end do
     input_state%length = input_state%length - (word_end - word_start + 1)
     input_state%cursor_pos = word_start - 1
@@ -6900,24 +6559,14 @@ contains
     ! Make room for expanded text
     do i = input_state%length, input_state%cursor_pos + 1, -1
       if (i + expanded_len <= MAX_LINE_LEN) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data(i + expanded_len:i + expanded_len) = input_state%buffer_ref%data(i:i)
-#else
-        input_state%buffer(i + expanded_len:i + expanded_len) = input_state%buffer(i:i)
-#endif
+        call state_buffer_set_char(input_state, i + expanded_len, state_buffer_get_char(input_state, i))
       end if
     end do
 
     ! Insert expanded text
     do i = 1, expanded_len
       if (input_state%cursor_pos + i <= MAX_LINE_LEN) then
-#ifdef USE_MEMORY_POOL
-        input_state%buffer_ref%data(input_state%cursor_pos + i:input_state%cursor_pos + i) = &
-          expanded_form(i:i)
-#else
-        input_state%buffer(input_state%cursor_pos + i:input_state%cursor_pos + i) = &
-          expanded_form(i:i)
-#endif
+        call state_buffer_set_char(input_state, input_state%cursor_pos + i, expanded_form(i:i))
       end if
     end do
 
@@ -7046,11 +6695,7 @@ contains
     ! Get current input - copy character-by-character (avoid substring on allocatable)
     current_input = ''
     do j = 1, input_state%length
-#ifdef USE_MEMORY_POOL
-      current_input(j:j) = input_state%buffer_ref%data(j:j)
-#else
-      current_input(j:j) = input_state%buffer(j:j)
-#endif
+      current_input(j:j) = state_buffer_get_char(input_state, j)
     end do
 
     ! Check if user is currently typing a path (last word looks like a path)
@@ -7138,7 +6783,7 @@ contains
   ! Accept the current autosuggestion
   subroutine accept_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, new_length
+    integer :: i, j, new_length
 
     if (input_state%suggestion_length == 0) return
 
@@ -7150,14 +6795,10 @@ contains
       new_length = input_state%length + input_state%suggestion_length
     end if
 
-    ! Append suggestion to buffer using substring assignment (safer and more efficient)
-#ifdef USE_MEMORY_POOL
-    input_state%buffer_ref%data(input_state%length+1:new_length) = &
-      input_state%suggestion(1:input_state%suggestion_length)
-#else
-    input_state%buffer(input_state%length+1:new_length) = &
-      input_state%suggestion(1:input_state%suggestion_length)
-#endif
+    ! Append suggestion to buffer using character-by-character assignment
+    do j = 1, input_state%suggestion_length
+      call state_buffer_set_char(input_state, input_state%length + j, input_state%suggestion(j:j))
+    end do
 
     input_state%length = new_length
     input_state%cursor_pos = input_state%length
@@ -7272,6 +6913,7 @@ contains
     character(len=1024) :: line, combined_selection
     logical :: first_line
     integer :: i, moves
+    character(len=MAX_LINE_LEN) :: temp_buf
 
 
     ! Check if fzf is installed
@@ -7370,11 +7012,8 @@ contains
 
     ! Redraw current line
     if (input_state%length > 0) then
-#ifdef USE_MEMORY_POOL
-      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
-#else
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
-#endif
+      call state_buffer_get(input_state, temp_buf)
+      write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
       ! Move cursor to correct position (if not at end)
       if (input_state%cursor_pos < input_state%length) then
         ! Move cursor back from end to cursor position using ANSI escape codes
@@ -7397,6 +7036,7 @@ contains
     character(len=1024) :: fzf_cmd, selected_cmd, history_file
     integer :: unit, iostat, exit_status
     logical :: file_exists
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Check if fzf is installed
     call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
@@ -7467,11 +7107,8 @@ contains
 
     ! Redraw current line
     if (input_state%length > 0) then
-#ifdef USE_MEMORY_POOL
-      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
-#else
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
-#endif
+      call state_buffer_get(input_state, temp_buf)
+      write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
     end if
     flush(output_unit)
 
@@ -7483,6 +7120,7 @@ contains
     character(len=1024) :: fzf_cmd, selected_dir
     integer :: unit, iostat, exit_status
     logical :: file_exists
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Check if fzf is installed
     call safe_execute_command('command -v fzf >/dev/null 2>&1', exitstat=exit_status)
@@ -7546,11 +7184,8 @@ contains
     write(output_unit, '(a)', advance='no') char(27) // '[H'
     write(output_unit, '(a)', advance='no') trim(input_state%menu_prompt)
     if (input_state%length > 0) then
-#ifdef USE_MEMORY_POOL
-      write(output_unit, '(a)', advance='no') input_state%buffer_ref%data(:input_state%length)
-#else
-      write(output_unit, '(a)', advance='no') input_state%buffer(:input_state%length)
-#endif
+      call state_buffer_get(input_state, temp_buf)
+      write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
     end if
     flush(output_unit)
 
