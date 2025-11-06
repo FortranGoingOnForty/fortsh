@@ -188,15 +188,15 @@ contains
     end if
     
     command_name = cmd%tokens(arg_index)
-    
+
     if (verbose_flag) then
       call identify_command_type(shell, command_name, .false., path_flag, .false., .false.)
+      ! Don't overwrite exit status set by identify_command_type
     else
       ! Execute the command (simplified - would need full execution logic)
       write(output_unit, '(a,a)') 'command: would execute ', trim(command_name)
+      shell%last_exit_status = 0
     end if
-    
-    shell%last_exit_status = 0
   end subroutine
 
   subroutine identify_command_type(shell, command_name, all_flag, path_flag, type_flag, function_flag)
@@ -415,9 +415,16 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_name
     logical :: is_function
-    
-    ! Simplified - in real implementation would check function table
+    integer :: i
+
     is_function = .false.
+    do i = 1, shell%num_functions
+      if (trim(shell%functions(i)%name) == trim(command_name) .and. &
+          len_trim(shell%functions(i)%name) > 0) then
+        is_function = .true.
+        return
+      end if
+    end do
   end function
 
   function is_shell_alias(shell, command_name) result(is_alias)
