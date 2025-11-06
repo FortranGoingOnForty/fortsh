@@ -1868,6 +1868,7 @@ contains
     do i = shell%control_depth, 1, -1
       if (shell%control_stack(i)%block_type == BLOCK_FOR .or. &
           shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
+          shell%control_stack(i)%block_type == BLOCK_UNTIL .or. &
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
         shell%control_stack(i)%break_requested = .true.
         shell%control_stack(i)%break_level = break_count
@@ -1908,6 +1909,7 @@ contains
     do i = shell%control_depth, 1, -1
       if (shell%control_stack(i)%block_type == BLOCK_FOR .or. &
           shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
+          shell%control_stack(i)%block_type == BLOCK_UNTIL .or. &
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
         shell%control_stack(i)%continue_requested = .true.
         shell%control_stack(i)%continue_level = continue_count
