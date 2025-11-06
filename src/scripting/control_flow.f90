@@ -776,6 +776,24 @@ contains
     ! Stop capturing loop body
     shell%control_stack(shell%control_depth)%capturing_loop_body = .false.
 
+    ! Check if break or continue was requested (for multi-level propagation)
+    if (shell%control_stack(shell%control_depth)%break_requested) then
+      ! Break requested - exit the loop
+      shell%control_stack(shell%control_depth)%break_requested = .false.
+      shell%control_stack(shell%control_depth)%break_level = 0
+      ! Pop the control stack
+      shell%control_depth = shell%control_depth - 1
+      shell%last_exit_status = 0
+      return
+    end if
+
+    if (shell%control_stack(shell%control_depth)%continue_requested) then
+      ! Continue requested - skip to next iteration
+      shell%control_stack(shell%control_depth)%continue_requested = .false.
+      shell%control_stack(shell%control_depth)%continue_level = 0
+      ! Don't return - fall through to iteration logic
+    end if
+
     ! Handle for loop iteration
     if (shell%control_stack(shell%control_depth)%block_type == BLOCK_FOR) then
       ! Increment to next iteration value

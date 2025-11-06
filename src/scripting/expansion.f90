@@ -866,6 +866,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=32) :: result_value
     character(len=512) :: expr
+    character(len=:), allocatable :: expanded_expr
     integer(kind=8) :: result_int
 
     result_value = '0'
@@ -874,8 +875,12 @@ contains
     if (len_trim(expression) < 6) return
     expr = adjustl(expression(4:len_trim(expression)-2))
 
-    ! Evaluate with shell context for variable resolution
-    result_int = eval_expression_shell(trim(expr), shell)
+    ! Expand ALL parameter expansions ($var, $1, $(cmd), etc.) before evaluation
+    ! This handles variables, positional parameters, and command substitutions
+    call enhanced_expand_variables(expr, expanded_expr, shell)
+
+    ! Evaluate with shell context for any remaining variable resolution
+    result_int = eval_expression_shell(trim(expanded_expr), shell)
     write(result_value, '(I0)') result_int
   end function
 
@@ -1993,16 +1998,17 @@ contains
         start_pos = i
         bracket_count = 2
         i = i + 3
-        
+
         do while (i <= len_trim(input) .and. bracket_count > 0)
           if (input(i:i) == '(') bracket_count = bracket_count + 1
           if (input(i:i) == ')') bracket_count = bracket_count - 1
           i = i + 1
         end do
-        
+
         if (bracket_count == 0) then
           var_expr = input(start_pos:i-1)
-          var_value = arithmetic_expansion(var_expr)
+          ! Use shell-aware version to handle command substitutions inside arithmetic
+          var_value = arithmetic_expansion_shell(var_expr, shell)
           result = trim(result) // trim(var_value)
         end if
 
@@ -2023,7 +2029,7 @@ contains
         if (bracket_count == 0) then
           ! Extract command from $( ... )
           var_expr = input(start_pos+2:i-2)  ! Skip $( and )
-          call execute_command_and_capture(trim(var_expr), var_value)
+          call execute_command_and_capture(shell, trim(var_expr), var_value)
           result = trim(result) // trim(var_value)
         end if
 
