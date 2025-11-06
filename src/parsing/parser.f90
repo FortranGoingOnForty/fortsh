@@ -21,7 +21,7 @@ contains
 
     character(len=len(input)) :: working_input, proc_subst_input
     integer :: pos, start, cmd_count
-    integer :: i, comment_pos
+    integer :: i, comment_pos, newline_pos
     type(command_t), allocatable :: temp_commands(:)
     logical :: background, in_quotes, in_param_expansion, in_for_arith, after_case_in
     character(len=1) :: quote_char
@@ -71,8 +71,16 @@ contains
             ! This is $#, not a comment
             cycle
           end if
-          ! Found comment, truncate here
-          working_input = working_input(:i-1)
+          ! Found comment - remove from # to end of line (but keep newline and rest)
+          ! Find the next newline
+          newline_pos = index(working_input(i:), char(10))
+          if (newline_pos > 0) then
+            ! There's a newline - remove comment but keep newline and everything after
+            working_input = working_input(:i-1) // working_input(i+newline_pos-1:)
+          else
+            ! No newline - truncate to end
+            working_input = working_input(:i-1)
+          end if
           exit
         end if
       end if
@@ -276,7 +284,13 @@ contains
         else if (working_input(i:i) == ';') then
           ! Check for ;; (double semicolon) which is used in case statements
           if (i < len_trim(working_input) .and. working_input(i+1:i+1) == ';') then
-            ! This is ;; - always split on it (even inside case statements)
+            ! This is ;; - only valid inside case statements
+            if (case_depth == 0) then
+              ! Syntax error: ;; outside case statement
+              call parser_error(102, 'Syntax error: ";;" is only valid in case statements', 'parse_pipeline')
+              pipeline%num_commands = 0
+              return
+            end if
             cmd_count = cmd_count + 1
             if (cmd_count <= MAX_PIPELINE) then
               call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
@@ -289,6 +303,12 @@ contains
           else if (in_for_arith .or. brace_depth > 0 .or. paren_depth > 0 .or. case_depth > 0) then
             ! Skip - we're inside for (( ... )), function { ... }, subshell ( ... ), or case...esac
           else
+            ! Check if semicolon is at the start (syntax error)
+            if (i == start) then
+              call parser_error(103, 'Syntax error: unexpected ";"', 'parse_pipeline')
+              pipeline%num_commands = 0
+              return
+            end if
             cmd_count = cmd_count + 1
             if (cmd_count <= MAX_PIPELINE) then
               call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
@@ -1122,6 +1142,36 @@ contains
     end if
   end function
 
+  ! Helper function to strip ALL quotes from a token (for adjacent quotes like "a"b"c")
+  function strip_all_quotes(token) result(stripped)
+    character(len=*), intent(in) :: token
+    character(len=len(token)) :: stripped
+    integer :: i, j, token_len
+    logical :: in_single_quote, in_double_quote
+
+    stripped = ''
+    j = 1
+    token_len = len_trim(token)
+    in_single_quote = .false.
+    in_double_quote = .false.
+
+    do i = 1, token_len
+      if (token(i:i) == "'" .and. .not. in_double_quote) then
+        ! Toggle single quote mode
+        in_single_quote = .not. in_single_quote
+        ! Don't include the quote character itself
+      else if (token(i:i) == '"' .and. .not. in_single_quote) then
+        ! Toggle double quote mode
+        in_double_quote = .not. in_double_quote
+        ! Don't include the quote character itself
+      else
+        ! Regular character - include it
+        stripped(j:j) = token(i:i)
+        j = j + 1
+      end if
+    end do
+  end function
+
   ! Helper function to process backslash escape sequences outside quotes
   function process_escapes(token) result(processed)
     character(len=*), intent(in) :: token
@@ -1452,8 +1502,8 @@ contains
       end if
     end do
 
-    ! Strip outer quotes from result if the original token was quoted
-    expanded = strip_outer_quotes(trim(result))
+    ! Strip all quotes from result to handle adjacent quotes like "a"b"c"
+    expanded = strip_all_quotes(trim(result))
 
   contains
     
