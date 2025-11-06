@@ -357,14 +357,16 @@ contains
 
   subroutine process_for_statement(cmd, shell, should_execute)
     use substitution, only: expand_braces
+    use glob, only: glob_match, has_unescaped_glob_chars
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
 
     character(len=256) :: var_name, list_part
     character(len=256) :: expanded_items(100)
+    character(len=256) :: glob_matches(100)
     character(len=256) :: final_items(100)
-    integer :: expanded_count, final_count, start_pos, end_pos
+    integer :: expanded_count, final_count, glob_count, start_pos, end_pos
     integer :: in_pos, i, j, k, word_start, word_end
 
     should_execute = .false.  ! Don't execute the for command itself
@@ -377,60 +379,81 @@ contains
       end if
     end if
 
-    ! Parse: for var in word1 word2 word3
-    if (cmd%num_tokens < 4 .or. trim(cmd%tokens(3)) /= 'in') then
-      write(error_unit, '(a)') 'for: syntax error, expected "for var in list"'
+    ! Parse: for var in [word1 word2 word3]
+    ! Note: Empty list is allowed (e.g., "for x in; do")
+    if (cmd%num_tokens < 3 .or. trim(cmd%tokens(3)) /= 'in') then
+      write(error_unit, '(a)') 'for: syntax error, expected "for var in [list]"'
       shell%last_exit_status = 1
       return
     end if
 
     var_name = trim(cmd%tokens(2))
 
-    ! Build the list from remaining tokens
-    list_part = ''
-    do i = 4, cmd%num_tokens
-      if (len_trim(list_part) > 0) then
-        list_part = trim(list_part) // ' ' // trim(cmd%tokens(i))
-      else
-        list_part = trim(cmd%tokens(i))
-      end if
-    end do
-
-    ! Expand braces before parsing values (e.g., {1..5} -> 1 2 3 4 5)
-    call expand_braces(list_part, expanded_items, expanded_count)
-
-    ! Now split each expanded item on spaces to get final list
-    ! (expand_braces doesn't split on spaces, so "a b c" is one item)
-    final_count = 0
-
-    do i = 1, expanded_count
-      ! Split this expanded item on spaces
-      start_pos = 1
-      do while (start_pos <= len_trim(expanded_items(i)) .and. final_count < 100)
-        ! Skip leading spaces
-        do while (start_pos <= len_trim(expanded_items(i)) .and. expanded_items(i)(start_pos:start_pos) == ' ')
-          start_pos = start_pos + 1
-        end do
-
-        if (start_pos > len_trim(expanded_items(i))) exit
-
-        ! Find end of current word
-        end_pos = start_pos
-        do while (end_pos <= len_trim(expanded_items(i)) .and. expanded_items(i)(end_pos:end_pos) /= ' ')
-          end_pos = end_pos + 1
-        end do
-
-        final_count = final_count + 1
-        final_items(final_count) = expanded_items(i)(start_pos:end_pos-1)
-        start_pos = end_pos + 1
+    ! If there are no items after "in", that's valid - just an empty loop
+    if (cmd%num_tokens < 4) then
+      final_count = 0
+    else
+      ! Process each token as a separate item (they're already tokenized correctly)
+      ! Expand braces and globs as needed
+      final_count = 0
+      do i = 4, cmd%num_tokens
+        ! Check if this token needs brace expansion
+        if (index(cmd%tokens(i), '{') > 0 .and. index(cmd%tokens(i), '}') > 0) then
+          ! Expand braces for this token (e.g., {1..5} -> 1 2 3 4 5)
+          call expand_braces(trim(cmd%tokens(i)), expanded_items, expanded_count)
+          ! Add all expanded items to final list
+          do j = 1, expanded_count
+            if (final_count < 100) then
+              final_count = final_count + 1
+              final_items(final_count) = trim(expanded_items(j))
+            end if
+          end do
+        ! Check if this token needs glob expansion
+        else if (has_unescaped_glob_chars(trim(cmd%tokens(i)))) then
+          ! Expand glob pattern (e.g., *.txt -> file1.txt file2.txt)
+          call glob_match(trim(cmd%tokens(i)), glob_matches, glob_count)
+          if (glob_count > 0) then
+            ! Add all matched files to final list
+            do j = 1, glob_count
+              if (final_count < 100) then
+                final_count = final_count + 1
+                final_items(final_count) = trim(glob_matches(j))
+              end if
+            end do
+          else
+            ! No matches - use pattern literally (POSIX behavior)
+            if (final_count < 100) then
+              final_count = final_count + 1
+              final_items(final_count) = trim(cmd%tokens(i))
+            end if
+          end if
+        else
+          ! No expansion needed - use token as-is (preserves quoted strings)
+          if (final_count < 100) then
+            final_count = final_count + 1
+            final_items(final_count) = trim(cmd%tokens(i))
+          end if
+        end if
       end do
-    end do
+    end if
 
     ! Push for block onto control stack with final split items
     if (shell%control_depth < MAX_CONTROL_DEPTH) then
       shell%control_depth = shell%control_depth + 1
       shell%control_stack(shell%control_depth)%block_type = BLOCK_FOR
       shell%control_stack(shell%control_depth)%loop_variable = var_name
+
+      ! Build list_part from final_items for storage (mainly for debugging)
+      list_part = ''
+      if (final_count > 0) then
+        do i = 1, final_count
+          if (len_trim(list_part) > 0) then
+            list_part = trim(list_part) // ' ' // trim(final_items(i))
+          else
+            list_part = trim(final_items(i))
+          end if
+        end do
+      end if
       shell%control_stack(shell%control_depth)%for_list = list_part
 
       ! Use final split items
