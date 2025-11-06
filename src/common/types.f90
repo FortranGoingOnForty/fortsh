@@ -59,6 +59,40 @@ module shell_types
     logical :: close_fd = .false. ! for n>&- syntax
   end type redirection_t
 
+  ! =====================================
+  ! Token types for new grammar-aware parser
+  ! =====================================
+  integer, parameter :: TOKEN_WORD = 1
+  integer, parameter :: TOKEN_KEYWORD = 2
+  integer, parameter :: TOKEN_OPERATOR = 3
+  integer, parameter :: TOKEN_REDIRECT = 4
+  integer, parameter :: TOKEN_ASSIGN = 5
+  integer, parameter :: TOKEN_EOF = 6
+  integer, parameter :: TOKEN_NEWLINE = 7
+
+  type :: token_t
+    integer :: token_type           ! TOKEN_* constant
+    character(len=MAX_TOKEN_LEN) :: value
+    integer :: start_pos
+    integer :: end_pos
+    logical :: quoted
+  end type token_t
+
+  ! =====================================
+  ! Command node types for grammar parser
+  ! =====================================
+  integer, parameter :: CMD_SIMPLE = 1
+  integer, parameter :: CMD_PIPELINE = 2
+  integer, parameter :: CMD_LIST = 3
+  integer, parameter :: CMD_FOR_LOOP = 4
+  integer, parameter :: CMD_WHILE_LOOP = 5
+  integer, parameter :: CMD_UNTIL_LOOP = 6
+  integer, parameter :: CMD_IF_STATEMENT = 7
+  integer, parameter :: CMD_CASE_STATEMENT = 8
+  integer, parameter :: CMD_SUBSHELL = 9
+  integer, parameter :: CMD_BRACE_GROUP = 10
+  integer, parameter :: CMD_FUNCTION_DEF = 11
+
   type :: command_t
     character(len=:), allocatable :: tokens(:)
     integer :: num_tokens = 0
@@ -248,6 +282,8 @@ module shell_types
     logical :: option_pipefail = .false.       ! set -o pipefail
     logical :: option_verbose = .false.        ! set -v (verbose)
     logical :: option_xtrace = .false.         ! set -x (trace execution)
+    ! Parser selection (experimental feature)
+    logical :: use_new_parser = .false.        ! Use grammar-aware parser (FORTSH_USE_NEW_PARSER=1)
     logical :: option_noclobber = .false.      ! set -C (no clobber)
     logical :: option_monitor = .false.        ! set -m (job control)
     logical :: option_allexport = .false.      ! set -a (auto export)
