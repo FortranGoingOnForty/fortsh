@@ -99,6 +99,8 @@ program fortran_shell
 
   ! Execute command string if -c was specified
   if (execute_command_string) then
+    ! Handle line continuation (backslash-newline)
+    command_string = remove_line_continuations(command_string)
     call process_substitutions(shell, trim(command_string), proc_subst_line)
     call parse_pipeline(proc_subst_line, pipeline)
 
@@ -330,6 +332,33 @@ program fortran_shell
   call c_exit(shell%last_exit_status)
 
 contains
+
+  ! Remove backslash-newline line continuations from input
+  function remove_line_continuations(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=len(input)) :: output
+    integer :: i, j
+
+    output = ''
+    i = 1
+    j = 1
+
+    do while (i <= len_trim(input))
+      ! Check for backslash followed by newline
+      if (i < len_trim(input) .and. input(i:i) == char(92)) then  ! char(92) is backslash
+        if (input(i+1:i+1) == char(10)) then  ! char(10) is newline
+          ! Skip both the backslash and newline
+          i = i + 2
+          cycle
+        end if
+      end if
+
+      ! Copy character to output
+      output(j:j) = input(i:i)
+      i = i + 1
+      j = j + 1
+    end do
+  end function
 
   subroutine run_logout_scripts(shell)
     type(shell_state_t), intent(inout) :: shell

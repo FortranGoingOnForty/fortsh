@@ -463,6 +463,13 @@ contains
         end if
 
         call process_control_flow(cmd, shell, should_execute)
+
+        ! If we just processed a 'done' keyword, execute the loop body immediately
+        ! This ensures loops execute inline, not deferred until after the pipeline
+        if (trim(cmd%tokens(1)) == 'done') then
+          call replay_loop_if_needed(shell)
+        end if
+
         if (.not. should_execute) return
       else
         ! For regular commands, check if we should execute based on control flow state
@@ -1487,10 +1494,12 @@ contains
           if (pipeline%num_commands > 0) then
             call execute_pipeline(pipeline, shell, expanded_line)
 
-            ! Check if we need to replay loop body (only if NOT currently capturing)
-            if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-              call replay_loop_if_needed(shell)
-            end if
+            ! NOTE: Loop replay now happens inline when 'done' is processed (see line ~470)
+            ! Deferred replay is no longer needed for normal loop execution
+            ! This fallback might still be needed for edge cases, so leaving it commented:
+            ! if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+            !   call replay_loop_if_needed(shell)
+            ! end if
           end if
 
           ! Clean up
@@ -1578,7 +1587,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     type(pipeline_t) :: pipeline, done_pipeline
     type(command_t) :: done_cmd
-    integer :: i, iteration_count
+    integer :: i, iteration_count, loop_depth
     logical :: should_execute
     character(len=4) :: done_str
 
@@ -1586,11 +1595,14 @@ contains
     if (shell%control_depth == 0) return
     if (shell%control_stack(shell%control_depth)%loop_body_count == 0) return
 
+    ! Save the loop's control depth - this won't change even if nested control structures are executed
+    loop_depth = shell%control_depth
     iteration_count = 0
     done_str = 'done'
 
     ! Keep replaying until loop condition is false
-    do while (shell%control_depth > 0 .and. shell%control_stack(shell%control_depth)%loop_body_count > 0)
+    ! Use loop_depth instead of shell%control_depth since depth can change during loop body execution
+    do while (shell%control_depth >= loop_depth .and. shell%control_stack(loop_depth)%loop_body_count > 0)
       iteration_count = iteration_count + 1
       if (iteration_count > 1000) then
         write(error_unit, '(a)') 'Loop limit reached (1000 iterations)'
@@ -1598,39 +1610,55 @@ contains
       end if
 
       ! Temporarily stop capturing to avoid re-capturing during replay
-      shell%control_stack(shell%control_depth)%capturing_loop_body = .false.
+      shell%control_stack(loop_depth)%capturing_loop_body = .false.
 
-      do i = 1, shell%control_stack(shell%control_depth)%loop_body_count
+      do i = 1, shell%control_stack(loop_depth)%loop_body_count
         ! Check if break was requested
-        if (shell%control_stack(shell%control_depth)%break_requested) then
-          ! Clear the break flag
-          shell%control_stack(shell%control_depth)%break_requested = .false.
-          shell%control_stack(shell%control_depth)%break_level = 0
+        if (shell%control_stack(loop_depth)%break_requested) then
+          if (shell%control_stack(loop_depth)%break_level > 1) then
+            ! Multi-level break: propagate to parent loop
+            if (loop_depth > 1) then
+              shell%control_stack(loop_depth - 1)%break_requested = .true.
+              shell%control_stack(loop_depth - 1)%break_level = &
+                shell%control_stack(loop_depth)%break_level - 1
+            end if
+          end if
+          ! Clear the break flag for this level
+          shell%control_stack(loop_depth)%break_requested = .false.
+          shell%control_stack(loop_depth)%break_level = 0
           ! Exit the loop immediately
-          shell%control_stack(shell%control_depth)%loop_body_count = 0  ! Signal loop end
+          shell%control_stack(loop_depth)%loop_body_count = 0  ! Signal loop end
           exit
         end if
 
         ! Check if continue was requested
-        if (shell%control_stack(shell%control_depth)%continue_requested) then
-          ! Clear the continue flag
-          shell%control_stack(shell%control_depth)%continue_requested = .false.
-          shell%control_stack(shell%control_depth)%continue_level = 0
+        if (shell%control_stack(loop_depth)%continue_requested) then
+          if (shell%control_stack(loop_depth)%continue_level > 1) then
+            ! Multi-level continue: propagate to parent loop
+            if (loop_depth > 1) then
+              shell%control_stack(loop_depth - 1)%continue_requested = .true.
+              shell%control_stack(loop_depth - 1)%continue_level = &
+                shell%control_stack(loop_depth)%continue_level - 1
+            end if
+          end if
+          ! Clear the continue flag for this level
+          shell%control_stack(loop_depth)%continue_requested = .false.
+          shell%control_stack(loop_depth)%continue_level = 0
           ! Skip the rest of the iteration
           exit
         end if
 
-        call parse_pipeline(shell%control_stack(shell%control_depth)%loop_body(i), pipeline)
+        call parse_pipeline(shell%control_stack(loop_depth)%loop_body(i), pipeline)
         if (pipeline%num_commands > 0) then
-          call execute_pipeline(pipeline, shell, shell%control_stack(shell%control_depth)%loop_body(i))
+          call execute_pipeline(pipeline, shell, shell%control_stack(loop_depth)%loop_body(i))
         end if
       end do
 
       ! Re-enable capturing for next iteration
-      shell%control_stack(shell%control_depth)%capturing_loop_body = .true.
+      shell%control_stack(loop_depth)%capturing_loop_body = .true.
 
       ! Check if loop_body_count is 0 (break was called)
-      if (shell%control_stack(shell%control_depth)%loop_body_count == 0) then
+      if (shell%control_stack(loop_depth)%loop_body_count == 0) then
         ! Break was called, exit the loop
         exit
       end if
@@ -1640,12 +1668,12 @@ contains
       if (done_pipeline%num_commands > 0) then
         done_cmd = done_pipeline%commands(1)
         call process_control_flow(done_cmd, shell, should_execute)
-        ! If control_depth decreased to 0, loop ended
-        if (shell%control_depth == 0) then
+        ! If control_depth decreased below loop_depth, loop ended
+        if (shell%control_depth < loop_depth) then
           exit
         end if
-        ! Also exit if loop_body_count became 0 (shouldn't happen but safety check)
-        if (shell%control_stack(shell%control_depth)%loop_body_count == 0) then
+        ! Also exit if loop_body_count became 0 (break was called)
+        if (shell%control_stack(loop_depth)%loop_body_count == 0) then
           exit
         end if
       else

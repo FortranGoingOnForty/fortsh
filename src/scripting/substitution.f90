@@ -6,7 +6,37 @@ module substitution
   use shell_types
   use system_interface
   use iso_fortran_env, only: output_unit, error_unit
+  use iso_c_binding
   implicit none
+
+  ! C function bindings for file descriptor manipulation
+  interface
+    function dup(fd) bind(c, name='dup')
+      import :: c_int
+      integer(c_int), value :: fd
+      integer(c_int) :: dup
+    end function
+
+    function dup2(oldfd, newfd) bind(c, name='dup2')
+      import :: c_int
+      integer(c_int), value :: oldfd, newfd
+      integer(c_int) :: dup2
+    end function
+
+    function close(fd) bind(c, name='close')
+      import :: c_int
+      integer(c_int), value :: fd
+      integer(c_int) :: close
+    end function
+
+    function c_fsync(fd) bind(c, name='fsync')
+      import :: c_int
+      integer(c_int), value :: fd
+      integer(c_int) :: c_fsync
+    end function
+  end interface
+
+  ! Note: c_pipe, c_read, c_open, c_unlink, and O_* constants are provided by system_interface
 
   ! Process substitution file descriptors
   type :: proc_subst_t
@@ -21,23 +51,23 @@ contains
 
   ! Enhanced command substitution with nested support
   function enhanced_command_substitution(shell, input) result(output)
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
     character(len=4096) :: output
-    
+
     character(len=4096) :: processed_input
     integer :: i, paren_count, start_pos
     character(len=2048) :: inner_cmd, inner_result
-    
+
     output = ''
     processed_input = input
-    
+
     ! Process nested command substitutions from inside out
     call process_nested_substitutions(shell, processed_input)
-    
-    ! Execute the final command
-    call execute_command_and_capture(processed_input, output)
-    
+
+    ! Execute the final command in the current shell context
+    call execute_command_and_capture(shell, processed_input, output)
+
     ! Remove trailing newlines
     do while (len_trim(output) > 0 .and. output(len_trim(output):len_trim(output)) == char(10))
       output = output(:len_trim(output)-1)
@@ -45,29 +75,29 @@ contains
   end function
 
   subroutine process_nested_substitutions(shell, cmd_str)
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(inout) :: cmd_str
-    
+
     character(len=len(cmd_str)) :: result
     integer :: i, start_pos, paren_count, subst_start, subst_end
     character(len=2048) :: inner_cmd, inner_result
     logical :: found_nested
-    
+
     found_nested = .true.
-    
+
     ! Keep processing until no more nested substitutions
     do while (found_nested)
       found_nested = .false.
       result = ''
       i = 1
-      
+
       do while (i <= len_trim(cmd_str))
         if (i < len_trim(cmd_str) - 1 .and. cmd_str(i:i+1) == '$(') then
           ! Found start of command substitution
           subst_start = i
           paren_count = 1
           i = i + 2
-          
+
           ! Find the matching closing parenthesis
           do while (i <= len_trim(cmd_str) .and. paren_count > 0)
             if (cmd_str(i:i) == '(') then
@@ -77,15 +107,15 @@ contains
             end if
             i = i + 1
           end do
-          
+
           if (paren_count == 0) then
             subst_end = i - 1
             inner_cmd = cmd_str(subst_start+2:subst_end-1)
-            
+
             ! Check if this inner command has nested substitutions
             if (index(inner_cmd, '$(') == 0) then
-              ! No more nesting - execute this command
-              call execute_command_and_capture(inner_cmd, inner_result)
+              ! No more nesting - execute this command in current shell context
+              call execute_command_and_capture(shell, inner_cmd, inner_result)
               result = trim(result) // trim(inner_result)
               found_nested = .true.
             else
@@ -106,72 +136,84 @@ contains
     end do
   end subroutine
 
-  subroutine execute_command_and_capture(command, output)
+  subroutine execute_command_and_capture(shell, command, output)
+    use parser, only: parse_pipeline
+    use executor, only: execute_pipeline
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command
     character(len=*), intent(out) :: output
 
-    integer :: unit, iostat, pos, exit_status
-    character(len=256) :: temp_file, line
-    character(len=2048) :: full_cmd
-    logical :: file_exists
+    type(pipeline_t) :: pipeline
+    integer(c_int), target :: pipefd(2)
+    integer(c_int) :: saved_stdout, ret
+    integer(c_size_t) :: bytes_read
+    character(kind=c_char), target :: buffer(4096)
+    integer :: i, pos
 
     output = ''
 
-    ! Create temporary file for output capture
-    temp_file = '/tmp/fortsh_subst_' // generate_temp_suffix()
-
-    ! Build command with output redirection to temp file
-    ! Redirect both stdout and stderr to allow capturing all output
-    full_cmd = 'sh -c ' // "'" // trim(command) // "' > " // trim(temp_file) // ' 2>&1'
-
-    ! Execute command using Fortran intrinsic
-    call execute_command_line(trim(full_cmd), exitstat=exit_status, cmdstat=iostat)
-
-    ! Check if temp file was created
-    inquire(file=trim(temp_file), exist=file_exists)
-    if (.not. file_exists) then
-      ! Command failed or produced no output
+    ! Parse the command
+    call parse_pipeline(command, pipeline)
+    if (pipeline%num_commands == 0) then
       return
     end if
 
-    ! Read captured output
-    open(newunit=unit, file=trim(temp_file), status='old', action='read', iostat=iostat)
-    if (iostat == 0) then
-      pos = 1
-      do
-        read(unit, '(A)', iostat=iostat) line
-        if (iostat /= 0) exit
+    ! Create a pipe
+    ret = c_pipe(c_loc(pipefd))
+    if (ret /= 0) then
+      if (allocated(pipeline%commands)) deallocate(pipeline%commands)
+      return
+    end if
+    ! pipefd(1) is read end, pipefd(2) is write end
 
-        ! Append line to output with newline
-        if (pos + len_trim(line) + 1 <= len(output)) then
-          if (len_trim(line) > 0) then
-            output(pos:pos+len_trim(line)-1) = trim(line)
-            pos = pos + len_trim(line)
-          end if
-          ! Add newline after each line (bash behavior)
-          if (pos <= len(output)) then
-            output(pos:pos) = char(10)
-            pos = pos + 1
-          end if
-        else
-          ! Output buffer full
-          exit
-        end if
-      end do
-      close(unit)
-
-      ! Remove trailing newline (bash removes the last newline)
-      do while (pos > 1 .and. output(pos-1:pos-1) == char(10))
-        output(pos-1:pos-1) = ' '
-        pos = pos - 1
-      end do
+    ! Save current stdout
+    saved_stdout = dup(int(1, c_int))
+    if (saved_stdout < 0) then
+      ret = close(pipefd(1))
+      ret = close(pipefd(2))
+      if (allocated(pipeline%commands)) deallocate(pipeline%commands)
+      return
     end if
 
-    ! Remove temporary file
-    open(newunit=unit, file=trim(temp_file), status='old', iostat=iostat)
-    if (iostat == 0) then
-      close(unit, status='delete')
-    end if
+    ! Redirect stdout to the write end of the pipe
+    ret = dup2(pipefd(2), int(1, c_int))
+    ret = close(pipefd(2))  ! Close write end in parent, stdout now points to it
+
+    ! Execute the command in the current shell context
+    call execute_pipeline(pipeline, shell, command)
+
+    ! Flush and restore stdout
+    ret = c_fsync(int(1, c_int))
+    ret = dup2(saved_stdout, int(1, c_int))
+    ret = close(saved_stdout)
+
+    ! Read from the read end of the pipe
+    pos = 1
+    do
+      bytes_read = c_read(pipefd(1), c_loc(buffer), int(4096, c_size_t))
+      if (bytes_read <= 0) exit
+
+      ! Copy to output
+      do i = 1, int(bytes_read)
+        if (pos > len(output)) exit
+        output(pos:pos) = buffer(i)
+        pos = pos + 1
+      end do
+
+      if (bytes_read < 4096) exit  ! End of data
+    end do
+
+    ! Close read end
+    ret = close(pipefd(1))
+
+    ! Remove trailing newlines (bash behavior)
+    do while (pos > 1 .and. output(pos-1:pos-1) == char(10))
+      output(pos-1:pos-1) = ' '
+      pos = pos - 1
+    end do
+
+    ! Clean up pipeline
+    if (allocated(pipeline%commands)) deallocate(pipeline%commands)
   end subroutine
 
   ! Process substitution: <(command) and >(command)

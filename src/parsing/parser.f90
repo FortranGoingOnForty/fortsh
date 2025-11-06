@@ -1750,13 +1750,19 @@ contains
   end function
 
   subroutine execute_command_substitution(command, output, shell)
+    use substitution, only: execute_command_and_capture
     character(len=*), intent(in) :: command
     character(len=:), allocatable, intent(out) :: output
-    type(shell_state_t), intent(in) :: shell
-    
-    ! Use the existing execute_and_capture function
-    output = execute_and_capture(command)
-    
+    type(shell_state_t), intent(inout) :: shell
+
+    character(len=4096) :: temp_output
+
+    ! Execute in current shell context to preserve functions, variables, etc.
+    call execute_command_and_capture(shell, command, temp_output)
+
+    ! Allocate and copy result
+    output = trim(temp_output)
+
     ! Remove trailing newline for single-line output (bash behavior)
     do while (len(output) > 0 .and. output(len(output):len(output)) == char(10))
       output = output(:len(output)-1)
