@@ -6,7 +6,6 @@ module parser
   use shell_types
   use system_interface
   use variables  ! includes check_nounset
-  use expansion
   use glob
   use error_handling
   use performance
@@ -1216,6 +1215,7 @@ contains
   end function
 
   subroutine expand_variables(token, expanded, shell)
+    use expansion, only: expand_braces, arithmetic_expansion_shell
     character(len=*), intent(in) :: token
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
@@ -1750,7 +1750,7 @@ contains
   end function
 
   subroutine execute_command_substitution(command, output, shell)
-    use substitution, only: execute_command_and_capture
+    use command_capture, only: execute_command_and_capture
     character(len=*), intent(in) :: command
     character(len=:), allocatable, intent(out) :: output
     type(shell_state_t), intent(inout) :: shell

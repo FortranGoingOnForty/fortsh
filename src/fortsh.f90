@@ -7,6 +7,7 @@ program fortran_shell
   use signal_handler
   use signal_handling
   use parser
+  use grammar_parser  ! New grammar-aware parser
   use executor
   use job_control
   use readline
@@ -102,7 +103,13 @@ program fortran_shell
     ! Handle line continuation (backslash-newline)
     command_string = remove_line_continuations(command_string)
     call process_substitutions(shell, trim(command_string), proc_subst_line)
-    call parse_pipeline(proc_subst_line, pipeline)
+
+    ! Use new parser if feature flag is enabled
+    if (shell%use_new_parser) then
+      call parse_with_grammar(proc_subst_line, pipeline, shell)
+    else
+      call parse_pipeline(proc_subst_line, pipeline)
+    end if
 
     if (pipeline%num_commands > 0) then
       call execute_pipeline(pipeline, shell, trim(command_string))
@@ -237,8 +244,12 @@ program fortran_shell
     ! Process substitutions <() and >() before parsing
     call process_substitutions(shell, expanded_line, proc_subst_line)
 
-    ! Parse pipeline
-    call parse_pipeline(proc_subst_line, pipeline)
+    ! Parse pipeline (use new parser if feature flag is enabled)
+    if (shell%use_new_parser) then
+      call parse_with_grammar(proc_subst_line, pipeline, shell)
+    else
+      call parse_pipeline(proc_subst_line, pipeline)
+    end if
 
     ! Execute pipeline
     if (pipeline%num_commands > 0) then
@@ -489,8 +500,12 @@ contains
       ! Process substitutions <() and >() before parsing
       call process_substitutions(shell, expanded_line, proc_subst_line)
 
-      ! Parse and execute pipeline
-      call parse_pipeline(proc_subst_line, pipeline)
+      ! Parse and execute pipeline (use new parser if feature flag is enabled)
+      if (shell%use_new_parser) then
+        call parse_with_grammar(proc_subst_line, pipeline, shell)
+      else
+        call parse_pipeline(proc_subst_line, pipeline)
+      end if
 
       if (pipeline%num_commands > 0) then
         call execute_pipeline(pipeline, shell, expanded_line)
@@ -746,6 +761,15 @@ contains
     if (len(temp) > 0 .and. trim(temp) == '1') then
       call set_performance_monitoring(.true.)
     end if
+
+    ! Check for new parser feature flag
+    temp = get_environment_var('FORTSH_USE_NEW_PARSER')
+    if (len(temp) > 0 .and. (trim(temp) == '1' .or. trim(temp) == 'true')) then
+      shell%use_new_parser = .true.
+      if (shell%is_interactive) then
+        write(output_unit, '(a)') 'Using new grammar-aware parser (experimental)'
+      end if
+    end if
   end subroutine
 
   subroutine execute_trap_for_signal(shell, signum)
@@ -763,8 +787,12 @@ contains
     ! Save current exit status (trap should not affect $?)
     saved_exit_status = shell%last_exit_status
 
-    ! Parse the trap command
-    call parse_pipeline(trim(trap_command), trap_pipeline)
+    ! Parse the trap command (use new parser if feature flag is enabled)
+    if (shell%use_new_parser) then
+      call parse_with_grammar(trim(trap_command), trap_pipeline, shell)
+    else
+      call parse_pipeline(trim(trap_command), trap_pipeline)
+    end if
 
     ! Execute the trap command if parsing succeeded
     if (trap_pipeline%num_commands > 0) then
