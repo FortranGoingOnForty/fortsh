@@ -1310,23 +1310,116 @@ contains
   function case_pattern_match(value, pattern) result(matches)
     character(len=*), intent(in) :: value, pattern
     logical :: matches
+    integer :: val_idx, pat_idx, val_len, pat_len
+    logical :: in_bracket
+    character(len=256) :: bracket_chars
+    integer :: bracket_len, i
+    logical :: bracket_match, negated
 
-    ! Simple pattern matching - supports * and exact matches
+    val_len = len_trim(value)
+    pat_len = len_trim(pattern)
+
+    ! Fast path for common cases
     if (trim(pattern) == '*') then
       matches = .true.
-    else if (index(pattern, '*') > 0) then
-      ! Wildcard pattern matching (simplified)
-      if (pattern(1:1) == '*') then
-        matches = (index(value, trim(pattern(2:))) > 0)
-      else if (pattern(len_trim(pattern):len_trim(pattern)) == '*') then
-        matches = (index(value, trim(pattern(1:len_trim(pattern)-1))) == 1)
-      else
-        matches = (index(value, trim(pattern)) > 0)
-      end if
-    else
-      ! Exact match
-      matches = (trim(value) == trim(pattern))
+      return
+    else if (trim(pattern) == trim(value)) then
+      matches = .true.
+      return
     end if
+
+    ! If pattern contains glob characters, do pattern matching
+    if (index(pattern, '*') == 0 .and. index(pattern, '?') == 0 .and. index(pattern, '[') == 0) then
+      ! No glob characters - exact match only
+      matches = (trim(value) == trim(pattern))
+      return
+    end if
+
+    ! Full pattern matching with *, ?, and [abc] support
+    val_idx = 1
+    pat_idx = 1
+
+    do while (pat_idx <= pat_len .and. val_idx <= val_len)
+      if (pattern(pat_idx:pat_idx) == '*') then
+        ! Handle * wildcard - match zero or more characters
+        pat_idx = pat_idx + 1
+        if (pat_idx > pat_len) then
+          ! * at end matches rest of string
+          matches = .true.
+          return
+        end if
+        ! Try to match remaining pattern at each position
+        do while (val_idx <= val_len + 1)
+          if (case_pattern_match(value(val_idx:val_len), pattern(pat_idx:pat_len))) then
+            matches = .true.
+            return
+          end if
+          val_idx = val_idx + 1
+        end do
+        matches = .false.
+        return
+      else if (pattern(pat_idx:pat_idx) == '?') then
+        ! Match any single character
+        val_idx = val_idx + 1
+        pat_idx = pat_idx + 1
+      else if (pattern(pat_idx:pat_idx) == '[') then
+        ! Character class matching [abc] or [!abc]
+        pat_idx = pat_idx + 1
+        bracket_len = 0
+        negated = .false.
+
+        ! Check for negation [!abc]
+        if (pat_idx <= pat_len .and. pattern(pat_idx:pat_idx) == '!') then
+          negated = .true.
+          pat_idx = pat_idx + 1
+        end if
+
+        ! Extract characters in bracket
+        do while (pat_idx <= pat_len .and. pattern(pat_idx:pat_idx) /= ']')
+          bracket_len = bracket_len + 1
+          bracket_chars(bracket_len:bracket_len) = pattern(pat_idx:pat_idx)
+          pat_idx = pat_idx + 1
+        end do
+
+        if (pat_idx > pat_len) then
+          ! Unclosed bracket - treat as literal
+          matches = .false.
+          return
+        end if
+
+        pat_idx = pat_idx + 1  ! Skip the ]
+
+        ! Check if current character matches any in bracket
+        bracket_match = .false.
+        do i = 1, bracket_len
+          if (value(val_idx:val_idx) == bracket_chars(i:i)) then
+            bracket_match = .true.
+            exit
+          end if
+        end do
+
+        ! Apply negation if needed
+        if (negated) bracket_match = .not. bracket_match
+
+        if (.not. bracket_match) then
+          matches = .false.
+          return
+        end if
+
+        val_idx = val_idx + 1
+      else
+        ! Literal character match
+        if (value(val_idx:val_idx) /= pattern(pat_idx:pat_idx)) then
+          matches = .false.
+          return
+        end if
+        val_idx = val_idx + 1
+        pat_idx = pat_idx + 1
+      end if
+    end do
+
+    ! Match succeeds if we consumed both value and pattern
+    matches = (val_idx > val_len .and. pat_idx > pat_len)
   end function
 
   ! Check multi-pattern (e.g., a|b|c) - split on | and check each
