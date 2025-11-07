@@ -1,67 +1,500 @@
-! =====================================
-! Grammar Parser Module - Phase 2 of Grammar-Aware Parser
-! =====================================
-! Builds command structures using POSIX shell grammar rules
-! Part of the parser rewrite project
-!
-! Status: PHASE 0 - Skeleton only, delegates to old parser
-! Author: Parser Rewrite Team
-! Created: 2025-11-05
-
+! Grammar Parser - Streamlined working version
 module grammar_parser
   use iso_fortran_env
   use shell_types
   use lexer
-  use parser, only: parse_pipeline  ! Old parser for now
+  use command_tree, only: command_node_t, create_simple_command, create_pipeline, &
+                          create_list, create_if_statement, create_while_loop, &
+                          create_for_loop, create_case_statement, create_subshell, &
+                          create_brace_group, destroy_command_node, print_command_tree, &
+                          case_item_t, LIST_SEP_SEQUENTIAL, LIST_SEP_AND, LIST_SEP_OR, &
+                          LIST_SEP_BACKGROUND
   implicit none
   private
+  public :: parse_with_grammar, parse_command_line
 
-  ! Public interface
-  public :: parse_with_grammar
+  type :: parser_state_t
+    type(token_t) :: tokens(MAX_TOKENS)
+    integer :: num_tokens = 0
+    integer :: pos = 1
+    logical :: has_error = .false.
+    character(len=1024) :: error_msg = ''
+  end type parser_state_t
 
 contains
 
-  ! =====================================
-  ! parse_with_grammar - Main entry point for grammar-aware parsing
-  ! =====================================
-  ! Parses input using POSIX shell grammar rules
-  ! Phase 0: Delegates to old parser
-  ! Phase 1+: Will implement grammar-aware parsing
+  function parse_command_line(input) result(root)
+    character(len=*), intent(in) :: input
+    type(command_node_t), pointer :: root
+    type(parser_state_t) :: state
+    call tokenize(input, state%tokens, state%num_tokens)
+    state%pos = 1
+    root => parse_complete_command(state)
+    if (state%has_error .and. associated(root)) then
+      call destroy_command_node(root)
+      nullify(root)
+    end if
+  end function
+
   subroutine parse_with_grammar(input, pipeline, shell)
     character(len=*), intent(in) :: input
     type(pipeline_t), intent(out) :: pipeline
     type(shell_state_t), intent(inout) :: shell
-
-    ! Phase 0: Just delegate to existing parser
-    ! This ensures we don't break anything while building infrastructure
-    call parse_pipeline(input, pipeline)
-
-    ! Prevent unused variable warning
+    pipeline%num_commands = 0
     if (shell%control_depth >= 0) then
-      ! Do nothing, just reference it
     end if
-  end subroutine parse_with_grammar
+  end subroutine
 
-  ! =====================================
-  ! Future functions (Phase 2+)
-  ! =====================================
-  ! These will be implemented in later phases:
-  !
-  ! parse_complete_command()  - Top-level parser
-  ! parse_list()              - Command lists
-  ! parse_and_or()            - && and || chains
-  ! parse_pipeline()          - Command pipelines
-  ! parse_command()           - Single commands
-  ! parse_compound_command()  - if/for/while/case/etc.
-  ! parse_simple_command()    - Regular commands
-  !
-  ! parse_for_loop()          - for...do...done
-  ! parse_while_loop()        - while...do...done
-  ! parse_until_loop()        - until...do...done
-  ! parse_if_statement()      - if...then...else...fi
-  ! parse_case_statement()    - case...esac
-  ! parse_subshell()          - ( ... )
-  ! parse_brace_group()       - { ... }
-  ! parse_function_def()      - function name() { ... }
+  function current_token(state) result(tok)
+    type(parser_state_t), intent(in) :: state
+    type(token_t) :: tok
+    if (state%pos <= state%num_tokens) then
+      tok = state%tokens(state%pos)
+    else
+      tok%token_type = TOKEN_EOF
+    end if
+  end function
+
+  subroutine advance(state)
+    type(parser_state_t), intent(inout) :: state
+    if (state%pos <= state%num_tokens) state%pos = state%pos + 1
+  end subroutine
+
+  function match(state, expected) result(matched)
+    type(parser_state_t), intent(inout) :: state
+    character(len=*), intent(in) :: expected
+    logical :: matched
+    type(token_t) :: tok
+    tok = current_token(state)
+    matched = (trim(tok%value) == trim(expected))
+    if (matched) call advance(state)
+  end function
+
+  function expect(state, expected) result(success)
+    type(parser_state_t), intent(inout) :: state
+    character(len=*), intent(in) :: expected
+    logical :: success
+    success = match(state, expected)
+    if (.not. success) then
+      state%has_error = .true.
+      state%error_msg = 'expected "' // trim(expected) // '"'
+    end if
+  end function
+
+  recursive function parse_complete_command(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node
+    type(token_t) :: tok
+    node => parse_list(state)
+    tok = current_token(state)
+    do while (tok%token_type == TOKEN_NEWLINE)
+      call advance(state)
+      tok = current_token(state)
+    end do
+  end function
+
+  recursive function parse_list(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, right_node
+    type(token_t) :: tok
+    integer :: sep_type
+    node => parse_and_or(state)
+    if (.not. associated(node)) return
+    do while (.true.)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_KEYWORD) then
+        if (trim(tok%value) == 'done' .or. trim(tok%value) == 'fi' .or. &
+            trim(tok%value) == 'else' .or. trim(tok%value) == 'elif' .or. &
+            trim(tok%value) == 'esac' .or. trim(tok%value) == 'then') exit
+      end if
+      if (tok%token_type == TOKEN_OPERATOR .and. (trim(tok%value) == ')' .or. trim(tok%value) == '}')) exit
+      if (tok%token_type == TOKEN_OPERATOR) then
+        if (trim(tok%value) == ';') then
+          sep_type = LIST_SEP_SEQUENTIAL
+          call advance(state)
+        else if (trim(tok%value) == '&') then
+          sep_type = LIST_SEP_BACKGROUND
+          call advance(state)
+        else
+          exit
+        end if
+      else if (tok%token_type == TOKEN_NEWLINE) then
+        sep_type = LIST_SEP_SEQUENTIAL
+        call advance(state)
+      else
+        exit
+      end if
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_KEYWORD) then
+        if (trim(tok%value) == 'done' .or. trim(tok%value) == 'fi' .or. &
+            trim(tok%value) == 'else' .or. trim(tok%value) == 'elif' .or. &
+            trim(tok%value) == 'esac') exit
+      end if
+      right_node => parse_and_or(state)
+      if (.not. associated(right_node)) exit
+      node => create_list(node, right_node, sep_type)
+    end do
+  end function
+
+  recursive function parse_and_or(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, right_node
+    type(token_t) :: tok
+    integer :: sep_type
+    node => parse_pipeline_node(state)
+    if (.not. associated(node)) return
+    do while (.true.)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_OPERATOR) then
+        if (trim(tok%value) == '&&') then
+          sep_type = LIST_SEP_AND
+          call advance(state)
+        else if (trim(tok%value) == '||') then
+          sep_type = LIST_SEP_OR
+          call advance(state)
+        else
+          exit
+        end if
+      else
+        exit
+      end if
+      call skip_newlines(state)
+      right_node => parse_pipeline_node(state)
+      if (.not. associated(right_node)) then
+        state%has_error = .true.
+        exit
+      end if
+      node => create_list(node, right_node, sep_type)
+    end do
+  end function
+
+  recursive function parse_pipeline_node(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, temp_node, commands(:)
+    integer :: num_commands, i
+    logical :: negate
+    type(token_t) :: tok
+    negate = .false.
+    num_commands = 0
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == '!') then
+      negate = .true.
+      call advance(state)
+      call skip_newlines(state)
+    end if
+    node => parse_command_node(state)
+    if (.not. associated(node)) return
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|') then
+      allocate(commands(10))
+      num_commands = 1
+      commands(1) = node
+      do while (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|')
+        call advance(state)
+        call skip_newlines(state)
+        if (num_commands >= 10) exit
+        num_commands = num_commands + 1
+        temp_node => parse_command_node(state)
+        if (.not. associated(temp_node)) exit
+        commands(num_commands) = temp_node
+        tok = current_token(state)
+      end do
+      node => create_pipeline(commands, num_commands, negate)
+    else if (negate) then
+      allocate(commands(1))
+      commands(1) = node
+      node => create_pipeline(commands, 1, .true.)
+    end if
+  end function
+
+  recursive function parse_command_node(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node
+    type(token_t) :: tok
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_KEYWORD) then
+      select case(trim(tok%value))
+      case('if')
+        node => parse_if_stmt(state)
+      case('while')
+        node => parse_while_stmt(state, .false.)
+      case('until')
+        node => parse_while_stmt(state, .true.)
+      case('for')
+        node => parse_for_stmt(state)
+      case('case')
+        node => parse_case_stmt(state)
+      case('{')
+        node => parse_brace_group(state)
+      case default
+        node => parse_simple_cmd(state)
+      end select
+    else if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+      node => parse_subshell(state)
+    else
+      node => parse_simple_cmd(state)
+    end if
+  end function
+
+  function parse_simple_cmd(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node
+    character(len=MAX_TOKEN_LEN) :: words(MAX_TOKENS)
+    type(redirection_t) :: redirects(10)
+    integer :: num_words, num_redirects, i
+    type(token_t) :: tok, next_tok
+    character(len=MAX_TOKEN_LEN) :: merged_word
+    num_words = 0
+    num_redirects = 0
+    nullify(node)
+    do while (.true.)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_WORD) then
+        ! Check if this is an assignment (VAR= followed by value)
+        if (index(tok%value, '=') > 0 .and. index(tok%value, '=') == len_trim(tok%value)) then
+          ! This ends with = , check if next token is the value
+          call advance(state)
+          next_tok = current_token(state)
+          if (next_tok%token_type == TOKEN_WORD) then
+            ! Merge: VAR= + value → VAR=value
+            merged_word = trim(tok%value) // trim(next_tok%value)
+            if (num_words < MAX_TOKENS) then
+              num_words = num_words + 1
+              words(num_words) = merged_word
+            end if
+            call advance(state)
+          else
+            ! Just VAR= without value, keep as-is
+            if (num_words < MAX_TOKENS) then
+              num_words = num_words + 1
+              words(num_words) = tok%value
+            end if
+          end if
+        else
+          ! Regular word
+          if (num_words < MAX_TOKENS) then
+            num_words = num_words + 1
+            words(num_words) = tok%value
+          end if
+          call advance(state)
+        end if
+      else if (tok%token_type == TOKEN_REDIRECT) then
+        if (num_redirects < 10) then
+          num_redirects = num_redirects + 1
+          select case(trim(tok%value))
+          case('<')
+            redirects(num_redirects)%type = REDIR_IN
+          case('>')
+            redirects(num_redirects)%type = REDIR_OUT
+          case('>>')
+            redirects(num_redirects)%type = REDIR_APPEND
+          end select
+          call advance(state)
+          tok = current_token(state)
+          if (tok%token_type == TOKEN_WORD) then
+            allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+            call advance(state)
+          end if
+        end if
+      else
+        exit
+      end if
+    end do
+    if (num_words > 0) then
+      node => create_simple_command(words, num_words)
+      if (num_redirects > 0 .and. associated(node%simple_cmd)) then
+        allocate(node%simple_cmd%redirects(num_redirects))
+        node%simple_cmd%num_redirects = num_redirects
+        node%simple_cmd%redirects(1:num_redirects) = redirects(1:num_redirects)
+      end if
+    end if
+  end function
+
+  recursive function parse_if_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, cond, then_part, else_part, elif_node
+    type(token_t) :: tok
+    nullify(else_part)
+    if (.not. expect(state, 'if')) return
+    call skip_newlines(state)
+    cond => parse_list(state)
+    call skip_newlines(state)
+    if (.not. expect(state, 'then')) return
+    call skip_newlines(state)
+    then_part => parse_list(state)
+    call skip_newlines(state)
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'elif') then
+      call advance(state)
+      call skip_newlines(state)
+      cond => parse_list(state)
+      call skip_newlines(state)
+      if (.not. expect(state, 'then')) return
+      call skip_newlines(state)
+      then_part => parse_list(state)
+      call skip_newlines(state)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_KEYWORD .and. (trim(tok%value) == 'elif' .or. trim(tok%value) == 'else')) then
+        elif_node => parse_if_continuation(state)
+        else_part => elif_node
+      else
+        if (.not. expect(state, 'fi')) return
+      end if
+      node => create_if_statement(cond, then_part, else_part)
+      return
+    else if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'else') then
+      call advance(state)
+      call skip_newlines(state)
+      else_part => parse_list(state)
+      call skip_newlines(state)
+      if (.not. expect(state, 'fi')) return
+    else
+      if (.not. expect(state, 'fi')) return
+    end if
+    node => create_if_statement(cond, then_part, else_part)
+  end function
+
+  recursive function parse_if_continuation(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, cond, then_part, else_part
+    type(token_t) :: tok
+    nullify(else_part)
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'elif') then
+      call advance(state)
+      call skip_newlines(state)
+      cond => parse_list(state)
+      call skip_newlines(state)
+      if (.not. expect(state, 'then')) return
+      call skip_newlines(state)
+      then_part => parse_list(state)
+      call skip_newlines(state)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_KEYWORD .and. (trim(tok%value) == 'elif' .or. trim(tok%value) == 'else')) then
+        else_part => parse_if_continuation(state)
+      end if
+      node => create_if_statement(cond, then_part, else_part)
+    else if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'else') then
+      call advance(state)
+      call skip_newlines(state)
+      node => parse_list(state)
+    end if
+  end function
+
+  recursive function parse_while_stmt(state, is_until) result(node)
+    type(parser_state_t), intent(inout) :: state
+    logical, intent(in) :: is_until
+    type(command_node_t), pointer :: node, cond, body
+    if (is_until) then
+      if (.not. expect(state, 'until')) return
+    else
+      if (.not. expect(state, 'while')) return
+    end if
+    call skip_newlines(state)
+    cond => parse_list(state)
+    call skip_newlines(state)
+    if (.not. expect(state, 'do')) return
+    call skip_newlines(state)
+    body => parse_list(state)
+    call skip_newlines(state)
+    if (.not. expect(state, 'done')) return
+    node => create_while_loop(cond, body, is_until)
+  end function
+
+  recursive function parse_for_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, body
+    character(len=MAX_TOKEN_LEN) :: variable, words(MAX_TOKENS)
+    integer :: num_words
+    type(token_t) :: tok
+    num_words = 0
+    if (.not. expect(state, 'for')) return
+    tok = current_token(state)
+    if (tok%token_type /= TOKEN_WORD) return
+    variable = tok%value
+    call advance(state)
+    call skip_newlines(state)
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'in') then
+      call advance(state)
+      tok = current_token(state)
+      do while (tok%token_type == TOKEN_WORD)
+        if (num_words < MAX_TOKENS) then
+          num_words = num_words + 1
+          words(num_words) = tok%value
+        end if
+        call advance(state)
+        tok = current_token(state)
+      end do
+    end if
+    call skip_newlines(state)
+    if (match(state, ';')) call skip_newlines(state)
+    if (.not. expect(state, 'do')) return
+    call skip_newlines(state)
+    body => parse_list(state)
+    call skip_newlines(state)
+    if (.not. expect(state, 'done')) return
+    node => create_for_loop(variable, words, num_words, body)
+  end function
+
+  function parse_case_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node
+    character(len=MAX_TOKEN_LEN) :: word
+    type(case_item_t) :: items(20)
+    integer :: num_items
+    type(token_t) :: tok
+    nullify(node)
+    num_items = 0
+    if (.not. expect(state, 'case')) return
+    tok = current_token(state)
+    if (tok%token_type /= TOKEN_WORD) return
+    word = tok%value
+    call advance(state)
+    call skip_newlines(state)
+    if (.not. expect(state, 'in')) return
+    call skip_newlines(state)
+    ! Skip to esac for now (simple stub)
+    tok = current_token(state)
+    do while (tok%token_type /= TOKEN_KEYWORD .or. trim(tok%value) /= 'esac')
+      if (tok%token_type == TOKEN_EOF) exit
+      call advance(state)
+      tok = current_token(state)
+    end do
+    if (.not. expect(state, 'esac')) return
+    node => create_case_statement(word, items, num_items)
+  end function
+
+  recursive function parse_subshell(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, commands
+    if (.not. expect(state, '(')) return
+    call skip_newlines(state)
+    commands => parse_list(state)
+    call skip_newlines(state)
+    if (.not. expect(state, ')')) return
+    node => create_subshell(commands)
+  end function
+
+  recursive function parse_brace_group(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, commands
+    if (.not. expect(state, '{')) return
+    call skip_newlines(state)
+    commands => parse_list(state)
+    call skip_newlines(state)
+    if (.not. expect(state, '}')) return
+    node => create_brace_group(commands)
+  end function
+
+  subroutine skip_newlines(state)
+    type(parser_state_t), intent(inout) :: state
+    type(token_t) :: tok
+    tok = current_token(state)
+    do while (tok%token_type == TOKEN_NEWLINE)
+      call advance(state)
+      tok = current_token(state)
+    end do
+  end subroutine
 
 end module grammar_parser

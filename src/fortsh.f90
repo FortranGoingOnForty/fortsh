@@ -8,6 +8,8 @@ program fortran_shell
   use signal_handling
   use parser
   use grammar_parser  ! New grammar-aware parser
+  use ast_executor    ! AST execution for new parser
+  use command_tree    ! Command tree for new parser
   use executor
   use job_control
   use readline
@@ -31,6 +33,9 @@ program fortran_shell
   ! Command duration tracking
   integer :: cmd_start_time, cmd_end_time, cmd_duration_ms, clock_rate
   real :: cmd_duration_sec
+  ! New parser infrastructure
+  type(command_node_t), pointer :: ast_root
+  integer :: exit_code
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
@@ -106,31 +111,38 @@ program fortran_shell
 
     ! Use new parser if feature flag is enabled
     if (shell%use_new_parser) then
-      call parse_with_grammar(proc_subst_line, pipeline, shell)
-    else
-      call parse_pipeline(proc_subst_line, pipeline)
-    end if
-
-    if (pipeline%num_commands > 0) then
-      call execute_pipeline(pipeline, shell, trim(command_string))
-
-      ! Check if we need to replay loop body (for loops, while, until)
-      if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-        call replay_loop_if_needed(shell)
+      ! NEW PARSER PATH: Parse to AST and execute directly
+      ast_root => parse_command_line(proc_subst_line)
+      if (associated(ast_root)) then
+        exit_code = execute_ast(ast_root, shell)
+        shell%last_exit_status = exit_code
+        call destroy_command_node(ast_root)
       end if
+    else
+      ! OLD PARSER PATH: Parse to pipeline and execute
+      call parse_pipeline(proc_subst_line, pipeline)
 
-      ! Clean up pipeline
-      if (allocated(pipeline%commands)) then
-        do i = 1, pipeline%num_commands
-          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-        end do
-        deallocate(pipeline%commands)
+      if (pipeline%num_commands > 0) then
+        call execute_pipeline(pipeline, shell, trim(command_string))
+
+        ! Check if we need to replay loop body (for loops, while, until)
+        if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+          call replay_loop_if_needed(shell)
+        end if
+
+        ! Clean up pipeline
+        if (allocated(pipeline%commands)) then
+          do i = 1, pipeline%num_commands
+            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+          end do
+          deallocate(pipeline%commands)
+        end if
       end if
     end if
 
@@ -244,19 +256,40 @@ program fortran_shell
     ! Process substitutions <() and >() before parsing
     call process_substitutions(shell, expanded_line, proc_subst_line)
 
-    ! Parse pipeline (use new parser if feature flag is enabled)
+    ! Parse and execute (use new parser if feature flag is enabled)
     if (shell%use_new_parser) then
-      call parse_with_grammar(proc_subst_line, pipeline, shell)
-    else
-      call parse_pipeline(proc_subst_line, pipeline)
-    end if
-
-    ! Execute pipeline
-    if (pipeline%num_commands > 0) then
-      ! Track command duration (Fish-style)
+      ! NEW PARSER PATH: Parse to AST and execute directly
       call system_clock(cmd_start_time, clock_rate)
 
-      call execute_pipeline(pipeline, shell, expanded_line)
+      ast_root => parse_command_line(proc_subst_line)
+      if (associated(ast_root)) then
+        exit_code = execute_ast(ast_root, shell)
+        shell%last_exit_status = exit_code
+        call destroy_command_node(ast_root)
+
+        ! Calculate and display duration if > 1 second
+        call system_clock(cmd_end_time)
+        cmd_duration_ms = (cmd_end_time - cmd_start_time) * 1000 / clock_rate
+        cmd_duration_sec = real(cmd_duration_ms) / 1000.0
+
+        if (shell%is_interactive .and. cmd_duration_sec >= 1.0) then
+          write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
+                                           cmd_duration_sec, 's' // char(27) // '[0m'
+        end if
+
+        ! Increment command number for next prompt
+        shell%command_number = shell%command_number + 1
+        call increment_prompt_history()
+      end if
+    else
+      ! OLD PARSER PATH: Parse to pipeline and execute
+      call parse_pipeline(proc_subst_line, pipeline)
+
+      if (pipeline%num_commands > 0) then
+        ! Track command duration (Fish-style)
+        call system_clock(cmd_start_time, clock_rate)
+
+        call execute_pipeline(pipeline, shell, expanded_line)
 
       ! Exit immediately if exit command was executed
       if (.not. shell%running) then
@@ -297,20 +330,21 @@ program fortran_shell
       call increment_prompt_history()
     end if
 
-    ! Clean up pipeline
-    if (allocated(pipeline%commands)) then
-      do i = 1, pipeline%num_commands
-        if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-        if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-        if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-        if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-        if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-        if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-        if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-      end do
+      ! Clean up pipeline
+      if (allocated(pipeline%commands)) then
+        do i = 1, pipeline%num_commands
+          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+        end do
 
-      deallocate(pipeline%commands)
-    end if
+        deallocate(pipeline%commands)
+      end if
+    end if  ! End of old parser path
   end do
 
   ! Execute EXIT trap if one is set
