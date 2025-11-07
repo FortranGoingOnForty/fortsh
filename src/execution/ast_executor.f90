@@ -30,6 +30,15 @@ module ast_executor
     end function close
   end interface
 
+  ! Global function AST cache (maps function name to AST body)
+  type :: function_ast_entry_t
+    character(len=256) :: name
+    type(command_node_t), pointer :: body => null()
+  end type function_ast_entry_t
+
+  type(function_ast_entry_t), save :: function_ast_cache(20)
+  integer, save :: num_cached_functions = 0
+
 contains
 
   ! =====================================
@@ -84,8 +93,8 @@ contains
     case(CMD_BRACE_GROUP)
       exit_status = execute_brace_group_node(node, shell)
     case(CMD_FUNCTION_DEF)
-      ! Function definitions don't execute, they just register
-      exit_status = 0
+      ! Function definitions: Store in shell state
+      exit_status = execute_function_def(node, shell)
     case default
       write(error_unit, '(A,I0)') 'fortsh: unknown node type: ', node%node_type
       exit_status = 1
@@ -103,8 +112,9 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
-    integer :: i
+    integer :: i, func_idx
     type(pipeline_t) :: temp_pipeline
+    character(len=MAX_TOKEN_LEN) :: cmd_name
 
     exit_status = 0
 
@@ -117,6 +127,24 @@ contains
       exit_status = 0
       return
     end if
+
+    ! Check if this is a function call
+    cmd_name = trim(node%simple_cmd%words(1))
+    do func_idx = 1, num_cached_functions
+      if (trim(function_ast_cache(func_idx)%name) == trim(cmd_name)) then
+        ! This is a function call! Execute the cached AST body
+        ! TODO: Set positional parameters $1, $2, etc. from node%simple_cmd%words(2:)
+        ! TODO: Save/restore old positional params
+        ! TODO: Handle return builtin
+
+        if (associated(function_ast_cache(func_idx)%body)) then
+          exit_status = execute_ast_node(function_ast_cache(func_idx)%body, shell)
+        else
+          exit_status = 0
+        end if
+        return
+      end if
+    end do
 
     ! TEMPORARY: Convert AST simple command back to old command_t format
     ! This delegates to the existing, battle-tested executor
@@ -159,6 +187,13 @@ contains
           if (allocated(node%simple_cmd%redirects(i)%filename)) then
             temp_pipeline%commands(1)%output_file = trim(node%simple_cmd%redirects(i)%filename)
             temp_pipeline%commands(1)%append_output = .true.
+          end if
+        case(REDIR_FD_OUT)
+          ! 2> file (stderr redirect)
+          if (node%simple_cmd%redirects(i)%fd == 2) then
+            if (allocated(node%simple_cmd%redirects(i)%filename)) then
+              temp_pipeline%commands(1)%error_file = trim(node%simple_cmd%redirects(i)%filename)
+            end if
           end if
         end select
       end do
@@ -471,9 +506,15 @@ contains
   ! =====================================
 
   function execute_case_node(node, shell) result(exit_status)
+    use variables, only: get_shell_variable
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
+    character(len=1024) :: case_value
+    integer :: item_idx, pattern_idx
+    logical :: matched
+    character(len=MAX_TOKEN_LEN) :: pattern
+    character(len=256) :: suffix, prefix
 
     exit_status = 0
 
@@ -481,9 +522,62 @@ contains
       return
     end if
 
-    ! TODO: Implement case pattern matching
-    ! For now, just return success
-    exit_status = 0
+    ! Get the value to match (expand variables)
+    case_value = trim(node%case_stmt%word)
+    ! If it starts with $, expand it
+    if (case_value(1:1) == '$') then
+      case_value = get_shell_variable(shell, case_value(2:))
+    end if
+
+    ! Try to match against each case item
+    do item_idx = 1, node%case_stmt%num_items
+      matched = .false.
+
+      ! Check each pattern in this item
+      do pattern_idx = 1, node%case_stmt%items(item_idx)%num_patterns
+        pattern = trim(node%case_stmt%items(item_idx)%patterns(pattern_idx))
+
+        ! Match pattern (simple implementation)
+        if (trim(pattern) == '*') then
+          ! Wildcard matches everything
+          matched = .true.
+        else if (index(pattern, '*') > 0) then
+          ! Prefix/suffix wildcard (h* or *x or *mid*)
+          if (pattern(1:1) == '*') then
+            ! Suffix match: *suffix
+            suffix = pattern(2:)
+            if (len_trim(case_value) >= len_trim(suffix)) then
+              if (case_value(len_trim(case_value)-len_trim(suffix)+1:) == trim(suffix)) then
+                matched = .true.
+              end if
+            end if
+          else if (pattern(len_trim(pattern):len_trim(pattern)) == '*') then
+            ! Prefix match: prefix*
+            prefix = pattern(1:len_trim(pattern)-1)
+            if (case_value(1:len_trim(prefix)) == trim(prefix)) then
+              matched = .true.
+            end if
+          end if
+        else
+          ! Exact match
+          if (trim(case_value) == trim(pattern)) then
+            matched = .true.
+          end if
+        end if
+
+        if (matched) exit
+      end do
+
+      ! If matched, execute the commands for this case item
+      if (matched) then
+        if (associated(node%case_stmt%items(item_idx)%commands)) then
+          exit_status = execute_ast_node(node%case_stmt%items(item_idx)%commands, shell)
+        else
+          exit_status = 0
+        end if
+        exit  ! Only execute first match
+      end if
+    end do
 
   end function execute_case_node
 
@@ -540,6 +634,59 @@ contains
     exit_status = execute_ast_node(node%subshell, shell)
 
   end function execute_brace_group_node
+
+  ! =====================================
+  ! Function Definition Execution
+  ! =====================================
+
+  function execute_function_def(node, shell) result(exit_status)
+    type(command_node_t), pointer, intent(in) :: node
+    type(shell_state_t), intent(inout) :: shell
+    integer :: exit_status
+    integer :: func_idx, cache_idx
+
+    exit_status = 0
+
+    if (.not. associated(node%function_def)) then
+      return
+    end if
+
+    ! Store function AST body in cache
+    cache_idx = -1
+    do func_idx = 1, num_cached_functions
+      if (trim(function_ast_cache(func_idx)%name) == trim(node%function_def%name)) then
+        cache_idx = func_idx
+        exit
+      end if
+    end do
+
+    if (cache_idx == -1 .and. num_cached_functions < 20) then
+      ! New function
+      num_cached_functions = num_cached_functions + 1
+      cache_idx = num_cached_functions
+    end if
+
+    if (cache_idx > 0) then
+      function_ast_cache(cache_idx)%name = trim(node%function_def%name)
+      function_ast_cache(cache_idx)%body => node%function_def%body
+    end if
+
+    ! Also register in shell state for compatibility
+    do func_idx = 1, shell%num_functions
+      if (trim(shell%functions(func_idx)%name) == trim(node%function_def%name)) then
+        return  ! Already registered
+      end if
+    end do
+
+    if (shell%num_functions < 20) then
+      shell%num_functions = shell%num_functions + 1
+      shell%functions(shell%num_functions)%name = trim(node%function_def%name)
+      shell%functions(shell%num_functions)%body_lines = 1
+      allocate(shell%functions(shell%num_functions)%body(1))
+      shell%functions(shell%num_functions)%body(1) = 'AST_FUNCTION'
+    end if
+
+  end function execute_function_def
 
   ! =====================================
   ! Helper Functions

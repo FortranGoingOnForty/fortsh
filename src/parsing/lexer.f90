@@ -306,15 +306,30 @@ contains
                                   token_start, pos-1, .false.)
           state = LEX_NORMAL
           ! Don't increment pos, let NORMAL state handle the quote
-        else if (ch == '(' .or. ch == ')' .or. ch == '+' .or. ch == '-' .or. &
-                 ch == '*' .or. ch == '/' .or. ch == '%' .or. &
-                 (ch >= '0' .and. ch <= '9')) then
-          ! Keep these chars in word (for $(( )), $( ), and arithmetic)
+        else if ((ch >= '0' .and. ch <= '9') .or. ch == '+' .or. ch == '-' .or. &
+                 ch == '*' .or. ch == '/' .or. ch == '%') then
+          ! Keep these chars in word (for variables and arithmetic)
           if (token_len < MAX_TOKEN_LEN) then
             token_len = token_len + 1
             current_token(token_len:token_len) = ch
           end if
           pos = pos + 1
+        else if (ch == '(' .or. ch == ')') then
+          ! Parentheses: Keep ONLY if inside $(( or $(
+          ! Check if current token starts with $(
+          if (token_len >= 2 .and. current_token(1:2) == '$(') then
+            ! Inside command/arithmetic substitution - keep parens
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          else
+            ! Not in substitution - end word, let paren be operator
+            call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                    token_start, pos-1, .false.)
+            state = LEX_NORMAL
+          end if
         else if (is_word_char(ch)) then
           ! Continue word
           if (token_len < MAX_TOKEN_LEN) then

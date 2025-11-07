@@ -136,6 +136,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/parsing/parser.o \
           $(BUILDDIR)/scripting/completion.o \
           $(BUILDDIR)/execution/executor.o \
+          $(BUILDDIR)/execution/ast_executor.o \
           $(BUILDDIR)/execution/command_capture.o \
           $(BUILDDIR)/scripting/substitution.o \
           $(BUILDDIR)/io/readline.o \
@@ -220,6 +221,9 @@ $(BUILDDIR)/execution/builtins.o: src/execution/builtins.f90 $(BUILDDIR)/common/
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/executor.o: src/execution/executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/control_flow.o $(BUILDDIR)/execution/builtins.o | $(BUILDDIR)/execution
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+$(BUILDDIR)/execution/ast_executor.o: src/execution/ast_executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/command_capture.o: src/execution/command_capture.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
