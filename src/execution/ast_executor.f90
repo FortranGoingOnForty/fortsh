@@ -112,9 +112,10 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
-    integer :: i, func_idx
+    integer :: i, func_idx, old_num_positional, j
     type(pipeline_t) :: temp_pipeline
     character(len=MAX_TOKEN_LEN) :: cmd_name
+    character(len=1024), allocatable :: old_params(:)
 
     exit_status = 0
 
@@ -133,15 +134,48 @@ contains
     do func_idx = 1, num_cached_functions
       if (trim(function_ast_cache(func_idx)%name) == trim(cmd_name)) then
         ! This is a function call! Execute the cached AST body
-        ! TODO: Set positional parameters $1, $2, etc. from node%simple_cmd%words(2:)
-        ! TODO: Save/restore old positional params
-        ! TODO: Handle return builtin
 
+        ! Save old positional parameters
+        old_num_positional = shell%num_positional
+        if (allocated(shell%positional_params) .and. old_num_positional > 0) then
+          allocate(old_params(old_num_positional))
+          old_params(1:old_num_positional) = shell%positional_params(1:old_num_positional)
+        end if
+
+        ! Set new positional parameters from function arguments
+        shell%num_positional = node%simple_cmd%num_words - 1  ! Exclude function name
+        if (shell%num_positional > 0) then
+          if (.not. allocated(shell%positional_params)) then
+            allocate(shell%positional_params(shell%num_positional))
+            shell%positional_params_capacity = shell%num_positional
+          else if (shell%positional_params_capacity < shell%num_positional) then
+            deallocate(shell%positional_params)
+            allocate(shell%positional_params(shell%num_positional))
+            shell%positional_params_capacity = shell%num_positional
+          end if
+          do j = 1, shell%num_positional
+            shell%positional_params(j) = trim(node%simple_cmd%words(j + 1))
+          end do
+        else
+          shell%num_positional = 0
+        end if
+
+        ! Execute function body
         if (associated(function_ast_cache(func_idx)%body)) then
           exit_status = execute_ast_node(function_ast_cache(func_idx)%body, shell)
         else
           exit_status = 0
         end if
+
+        ! Restore old positional parameters
+        shell%num_positional = old_num_positional
+        if (allocated(old_params)) then
+          if (shell%num_positional > 0) then
+            shell%positional_params(1:old_num_positional) = old_params(1:old_num_positional)
+          end if
+          deallocate(old_params)
+        end if
+
         return
       end if
     end do
