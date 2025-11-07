@@ -306,6 +306,19 @@ contains
                                   token_start, pos-1, .false.)
           state = LEX_NORMAL
           ! Don't increment pos, let NORMAL state handle the quote
+        else if (ch == '#') then
+          ! # is normally comment, but in $# it's part of variable
+          ! Keep it if current token is just $
+          if (token_len == 1 .and. current_token(1:1) == '$') then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = ch
+            pos = pos + 1
+          else
+            ! End word, let # start a comment
+            call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                    token_start, pos-1, .false.)
+            state = LEX_NORMAL
+          end if
         else if ((ch >= '0' .and. ch <= '9') .or. ch == '+' .or. ch == '-' .or. &
                  ch == '*' .or. ch == '/' .or. ch == '%') then
           ! Keep these chars in word (for variables and arithmetic)
