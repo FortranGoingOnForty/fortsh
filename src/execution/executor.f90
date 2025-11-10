@@ -24,10 +24,10 @@ contains
     type(pipeline_t), intent(inout) :: pipeline
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
-    
+
     integer :: i
     logical :: should_continue
-    
+
     should_continue = .true.
     i = 1
     
@@ -222,10 +222,8 @@ contains
         call process_command_escapes(pipeline%commands(i))
 
         ! Handle eval builtin directly (to avoid circular dependency)
-        if (trim(pipeline%commands(i)%tokens(1)) == 'eval') then
-          call execute_eval_builtin(pipeline%commands(i), shell)
-          call c_exit(int(shell%last_exit_status, c_int))
-        else if (is_builtin(pipeline%commands(i)%tokens(1))) then
+        ! Removed special handling for eval - it's now a regular builtin
+        if (is_builtin(pipeline%commands(i)%tokens(1))) then
           ! Builtins in pipes need redirections applied
           call setup_redirections(pipeline%commands(i), shell)
           call execute_builtin(pipeline%commands(i), shell)
@@ -575,9 +573,7 @@ contains
     ! Check if it's a user-defined function
     else if (is_function(shell, cmd%tokens(1))) then
       call execute_function(cmd, shell)
-    ! Handle eval builtin directly (to avoid circular dependency with builtins)
-    else if (trim(cmd%tokens(1)) == 'eval') then
-      call execute_eval_builtin(cmd, shell)
+    ! Eval is now handled as a regular builtin (no special case needed)
     ! Check for cd-less navigation: if single token is a directory, treat as 'cd'
     else if (cmd%num_tokens == 1 .and. file_is_directory(trim(cmd%tokens(1)))) then
       ! Create synthetic cd command by properly reallocating tokens array
