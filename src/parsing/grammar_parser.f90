@@ -242,19 +242,21 @@ contains
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, func_body
     character(len=MAX_TOKEN_LEN) :: words(MAX_TOKENS), func_name, delimiter, merged_word
-    logical :: was_quoted(MAX_TOKENS)
-    character(len=4096) :: heredoc_content
+    logical :: was_quoted(MAX_TOKENS), was_escaped(MAX_TOKENS)
+    character(len=MAX_TOKEN_LEN) :: saved_heredoc_delimiter
+    logical :: saved_heredoc_quoted
+    logical :: has_heredoc
     type(redirection_t) :: redirects(10)
     integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos
-    integer :: line_start, line_end, input_pos
-    integer :: delim_pos, content_start, content_end, newline_pos
     type(token_t) :: tok, next_tok, peek_tok, delim_tok
-    character(len=:), allocatable :: remaining
-    logical :: found_delimiter
     num_words = 0
     num_redirects = 0
     nullify(node)
     was_quoted = .false.
+    was_escaped = .false.
+    has_heredoc = .false.
+    saved_heredoc_quoted = .false.
+    saved_heredoc_delimiter = ''
 
     ! Check for function definition: name() { ... }
     tok = current_token(state)
@@ -299,6 +301,7 @@ contains
               num_words = num_words + 1
               words(num_words) = merged_word
               was_quoted(num_words) = next_tok%quoted
+              was_escaped(num_words) = next_tok%escaped
             end if
             call advance(state)
           else
@@ -307,6 +310,7 @@ contains
               num_words = num_words + 1
               words(num_words) = tok%value
               was_quoted(num_words) = tok%quoted
+              was_escaped(num_words) = tok%escaped
             end if
           end if
         else
@@ -315,6 +319,7 @@ contains
             num_words = num_words + 1
             words(num_words) = tok%value
             was_quoted(num_words) = tok%quoted
+            was_escaped(num_words) = tok%escaped
           end if
           call advance(state)
         end if
@@ -352,43 +357,15 @@ contains
             case('>&')
               redirects(num_redirects)%type = REDIR_DUP_OUT
             case('<<')
-              ! Heredoc - extract content from raw input
+              ! Heredoc - just store the delimiter, executor will handle content
               call advance(state)
               delim_tok = current_token(state)
-              if (delim_tok%token_type == TOKEN_WORD .and. allocated(state%raw_input)) then
+              if (delim_tok%token_type == TOKEN_WORD) then
                 delimiter = trim(delim_tok%value)
+                has_heredoc = .true.
+                saved_heredoc_delimiter = delimiter
+                saved_heredoc_quoted = delim_tok%quoted
                 call advance(state)
-
-                ! Find heredoc content in raw_input
-                ! Format: cat <<EOF\nline1\nline2\nEOF
-
-                ! Find where <<DELIMITER appears in raw input
-                delim_pos = index(state%raw_input, '<<' // trim(delimiter))
-                if (delim_pos > 0) then
-                  ! Find the newline after <<DELIMITER
-                  content_start = delim_pos + 2 + len_trim(delimiter)
-                  ! Scan for the first newline
-                  newline_pos = index(state%raw_input(content_start:), char(10))
-                  if (newline_pos > 0) then
-                    content_start = content_start + newline_pos  ! Skip past newline
-
-                    ! Find the ending delimiter on its own line
-                    ! Look for \nDELIMITER\n or \nDELIMITER$
-                    allocate(character(len=len(state%raw_input)-content_start+1) :: remaining)
-                    remaining = state%raw_input(content_start:)
-                    content_end = index(remaining, char(10) // trim(delimiter))
-
-                    if (content_end > 0) then
-                      ! Extract heredoc content
-                      heredoc_content = remaining(1:content_end-1)
-
-                      ! TODO: Store this in the command's heredoc_content field
-                      ! For now, just parse successfully
-                      found_delimiter = .true.
-                    end if
-                  end if
-                end if
-
                 ! Don't add as regular redirect
                 num_redirects = num_redirects - 1
               end if
@@ -399,7 +376,21 @@ contains
             call advance(state)
             tok = current_token(state)
             if (tok%token_type == TOKEN_WORD) then
-              allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+              ! For >&, check if the "filename" is actually a file descriptor number
+              if (redirects(num_redirects)%type == REDIR_DUP_OUT) then
+                ! Try to parse as fd number
+                read(tok%value, *, iostat=io_stat) fd_num
+                if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
+                  ! It's a target fd like in 2>&1
+                  redirects(num_redirects)%target_fd = fd_num
+                else
+                  ! It's a filename (rare but possible)
+                  allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+                end if
+              else
+                ! Regular filename for other redirects
+                allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+              end if
               call advance(state)
             end if
           end if
@@ -411,9 +402,17 @@ contains
     if (num_words > 0) then
       node => create_simple_command(words, num_words)
       if (associated(node%simple_cmd)) then
-        ! Store quoted flags
+        ! Store quoted and escaped flags
         allocate(node%simple_cmd%word_was_quoted(num_words))
         node%simple_cmd%word_was_quoted(1:num_words) = was_quoted(1:num_words)
+        allocate(node%simple_cmd%word_was_escaped(num_words))
+        node%simple_cmd%word_was_escaped(1:num_words) = was_escaped(1:num_words)
+
+        ! Store heredoc delimiter if present
+        if (has_heredoc) then
+          node%simple_cmd%heredoc_delimiter = saved_heredoc_delimiter
+          node%simple_cmd%heredoc_quoted = saved_heredoc_quoted
+        end if
 
         if (num_redirects > 0) then
           allocate(node%simple_cmd%redirects(num_redirects))

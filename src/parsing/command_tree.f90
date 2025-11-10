@@ -74,11 +74,15 @@ module command_tree
   type :: simple_command_data_t
     character(len=MAX_TOKEN_LEN), allocatable :: words(:)     ! Command words
     logical, allocatable :: word_was_quoted(:)                ! Track quoted tokens for old executor
+    logical, allocatable :: word_was_escaped(:)               ! Track escaped tokens (prevent glob expansion)
     integer :: num_words = 0
     type(redirection_t), allocatable :: redirects(:)          ! Redirections
     integer :: num_redirects = 0
     character(len=MAX_TOKEN_LEN), allocatable :: assignments(:) ! VAR=value
     integer :: num_assignments = 0
+    ! Heredoc support (delimiter only, content handled at execution)
+    character(len=MAX_TOKEN_LEN) :: heredoc_delimiter = ''    ! Delimiter word (EOF)
+    logical :: heredoc_quoted = .false.                       ! Was delimiter quoted? (suppress expansion)
   end type simple_command_data_t
 
   ! =====================================

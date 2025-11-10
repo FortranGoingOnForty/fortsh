@@ -1673,14 +1673,25 @@ contains
       original_tokens(i) = cmd%tokens(i)
     end do
 
-    ! Don't glob expand tokens with backslashes (they were escaped)
-    ! Just use them as-is
+    ! Don't glob expand tokens that were escaped or have backslashes
+    ! Check metadata if available, otherwise fall back to checking for backslash
     has_expandable = .false.
     do i = 1, cmd%num_tokens
-      if (index(cmd%tokens(i), '\') == 0 .and. &
-          (index(cmd%tokens(i), '*') > 0 .or. &
-           index(cmd%tokens(i), '?') > 0 .or. &
-           index(cmd%tokens(i), '[') > 0)) then
+      ! Skip if token was escaped (metadata available) or has backslash (fallback)
+      if (allocated(cmd%token_escaped)) then
+        ! Use metadata if available
+        if (i <= size(cmd%token_escaped) .and. cmd%token_escaped(i)) then
+          cycle  ! Skip this token - it was escaped
+        end if
+      else if (index(cmd%tokens(i), '\') > 0) then
+        ! Fallback: check for backslash in token
+        cycle  ! Skip this token - it has a backslash
+      end if
+
+      ! Check if token has glob characters
+      if (index(cmd%tokens(i), '*') > 0 .or. &
+          index(cmd%tokens(i), '?') > 0 .or. &
+          index(cmd%tokens(i), '[') > 0) then
         has_expandable = .true.
         exit
       end if

@@ -198,23 +198,36 @@ contains
     ! Allocate tokens array directly in pipeline command
     allocate(character(len=MAX_TOKEN_LEN) :: temp_pipeline%commands(1)%tokens(node%simple_cmd%num_words))
 
-    ! Copy words to tokens
-    ! Add quotes/escapes back for old executor compatibility
+    ! Allocate metadata arrays to track token properties
+    allocate(temp_pipeline%commands(1)%token_quoted(node%simple_cmd%num_words))
+    allocate(temp_pipeline%commands(1)%token_escaped(node%simple_cmd%num_words))
+
+    ! Initialize metadata arrays
+    temp_pipeline%commands(1)%token_quoted = .false.
+    temp_pipeline%commands(1)%token_escaped = .false.
+
+    ! Copy words to tokens and metadata
     do i = 1, node%simple_cmd%num_words
       needs_quotes = .false.
 
+      ! Copy quoted flag if available
       if (allocated(node%simple_cmd%word_was_quoted) .and. &
-          i <= size(node%simple_cmd%word_was_quoted) .and. &
-          node%simple_cmd%word_was_quoted(i)) then
-        ! Was quoted - check if it has BACKSLASH (escaped chars need quotes)
-        if (index(node%simple_cmd%words(i), '\') > 0) then
+          i <= size(node%simple_cmd%word_was_quoted)) then
+        temp_pipeline%commands(1)%token_quoted(i) = node%simple_cmd%word_was_quoted(i)
+        ! Check if quoted token has backslash (needs quotes for old executor)
+        if (node%simple_cmd%word_was_quoted(i) .and. &
+            index(node%simple_cmd%words(i), '\') > 0) then
           needs_quotes = .true.
         end if
       end if
 
-      ! Check if word was escaped (had backslash in input)
-      ! Add backslash back so old executor knows not to glob expand
-      ! For now, just use needs_quotes
+      ! Copy escaped flag if available
+      if (allocated(node%simple_cmd%word_was_escaped) .and. &
+          i <= size(node%simple_cmd%word_was_escaped)) then
+        temp_pipeline%commands(1)%token_escaped(i) = node%simple_cmd%word_was_escaped(i)
+      end if
+
+      ! Copy token value - add quotes back only for tokens with backslashes
       if (needs_quotes) then
         temp_pipeline%commands(1)%tokens(i) = '"' // trim(node%simple_cmd%words(i)) // '"'
       else
@@ -249,8 +262,25 @@ contains
               temp_pipeline%commands(1)%error_file = trim(node%simple_cmd%redirects(i)%filename)
             end if
           end if
+        case(REDIR_DUP_OUT)
+          ! n>&m (duplicate fd m to fd n)
+          if (node%simple_cmd%redirects(i)%fd == 2 .and. &
+              node%simple_cmd%redirects(i)%target_fd == 1) then
+            ! 2>&1 - redirect stderr to stdout
+            temp_pipeline%commands(1)%redirect_stderr_to_stdout = .true.
+          else if (node%simple_cmd%redirects(i)%fd == 1 .and. &
+                   node%simple_cmd%redirects(i)%target_fd == 2) then
+            ! 1>&2 - redirect stdout to stderr
+            temp_pipeline%commands(1)%redirect_stdout_to_stderr = .true.
+          end if
         end select
       end do
+    end if
+
+    ! Copy heredoc delimiter if present (content will be read by executor)
+    if (len_trim(node%simple_cmd%heredoc_delimiter) > 0) then
+      temp_pipeline%commands(1)%heredoc_delimiter = trim(node%simple_cmd%heredoc_delimiter)
+      temp_pipeline%commands(1)%heredoc_quoted = node%simple_cmd%heredoc_quoted
     end if
 
     ! Execute using existing executor
@@ -262,6 +292,8 @@ contains
     ! Clean up
     if (allocated(temp_pipeline%commands)) then
       if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
+      if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
+      if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
       deallocate(temp_pipeline%commands)
     end if
 
