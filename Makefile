@@ -8,10 +8,10 @@ UNAME_M := $(shell uname -m)
 
 ifeq ($(UNAME_S),Darwin)
     ifeq ($(UNAME_M),arm64)
-        # macOS ARM64: Use gfortran for debugging
-        FC = gfortran
-        PLATFORM_FLAGS = -D__APPLE__ -cpp -frecursive
-        $(info Using gfortran on macOS ARM64)
+        # macOS ARM64: Use LLVM Flang for better stability
+        FC = flang-new
+        PLATFORM_FLAGS = -D__APPLE__ -cpp
+        $(info Using flang-new on macOS ARM64)
     else
         # macOS Intel: Use gfortran with fixes
         FC = gfortran
