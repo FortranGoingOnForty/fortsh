@@ -960,7 +960,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    is_reg = (ret == 0 .and. iand(statbuf%st_mode, S_IFMT) == S_IFREG)
+    is_reg = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFREG)
   end function
 
   function file_is_directory(path) result(is_dir)
@@ -972,7 +972,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    is_dir = (ret == 0 .and. iand(statbuf%st_mode, S_IFMT) == S_IFDIR)
+    is_dir = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFDIR)
   end function
 
   function file_is_symlink(path) result(is_link)
@@ -984,7 +984,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_lstat(c_loc(c_path), statbuf)  ! lstat for symlinks
-    is_link = (ret == 0 .and. iand(statbuf%st_mode, S_IFMT) == S_IFLNK)
+    is_link = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFLNK)
   end function
 
   function file_is_block_device(path) result(is_blk)
@@ -996,7 +996,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    is_blk = (ret == 0 .and. iand(statbuf%st_mode, S_IFMT) == S_IFBLK)
+    is_blk = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFBLK)
   end function
 
   function file_is_char_device(path) result(is_chr)
@@ -1008,7 +1008,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    is_chr = (ret == 0 .and. iand(statbuf%st_mode, S_IFMT) == S_IFCHR)
+    is_chr = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFCHR)
   end function
 
   function file_is_fifo(path) result(is_fifo)
@@ -1020,7 +1020,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    is_fifo = (ret == 0 .and. iand(statbuf%st_mode, S_IFMT) == S_IFIFO)
+    is_fifo = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFIFO)
   end function
 
   function file_is_socket(path) result(is_sock)
@@ -1032,7 +1032,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    is_sock = (ret == 0 .and. iand(statbuf%st_mode, S_IFMT) == S_IFSOCK)
+    is_sock = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFSOCK)
   end function
 
   function file_is_readable(path) result(is_readable)
@@ -1077,7 +1077,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    has_suid = (ret == 0 .and. iand(statbuf%st_mode, S_ISUID) /= 0)
+    has_suid = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_ISUID) /= 0)
   end function
 
   function file_has_sgid(path) result(has_sgid)
@@ -1089,7 +1089,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    has_sgid = (ret == 0 .and. iand(statbuf%st_mode, S_ISGID) /= 0)
+    has_sgid = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_ISGID) /= 0)
   end function
 
   function file_has_sticky(path) result(has_sticky)
@@ -1101,7 +1101,7 @@ contains
 
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
-    has_sticky = (ret == 0 .and. iand(statbuf%st_mode, S_ISVTX) /= 0)
+    has_sticky = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_ISVTX) /= 0)
   end function
 
   function file_has_size(path) result(has_size)

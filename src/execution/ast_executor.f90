@@ -195,6 +195,7 @@ contains
     temp_pipeline%commands(1)%num_redirections = 0
     temp_pipeline%commands(1)%num_prefix_assignments = 0
 
+
     ! Allocate tokens array directly in pipeline command
     allocate(character(len=MAX_TOKEN_LEN) :: temp_pipeline%commands(1)%tokens(node%simple_cmd%num_words))
 
@@ -829,6 +830,14 @@ contains
     integer, intent(out) :: exit_status
     character(len=MAX_PATH_LEN) :: cmd_path
     integer :: ret
+
+    interface
+      function system(cmd) bind(c, name='system')
+        import :: c_char, c_int
+        character(kind=c_char), dimension(*) :: cmd
+        integer(c_int) :: system
+      end function
+    end interface
 
     exit_status = 0
 
