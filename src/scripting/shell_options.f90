@@ -30,6 +30,7 @@ contains
     shell%option_noclobber = .false.
     shell%option_monitor = .true.     ! Enable job control by default
     shell%option_allexport = .false.
+    shell%option_noglob = .false.
     shell%option_vi = .false.         ! Emacs mode by default
 
     ! Set default bash-style options
@@ -144,6 +145,8 @@ contains
             shell%option_monitor = enable_option
           case ('a')
             shell%option_allexport = enable_option
+          case ('f')
+            shell%option_noglob = enable_option
           case ('o')
             ! Handle -o followed by option name (should be separate argument)
             if (i < cmd%num_tokens) then
@@ -346,11 +349,15 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_line
     character(len=1024) :: expanded_ps4
+    integer :: ps4_actual_len
 
     if (shell%option_xtrace) then
       ! Expand PS4 prompt (supports escape sequences like \h, \w, etc.)
       expanded_ps4 = expand_prompt(shell%ps4, shell, shell%ps4_len)
-      write(error_unit, '(a)') trim(expanded_ps4) // trim(command_line)
+      ! Don't trim PS4 - it typically has a trailing space (e.g., '+ ')
+      ps4_actual_len = shell%ps4_len
+      if (ps4_actual_len > len(expanded_ps4)) ps4_actual_len = len_trim(expanded_ps4)
+      write(error_unit, '(a)') expanded_ps4(1:ps4_actual_len) // trim(command_line)
     end if
   end subroutine
 

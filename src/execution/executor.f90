@@ -214,7 +214,7 @@ contains
         call expand_tokens(pipeline%commands(i), shell)
 
         ! Expand glob patterns
-        call expand_command_globs(pipeline%commands(i))
+        call expand_command_globs(pipeline%commands(i), shell)
 
         ! Process backslash escapes AFTER glob expansion
         call process_command_escapes(pipeline%commands(i))
@@ -535,7 +535,7 @@ contains
 
     ! Expand glob patterns (except for defun)
     if (trim(cmd%tokens(1)) /= 'defun') then
-      call expand_command_globs(cmd)
+      call expand_command_globs(cmd, shell)
     end if
 
     ! Process backslash escapes AFTER glob expansion
@@ -893,6 +893,21 @@ contains
         call strip_quotes_local(var_value)
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
       end if
+
+      ! If allexport is enabled (set -a), automatically export the variable
+      if (shell%option_allexport) then
+        do i = 1, shell%num_variables
+          if (trim(shell%variables(i)%name) == trim(var_name)) then
+            shell%variables(i)%exported = .true.
+            ! Also set in environment
+            if (.not. set_environment_var(trim(var_name), trim(shell%variables(i)%value))) then
+              ! Silently ignore export errors (POSIX behavior)
+            end if
+            exit
+          end if
+        end do
+      end if
+
       ! Set exit status to 0 for successful assignments
       ! Don't overwrite error codes like 127 (readonly violation)
       if (shell%last_exit_status /= 127) then
