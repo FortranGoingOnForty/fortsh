@@ -353,6 +353,12 @@ module shell_types
     character(len=MAX_PATH_LEN) :: dir_history(50)  ! Circular buffer of directories
     integer :: dir_history_size = 0                  ! Number of directories in history
     integer :: dir_history_index = 0                 ! Current position in history
+
+    ! Pending heredoc for -c flag processing
+    character(len=4096) :: pending_heredoc = ''
+    character(len=256) :: pending_heredoc_delimiter = ''
+    logical :: pending_heredoc_quoted = .false.
+    logical :: has_pending_heredoc = .false.
   end type shell_state_t
 
 end module shell_types

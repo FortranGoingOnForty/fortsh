@@ -27,14 +27,16 @@ contains
     character(len=*), intent(inout) :: cmd_line
     integer, intent(out) :: heredoc_start
     logical, intent(out) :: cmd_modified
-    
+
     integer :: pos, delimiter_start, delimiter_end
     character(len=256) :: delimiter
     logical :: strip_tabs, expand_vars
-    
+
+    ! write(error_unit, '(A,A,A)') 'DEBUG: parse_heredoc_redirection called with cmd_line=|', trim(cmd_line), '|'
+
     cmd_modified = .false.
     heredoc_start = 0
-    
+
     ! Look for << or <<< operators
     pos = index(cmd_line, '<<')
     if (pos == 0) return
@@ -79,7 +81,10 @@ contains
     end if
     
     delimiter = cmd_line(delimiter_start:delimiter_end-1)
-    
+
+    ! write(error_unit, '(A,A,A,A,A,L1)') 'DEBUG: parse_heredoc delimiter=|', &
+    !   trim(delimiter), '| vs pending=|', trim(shell%pending_heredoc_delimiter), '| has=', shell%has_pending_heredoc
+
     ! Check if delimiter is quoted (affects variable expansion)
     expand_vars = .true.
     if (delimiter(1:1) == '"' .or. delimiter(1:1) == "'" .or. delimiter(1:1) == '\') then
@@ -148,45 +153,101 @@ contains
     character(len=MAX_HEREDOC_LENGTH) :: line, processed_line
     character(len=1024) :: temp_file
     integer :: num_lines, i, capacity
-    logical :: found_delimiter
+    logical :: found_delimiter, actual_expand_vars
     
     ! Allocate initial array
     allocate(doc_lines(20))  ! Start with reasonable size
     capacity = 20
     num_lines = 0
     found_delimiter = .false.
+    actual_expand_vars = expand_vars  ! Default to input value
 
-    write(output_unit, '(a)', advance='no') '> '
+    ! Check if we have pending heredoc content from -c flag
+    if (shell%has_pending_heredoc .and. &
+        trim(shell%pending_heredoc_delimiter) == trim(delimiter)) then
+      ! Use the pre-stored heredoc content
+      ! Use the stored quoted flag to determine expansion
+      actual_expand_vars = .not. shell%pending_heredoc_quoted
 
-    ! Read lines until we find the delimiter
-    do while (.true.)  ! Remove MAX_HEREDOC_LINES limit
-      read(input_unit, '(a)', iostat=i) line
-      if (i /= 0) then
-        write(error_unit, '(a)') 'heredoc: unexpected end of input'
-        shell%last_exit_status = 1
-        if (allocated(doc_lines)) deallocate(doc_lines)
-        return
-      end if
-      
-      ! Check if this line is the delimiter
-      if (strip_tabs) then
-        ! Remove leading tabs for comparison
-        processed_line = line
-        do while (len_trim(processed_line) > 0 .and. processed_line(1:1) == char(9))
-          processed_line = processed_line(2:)
+      ! DEBUG: Print what we're doing
+      ! write(error_unit, '(A,L1,A,A,A,A)') 'DEBUG: Using pending heredoc, expand_vars=', actual_expand_vars, &
+      !   ', delimiter=', trim(delimiter), ', pending_delim=', trim(shell%pending_heredoc_delimiter)
+
+      ! Split pending content into lines
+      block
+        integer :: line_start, line_end, content_len
+        content_len = len_trim(shell%pending_heredoc)
+        line_start = 1
+
+        do while (line_start <= content_len)
+          ! Find end of line
+          line_end = line_start
+          do while (line_end <= content_len .and. &
+                    shell%pending_heredoc(line_end:line_end) /= char(10))
+            line_end = line_end + 1
+          end do
+
+          num_lines = num_lines + 1
+          ! Grow array if needed
+          if (num_lines > capacity) then
+            block
+              character(len=MAX_HEREDOC_LENGTH), allocatable :: temp(:)
+              allocate(temp(capacity * 2))
+              temp(1:capacity) = doc_lines
+              call move_alloc(temp, doc_lines)
+              capacity = capacity * 2
+            end block
+          end if
+
+          ! Store the line
+          if (line_end > line_start) then
+            doc_lines(num_lines) = shell%pending_heredoc(line_start:line_end-1)
+          else
+            doc_lines(num_lines) = ''
+          end if
+
+          line_start = line_end + 1
         end do
-      else
-        processed_line = line
-      end if
-      
-      if (trim(processed_line) == trim(delimiter)) then
-        found_delimiter = .true.
-        exit
-      end if
+      end block
 
-      num_lines = num_lines + 1
-      ! Grow array if needed
-      if (num_lines > capacity) then
+      ! Clear the pending heredoc
+      shell%has_pending_heredoc = .false.
+      shell%pending_heredoc = ''
+      found_delimiter = .true.
+
+    else
+      ! Read from stdin as usual
+      write(output_unit, '(a)', advance='no') '> '
+
+      ! Read lines until we find the delimiter
+      do while (.true.)  ! Remove MAX_HEREDOC_LINES limit
+        read(input_unit, '(a)', iostat=i) line
+        if (i /= 0) then
+          write(error_unit, '(a)') 'heredoc: unexpected end of input'
+          shell%last_exit_status = 1
+          if (allocated(doc_lines)) deallocate(doc_lines)
+          return
+        end if
+
+        ! Check if this line is the delimiter
+        if (strip_tabs) then
+          ! Remove leading tabs for comparison
+          processed_line = line
+          do while (len_trim(processed_line) > 0 .and. processed_line(1:1) == char(9))
+            processed_line = processed_line(2:)
+          end do
+        else
+          processed_line = line
+        end if
+
+        if (trim(processed_line) == trim(delimiter)) then
+          found_delimiter = .true.
+          exit
+        end if
+
+        num_lines = num_lines + 1
+        ! Grow array if needed
+        if (num_lines > capacity) then
         call grow_heredoc_array(doc_lines, capacity)
       end if
       doc_lines(num_lines) = line
@@ -194,7 +255,8 @@ contains
       ! Show continuation prompt
       write(output_unit, '(a)', advance='no') '> '
     end do
-    
+    end if  ! end of else (reading from stdin vs using pending heredoc)
+
     if (.not. found_delimiter) then
       write(error_unit, '(a,a,a)') 'heredoc: delimiter "', trim(delimiter), '" not found'
       shell%last_exit_status = 1
@@ -203,7 +265,7 @@ contains
     end if
     
     ! Process the collected lines
-    call process_heredoc_lines(shell, doc_lines(1:num_lines), num_lines, expand_vars, strip_tabs, temp_file)
+    call process_heredoc_lines(shell, doc_lines(1:num_lines), num_lines, actual_expand_vars, strip_tabs, temp_file)
 
     ! Clean up allocatable array
     if (allocated(doc_lines)) deallocate(doc_lines)

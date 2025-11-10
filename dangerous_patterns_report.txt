@@ -1,0 +1,340 @@
+Dangerous Fortran Patterns Report
+================================================================================
+
+
+src/ast/evaluator_simple_real.f90: 19 issues
+--------------------------------------------------------------------------------
+ 1473:           if (len_trim(cmd_str) >= 2 .and. cmd_str(1:1) == '-' .and. cmd_str(2:2) /= '-') then
+ 1623:           if (len_trim(word_value) > 0 .and. word_value(1:1) == '-') then
+ 1679:         else if (len_trim(word_value) > 0 .and. word_value(1:1) == '-') then
+ 1797:         if (index('+-*/%', clean_expr(i:i)) > 0 .and. i > 1) then
+ 3275:       if (expression(1:1) == '(' .and. expression(len_trim(expression):len_trim(expression)) == ')') then
+ 3543:       do while (i <= len_trim(expr) .and. expr(i:i) == ' ')
+ 3549:       do while (i <= len_trim(expr) .and. expr(i:i) /= ' ')
+ 3555:       do while (i <= len_trim(expr) .and. expr(i:i) == ' ')
+ 3563:       do while (i <= len_trim(expr) .and. expr(i:i) /= ' ')
+ 3569:       do while (i <= len_trim(expr) .and. expr(i:i) == ' ')
+ 3596:         if (i <= len_trim(word) .and. word(i:i) == '{') then
+ 3786:       if (str(i:i) == '*' .or. str(i:i) == '?' .or. str(i:i) == '[') then
+ 4081:       if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
+ 4098:       if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
+ 4293:       if (pattern(i:i) /= '?' .and. pattern(i:i) /= str(i:i)) then
+ 4473:         else if (brace_content(i:i) == ',' .and. depth == 0) then
+ 4513:     if (len_trim(word) == 0 .or. word(1:1) /= '~') return
+ 4542:       if (len_trim(word) == 2 .or. (len_trim(word) > 2 .and. word(3:3) == '/')) then
+ 4559:       if (len_trim(word) == 2 .or. (len_trim(word) > 2 .and. word(3:3) == '/')) then
+
+
+src/ast/parser_enhanced.f90: 9 issues
+--------------------------------------------------------------------------------
+ 1199:       if (len_trim(text) > 0 .and. text(1:1) == '!') then
+ 1221:       if (len_trim(base_text) > 0 .and. base_text(1:1) == '#') then
+ 1231:         if (i < len_trim(base_text) .and. base_text(i:i+1) == ':-') then
+ 1239:         if (i < len_trim(base_text) .and. base_text(i:i+1) == ':=') then
+ 1247:         if (i < len_trim(base_text) .and. base_text(i:i+1) == ':?') then
+ 1255:         if (i < len_trim(base_text) .and. base_text(i:i+1) == ':+') then
+ 1263:         if (i < len_trim(base_text) .and. base_text(i:i+1) == '##') then
+ 1279:         if (i < len_trim(base_text) .and. base_text(i:i+1) == '%%') then
+ 1295:         if (base_text(i:i) == ':' .and. i > 1) then
+
+
+src/ast/test_param_helpers.f90: 3 issues
+--------------------------------------------------------------------------------
+  154:       if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
+  170:       if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
+  284:       if (pattern(i:i) /= '?' .and. pattern(i:i) /= str(i:i)) then
+
+
+src/ast/test_tilde_expansion.f90: 3 issues
+--------------------------------------------------------------------------------
+  142:     if (len_trim(word) == 0 .or. word(1:1) /= '~') return
+  170:       if (len_trim(word) == 2 .or. (len_trim(word) > 2 .and. word(3:3) == '/')) then
+  187:       if (len_trim(word) == 2 .or. (len_trim(word) > 2 .and. word(3:3) == '/')) then
+
+
+src/execution/builtins.f90: 10 issues
+--------------------------------------------------------------------------------
+  906:       if (action(1:1) == '"' .and. action(len_trim(action):len_trim(action)) == '"') then
+  908:       else if (action(1:1) == "'" .and. action(len_trim(action):len_trim(action)) == "'") then
+  992:         if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
+  994:         else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
+ 1074:           if (expanded_form(1:1) == '"' .and. expanded_form(len_trim(expanded_form):len_trim(expanded_form)) == '"') then
+ 1076:           else if (expanded_form(1:1) == "'" .and. expanded_form(len_trim(expanded_form):len_trim(expanded_form)) == "'") then
+ 1339:       if (function_body(1)(1:1) == '"' .or. function_body(1)(1:1) == "'") then
+ 2491:         if (expr(1:1) == '"' .and. expr(len_trim(expr):len_trim(expr)) == '"') then
+ 2493:         else if (expr(1:1) == "'" .and. expr(len_trim(expr):len_trim(expr)) == "'") then
+ 2999:       if (len_trim(line) == 0 .or. line(1:1) == '#') cycle
+
+
+src/execution/executor.f90: 20 issues
+--------------------------------------------------------------------------------
+  406:               (len_trim(cmd%tokens(1)) >= 5 .and. cmd%tokens(1)(1:5) == 'for((')) then
+  565:         cmd%tokens(1)(1:2) == '((' .and. &
+  852:           if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
+  897:       do while (i <= len_input .and. input(i:i) == ' ')
+  911:         if (.not. in_quotes .and. (input(i:i) == '"' .or. input(i:i) == "'")) then
+  914:         else if (in_quotes .and. input(i:i) == quote_char) then
+  916:         else if (.not. in_quotes .and. input(i:i) == ' ') then
+  925:         if ((elements(count)(1:1) == '"' .and. elements(count)(len_trim(elements(count)):len_trim(elements(count))) == '"') .or. &
+  926:             (elements(count)(1:1) == "'" .and. elements(count)(len_trim(elements(count)):len_trim(elements(count))) == "'")) then
+  945:       if (str(i:i) == backslash .and. str(i+1:i+1) == ' ') then
+  966:       if (input(i:i) == backslash .and. i < input_len) then
+ 1316:             if (target_fd_str(1:2) == '${' .and. &
+ 1351:             if (target_fd_str(1:2) == '${' .and. &
+ 1671:     if (str(1:1) /= "'" .and. str(1:1) /= '"') return
+ 1869:       do while (i <= len_trim(input) .and. input(i:i) == ' ')
+ 1877:       do while (i <= len_trim(input) .and. input(i:i) /= ' ')
+ 2010:         if (.not. in_quotes .and. (cmd%tokens(i)(j:j) == '"' .or. cmd%tokens(i)(j:j) == "'")) then
+ 2016:         else if (in_quotes .and. cmd%tokens(i)(j:j) == quote_char) then
+ 2021:         else if (.not. in_quotes .and. cmd%tokens(i)(j:j) == backslash .and. j < token_len) then
+ 2158:       if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+
+
+src/fortsh.f90: 5 issues
+--------------------------------------------------------------------------------
+  363:         if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+  487:       do while (i <= len_trim(trimmed) .and. trimmed(i:i) /= ' ' .and. &
+  488:                 trimmed(i:i) /= '(' .and. trimmed(i:i) /= '{')
+  503:       do while (i < paren_pos .and. (is_alnum_underscore(trimmed(i:i))))
+  581:       if (len_trim(arg) > 0 .and. arg(1:1) == '-') then
+
+
+src/fortsh_ast.f90: 5 issues
+--------------------------------------------------------------------------------
+  299:         if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+  409:       do while (i <= len_trim(trimmed) .and. trimmed(i:i) /= ' ' .and. &
+  410:                 trimmed(i:i) /= '(' .and. trimmed(i:i) /= '{')
+  425:       do while (i < paren_pos .and. (is_alnum_underscore(trimmed(i:i))))
+  502:       if (len_trim(arg) > 0 .and. arg(1:1) == '-') then
+
+
+src/io/heredoc.f90: 3 issues
+--------------------------------------------------------------------------------
+   85:     if (delimiter(1:1) == '"' .or. delimiter(1:1) == "'" .or. delimiter(1:1) == '\') then
+  175:         do while (len_trim(processed_line) > 0 .and. processed_line(1:1) == char(9))
+  256:         do while (len_trim(processed_line) > 0 .and. processed_line(1:1) == char(9))
+
+
+src/io/readline.f90: 11 issues
+--------------------------------------------------------------------------------
+ 1156:       else if (pos == 1 .or. line(pos-1:pos-1) == ' ' .or. line(pos-1:pos-1) == char(9)) then
+ 2270:     if (len_trim(dir_path) > 0 .and. dir_path(1:1) == '~') then
+ 2300:         if (pattern_len == 0 .or. (pattern_len > 0 .and. pattern(1:1) /= '.')) then
+ 2382:       do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+ 2411:         do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+ 3645:       if (upper_name(i:i) >= 'a' .and. upper_name(i:i) <= 'z') then
+ 3964:         if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
+ 3966:         else if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
+ 4551:       if (last_cmd(i:i) /= ' ' .and. last_cmd(i:i) /= char(9)) then
+ 5379:             if (suggestion_candidate(j:j) == char(10) .or. suggestion_candidate(j:j) == char(13)) then
+ 5453:       if (input_state%suggestion(i:i) == ' ' .or. input_state%suggestion(i:i) == '/') then
+
+
+src/io/syntax_highlight.f90: 9 issues
+--------------------------------------------------------------------------------
+  201:       do while (i <= len_trim(working) .and. working(i:i) == ' ')
+  208:       if (working(i:i) == '#' .and. .not. in_quotes) then
+  222:       if (working(i:i) == ';' .or. working(i:i) == '|' .or. &
+  223:           working(i:i) == '&' .or. working(i:i) == '>' .or. working(i:i) == '<') then
+  236:           if (working(i:i) == '"' .or. working(i:i) == "'") then
+  239:           else if (working(i:i) == ' ' .or. working(i:i) == ';' .or. &
+  240:                    working(i:i) == '|' .or. working(i:i) == '&' .or. &
+  241:                    working(i:i) == '>' .or. working(i:i) == '<') then
+  307:       else if (token(1:1) == '"' .or. token(1:1) == "'") then
+
+
+src/parsing/glob.f90: 1 issues
+--------------------------------------------------------------------------------
+   38:       else if (str(i:i) == '*' .or. str(i:i) == '?' .or. str(i:i) == '[') then
+
+
+src/parsing/parser.f90: 36 issues
+--------------------------------------------------------------------------------
+   59:         if (i > 1 .and. working_input(i-1:i) == '${') then
+   61:         else if (in_param_expansion .and. working_input(i:i) == '}') then
+   65:         if (working_input(i:i) == '"' .or. working_input(i:i) == "'") then
+   68:         else if (working_input(i:i) == '#' .and. .not. in_param_expansion) then
+  108:         if (working_input(i:i) == '"' .or. working_input(i:i) == "'") then
+  247:         if (working_input(i:i) == '|' .and. &
+  441:     if (len_trim(working_input) >= 2 .and. working_input(1:2) == '((') then
+  448:     if (len_trim(working_input) >= 5 .and. working_input(1:5) == 'for((') then
+  455:     if (len_trim(working_input) >= 6 .and. working_input(1:6) == 'for ((') then
+  713:       if (filename(i:i) == ' ' .or. filename(i:i) == char(9)) then
+  728:       if (word(i:i) == ' ' .or. word(i:i) == char(9) .or. word(i:i) == char(10) .or. &
+  729:           word(i:i) == '<' .or. word(i:i) == '>' .or. &
+  730:           word(i:i) == '|' .or. word(i:i) == '&' .or. &
+  800:         if (str(i:i) == '"' .or. str(i:i) == "'") then
+ 1112:       if (token(1:1) == '"' .and. token(token_len:token_len) == '"') then
+ 1117:       if (token(1:1) == "'" .and. token(token_len:token_len) == "'") then
+ 1141:       if (.not. in_quotes .and. (token(i:i) == '"' .or. token(i:i) == "'")) then
+ 1147:       else if (in_quotes .and. token(i:i) == quote_char) then
+ 1152:       else if (.not. in_quotes .and. token(i:i) == '\' .and. i < token_len) then
+ 1183:       if (token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"') then
+ 1185:       else if (token(1:1) == "'" .and. token(len_trim(token):len_trim(token)) == "'") then
+ 1212:       if (is_quoted .and. .not. is_single_quoted .and. working_token(i:i) == '\' .and. &
+ 1227:       if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ')) then
+ 1230:       else if (working_token(i:i) == '$' .and. i < len_trim(working_token)) then
+ 1288:         else if (working_token(i:i) >= '0' .and. working_token(i:i) <= '9') then
+ 1374:             if (.not. (is_alnum(working_token(i:i)) .or. working_token(i:i) == '_')) exit
+ 1416:         do while (i <= len_trim(working_token) .and. working_token(i:i) /= '`')
+ 1420:         if (i <= len_trim(working_token) .and. working_token(i:i) == '`') then
+ 1513:       if (input(i:i) == '<' .and. i < len(input) - 1) then
+ 1541:       do while (line_end <= len(input) .and. input(line_end:line_end) /= char(10))
+ 1654:         if (input(i:i) == "'" .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
+ 1656:         else if (input(i:i) == '"' .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
+ 1662:       if (input(i:i) == '`' .and. .not. in_single_quote .and. &
+ 2649:           (input(i:i+1) == '<(' .or. input(i:i+1) == '>(')) then
+ 2894:       if (line(i:i) == "'" .and. .not. in_double_quote) then
+ 2896:       else if (line(i:i) == '"' .and. .not. in_single_quote) then
+
+
+src/scripting/advanced_test.f90: 3 issues
+--------------------------------------------------------------------------------
+  203:         if (i + 2 < num_tokens .and. is_test_operator(tokens(i+1))) then
+  623:       if ((temp(1:1) == '"' .and. temp(temp_len:temp_len) == '"') .or. &
+  624:           (temp(1:1) == "'" .and. temp(temp_len:temp_len) == "'")) then
+
+
+src/scripting/aliases.f90: 2 issues
+--------------------------------------------------------------------------------
+   25:       else if (shell%aliases(i)%name(1:1) == char(0) .or. trim(shell%aliases(i)%name) == '') then
+   79:       if (shell%aliases(i)%name(1:1) /= char(0) .and. trim(shell%aliases(i)%name) /= '') then
+
+
+src/scripting/completion.f90: 6 issues
+--------------------------------------------------------------------------------
+  277:       do while (i <= len_trim(word_list_str) .and. word_list_str(i:i) == ' ')
+  290:           if (word_list_str(i:i) == '"' .or. word_list_str(i:i) == "'") then
+  311:         if ((spec%word_list(pos)(1:1) == '"' .and. &
+  313:             (spec%word_list(pos)(1:1) == "'" .and. &
+  514:       do while (i <= len_trim(input) .and. input(i:i) == ' ')
+  521:       do while (i <= len_trim(input) .and. input(i:i) /= ' ')
+
+
+src/scripting/config.f90: 2 issues
+--------------------------------------------------------------------------------
+   82:         response(1:1) == 'Y' .or. response(1:1) == 'y') then
+  212:       if (len_trim(line) == 0 .or. line(1:1) == '#') cycle
+
+
+src/scripting/control_flow.f90: 9 issues
+--------------------------------------------------------------------------------
+  168:       if (len_trim(cmd%tokens(2)) >= 2 .and. cmd%tokens(2)(1:2) == '((') then
+  411:         do while (start_pos <= len_trim(expanded_items(i)) .and. expanded_items(i)(start_pos:start_pos) == ' ')
+  419:         do while (end_pos <= len_trim(expanded_items(i)) .and. expanded_items(i)(end_pos:end_pos) /= ' ')
+  512:       if (i+1 <= len_trim(full_expr) .and. full_expr(i:i+1) == '((') then
+  515:       else if (i+1 <= len_trim(full_expr) .and. full_expr(i:i+1) == '))') then
+ 1400:       if (input(i:i) == '$' .and. i < len_trim(input)) then
+ 1406:           if (.not. ((input(i:i) >= 'a' .and. input(i:i) <= 'z') .or. &
+ 1407:                      (input(i:i) >= 'A' .and. input(i:i) <= 'Z') .or. &
+ 1408:                      (input(i:i) >= '0' .and. input(i:i) <= '9') .or. &
+
+
+src/scripting/directory_builtin.f90: 2 issues
+--------------------------------------------------------------------------------
+  172:         if (cmd%tokens(arg_index)(1:1) == '+' .or. cmd%tokens(arg_index)(1:1) == '-' .or. &
+  173:             (cmd%tokens(arg_index)(1:1) >= '0' .and. cmd%tokens(arg_index)(1:1) <= '9')) then
+
+
+src/scripting/expansion.f90: 32 issues
+--------------------------------------------------------------------------------
+   55:         if (len_trim(array_name) > 0 .and. array_name(1:1) == '!') then
+   59:         else if (len_trim(array_name) > 0 .and. array_name(1:1) == '#') then
+  624:       if (input(i:i) == '\' .and. i < len_trim(input)) then
+ 1217:     if (expr(1:1) == '-' .and. len_trim(expr) > 1) then
+ 1224:     if (expr(1:1) == '+' .and. len_trim(expr) > 1) then
+ 1364:           if (expr(i:i+1) == '+=' .or. expr(i:i+1) == '-=' .or. &
+ 1365:               expr(i:i+1) == '*=' .or. expr(i:i+1) == '/=' .or. &
+ 1666:     if (len_trim(expr) > 2 .and. expr(1:2) == '++') then
+ 1685:     if (len_trim(expr) > 2 .and. expr(1:2) == '--') then
+ 1710:     if (expr(1:1) == '-' .and. len_trim(expr) > 1) then
+ 1716:     if (expr(1:1) == '+' .and. len_trim(expr) > 1) then
+ 1853:       else if (depth == 0 .and. expr(i:i) == op) then
+ 1887:       else if (depth == 0 .and. (expr(i:i) == '+' .or. expr(i:i) == '-')) then
+ 1889:         if (i > 1 .and. expr(i-1:i) == '++') cycle
+ 1890:         if (i > 1 .and. expr(i-1:i) == '--') cycle
+ 1891:         if (i < len_trim(expr) .and. expr(i:i+1) == '++') cycle
+ 1892:         if (i < len_trim(expr) .and. expr(i:i+1) == '--') cycle
+ 1923:         if (expr(i:i) == '*' .or. expr(i:i) == '/' .or. expr(i:i) == '%') then
+ 1925:           if (expr(i:i) == '*' .and. i < len_trim(expr) .and. expr(i+1:i+1) == '*') cycle
+ 1926:           if (expr(i:i) == '*' .and. i > 1 .and. expr(i-1:i-1) == '*') cycle
+ 1959:       if (input(i:i) == "'" .and. .not. in_double_quote) then
+ 1965:       else if (input(i:i) == '"' .and. .not. in_single_quote) then
+ 1988:       if (i < len_trim(input) - 2 .and. input(i:i+2) == '$((') then
+ 2006:       else if (i < len_trim(input) - 1 .and. input(i:i+1) == '$(' .and. &
+ 2007:                (i >= len_trim(input) - 2 .or. input(i:i+2) /= '$((')) then
+ 2027:       else if (i < len_trim(input) - 1 .and. input(i:i+1) == '${') then
+ 2052:         do while (i <= len_trim(input) .and. (is_alnum(input(i:i)) .or. input(i:i) == '_'))
+ 2175:     if (input(1:1) == "'" .and. input(len_input:len_input) == "'") then
+ 2185:     if (input(1:1) == '"' .and. input(len_input:len_input) == '"') then
+ 2375:         else if (brace_content(i:i) == ',' .and. depth == 0) then
+ 2531:     if (len_trim(input) == 0 .or. input(1:1) /= '~') return
+ 2547:     else if (input(2:2) == ' ' .or. input(2:2) == char(9)) then
+
+
+src/scripting/getopts_builtin.f90: 2 issues
+--------------------------------------------------------------------------------
+   69:     if (optind > argc .or. len_trim(current_arg) == 0 .or. current_arg(1:1) /= '-') then
+  122:       if (len_trim(current_arg) == 0 .or. current_arg(1:1) /= '-') then
+
+
+src/scripting/printf_builtin.f90: 2 issues
+--------------------------------------------------------------------------------
+  303:       if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
+  316:       if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
+
+
+src/scripting/prompt_formatting.f90: 3 issues
+--------------------------------------------------------------------------------
+   44:       if (prompt_str(i:i) == '\' .and. i < prompt_len) then
+  339:     if (len_trim(path) > 0 .and. path(1:1) == '~') then
+  343:     else if (len_trim(path) > 0 .and. path(1:1) == '/') then
+
+
+src/scripting/read_builtin.f90: 3 issues
+--------------------------------------------------------------------------------
+  238:       if (input_line(i:i) == '\' .and. i < len_trim(input_line)) then
+  285:       if (input_line(pos:pos) == ' ' .or. input_line(pos:pos) == char(9)) then
+  323:       if (input_line(pos:pos) == ' ' .or. input_line(pos:pos) == char(9)) then
+
+
+src/scripting/shell_options.f90: 2 issues
+--------------------------------------------------------------------------------
+   88:       if (arg_len >= 1 .and. option_str(1:1) /= '-' .and. option_str(1:1) /= '+') then
+  294:       if (shell%variables(i)%name(1:1) /= char(0) .and. trim(shell%variables(i)%name) /= '') then
+
+
+src/scripting/substitution.f90: 2 issues
+--------------------------------------------------------------------------------
+   65:         if (i < len_trim(cmd_str) - 1 .and. cmd_str(i:i+1) == '$(') then
+  164:       do while (pos > 1 .and. output(pos-1:pos-1) == char(10))
+
+
+src/scripting/variables.f90: 15 issues
+--------------------------------------------------------------------------------
+   95:       if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+  328:         if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
+  385:       if (len_trim(var_value) > 2 .and. var_value(1:1) == '(' .and. &
+  445:             if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
+  446:                 (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
+  466:         if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
+  467:             (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
+  515:       if (input(i:i) == '$' .and. i < len_trim(input)) then
+  519:         if (i <= len_trim(input) .and. input(i:i) == '{') then
+  550:                   if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
+  679:       if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+  746:       if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+  847:       if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+ 1345:       if (str(i:i) < '0' .or. str(i:i) > '9') return
+ 1495:     if (str(1:1) /= "'" .and. str(1:1) /= '"') return
+
+
+src/system/signal_handling.f90: 1 issues
+--------------------------------------------------------------------------------
+  113:       if (upper_name(i:i) >= 'a' .and. upper_name(i:i) <= 'z') then
+
+
+src/system/signals.f90: 1 issues
+--------------------------------------------------------------------------------
+  272:       if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
+
