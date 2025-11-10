@@ -113,11 +113,13 @@ contains
           return
         end if
       case default
-        ! Variable name
+        ! Variable names - don't exit, let the loop collect all of them
         if (cmd%tokens(arg_index)(1:1) /= '-') then
-          var_name = cmd%tokens(arg_index)
-          arg_index = arg_index + 1
-          exit
+          ! Found first variable name, mark where variables start
+          if (var_name == 'REPLY') then
+            var_name = cmd%tokens(arg_index)  ! Save first var for single-var case
+          end if
+          exit  ! Exit to start processing variables
         else
           write(error_unit, '(a,a)') 'read: unknown option: ', trim(cmd%tokens(arg_index))
           shell%last_exit_status = 1
@@ -125,12 +127,12 @@ contains
         end if
       end select
     end do
-    
+
     ! Display prompt if specified
     if (use_prompt) then
       write(output_unit, '(a)', advance='no') trim(prompt)
     end if
-    
+
     ! Read input based on options
     if (use_nchars) then
       call read_n_characters(nchars, input_line)
@@ -141,18 +143,20 @@ contains
     else
       call read_line_input(input_line)
     end if
-    
+
     ! Process input based on raw mode
     if (.not. raw_mode) then
       call process_backslash_escapes(input_line)
     end if
-    
+
     ! Store result in variable(s)
     if (use_array) then
       call store_array_result(shell, var_name, input_line)
-    else if (arg_index <= cmd%num_tokens) then
+    else if (arg_index < cmd%num_tokens) then
+      ! Multiple variables: start from arg_index (first variable)
       call store_multiple_variables(shell, cmd%tokens, arg_index, cmd%num_tokens, input_line)
     else
+      ! Single variable
       call set_shell_variable(shell, var_name, trim(input_line))
     end if
     
@@ -309,39 +313,78 @@ contains
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: start_arg, num_tokens
     character(len=*), intent(in) :: input_line
-    
+
     character(len=256) :: words(20)
-    integer :: word_count, var_count, i, pos, start_pos
-    
+    character(len=256) :: ifs_value
+    integer :: word_count, var_count, i, pos, start_pos, input_len
+    logical :: is_ifs_char
+
+    ! Get IFS value (default is space, tab, newline)
+    ifs_value = get_shell_variable(shell, 'IFS')
+    if (len_trim(ifs_value) == 0 .or. trim(ifs_value) == ' \t\n') then
+      ! Default IFS: space, tab, newline as actual characters
+      ifs_value = ' ' // char(9) // char(10)
+    end if
+
     word_count = 0
     var_count = num_tokens - start_arg + 1
+    input_len = len_trim(input_line)
     pos = 1
-    start_pos = 1
-    
-    ! Split input into words
-    do while (pos <= len_trim(input_line) .and. word_count < var_count)
-      if (input_line(pos:pos) == ' ' .or. input_line(pos:pos) == char(9)) then
+
+    ! Skip leading IFS whitespace
+    do while (pos <= input_len)
+      if (index(ifs_value, input_line(pos:pos)) > 0) then
+        pos = pos + 1
+      else
+        exit
+      end if
+    end do
+
+    start_pos = pos
+
+    ! Split input by IFS characters
+    do while (pos <= input_len .and. word_count < var_count)
+      is_ifs_char = (index(ifs_value, input_line(pos:pos)) > 0)
+
+      if (is_ifs_char) then
         if (pos > start_pos) then
           word_count = word_count + 1
           words(word_count) = input_line(start_pos:pos-1)
+
+          ! If we've filled all but the last variable, assign remaining input to last var
           if (word_count >= var_count - 1) then
-            ! Last variable gets remaining input
-            words(word_count + 1) = input_line(pos+1:)
-            word_count = word_count + 1
+            ! Skip IFS chars before remainder
+            pos = pos + 1
+            do while (pos <= input_len .and. index(ifs_value, input_line(pos:pos)) > 0)
+              pos = pos + 1
+            end do
+            if (pos <= input_len) then
+              word_count = word_count + 1
+              words(word_count) = input_line(pos:input_len)
+            end if
             exit
           end if
         end if
-        start_pos = pos + 1
+
+        ! Skip all consecutive IFS chars to find start of next word
+        do while (pos <= input_len .and. index(ifs_value, input_line(pos:pos)) > 0)
+          pos = pos + 1
+        end do
+        start_pos = pos
+        ! Don't increment pos, just continue to next iteration
+        cycle
       end if
+
+      ! Not an IFS char, keep scanning
       pos = pos + 1
     end do
-    
-    ! Handle last word if not handled above
-    if (word_count < var_count .and. start_pos <= len_trim(input_line)) then
+
+    ! Handle last word if we haven't filled all variables yet
+    if (word_count < var_count .and. start_pos <= input_len) then
       word_count = word_count + 1
-      words(word_count) = input_line(start_pos:)
+      words(word_count) = input_line(start_pos:input_len)
     end if
-    
+
     ! Assign to variables
     do i = start_arg, num_tokens
       if (i - start_arg + 1 <= word_count) then
