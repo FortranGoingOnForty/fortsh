@@ -1017,9 +1017,9 @@ contains
 
     ! Initialize prompt string lengths (to match default values in shell_state_t)
     shell%ps1_len = len_trim(shell%ps1)  ! '\u@\h :: \w > ' = 17 chars
-    shell%ps2_len = len_trim(shell%ps2)  ! '> ' = 2 chars
-    shell%ps3_len = len_trim(shell%ps3)  ! '#? ' = 3 chars
-    shell%ps4_len = len_trim(shell%ps4)  ! '+ ' = 2 chars
+    shell%ps2_len = 2                    ! '> ' = 2 chars (don't trim trailing space)
+    shell%ps3_len = 3                    ! '#? ' = 3 chars (don't trim trailing space)
+    shell%ps4_len = 2                    ! '+ ' = 2 chars (don't trim trailing space)
 
     ! Check for performance monitoring environment variable
     temp = get_environment_var('FORTSH_PERF')

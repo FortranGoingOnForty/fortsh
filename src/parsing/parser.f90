@@ -1763,8 +1763,9 @@ contains
   end subroutine
 
   ! Expand glob patterns in command tokens
-  subroutine expand_command_globs(cmd)
+  subroutine expand_command_globs(cmd, shell)
     type(command_t), intent(inout) :: cmd
+    type(shell_state_t), intent(in) :: shell
 
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_tokens(:)
     character(len=MAX_TOKEN_LEN), allocatable :: original_tokens(:)
@@ -1773,6 +1774,9 @@ contains
     logical :: has_expandable
 
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
+
+    ! Skip glob expansion if noglob option is enabled (set -f)
+    if (shell%option_noglob) return
 
     ! Save original tokens
     allocate(original_tokens(cmd%num_tokens))
