@@ -1047,7 +1047,16 @@ contains
     end if
 
     do i = 1, cmd%num_tokens
-      call expand_variables(cmd%tokens(i), expanded, shell)
+      ! Check if this token was single-quoted (no expansion)
+      if (allocated(cmd%token_quote_type) .and. &
+          i <= size(cmd%token_quote_type) .and. &
+          cmd%token_quote_type(i) == QUOTE_SINGLE) then
+        ! Single quotes - no expansion, use literal value
+        expanded = cmd%tokens(i)
+      else
+        ! No quotes or double quotes - perform expansion
+        call expand_variables(cmd%tokens(i), expanded, shell)
+      end if
 
       ! Determine if we should split this token on IFS characters
       ! Only split if:

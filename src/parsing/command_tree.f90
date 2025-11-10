@@ -75,6 +75,7 @@ module command_tree
     character(len=MAX_TOKEN_LEN), allocatable :: words(:)     ! Command words
     logical, allocatable :: word_was_quoted(:)                ! Track quoted tokens for old executor
     logical, allocatable :: word_was_escaped(:)               ! Track escaped tokens (prevent glob expansion)
+    integer, allocatable :: word_quote_type(:)                ! Track quote type (QUOTE_* constant)
     integer :: num_words = 0
     type(redirection_t), allocatable :: redirects(:)          ! Redirections
     integer :: num_redirects = 0

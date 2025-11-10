@@ -243,6 +243,7 @@ contains
     type(command_node_t), pointer :: node, func_body
     character(len=MAX_TOKEN_LEN) :: words(MAX_TOKENS), func_name, delimiter, merged_word
     logical :: was_quoted(MAX_TOKENS), was_escaped(MAX_TOKENS)
+    integer :: quote_types(MAX_TOKENS)
     character(len=MAX_TOKEN_LEN) :: saved_heredoc_delimiter
     logical :: saved_heredoc_quoted
     logical :: has_heredoc
@@ -254,6 +255,7 @@ contains
     nullify(node)
     was_quoted = .false.
     was_escaped = .false.
+    quote_types = QUOTE_NONE
     has_heredoc = .false.
     saved_heredoc_quoted = .false.
     saved_heredoc_delimiter = ''
@@ -311,6 +313,7 @@ contains
               words(num_words) = tok%value
               was_quoted(num_words) = tok%quoted
               was_escaped(num_words) = tok%escaped
+              quote_types(num_words) = tok%quote_type
             end if
           end if
         else
@@ -320,6 +323,7 @@ contains
             words(num_words) = tok%value
             was_quoted(num_words) = tok%quoted
             was_escaped(num_words) = tok%escaped
+            quote_types(num_words) = tok%quote_type
           end if
           call advance(state)
         end if
@@ -407,6 +411,8 @@ contains
         node%simple_cmd%word_was_quoted(1:num_words) = was_quoted(1:num_words)
         allocate(node%simple_cmd%word_was_escaped(num_words))
         node%simple_cmd%word_was_escaped(1:num_words) = was_escaped(1:num_words)
+        allocate(node%simple_cmd%word_quote_type(num_words))
+        node%simple_cmd%word_quote_type(1:num_words) = quote_types(1:num_words)
 
         ! Store heredoc delimiter if present
         if (has_heredoc) then
@@ -518,9 +524,10 @@ contains
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, body
     character(len=MAX_TOKEN_LEN) :: variable, words(MAX_TOKENS)
-    integer :: num_words
+    integer :: num_words, quote_types(MAX_TOKENS)
     type(token_t) :: tok
     num_words = 0
+    quote_types = QUOTE_NONE
     if (.not. expect(state, 'for')) return
     tok = current_token(state)
     if (tok%token_type /= TOKEN_WORD) return
@@ -535,6 +542,7 @@ contains
         if (num_words < MAX_TOKENS) then
           num_words = num_words + 1
           words(num_words) = tok%value
+          quote_types(num_words) = tok%quote_type
         end if
         call advance(state)
         tok = current_token(state)
