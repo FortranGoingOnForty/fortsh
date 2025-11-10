@@ -1026,6 +1026,7 @@ contains
     integer :: i, j, num_words, total_tokens
     character(len=:), allocatable :: expanded
     character(len=1024), allocatable :: temp_tokens(:)  ! Increased to match split_words length
+    logical :: is_format_string
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
     character(len=1024) :: split_words(30)
     character(len=MAX_TOKEN_LEN) :: word
@@ -1072,9 +1073,11 @@ contains
         has_equals = (index(expanded, '=') > 0)
         ! Check if spaces are escaped with backslash in ORIGINAL token
         has_escaped = has_escaped_spaces(cmd%tokens(i))
+        ! PARSER FIX: Check if token starts with % (printf format string)
+        is_format_string = (len_trim(expanded) > 0 .and. expanded(1:1) == '%')
 
-        ! Only split if no quotes, no equals sign, and no escaped spaces
-        should_split = (.not. has_quotes .and. .not. has_equals .and. .not. has_escaped)
+        ! Only split if no quotes, no equals sign, no escaped spaces, and not a format string
+        should_split = (.not. has_quotes .and. .not. has_equals .and. .not. has_escaped .and. .not. is_format_string)
       end if
 
       if (should_split) then

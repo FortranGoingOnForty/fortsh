@@ -19,6 +19,7 @@ module grammar_parser
     integer :: pos = 1
     logical :: has_error = .false.
     character(len=1024) :: error_msg = ''
+    character(len=:), allocatable :: raw_input  ! For heredoc extraction
   end type parser_state_t
 
 contains
@@ -27,6 +28,7 @@ contains
     character(len=*), intent(in) :: input
     type(command_node_t), pointer :: root
     type(parser_state_t) :: state
+    state%raw_input = input  ! Save for heredoc parsing
     call tokenize(input, state%tokens, state%num_tokens)
     state%pos = 1
     root => parse_complete_command(state)
@@ -239,14 +241,20 @@ contains
   function parse_simple_cmd(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, func_body
-    character(len=MAX_TOKEN_LEN) :: words(MAX_TOKENS), func_name
+    character(len=MAX_TOKEN_LEN) :: words(MAX_TOKENS), func_name, delimiter, merged_word
+    logical :: was_quoted(MAX_TOKENS)
+    character(len=4096) :: heredoc_content
     type(redirection_t) :: redirects(10)
     integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos
-    type(token_t) :: tok, next_tok, peek_tok
-    character(len=MAX_TOKEN_LEN) :: merged_word
+    integer :: line_start, line_end, input_pos
+    integer :: delim_pos, content_start, content_end, newline_pos
+    type(token_t) :: tok, next_tok, peek_tok, delim_tok
+    character(len=:), allocatable :: remaining
+    logical :: found_delimiter
     num_words = 0
     num_redirects = 0
     nullify(node)
+    was_quoted = .false.
 
     ! Check for function definition: name() { ... }
     tok = current_token(state)
@@ -279,7 +287,8 @@ contains
       tok = current_token(state)
       if (tok%token_type == TOKEN_WORD) then
         ! Check if this is an assignment (VAR= followed by value)
-        if (index(tok%value, '=') > 0 .and. index(tok%value, '=') == len_trim(tok%value)) then
+        ! Only merge if first token (assignments come before commands)
+        if (num_words == 0 .and. index(tok%value, '=') > 0 .and. index(tok%value, '=') == len_trim(tok%value)) then
           ! This ends with = , check if next token is the value
           call advance(state)
           next_tok = current_token(state)
@@ -289,6 +298,7 @@ contains
             if (num_words < MAX_TOKENS) then
               num_words = num_words + 1
               words(num_words) = merged_word
+              was_quoted(num_words) = next_tok%quoted
             end if
             call advance(state)
           else
@@ -296,6 +306,7 @@ contains
             if (num_words < MAX_TOKENS) then
               num_words = num_words + 1
               words(num_words) = tok%value
+              was_quoted(num_words) = tok%quoted
             end if
           end if
         else
@@ -303,6 +314,7 @@ contains
           if (num_words < MAX_TOKENS) then
             num_words = num_words + 1
             words(num_words) = tok%value
+            was_quoted(num_words) = tok%quoted
           end if
           call advance(state)
         end if
@@ -310,16 +322,24 @@ contains
         if (num_redirects < 10) then
           num_redirects = num_redirects + 1
 
-          ! Check if previous word was a file descriptor number (e.g., "2" before ">")
-          if (num_words > 0 .and. trim(tok%value) == '>') then
+          ! Check if previous word was a file descriptor number (e.g., "2" before ">" or ">&")
+          if (num_words > 0 .and. (trim(tok%value) == '>' .or. trim(tok%value) == '>&')) then
             read(words(num_words), *, iostat=io_stat) fd_num
             if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
               ! Previous word was a single digit - this is fd redirection
-              redirects(num_redirects)%type = REDIR_FD_OUT
+              if (trim(tok%value) == '>&') then
+                redirects(num_redirects)%type = REDIR_DUP_OUT
+              else
+                redirects(num_redirects)%type = REDIR_FD_OUT
+              end if
               redirects(num_redirects)%fd = fd_num
               num_words = num_words - 1  ! Remove fd from words
             else
-              redirects(num_redirects)%type = REDIR_OUT
+              if (trim(tok%value) == '>&') then
+                redirects(num_redirects)%type = REDIR_DUP_OUT
+              else
+                redirects(num_redirects)%type = REDIR_OUT
+              end if
             end if
           else
             select case(trim(tok%value))
@@ -329,14 +349,59 @@ contains
               redirects(num_redirects)%type = REDIR_OUT
             case('>>')
               redirects(num_redirects)%type = REDIR_APPEND
+            case('>&')
+              redirects(num_redirects)%type = REDIR_DUP_OUT
+            case('<<')
+              ! Heredoc - extract content from raw input
+              call advance(state)
+              delim_tok = current_token(state)
+              if (delim_tok%token_type == TOKEN_WORD .and. allocated(state%raw_input)) then
+                delimiter = trim(delim_tok%value)
+                call advance(state)
+
+                ! Find heredoc content in raw_input
+                ! Format: cat <<EOF\nline1\nline2\nEOF
+
+                ! Find where <<DELIMITER appears in raw input
+                delim_pos = index(state%raw_input, '<<' // trim(delimiter))
+                if (delim_pos > 0) then
+                  ! Find the newline after <<DELIMITER
+                  content_start = delim_pos + 2 + len_trim(delimiter)
+                  ! Scan for the first newline
+                  newline_pos = index(state%raw_input(content_start:), char(10))
+                  if (newline_pos > 0) then
+                    content_start = content_start + newline_pos  ! Skip past newline
+
+                    ! Find the ending delimiter on its own line
+                    ! Look for \nDELIMITER\n or \nDELIMITER$
+                    allocate(character(len=len(state%raw_input)-content_start+1) :: remaining)
+                    remaining = state%raw_input(content_start:)
+                    content_end = index(remaining, char(10) // trim(delimiter))
+
+                    if (content_end > 0) then
+                      ! Extract heredoc content
+                      heredoc_content = remaining(1:content_end-1)
+
+                      ! TODO: Store this in the command's heredoc_content field
+                      ! For now, just parse successfully
+                      found_delimiter = .true.
+                    end if
+                  end if
+                end if
+
+                ! Don't add as regular redirect
+                num_redirects = num_redirects - 1
+              end if
             end select
           end if
 
-          call advance(state)
-          tok = current_token(state)
-          if (tok%token_type == TOKEN_WORD) then
-            allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+          if (trim(tok%value) /= '<<') then
             call advance(state)
+            tok = current_token(state)
+            if (tok%token_type == TOKEN_WORD) then
+              allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+              call advance(state)
+            end if
           end if
         end if
       else
@@ -345,10 +410,16 @@ contains
     end do
     if (num_words > 0) then
       node => create_simple_command(words, num_words)
-      if (num_redirects > 0 .and. associated(node%simple_cmd)) then
-        allocate(node%simple_cmd%redirects(num_redirects))
-        node%simple_cmd%num_redirects = num_redirects
-        node%simple_cmd%redirects(1:num_redirects) = redirects(1:num_redirects)
+      if (associated(node%simple_cmd)) then
+        ! Store quoted flags
+        allocate(node%simple_cmd%word_was_quoted(num_words))
+        node%simple_cmd%word_was_quoted(1:num_words) = was_quoted(1:num_words)
+
+        if (num_redirects > 0) then
+          allocate(node%simple_cmd%redirects(num_redirects))
+          node%simple_cmd%num_redirects = num_redirects
+          node%simple_cmd%redirects(1:num_redirects) = redirects(1:num_redirects)
+        end if
       end if
     end if
   end function

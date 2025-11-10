@@ -116,6 +116,7 @@ contains
     type(pipeline_t) :: temp_pipeline
     character(len=MAX_TOKEN_LEN) :: cmd_name
     character(len=1024), allocatable :: old_params(:)
+    logical :: needs_quotes
 
     exit_status = 0
 
@@ -198,8 +199,27 @@ contains
     allocate(character(len=MAX_TOKEN_LEN) :: temp_pipeline%commands(1)%tokens(node%simple_cmd%num_words))
 
     ! Copy words to tokens
+    ! Add quotes/escapes back for old executor compatibility
     do i = 1, node%simple_cmd%num_words
-      temp_pipeline%commands(1)%tokens(i) = trim(node%simple_cmd%words(i))
+      needs_quotes = .false.
+
+      if (allocated(node%simple_cmd%word_was_quoted) .and. &
+          i <= size(node%simple_cmd%word_was_quoted) .and. &
+          node%simple_cmd%word_was_quoted(i)) then
+        ! Was quoted - check if it has BACKSLASH (escaped chars need quotes)
+        if (index(node%simple_cmd%words(i), '\') > 0) then
+          needs_quotes = .true.
+        end if
+      end if
+
+      ! Check if word was escaped (had backslash in input)
+      ! Add backslash back so old executor knows not to glob expand
+      ! For now, just use needs_quotes
+      if (needs_quotes) then
+        temp_pipeline%commands(1)%tokens(i) = '"' // trim(node%simple_cmd%words(i)) // '"'
+      else
+        temp_pipeline%commands(1)%tokens(i) = trim(node%simple_cmd%words(i))
+      end if
     end do
 
     ! Convert redirections to old executor format
