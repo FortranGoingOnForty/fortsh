@@ -434,6 +434,10 @@ contains
     select case(node%list%separator)
     case(LIST_SEP_SEQUENTIAL)
       ! ; - Execute right side unless shell is exiting
+      ! But first, handle any sourcing queued by the left side (e.g., dot command)
+      if (shell%should_source) then
+        call process_source_inline_ast(shell)
+      end if
       if (.not. shell%running) then
         ! Shell is exiting (e.g., exit builtin was called)
         exit_status = left_status
@@ -885,5 +889,50 @@ contains
     ! Restore original exit status (traps don't affect $?)
     shell%last_exit_status = saved_status
   end subroutine execute_pending_trap
+
+  ! Process sourced files inline (for dot command in lists)
+  subroutine process_source_inline_ast(shell)
+    use grammar_parser, only: parse_command_line
+    use command_tree, only: destroy_command_node
+    type(shell_state_t), intent(inout) :: shell
+    character(len=1024) :: input_line
+    integer :: file_unit, iostat
+    type(command_node_t), pointer :: ast_root
+    integer :: exit_code
+
+    ! Reset the source flag first
+    shell%should_source = .false.
+
+    ! Open file for reading
+    open(newunit=file_unit, file=trim(shell%source_file), status='old', action='read', iostat=iostat)
+    if (iostat /= 0) then
+      write(error_unit, '(a)') 'source: failed to open ' // trim(shell%source_file)
+      shell%last_exit_status = 1
+      return
+    end if
+
+    ! Execute each line in the file
+    do
+      read(file_unit, '(a)', iostat=iostat) input_line
+      if (iostat /= 0) exit  ! End of file or error
+
+      ! Skip empty lines and comments
+      if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+
+      ! Parse and execute using AST parser
+      ast_root => parse_command_line(trim(input_line))
+      if (associated(ast_root)) then
+        exit_code = execute_ast_node(ast_root, shell)
+        shell%last_exit_status = exit_code
+        call destroy_command_node(ast_root)
+      end if
+
+      ! Stop execution if exit command was encountered
+      if (.not. shell%running) exit
+    end do
+
+    close(file_unit)
+    shell%source_file = ''
+  end subroutine process_source_inline_ast
 
 end module ast_executor
