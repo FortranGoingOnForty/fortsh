@@ -137,6 +137,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/execution/executor.o \
           $(BUILDDIR)/execution/ast_executor.o \
           $(BUILDDIR)/execution/command_capture.o \
+          $(BUILDDIR)/execution/command_capture_callback.o \
           $(BUILDDIR)/scripting/expansion.o \
           $(BUILDDIR)/scripting/substitution.o \
           $(BUILDDIR)/io/readline.o \
@@ -229,6 +230,9 @@ $(BUILDDIR)/execution/ast_executor.o: src/execution/ast_executor.f90 $(BUILDDIR)
 $(BUILDDIR)/execution/command_capture.o: src/execution/command_capture.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
+$(BUILDDIR)/execution/command_capture_callback.o: src/execution/command_capture_callback.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/command_capture.o | $(BUILDDIR)/execution
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
 $(BUILDDIR)/scripting/test_builtin.o: src/scripting/test_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/advanced_test.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
@@ -256,7 +260,7 @@ $(BUILDDIR)/scripting/variables.o: src/scripting/variables.f90 $(BUILDDIR)/commo
 $(BUILDDIR)/scripting/prompt_formatting.o: src/scripting/prompt_formatting.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/expansion.o: src/scripting/expansion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/expansion.o: src/scripting/expansion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/command_capture.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/substitution.o: src/scripting/substitution.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/command_capture.o | $(BUILDDIR)/scripting
