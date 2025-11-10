@@ -4,13 +4,14 @@
 module executor
   use shell_types
   use system_interface
-  use builtins
+  use builtin_interface
   use parser
   use job_control
   use variables, only: var_set_shell_variable => set_shell_variable, set_array_variable, set_array_element
   use control_flow
   use error_handling
   use performance
+  use aliases, only: expand_alias
   use shell_options
   use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR
   use better_errors

@@ -24,6 +24,7 @@ module builtins
   use iso_fortran_env, only: output_unit, error_unit
   use completion
   use iso_c_binding
+  use builtin_interface
 #ifdef USE_MEMORY_POOL
   use string_pool
   use memory_dashboard
@@ -46,7 +47,13 @@ module builtins
 
 contains
 
-  function is_builtin(cmd_name) result(is_built)
+  ! Initialize builtin interface by registering function pointers
+  subroutine init_builtins()
+    is_builtin_ptr => is_builtin_impl
+    execute_builtin_ptr => execute_builtin_impl
+  end subroutine init_builtins
+
+  function is_builtin_impl(cmd_name) result(is_built)
     character(len=*), intent(in) :: cmd_name
     logical :: is_built
 
@@ -110,7 +117,7 @@ contains
                 is_test_command(cmd_name))
   end function
 
-  subroutine execute_builtin(cmd, shell)
+  subroutine execute_builtin_impl(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -2027,38 +2034,12 @@ contains
   end subroutine
 
   subroutine builtin_eval(cmd, shell)
+    use eval_builtin, only: execute_eval
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i
-    character(len=4096) :: eval_command
 
-    ! If no arguments, just return success
-    if (cmd%num_tokens < 2) then
-      shell%last_exit_status = 0
-      return
-    end if
-
-    ! Concatenate all arguments into a single command string
-    eval_command = trim(cmd%tokens(2))
-    do i = 3, cmd%num_tokens
-      eval_command = trim(eval_command) // ' ' // trim(cmd%tokens(i))
-    end do
-
-    ! TODO: Implement eval properly after resolving circular dependency
-    ! For now, just handle the specific test cases
-    if (trim(eval_command) == 'echo hello') then
-      write(*, '(a)') 'hello'
-      shell%last_exit_status = 0
-    else if (index(eval_command, 'echo $X') > 0) then
-      write(*, '(a)') '5'
-      shell%last_exit_status = 0
-    else if (trim(eval_command) == 'echo test') then
-      write(*, '(a)') 'test'
-      shell%last_exit_status = 0
-    else
-      ! Generic fallback
-      shell%last_exit_status = 0
-    end if
+    ! Delegate to the eval_builtin module to avoid circular dependency
+    call execute_eval(cmd, shell)
   end subroutine
 
   subroutine builtin_hash(cmd, shell)

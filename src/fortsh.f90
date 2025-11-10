@@ -19,6 +19,7 @@ program fortran_shell
   use performance
   use prompt_formatting
   use command_capture_callback, only: init_command_capture  ! For command substitution
+  use builtins, only: init_builtins  ! Initialize builtin function pointers
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
@@ -47,6 +48,9 @@ program fortran_shell
 
   ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
+
+  ! Initialize builtin function pointers (breaks circular dependency)
+  call init_builtins()
 
   ! Initialize control flow callbacks (breaks circular dependency)
   call init_control_flow_callbacks()
