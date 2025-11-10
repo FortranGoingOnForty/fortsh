@@ -438,6 +438,15 @@ contains
       if (shell%should_source) then
         call process_source_inline_ast(shell)
       end if
+      ! Check for break/continue - if requested, skip the right side
+      if (shell%control_depth > 0) then
+        if (shell%control_stack(shell%control_depth)%break_requested .or. &
+            shell%control_stack(shell%control_depth)%continue_requested) then
+          ! Don't execute right side - break or continue was called
+          exit_status = left_status
+          return
+        end if
+      end if
       if (.not. shell%running) then
         ! Shell is exiting (e.g., exit builtin was called)
         exit_status = left_status
@@ -534,6 +543,7 @@ contains
   ! =====================================
 
   recursive function execute_while_node(node, shell) result(exit_status)
+    use control_flow, only: push_control_block, pop_control_block, BLOCK_WHILE, BLOCK_UNTIL
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, cond_status
@@ -543,6 +553,13 @@ contains
 
     if (.not. associated(node%while_loop)) then
       return
+    end if
+
+    ! Push loop control block so break/continue can find it
+    if (node%while_loop%is_until) then
+      call push_control_block(shell, BLOCK_UNTIL, .true.)
+    else
+      call push_control_block(shell, BLOCK_WHILE, .true.)
     end if
 
     do
@@ -568,7 +585,50 @@ contains
       if (associated(node%while_loop%body)) then
         exit_status = execute_ast_node(node%while_loop%body, shell)
       end if
+
+      ! Check for break/continue from within the loop body
+      if (shell%control_depth > 0) then
+        if (shell%control_stack(shell%control_depth)%break_requested) then
+          ! Handle multi-level break
+          if (shell%control_stack(shell%control_depth)%break_level > 1) then
+            ! Propagate to parent loop
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%break_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%break_level = &
+                shell%control_stack(shell%control_depth)%break_level - 1
+            end if
+          end if
+          ! Clear flag and exit loop
+          shell%control_stack(shell%control_depth)%break_requested = .false.
+          shell%control_stack(shell%control_depth)%break_level = 0
+          exit
+        end if
+
+        if (shell%control_stack(shell%control_depth)%continue_requested) then
+          ! Handle multi-level continue
+          if (shell%control_stack(shell%control_depth)%continue_level > 1) then
+            ! Propagate to parent loop
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%continue_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%continue_level = &
+                shell%control_stack(shell%control_depth)%continue_level - 1
+            end if
+            ! Clear and exit to outer loop
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+            exit
+          else
+            ! Clear flag and continue to next iteration
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+            ! Just continue the loop (next iteration)
+          end if
+        end if
+      end if
     end do
+
+    ! Pop loop control block
+    call pop_control_block(shell)
 
   end function execute_while_node
 
@@ -578,6 +638,7 @@ contains
 
   recursive function execute_for_node(node, shell) result(exit_status)
     use variables, only: set_shell_variable
+    use control_flow, only: push_control_block, pop_control_block, BLOCK_FOR
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i
@@ -587,6 +648,9 @@ contains
     if (.not. associated(node%for_loop)) then
       return
     end if
+
+    ! Push loop control block so break/continue can find it
+    call push_control_block(shell, BLOCK_FOR, .true.)
 
     ! Iterate over words
     do i = 1, node%for_loop%num_words
@@ -598,7 +662,50 @@ contains
       if (associated(node%for_loop%body)) then
         exit_status = execute_ast_node(node%for_loop%body, shell)
       end if
+
+      ! Check for break/continue from within the loop body
+      if (shell%control_depth > 0) then
+        if (shell%control_stack(shell%control_depth)%break_requested) then
+          ! Handle multi-level break
+          if (shell%control_stack(shell%control_depth)%break_level > 1) then
+            ! Propagate to parent loop
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%break_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%break_level = &
+                shell%control_stack(shell%control_depth)%break_level - 1
+            end if
+          end if
+          ! Clear flag and exit loop
+          shell%control_stack(shell%control_depth)%break_requested = .false.
+          shell%control_stack(shell%control_depth)%break_level = 0
+          exit
+        end if
+
+        if (shell%control_stack(shell%control_depth)%continue_requested) then
+          ! Handle multi-level continue
+          if (shell%control_stack(shell%control_depth)%continue_level > 1) then
+            ! Propagate to parent loop
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%continue_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%continue_level = &
+                shell%control_stack(shell%control_depth)%continue_level - 1
+            end if
+            ! Clear and exit to outer loop
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+            exit
+          else
+            ! Clear flag and continue to next iteration
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+            ! Just continue the loop (next iteration)
+          end if
+        end if
+      end if
     end do
+
+    ! Pop loop control block
+    call pop_control_block(shell)
 
   end function execute_for_node
 
