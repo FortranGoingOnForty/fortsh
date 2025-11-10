@@ -70,13 +70,21 @@ module shell_types
   integer, parameter :: TOKEN_EOF = 6
   integer, parameter :: TOKEN_NEWLINE = 7
 
+  ! =====================================
+  ! Quote types for tracking quote style
+  ! =====================================
+  integer, parameter :: QUOTE_NONE = 0     ! No quotes
+  integer, parameter :: QUOTE_SINGLE = 1   ! Single quotes 'text' - no expansion
+  integer, parameter :: QUOTE_DOUBLE = 2   ! Double quotes "text" - allows expansion
+
   type :: token_t
     integer :: token_type           ! TOKEN_* constant
     character(len=MAX_TOKEN_LEN) :: value
     integer :: start_pos
     integer :: end_pos
-    logical :: quoted
+    logical :: quoted               ! DEPRECATED - use quote_type instead
     logical :: escaped              ! Token had backslash escape (don't glob expand)
+    integer :: quote_type = QUOTE_NONE  ! QUOTE_* constant - tracks quote style
   end type token_t
 
   ! =====================================
@@ -100,6 +108,7 @@ module shell_types
     ! Token metadata arrays - track per-token properties from lexer
     logical, allocatable :: token_quoted(:)   ! Was token quoted? (prevents field splitting)
     logical, allocatable :: token_escaped(:)  ! Was token escaped? (prevents glob expansion)
+    integer, allocatable :: token_quote_type(:)  ! Quote type for each token (QUOTE_* constant)
     character(len=:), allocatable :: input_file
     character(len=:), allocatable :: output_file
     character(len=:), allocatable :: error_file

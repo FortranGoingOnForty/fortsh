@@ -201,10 +201,12 @@ contains
     ! Allocate metadata arrays to track token properties
     allocate(temp_pipeline%commands(1)%token_quoted(node%simple_cmd%num_words))
     allocate(temp_pipeline%commands(1)%token_escaped(node%simple_cmd%num_words))
+    allocate(temp_pipeline%commands(1)%token_quote_type(node%simple_cmd%num_words))
 
     ! Initialize metadata arrays
     temp_pipeline%commands(1)%token_quoted = .false.
     temp_pipeline%commands(1)%token_escaped = .false.
+    temp_pipeline%commands(1)%token_quote_type = QUOTE_NONE
 
     ! Copy words to tokens and metadata
     do i = 1, node%simple_cmd%num_words
@@ -214,9 +216,13 @@ contains
       if (allocated(node%simple_cmd%word_was_quoted) .and. &
           i <= size(node%simple_cmd%word_was_quoted)) then
         temp_pipeline%commands(1)%token_quoted(i) = node%simple_cmd%word_was_quoted(i)
-        ! Check if quoted token has backslash (needs quotes for old executor)
+        ! Check if DOUBLE-quoted token has backslash (needs quotes for old executor)
+        ! Single-quoted tokens should never get quotes re-added
         if (node%simple_cmd%word_was_quoted(i) .and. &
-            index(node%simple_cmd%words(i), '\') > 0) then
+            index(node%simple_cmd%words(i), '\') > 0 .and. &
+            allocated(node%simple_cmd%word_quote_type) .and. &
+            i <= size(node%simple_cmd%word_quote_type) .and. &
+            node%simple_cmd%word_quote_type(i) /= QUOTE_SINGLE) then
           needs_quotes = .true.
         end if
       end if
@@ -225,6 +231,12 @@ contains
       if (allocated(node%simple_cmd%word_was_escaped) .and. &
           i <= size(node%simple_cmd%word_was_escaped)) then
         temp_pipeline%commands(1)%token_escaped(i) = node%simple_cmd%word_was_escaped(i)
+      end if
+
+      ! Copy quote type if available
+      if (allocated(node%simple_cmd%word_quote_type) .and. &
+          i <= size(node%simple_cmd%word_quote_type)) then
+        temp_pipeline%commands(1)%token_quote_type(i) = node%simple_cmd%word_quote_type(i)
       end if
 
       ! Copy token value - add quotes back only for tokens with backslashes
@@ -294,6 +306,7 @@ contains
       if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
       if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
       if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
+      if (allocated(temp_pipeline%commands(1)%token_quote_type)) deallocate(temp_pipeline%commands(1)%token_quote_type)
       deallocate(temp_pipeline%commands)
     end if
 

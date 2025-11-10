@@ -11,6 +11,7 @@
 module lexer
   use iso_fortran_env
   use shell_types
+  use shell_types, only: QUOTE_NONE, QUOTE_SINGLE, QUOTE_DOUBLE
   implicit none
   private
 
@@ -246,7 +247,7 @@ contains
         if (ch == "'") then
           ! End of single-quoted string
           call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
-                         token_start, pos, .true.)
+                         token_start, pos, .true., quote_type=QUOTE_SINGLE)
           state = LEX_NORMAL
           pos = pos + 1
         else
@@ -289,7 +290,7 @@ contains
         else if (ch == '"') then
           ! End of double-quoted string
           call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
-                         token_start, pos, .true.)
+                         token_start, pos, .true., quote_type=QUOTE_DOUBLE)
           state = LEX_NORMAL
           pos = pos + 1
         else
@@ -546,8 +547,13 @@ contains
                               token_start, input_len, .false., in_escape)
     else if (state == LEX_IN_SINGLE_QUOTE .or. state == LEX_IN_DOUBLE_QUOTE) then
       ! Unterminated quote - add as word with error marker
-      call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
-                    token_start, input_len, .true.)
+      if (state == LEX_IN_SINGLE_QUOTE) then
+        call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
+                    token_start, input_len, .true., quote_type=QUOTE_SINGLE)
+      else
+        call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
+                    token_start, input_len, .true., quote_type=QUOTE_DOUBLE)
+      end if
     else if (state == LEX_IN_OPERATOR .and. token_len > 0) then
       ! Flush operator
       call add_token(tokens, num_tokens, TOKEN_OPERATOR, current_token(1:token_len), &
@@ -562,13 +568,15 @@ contains
   ! =====================================
   ! Helper: Add token to array
   ! =====================================
-  subroutine add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted, escaped)
+  subroutine add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted, escaped, quote_type)
+    use shell_types, only: QUOTE_NONE
     type(token_t), intent(inout) :: tokens(:)
     integer, intent(inout) :: num_tokens
     integer, intent(in) :: tok_type, start_pos, end_pos
     character(len=*), intent(in) :: value
     logical, intent(in) :: quoted
     logical, intent(in), optional :: escaped
+    integer, intent(in), optional :: quote_type
 
     if (num_tokens < size(tokens)) then
       num_tokens = num_tokens + 1
@@ -581,6 +589,11 @@ contains
         tokens(num_tokens)%escaped = escaped
       else
         tokens(num_tokens)%escaped = .false.
+      end if
+      if (present(quote_type)) then
+        tokens(num_tokens)%quote_type = quote_type
+      else
+        tokens(num_tokens)%quote_type = QUOTE_NONE
       end if
     end if
   end subroutine add_token
