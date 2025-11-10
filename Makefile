@@ -132,12 +132,12 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/parsing/lexer.o \
           $(BUILDDIR)/parsing/command_tree.o \
           $(BUILDDIR)/parsing/grammar_parser.o \
-          $(BUILDDIR)/scripting/expansion.o \
           $(BUILDDIR)/parsing/parser.o \
           $(BUILDDIR)/scripting/completion.o \
           $(BUILDDIR)/execution/executor.o \
           $(BUILDDIR)/execution/ast_executor.o \
           $(BUILDDIR)/execution/command_capture.o \
+          $(BUILDDIR)/scripting/expansion.o \
           $(BUILDDIR)/scripting/substitution.o \
           $(BUILDDIR)/io/readline.o \
           $(BUILDDIR)/scripting/shell_options.o \
@@ -199,7 +199,7 @@ $(BUILDDIR)/system/signal_handling.o: src/system/signal_handling.f90 $(BUILDDIR)
 $(BUILDDIR)/parsing/glob.o: src/parsing/glob.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/expansion.o | $(BUILDDIR)/parsing
+$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/parsing/lexer.o: src/parsing/lexer.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/parsing
