@@ -5,6 +5,9 @@ module command_capture
   use system_interface
   implicit none
 
+  ! Define c_ssize_t if not available
+  integer, parameter :: c_ssize_t = c_long
+
   ! Interface for the command execution callback
   abstract interface
     subroutine execute_callback(shell, command, exit_status)
@@ -19,6 +22,11 @@ module command_capture
   procedure(execute_callback), pointer :: execute_command_ptr => null()
 
   interface
+    function pipe(fds) bind(c, name='pipe')
+      import :: c_int
+      integer(c_int), dimension(2), intent(out) :: fds
+      integer(c_int) :: pipe
+    end function
     function dup(fd) bind(c, name='dup')
       import :: c_int
       integer(c_int), value :: fd
@@ -34,10 +42,29 @@ module command_capture
       integer(c_int), value :: fd
       integer(c_int) :: close
     end function
-    function c_fsync(fd) bind(c, name='fsync')
-      import :: c_int
+    function fork() bind(c, name='fork')
+      import :: c_pid_t
+      integer(c_pid_t) :: fork
+    end function
+    function waitpid(pid, stat_loc, options) bind(c, name='waitpid')
+      import :: c_pid_t, c_int, c_ptr
+      integer(c_pid_t), value :: pid
+      type(c_ptr), value :: stat_loc
+      integer(c_int), value :: options
+      integer(c_pid_t) :: waitpid
+    end function
+    function fdopen(fd, mode) bind(c, name='fdopen')
+      import :: c_int, c_ptr, c_char
       integer(c_int), value :: fd
-      integer(c_int) :: c_fsync
+      character(kind=c_char), dimension(*) :: mode
+      type(c_ptr) :: fdopen
+    end function
+    function read(fd, buf, count) bind(c, name='read')
+      import :: c_int, c_ptr, c_size_t, c_ssize_t
+      integer(c_int), value :: fd
+      type(c_ptr), value :: buf
+      integer(c_size_t), value :: count
+      integer(c_ssize_t) :: read
     end function
   end interface
 
@@ -54,107 +81,99 @@ contains
     character(len=*), intent(in) :: command
     character(len=*), intent(out) :: output
 
-    character(len=256) :: temp_file
-    integer :: unit_num, ios, exit_status
-    integer :: saved_stdout, new_stdout
-    character(len=4096) :: line
-    integer :: total_len
-    logical :: success
+    integer(c_int) :: pipe_fds(2)
+    integer(c_int) :: saved_stdout, saved_stderr
+    integer(c_int) :: ret, exit_status
+    integer(c_pid_t) :: pid
+    character(kind=c_char), target :: buffer(4096)
+    integer(c_ssize_t) :: bytes_read
+    integer :: total_len, i
+    integer(c_int), target :: wstatus
+    type(c_ptr) :: wstatus_ptr
 
     output = ''
 
     ! Check if callback is set
     if (.not. associated(execute_command_ptr)) then
-      ! Fallback to empty if no callback (shouldn't happen after init)
       shell%last_exit_status = 127
       return
     end if
 
-    ! Create a temporary file for capturing output
-    call get_temp_filename(temp_file)
-
-    ! Open the temp file and get its file descriptor
-    open(newunit=unit_num, file=temp_file, status='replace', &
-         action='write', iostat=ios)
-    if (ios /= 0) then
+    ! Create a pipe
+    ret = pipe(pipe_fds)
+    if (ret /= 0) then
       shell%last_exit_status = 1
       return
     end if
 
-    ! Get the file descriptor
-    inquire(unit=unit_num, number=new_stdout)
+    ! Fork a child process
+    pid = fork()
 
-    ! Save current stdout
-    saved_stdout = dup(1)
-
-    ! Redirect stdout to our temp file
-    if (dup2(new_stdout, 1) < 0) then
-      close(unit_num)
-      success = remove_file(temp_file)
+    if (pid < 0) then
+      ! Fork failed
+      ret = close(pipe_fds(1))  ! Close read end
+      ret = close(pipe_fds(2))  ! Close write end
       shell%last_exit_status = 1
       return
-    end if
+    else if (pid == 0) then
+      ! Child process
+      ! Close read end of pipe
+      ret = close(pipe_fds(1))
 
-    ! Flush and close the Fortran unit (but keep the fd open via dup2)
-    close(unit_num)
+      ! Redirect stdout to pipe write end
+      ret = dup2(pipe_fds(2), 1)
 
-    ! Execute the command using the callback
-    call execute_command_ptr(shell, command, exit_status)
+      ! Close the original pipe write end
+      ret = close(pipe_fds(2))
 
-    ! Flush stdout to ensure all output is written
-    ios = c_fsync(1)
+      ! Execute the command
+      call execute_command_ptr(shell, command, exit_status)
 
-    ! Restore original stdout
-    if (dup2(saved_stdout, 1) < 0) then
-      ! Try to restore anyway
-    end if
-    ios = close(saved_stdout)
+      ! Exit child with the command's exit status
+      call c_exit(exit_status)
+    else
+      ! Parent process
+      ! Close write end of pipe
+      ret = close(pipe_fds(2))
 
-    ! Read the captured output
-    open(newunit=unit_num, file=temp_file, status='old', &
-         action='read', iostat=ios)
-    if (ios == 0) then
-      output = ''
+      ! Read output from pipe
       total_len = 0
       do
-        read(unit_num, '(A)', iostat=ios) line
-        if (ios /= 0) exit
-        if (total_len > 0) then
-          ! Add newline between lines
-          if (total_len + 1 <= len(output)) then
-            output(total_len+1:total_len+1) = char(10)
+        bytes_read = read(pipe_fds(1), c_loc(buffer), int(size(buffer), c_size_t))
+        if (bytes_read <= 0) exit
+
+        ! Copy buffer to output
+        do i = 1, int(bytes_read)
+          if (total_len < len(output)) then
             total_len = total_len + 1
+            output(total_len:total_len) = buffer(i)
           end if
-        end if
-        ! Add the line
-        if (total_len + len_trim(line) <= len(output)) then
-          output(total_len+1:total_len+len_trim(line)) = trim(line)
-          total_len = total_len + len_trim(line)
-        else
-          exit
-        end if
+        end do
       end do
-      close(unit_num)
+
+      ! Close read end
+      ret = close(pipe_fds(1))
+
+      ! Wait for child to complete
+      wstatus_ptr = c_loc(wstatus)
+      pid = waitpid(pid, wstatus_ptr, 0)
+
+      ! Extract exit status (WEXITSTATUS macro equivalent)
+      if (pid > 0) then
+        shell%last_exit_status = iand(ishft(wstatus, -8), 255)
+      else
+        shell%last_exit_status = 1
+      end if
     end if
 
-    ! Clean up temp file
-    success = remove_file(temp_file)
+    ! Remove trailing newlines for command substitution
+    do while (total_len > 0 .and. output(total_len:total_len) == char(10))
+      total_len = total_len - 1
+    end do
+    if (total_len < len(output)) then
+      output = output(1:total_len)
+    end if
 
-    ! Preserve exit status
-    shell%last_exit_status = exit_status
   end subroutine execute_command_and_capture
-
-  subroutine get_temp_filename(filename)
-    character(len=*), intent(out) :: filename
-    character(len=8) :: date_str
-    character(len=10) :: time_str
-    integer :: pid
-
-    call date_and_time(date_str, time_str)
-    pid = getpid()
-
-    write(filename, '(A,A,A,I0,A)') '/tmp/fortsh_', &
-           trim(time_str), '_', pid, '.tmp'
-  end subroutine get_temp_filename
 
 end module command_capture

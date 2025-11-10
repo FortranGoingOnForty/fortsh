@@ -1076,8 +1076,13 @@ contains
       end do
 
       if (has_ifs_char) then
-        ! Check if ORIGINAL token had quotes (not expanded, since expand_variables strips them)
-        has_quotes = (index(cmd%tokens(i), '"') > 0 .or. index(cmd%tokens(i), "'") > 0)
+        ! Check if ORIGINAL token was quoted (using metadata, not looking for quotes in string)
+        if (allocated(cmd%token_quoted) .and. i <= size(cmd%token_quoted)) then
+          has_quotes = cmd%token_quoted(i)
+        else
+          ! Fallback: Check if ORIGINAL token had quotes (not expanded, since expand_variables strips them)
+          has_quotes = (index(cmd%tokens(i), '"') > 0 .or. index(cmd%tokens(i), "'") > 0)
+        end if
         ! Check if it's an assignment (contains =)
         has_equals = (index(expanded, '=') > 0)
         ! Check if spaces are escaped with backslash in ORIGINAL token
@@ -1416,6 +1421,7 @@ contains
 
   subroutine exec_child(tokens, num_tokens)
     use system_interface, only: file_exists, file_is_executable
+    use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
 
@@ -1424,6 +1430,7 @@ contains
     integer :: i, j
     integer :: ret
     logical :: is_path_command
+
 
     ! Convert tokens to C strings
     do i = 1, num_tokens
