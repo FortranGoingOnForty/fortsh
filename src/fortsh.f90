@@ -18,6 +18,7 @@ program fortran_shell
   use shell_options
   use performance
   use prompt_formatting
+  use command_capture_callback, only: init_command_capture  ! For command substitution
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
@@ -82,6 +83,9 @@ program fortran_shell
 
   ! Initialize signal handling module
   call init_signal_handling(shell)
+
+  ! Initialize command capture callback (for command substitution)
+  call init_command_capture()
 
   ! Setup signal handlers if interactive
   if (shell%is_interactive) then
