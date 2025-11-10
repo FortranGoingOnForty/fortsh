@@ -97,6 +97,9 @@ module shell_types
   type :: command_t
     character(len=:), allocatable :: tokens(:)
     integer :: num_tokens = 0
+    ! Token metadata arrays - track per-token properties from lexer
+    logical, allocatable :: token_quoted(:)   ! Was token quoted? (prevents field splitting)
+    logical, allocatable :: token_escaped(:)  ! Was token escaped? (prevents glob expansion)
     character(len=:), allocatable :: input_file
     character(len=:), allocatable :: output_file
     character(len=:), allocatable :: error_file
