@@ -211,40 +211,23 @@ contains
 
     ! Copy words to tokens and metadata
     do i = 1, node%simple_cmd%num_words
-      needs_quotes = .false.
+      ! Simply copy the words as-is without adding quotes
+      temp_pipeline%commands(1)%tokens(i) = trim(node%simple_cmd%words(i))
 
-      ! Copy quoted flag if available
+      ! Copy metadata if available
       if (allocated(node%simple_cmd%word_was_quoted) .and. &
           i <= size(node%simple_cmd%word_was_quoted)) then
         temp_pipeline%commands(1)%token_quoted(i) = node%simple_cmd%word_was_quoted(i)
-        ! Check if DOUBLE-quoted token has backslash (needs quotes for old executor)
-        ! Single-quoted tokens should never get quotes re-added
-        if (node%simple_cmd%word_was_quoted(i) .and. &
-            index(node%simple_cmd%words(i), '\') > 0 .and. &
-            allocated(node%simple_cmd%word_quote_type) .and. &
-            i <= size(node%simple_cmd%word_quote_type) .and. &
-            node%simple_cmd%word_quote_type(i) /= QUOTE_SINGLE) then
-          needs_quotes = .true.
-        end if
       end if
 
-      ! Copy escaped flag if available
       if (allocated(node%simple_cmd%word_was_escaped) .and. &
           i <= size(node%simple_cmd%word_was_escaped)) then
         temp_pipeline%commands(1)%token_escaped(i) = node%simple_cmd%word_was_escaped(i)
       end if
 
-      ! Copy quote type if available
       if (allocated(node%simple_cmd%word_quote_type) .and. &
           i <= size(node%simple_cmd%word_quote_type)) then
         temp_pipeline%commands(1)%token_quote_type(i) = node%simple_cmd%word_quote_type(i)
-      end if
-
-      ! Copy token value - add quotes back only for tokens with backslashes
-      if (needs_quotes) then
-        temp_pipeline%commands(1)%tokens(i) = '"' // trim(node%simple_cmd%words(i)) // '"'
-      else
-        temp_pipeline%commands(1)%tokens(i) = trim(node%simple_cmd%words(i))
       end if
     end do
 
@@ -301,6 +284,11 @@ contains
     call execute_pipeline(temp_pipeline, shell, '')
 
     exit_status = shell%last_exit_status
+
+    ! If a trap command was queued, execute it now (unless we're already executing a trap)
+    if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap) then
+      call execute_pending_trap(shell)
+    end if
 
     ! Clean up
     if (allocated(temp_pipeline%commands)) then
@@ -441,8 +429,11 @@ contains
     ! Handle based on separator type
     select case(node%list%separator)
     case(LIST_SEP_SEQUENTIAL)
-      ! ; - Always execute right side
-      if (associated(node%list%right)) then
+      ! ; - Execute right side unless shell is exiting
+      if (.not. shell%running) then
+        ! Shell is exiting (e.g., exit builtin was called)
+        exit_status = left_status
+      else if (associated(node%list%right)) then
         exit_status = execute_ast_node(node%list%right, shell)
       else
         exit_status = left_status
@@ -852,5 +843,41 @@ contains
     exit_status = extract_exit_status(ret)
 
   end subroutine execute_external_command
+
+  ! Execute a pending trap command (set by signal_handling module)
+  subroutine execute_pending_trap(shell)
+    use grammar_parser, only: parse_command_line
+    use command_tree, only: destroy_command_node
+    type(shell_state_t), intent(inout) :: shell
+    type(command_node_t), pointer :: trap_ast
+    integer :: saved_status, trap_status
+    character(len=4096) :: trap_cmd
+
+    ! Save the trap command and signal before clearing
+    trap_cmd = shell%pending_trap_command
+
+    ! Save current exit status (traps don't affect $?)
+    saved_status = shell%last_exit_status
+
+    ! Clear the pending trap
+    shell%pending_trap_command = ''
+    shell%pending_trap_signal = 0
+
+    ! Set flag to prevent recursive trap execution
+    shell%executing_trap = .true.
+
+    ! Parse and execute the trap command using AST parser
+    trap_ast => parse_command_line(trim(trap_cmd))
+    if (associated(trap_ast)) then
+      trap_status = execute_ast_node(trap_ast, shell)
+      call destroy_command_node(trap_ast)
+    end if
+
+    ! Clear flag to allow future trap execution
+    shell%executing_trap = .false.
+
+    ! Restore original exit status (traps don't affect $?)
+    shell%last_exit_status = saved_status
+  end subroutine execute_pending_trap
 
 end module ast_executor

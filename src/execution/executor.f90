@@ -550,7 +550,9 @@ contains
     trap_executed = execute_trap(shell, TRAP_DEBUG)
 
     ! If a trap command was queued, execute it now
-    if (len_trim(shell%pending_trap_command) > 0) then
+    ! Check executing_trap to prevent recursion
+    ! Don't execute EXIT trap here - it should only execute when shell is exiting
+    if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap .and. shell%pending_trap_signal /= 0) then
       call execute_pending_trap(shell)
     end if
 
@@ -603,7 +605,9 @@ contains
       trap_executed = execute_trap(shell, TRAP_ERR, shell%last_exit_status)
 
       ! If a trap command was queued, execute it now
-      if (len_trim(shell%pending_trap_command) > 0) then
+      ! Check executing_trap to prevent recursion
+      ! Don't execute EXIT trap here - it should only execute when shell is exiting
+      if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap .and. shell%pending_trap_signal /= 0) then
         call execute_pending_trap(shell)
       end if
     end if
