@@ -57,6 +57,7 @@ module shell_types
     character(len=:), allocatable :: filename
     character(len=:), allocatable :: target_fd_expr  ! for variable FD like >&${var}
     logical :: close_fd = .false. ! for n>&- syntax
+    logical :: force_clobber = .false. ! for >| operator (override noclobber)
   end type redirection_t
 
   ! =====================================

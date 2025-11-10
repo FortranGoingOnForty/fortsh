@@ -633,6 +633,11 @@ contains
     ! Set $1, $2, ... from arguments
     shell%num_positional = 0
     if (cmd%num_tokens > 2) then
+      ! Allocate positional_params if not already allocated
+      if (.not. allocated(shell%positional_params)) then
+        allocate(shell%positional_params(50))  ! Default size
+      end if
+
       do i = 3, cmd%num_tokens
         shell%num_positional = shell%num_positional + 1
         if (shell%num_positional <= size(shell%positional_params)) then

@@ -356,6 +356,9 @@ contains
               redirects(num_redirects)%type = REDIR_IN
             case('>')
               redirects(num_redirects)%type = REDIR_OUT
+            case('>|')
+              redirects(num_redirects)%type = REDIR_OUT
+              redirects(num_redirects)%force_clobber = .true.
             case('>>')
               redirects(num_redirects)%type = REDIR_APPEND
             case('>&')
