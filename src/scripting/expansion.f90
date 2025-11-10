@@ -2054,12 +2054,22 @@ contains
         end if
         
       else if (input(i:i) == '$') then
-        ! Simple variable expansion $var or special parameters
-        start_pos = i + 1
-        i = i + 1
+        ! Check if $ is escaped with backslash
+        if (i > 1 .and. input(i-1:i-1) == '\') then
+          ! Escaped $ - output literal $ (backslash already in result)
+          write(error_unit, '(A,I0,A,A)') 'ESCAPED $ at pos ', i, ' input=', input(i:min(i+10, len_trim(input)))
+          ! Just add the $ and don't expand
+          result = trim(result) // '$'
+          i = i + 1
+          write(error_unit, '(A,I0)') 'After escape, i=', i
+          cycle  ! Skip the rest of $ expansion logic
+        else
+          ! Simple variable expansion $var or special parameters
+          start_pos = i + 1
+          i = i + 1
 
-        ! Check for special parameters first (single character)
-        if (i <= len_trim(input)) then
+          ! Check for special parameters first (single character)
+          if (i <= len_trim(input)) then
           ! POSIX special parameters: $, !, ?, 0, -, _, #, *, @
           if (index('$!?0-_#*@', input(i:i)) > 0) then
             var_expr = input(i:i)
@@ -2081,6 +2091,7 @@ contains
         else
           ! $ at end of string
           result = trim(result) // '$'
+        end if
         end if
         
       else

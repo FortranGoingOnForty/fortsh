@@ -10,11 +10,12 @@ module printf_builtin
 contains
 
   subroutine builtin_printf(cmd, shell)
+    use iso_fortran_env, only: error_unit
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
     character(len=2048) :: format_string, output_buffer
-    integer :: arg_index, prev_arg_index
+    integer :: arg_index, prev_arg_index, di
 
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'printf: usage: printf FORMAT [ARGUMENTS...]'

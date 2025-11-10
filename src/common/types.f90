@@ -76,6 +76,7 @@ module shell_types
     integer :: start_pos
     integer :: end_pos
     logical :: quoted
+    logical :: escaped              ! Token had backslash escape (don't glob expand)
   end type token_t
 
   ! =====================================

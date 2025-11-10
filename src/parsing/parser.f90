@@ -12,6 +12,9 @@ module parser
   use iso_fortran_env, only: error_unit, input_unit
   implicit none
 
+  ! Export backtick conversion for new parser
+  public :: convert_backticks_to_dollar_paren
+
 contains
 
   subroutine parse_pipeline(input, pipeline)
@@ -1655,19 +1658,40 @@ contains
   ! Expand glob patterns in command tokens
   subroutine expand_command_globs(cmd)
     type(command_t), intent(inout) :: cmd
-    
+
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_tokens(:)
     character(len=MAX_TOKEN_LEN), allocatable :: original_tokens(:)
-    integer :: expanded_count, i
-    
+    character(len=MAX_TOKEN_LEN), allocatable :: filtered_tokens(:)
+    integer :: expanded_count, i, filtered_count
+    logical :: has_expandable
+
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
-    
+
     ! Save original tokens
     allocate(original_tokens(cmd%num_tokens))
     do i = 1, cmd%num_tokens
       original_tokens(i) = cmd%tokens(i)
     end do
-    
+
+    ! Don't glob expand tokens with backslashes (they were escaped)
+    ! Just use them as-is
+    has_expandable = .false.
+    do i = 1, cmd%num_tokens
+      if (index(cmd%tokens(i), '\') == 0 .and. &
+          (index(cmd%tokens(i), '*') > 0 .or. &
+           index(cmd%tokens(i), '?') > 0 .or. &
+           index(cmd%tokens(i), '[') > 0)) then
+        has_expandable = .true.
+        exit
+      end if
+    end do
+
+    if (.not. has_expandable) then
+      ! No tokens need glob expansion
+      if (allocated(original_tokens)) deallocate(original_tokens)
+      return
+    end if
+
     ! Expand glob patterns
     call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count)
     

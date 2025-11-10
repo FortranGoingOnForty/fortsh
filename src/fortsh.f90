@@ -6,7 +6,7 @@ program fortran_shell
   use system_interface
   use signal_handler
   use signal_handling
-  use parser
+  use parser, only: convert_backticks_to_dollar_paren
   use grammar_parser  ! New grammar-aware parser
   use ast_executor    ! AST execution for new parser
   use command_tree    ! Command tree for new parser
@@ -36,6 +36,7 @@ program fortran_shell
   ! New parser infrastructure
   type(command_node_t), pointer :: ast_root
   integer :: exit_code
+  character(len=:), allocatable :: converted_line
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
@@ -112,7 +113,9 @@ program fortran_shell
     ! Use new parser if feature flag is enabled
     if (shell%use_new_parser) then
       ! NEW PARSER PATH: Parse to AST and execute directly
-      ast_root => parse_command_line(proc_subst_line)
+      ! Convert backticks to $() first
+      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+      ast_root => parse_command_line(converted_line)
       if (associated(ast_root)) then
         exit_code = execute_ast(ast_root, shell)
         shell%last_exit_status = exit_code
@@ -261,7 +264,9 @@ program fortran_shell
       ! NEW PARSER PATH: Parse to AST and execute directly
       call system_clock(cmd_start_time, clock_rate)
 
-      ast_root => parse_command_line(proc_subst_line)
+      ! Convert backticks to $() first
+      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+      ast_root => parse_command_line(converted_line)
       if (associated(ast_root)) then
         exit_code = execute_ast(ast_root, shell)
         shell%last_exit_status = exit_code
@@ -796,12 +801,16 @@ contains
       call set_performance_monitoring(.true.)
     end if
 
-    ! Check for new parser feature flag
-    temp = get_environment_var('FORTSH_USE_NEW_PARSER')
+    ! New parser is now THE DEFAULT!
+    ! Use FORTSH_USE_OLD_PARSER=1 to revert to old parser
+    shell%use_new_parser = .true.
+
+    ! Allow opt-out to old parser
+    temp = get_environment_var('FORTSH_USE_OLD_PARSER')
     if (len(temp) > 0 .and. (trim(temp) == '1' .or. trim(temp) == 'true')) then
-      shell%use_new_parser = .true.
+      shell%use_new_parser = .false.
       if (shell%is_interactive) then
-        write(output_unit, '(a)') 'Using new grammar-aware parser (experimental)'
+        write(output_unit, '(a)') 'Using legacy parser (new parser is default)'
       end if
     end if
   end subroutine

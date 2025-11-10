@@ -125,7 +125,7 @@ contains
     integer :: pos, input_len, state, token_start
     character(len=1) :: ch, next_ch
     character(len=MAX_TOKEN_LEN) :: current_token
-    integer :: token_len
+    integer :: token_len, paren_depth
     logical :: in_escape
 
     num_tokens = 0
@@ -136,6 +136,7 @@ contains
     current_token = ''
     token_len = 0
     in_escape = .false.
+    paren_depth = 0
 
     do while (pos <= input_len .and. num_tokens < size(tokens))
       ch = input(pos:pos)
@@ -202,6 +203,7 @@ contains
             token_start = pos
             token_len = 1
             current_token = next_ch
+            in_escape = .true.  ! Mark this token as escaped
             pos = pos + 2  ! Skip backslash and next char
             cycle
           end if
@@ -224,6 +226,7 @@ contains
           token_start = pos
           token_len = 2
           current_token = '$('
+          paren_depth = 1  ! Track that we're inside $(
           pos = pos + 2
           cycle
         end if
@@ -259,9 +262,17 @@ contains
       case(LEX_IN_DOUBLE_QUOTE)
         if (ch == '\' .and. pos < input_len) then
           ! Backslash escape in double quotes (only for $, `, ", \, newline)
-          if (next_ch == '$' .or. next_ch == '`' .or. next_ch == '"' .or. &
-              next_ch == '\' .or. next_ch == char(10)) then
-            ! Add escaped character
+          if (next_ch == '$' .or. next_ch == '`') then
+            ! For \$ and \` - keep BOTH chars so expansion can see the escape
+            if (token_len < MAX_TOKEN_LEN - 1) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+              token_len = token_len + 1
+              current_token(token_len:token_len) = next_ch
+            end if
+            pos = pos + 2
+          else if (next_ch == '"' .or. next_ch == '\' .or. next_ch == char(10)) then
+            ! For \" and \\ and \newline - add only escaped character
             if (token_len < MAX_TOKEN_LEN) then
               token_len = token_len + 1
               current_token(token_len:token_len) = next_ch
@@ -292,7 +303,40 @@ contains
 
       ! ============ WORD STATE ============
       case(LEX_IN_WORD)
-        if (ch == '\' .and. pos < input_len) then
+        ! Check if we're inside $() - if so, keep EVERYTHING including spaces
+        if (index(current_token(1:token_len), '$(') > 0) then
+          ! Inside command substitution - track paren depth
+          if (ch == '(') then
+            paren_depth = paren_depth + 1
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          else if (ch == ')') then
+            paren_depth = paren_depth - 1
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+            ! If paren_depth hits 0, we closed the $(...)
+            if (paren_depth == 0) then
+              ! End of command substitution - finish token
+              call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                      token_start, pos-1, .false., in_escape)
+              state = LEX_NORMAL
+              in_escape = .false.
+            end if
+          else
+            ! Inside $() - keep EVERYTHING including spaces
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          end if
+        else if (ch == '\' .and. pos < input_len) then
           ! Backslash escape in word
           if (token_len < MAX_TOKEN_LEN) then
             token_len = token_len + 1
@@ -303,8 +347,9 @@ contains
           ! Quote in middle of word - need to handle this specially
           ! For now, end the word and let the quote start a new token
           call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                  token_start, pos-1, .false.)
+                                  token_start, pos-1, .false., in_escape)
           state = LEX_NORMAL
+          in_escape = .false.
           ! Don't increment pos, let NORMAL state handle the quote
         else if (ch == '#') then
           ! # is normally comment, but in $# it's part of variable
@@ -316,9 +361,20 @@ contains
           else
             ! End word, let # start a comment
             call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                    token_start, pos-1, .false.)
+                                    token_start, pos-1, .false., in_escape)
             state = LEX_NORMAL
+            in_escape = .false.
           end if
+        else if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
+          ! $( for command/arithmetic substitution - keep in word
+          if (token_len < MAX_TOKEN_LEN - 1) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = ch
+            token_len = token_len + 1
+            current_token(token_len:token_len) = next_ch
+            paren_depth = 1  ! Track that we're inside $(
+          end if
+          pos = pos + 2
         else if ((ch >= '0' .and. ch <= '9') .or. ch == '+' .or. ch == '-' .or. &
                  ch == '*' .or. ch == '/' .or. ch == '%') then
           ! Keep these chars in word (for variables and arithmetic)
@@ -329,9 +385,16 @@ contains
           pos = pos + 1
         else if (ch == '(' .or. ch == ')') then
           ! Parentheses: Keep ONLY if inside $(( or $(
-          ! Check if current token starts with $(
-          if (token_len >= 2 .and. current_token(1:2) == '$(') then
-            ! Inside command/arithmetic substitution - keep parens
+          ! Check if current token ends with $ (for x=$(cmd) or just $(cmd))
+          if (token_len >= 1 .and. current_token(token_len:token_len) == '$') then
+            ! Just added $, now seeing ( - this is $( substitution - keep both
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          else if (token_len >= 2 .and. index(current_token(1:token_len), '$(') > 0) then
+            ! Already inside $(...) - keep parens
             if (token_len < MAX_TOKEN_LEN) then
               token_len = token_len + 1
               current_token(token_len:token_len) = ch
@@ -340,8 +403,9 @@ contains
           else
             ! Not in substitution - end word, let paren be operator
             call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                    token_start, pos-1, .false.)
+                                    token_start, pos-1, .false., in_escape)
             state = LEX_NORMAL
+            in_escape = .false.
           end if
         else if (is_word_char(ch)) then
           ! Continue word
@@ -353,8 +417,9 @@ contains
         else
           ! End of word
           call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                  token_start, pos-1, .false.)
+                                  token_start, pos-1, .false., in_escape)
           state = LEX_NORMAL
+          in_escape = .false.
           ! Don't increment pos, let NORMAL state handle this character
         end if
 
@@ -478,7 +543,7 @@ contains
     ! Flush any remaining token
     if (state == LEX_IN_WORD .and. token_len > 0) then
       call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                              token_start, input_len, .false.)
+                              token_start, input_len, .false., in_escape)
     else if (state == LEX_IN_SINGLE_QUOTE .or. state == LEX_IN_DOUBLE_QUOTE) then
       ! Unterminated quote - add as word with error marker
       call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
@@ -497,12 +562,13 @@ contains
   ! =====================================
   ! Helper: Add token to array
   ! =====================================
-  subroutine add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted)
+  subroutine add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted, escaped)
     type(token_t), intent(inout) :: tokens(:)
     integer, intent(inout) :: num_tokens
     integer, intent(in) :: tok_type, start_pos, end_pos
     character(len=*), intent(in) :: value
     logical, intent(in) :: quoted
+    logical, intent(in), optional :: escaped
 
     if (num_tokens < size(tokens)) then
       num_tokens = num_tokens + 1
@@ -511,18 +577,24 @@ contains
       tokens(num_tokens)%start_pos = start_pos
       tokens(num_tokens)%end_pos = end_pos
       tokens(num_tokens)%quoted = quoted
+      if (present(escaped)) then
+        tokens(num_tokens)%escaped = escaped
+      else
+        tokens(num_tokens)%escaped = .false.
+      end if
     end if
   end subroutine add_token
 
   ! =====================================
   ! Helper: Add word or keyword token
   ! =====================================
-  subroutine add_word_or_keyword(tokens, num_tokens, value, start_pos, end_pos, quoted)
+  subroutine add_word_or_keyword(tokens, num_tokens, value, start_pos, end_pos, quoted, escaped)
     type(token_t), intent(inout) :: tokens(:)
     integer, intent(inout) :: num_tokens
     character(len=*), intent(in) :: value
     integer, intent(in) :: start_pos, end_pos
     logical, intent(in) :: quoted
+    logical, intent(in), optional :: escaped
 
     integer :: tok_type
 
@@ -535,7 +607,7 @@ contains
       tok_type = TOKEN_WORD
     end if
 
-    call add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted)
+    call add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted, escaped)
   end subroutine add_word_or_keyword
 
   ! =====================================
