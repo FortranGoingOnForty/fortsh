@@ -1262,18 +1262,27 @@ contains
     j = 1
 
     do while (i <= len_trim(working_token))
-      ! Check for backslash escape in double-quoted strings
-      if (is_quoted .and. .not. is_single_quoted .and. working_token(i:i) == '\' .and. &
-          i < len_trim(working_token)) then
-        ! In double quotes, backslash escapes: $ ` " \ and newline
-        if (working_token(i+1:i+1) == '$' .or. working_token(i+1:i+1) == '`' .or. &
-            working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
-          ! Skip the backslash and add the escaped character
-          i = i + 1
-          result(j:j) = working_token(i:i)
+      ! Check for backslash escape
+      ! Handle \$ even outside quotes since lexer may have already removed quotes
+      if (working_token(i:i) == '\' .and. i < len_trim(working_token)) then
+        if (working_token(i+1:i+1) == '$') then
+          ! \$ -> literal $
+          i = i + 1  ! Skip backslash
+          result(j:j) = '$'
           i = i + 1
           j = j + 1
           cycle
+        else if (is_quoted .and. .not. is_single_quoted) then
+          ! In double quotes, backslash also escapes: ` " \ and newline
+          if (working_token(i+1:i+1) == '`' .or. &
+              working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
+            ! Skip the backslash and add the escaped character
+            i = i + 1
+            result(j:j) = working_token(i:i)
+            i = i + 1
+            j = j + 1
+            cycle
+          end if
         end if
         ! Otherwise, keep the backslash (it's not escaping anything special)
       end if

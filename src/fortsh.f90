@@ -1030,11 +1030,15 @@ contains
   end subroutine
 
   subroutine execute_trap_for_signal(shell, signum)
+    use grammar_parser, only: parse_command_line
+    use ast_executor, only: execute_ast_node
+    use command_tree, only: command_node_t, destroy_command_node
     type(shell_state_t), intent(inout) :: shell
     integer, intent(in) :: signum
     character(len=4096) :: trap_command
     type(pipeline_t) :: trap_pipeline
-    integer :: saved_exit_status, i
+    type(command_node_t), pointer :: trap_ast
+    integer :: saved_exit_status, i, trap_exit_code
 
     ! Get the trap command for this signal
     trap_command = get_trap_command(shell, signum)
@@ -1044,31 +1048,51 @@ contains
     ! Save current exit status (trap should not affect $?)
     saved_exit_status = shell%last_exit_status
 
+    ! Don't execute trap if we're already in one
+    if (shell%executing_trap) return
+
+    ! Don't execute EXIT trap if it was already executed by builtin_exit
+    if (signum == 0 .and. shell%exit_trap_executed) return
+
+    ! Set flag to prevent recursive trap execution
+    shell%executing_trap = .true.
+
+    ! Mark EXIT trap as executed if this is an EXIT trap
+    if (signum == 0) shell%exit_trap_executed = .true.
+
     ! Parse the trap command (use new parser if feature flag is enabled)
     if (shell%use_new_parser) then
-      call parse_with_grammar(trim(trap_command), trap_pipeline, shell)
+      ! Use AST parser for new parser mode
+      trap_ast => parse_command_line(trim(trap_command))
+      if (associated(trap_ast)) then
+        trap_exit_code = execute_ast_node(trap_ast, shell)
+        call destroy_command_node(trap_ast)
+      end if
     else
       call parse_pipeline(trim(trap_command), trap_pipeline)
+
+      ! Execute the trap command if parsing succeeded
+      if (trap_pipeline%num_commands > 0) then
+        call execute_pipeline(trap_pipeline, shell, trim(trap_command))
+      end if
+
+      ! Clean up pipeline
+      if (allocated(trap_pipeline%commands)) then
+        do i = 1, trap_pipeline%num_commands
+          if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
+          if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
+          if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
+          if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
+          if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
+          if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
+        end do
+        deallocate(trap_pipeline%commands)
+      end if
     end if
 
-    ! Execute the trap command if parsing succeeded
-    if (trap_pipeline%num_commands > 0) then
-      call execute_pipeline(trap_pipeline, shell, trim(trap_command))
-    end if
-
-    ! Clean up pipeline
-    if (allocated(trap_pipeline%commands)) then
-      do i = 1, trap_pipeline%num_commands
-        if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
-        if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
-        if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
-        if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
-        if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
-        if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
-        if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
-      end do
-      deallocate(trap_pipeline%commands)
-    end if
+    ! Clear flag
+    shell%executing_trap = .false.
 
     ! Restore exit status
     shell%last_exit_status = saved_exit_status
