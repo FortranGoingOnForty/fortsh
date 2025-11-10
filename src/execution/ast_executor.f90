@@ -241,9 +241,13 @@ contains
             temp_pipeline%commands(1)%input_file = trim(node%simple_cmd%redirects(i)%filename)
           end if
         case(REDIR_OUT)
-          ! > file
+          ! > file or >| file
           if (allocated(node%simple_cmd%redirects(i)%filename)) then
             temp_pipeline%commands(1)%output_file = trim(node%simple_cmd%redirects(i)%filename)
+            ! Check if this is >| (force clobber)
+            if (node%simple_cmd%redirects(i)%force_clobber) then
+              temp_pipeline%commands(1)%force_clobber = .true.
+            end if
           end if
         case(REDIR_APPEND)
           ! >> file
@@ -538,9 +542,11 @@ contains
     end if
 
     do
-      ! Evaluate condition
+      ! Evaluate condition (suppress errexit during condition evaluation per POSIX)
       if (associated(node%while_loop%condition)) then
+        shell%evaluating_condition = .true.
         cond_status = execute_ast_node(node%while_loop%condition, shell)
+        shell%evaluating_condition = .false.
       else
         cond_status = 1
       end if
