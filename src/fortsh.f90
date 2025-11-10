@@ -110,6 +110,13 @@ program fortran_shell
 
   ! Execute command string if -c was specified
   if (execute_command_string) then
+    ! Check if string contains heredoc and pre-process it
+    if (index(command_string, '<<') > 0) then
+      ! Pre-process heredocs before parsing
+      command_string = preprocess_heredocs_for_c(command_string, shell)
+      ! write(error_unit, '(A,A)') 'DEBUG: After preprocess, command_string=', trim(command_string)
+    end if
+
     ! Handle line continuation (backslash-newline)
     command_string = remove_line_continuations(command_string)
     call process_substitutions(shell, trim(command_string), proc_subst_line)
@@ -412,6 +419,209 @@ contains
       i = i + 1
       j = j + 1
     end do
+  end function
+
+  ! Convert escape sequences like \n to actual characters for -c flag
+  function convert_escape_sequences(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=len(input)*2) :: output  ! Worst case: all chars become newlines
+    integer :: i, j
+
+    output = ''
+    i = 1
+    j = 1
+
+    do while (i <= len_trim(input))
+      ! Check for backslash escape sequences
+      if (i < len_trim(input) .and. input(i:i) == '\') then
+        select case(input(i+1:i+1))
+        case('n')
+          ! Convert \n to actual newline
+          output(j:j) = char(10)
+          i = i + 2
+          j = j + 1
+        case('t')
+          ! Convert \t to tab
+          output(j:j) = char(9)
+          i = i + 2
+          j = j + 1
+        case('\')
+          ! Convert \\ to single backslash
+          output(j:j) = '\'
+          i = i + 2
+          j = j + 1
+        case default
+          ! Keep backslash and next char as-is
+          output(j:j) = input(i:i)
+          j = j + 1
+          i = i + 1
+        end select
+      else
+        ! Regular character, copy as-is
+        output(j:j) = input(i:i)
+        i = i + 1
+        j = j + 1
+      end if
+    end do
+  end function
+
+  ! Pre-process heredocs in -c commands
+  ! Extracts heredoc content and stores it for later use
+  function preprocess_heredocs_for_c(input, shell) result(output)
+    use shell_types
+    use iso_fortran_env, only: error_unit
+    character(len=*), intent(in) :: input
+    type(shell_state_t), intent(inout) :: shell
+    character(len=len(input)*2) :: output
+    integer :: i, j, heredoc_start, delim_start, delim_end
+    integer :: content_start, content_end, next_cmd_start
+    character(len=256) :: delimiter
+    character(len=4096) :: heredoc_content
+    logical :: quoted_delimiter
+
+    ! write(error_unit, '(A,A,A)') 'DEBUG: preprocess input=|', input(1:min(200,len_trim(input))), '|'
+
+    output = input  ! Start with original
+
+    ! Look for heredoc marker
+    i = index(input, '<<')
+    if (i == 0) then
+      return  ! No heredoc
+    end if
+
+    ! Skip spaces after <<
+    j = i + 2
+    do while (j <= len_trim(input) .and. input(j:j) == ' ')
+      j = j + 1
+    end do
+
+    ! Check for quoted delimiter
+    quoted_delimiter = .false.
+    if (input(j:j) == "'" .or. input(j:j) == '"') then
+      quoted_delimiter = .true.
+      block
+        character :: quote_char
+        quote_char = input(j:j)
+        j = j + 1
+        delim_start = j
+        ! Find closing quote
+        delim_end = j
+        do while (delim_end <= len_trim(input) .and. input(delim_end:delim_end) /= quote_char)
+          delim_end = delim_end + 1
+        end do
+        delim_end = delim_end - 1
+      end block
+    else
+      delim_start = j
+      ! Find end of delimiter (space or newline)
+      delim_end = j
+      do while (delim_end <= len_trim(input) .and. &
+               input(delim_end:delim_end) /= ' ' .and. &
+               input(delim_end:delim_end) /= char(10))
+        delim_end = delim_end + 1
+      end do
+      delim_end = delim_end - 1
+    end if
+
+    if (delim_end < delim_start) return  ! Invalid delimiter
+
+    delimiter = input(delim_start:delim_end)
+    ! write(error_unit, '(A,A,A)') 'DEBUG: delimiter=|', trim(delimiter), '|'
+
+    ! Find the newline after the heredoc command
+    heredoc_start = delim_end + 1
+    if (quoted_delimiter) heredoc_start = heredoc_start + 1  ! Skip closing quote
+
+    ! Skip to newline
+    do while (heredoc_start <= len_trim(input) .and. input(heredoc_start:heredoc_start) /= char(10))
+      heredoc_start = heredoc_start + 1
+    end do
+    if (heredoc_start > len_trim(input)) return  ! No content
+    heredoc_start = heredoc_start + 1  ! Skip the newline
+
+    ! Find the delimiter line
+    content_start = heredoc_start
+    content_end = 0
+    j = heredoc_start
+
+    do while (j <= len_trim(input))
+      ! Check if we're at start of a line
+      if (j == heredoc_start .or. input(j-1:j-1) == char(10)) then
+        ! Debug: show what we're checking
+        ! if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
+        !   write(error_unit, '(A,I0,A,A,A)') 'DEBUG: Checking at pos ', j, ': |', &
+        !     input(j:min(j+10, len_trim(input))), '|'
+        ! end if
+        ! Check if this line starts with the delimiter
+        if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
+          if (input(j:j+len_trim(delimiter)-1) == trim(delimiter)) then
+            ! write(error_unit, '(A)') 'DEBUG: Found delimiter match!'
+            ! Check if delimiter is alone on the line or followed by newline
+            if (j + len_trim(delimiter) > len_trim(input) .or. &
+                input(j+len_trim(delimiter):j+len_trim(delimiter)) == char(10)) then
+              content_end = j - 1
+              next_cmd_start = j + len_trim(delimiter)
+              if (next_cmd_start <= len_trim(input) .and. &
+                  input(next_cmd_start:next_cmd_start) == char(10)) then
+                next_cmd_start = next_cmd_start + 1
+              end if
+              exit
+            end if
+          end if
+        end if
+      end if
+      j = j + 1
+    end do
+
+    if (content_end == 0) then
+      return  ! Delimiter not found
+    end if
+
+    ! Extract heredoc content
+    if (content_end >= content_start) then
+      heredoc_content = input(content_start:content_end)
+    else
+      heredoc_content = ''
+    end if
+
+
+    ! Store heredoc content in shell state
+    shell%pending_heredoc = trim(heredoc_content)
+    shell%pending_heredoc_delimiter = trim(delimiter)
+    shell%pending_heredoc_quoted = quoted_delimiter
+    shell%has_pending_heredoc = .true.
+
+    ! Return the command without the heredoc content
+    ! The heredoc module will handle it when the command executes
+    ! Need to replace any newlines with semicolons to keep it a single command
+    block
+      integer :: k
+      character(len=len(input)) :: cmd_part
+
+      cmd_part = input(1:i-1)  ! Everything before <<
+
+      ! Replace newlines with semicolons in the command part
+      do k = 1, len_trim(cmd_part)
+        if (cmd_part(k:k) == char(10)) then
+          cmd_part(k:k) = ';'
+        end if
+      end do
+
+      output = trim(cmd_part)
+    end block
+
+    ! Re-add the heredoc marker with delimiter so heredoc module can process it
+    if (quoted_delimiter) then
+      output = trim(output) // " << '" // trim(delimiter) // "'"
+    else
+      output = trim(output) // ' << ' // trim(delimiter)
+    end if
+
+    ! Add any commands after the heredoc
+    if (next_cmd_start <= len_trim(input)) then
+      output = trim(output) // ' ' // input(next_cmd_start:len_trim(input))
+    end if
+
   end function
 
   subroutine run_logout_scripts(shell)

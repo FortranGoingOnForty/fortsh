@@ -497,7 +497,7 @@ contains
     ! Handle here document input
     ! Only read from stdin if content wasn't already extracted from input string
     if (allocated(cmd%heredoc_delimiter) .and. .not. allocated(cmd%heredoc_content)) then
-      call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content)
+      call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content, shell)
     end if
 
     ! Check if this is a function definition BEFORE expanding variables

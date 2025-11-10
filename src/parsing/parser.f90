@@ -1520,17 +1520,47 @@ contains
     
   end subroutine
 
-  subroutine read_heredoc(delimiter, content)
+  subroutine read_heredoc(delimiter, content, shell)
+    use shell_types, only: shell_state_t
+    use variables, only: get_shell_variable
     character(len=*), intent(in) :: delimiter
     character(len=:), allocatable, intent(out) :: content
+    type(shell_state_t), intent(inout) :: shell
 
     character(len=MAX_TOKEN_LEN) :: line
     character(len=MAX_HEREDOC_LEN) :: buffer
     integer :: iostat, pos
+    logical :: should_expand
 
+    ! Check if we have pending heredoc content from -c flag
+    if (shell%has_pending_heredoc .and. &
+        trim(shell%pending_heredoc_delimiter) == trim(delimiter)) then
+      ! Use the pre-stored content
+      buffer = trim(shell%pending_heredoc)
+
+      ! Check if we should expand variables
+      should_expand = .not. shell%pending_heredoc_quoted
+
+      ! Expand variables if needed
+      if (should_expand) then
+        buffer = expand_heredoc_variables(buffer, shell)
+      end if
+
+      allocate(character(len=len_trim(buffer)) :: content)
+      content = trim(buffer)
+
+      ! Clear the pending heredoc
+      shell%has_pending_heredoc = .false.
+      shell%pending_heredoc = ''
+      shell%pending_heredoc_delimiter = ''
+      shell%pending_heredoc_quoted = .false.
+      return
+    end if
+
+    ! Fall back to reading from stdin
     buffer = ''
     pos = 1
-    
+
     write(*, '(a)', advance='no') '> '
     
     do
@@ -1553,6 +1583,74 @@ contains
     allocate(character(len=pos-1) :: content)
     content = buffer(:pos-1)
   end subroutine
+
+  ! Expand variables in heredoc content
+  function expand_heredoc_variables(input, shell) result(output)
+    use shell_types, only: shell_state_t
+    use variables, only: get_shell_variable
+    character(len=*), intent(in) :: input
+    type(shell_state_t), intent(in) :: shell
+    character(len=MAX_HEREDOC_LEN) :: output
+
+    integer :: i, j, var_start, var_end
+    character(len=256) :: var_name, var_value
+
+    output = ''
+    i = 1
+    j = 1
+
+    do while (i <= len_trim(input))
+      if (input(i:i) == '$' .and. i < len_trim(input)) then
+        ! Found potential variable
+        var_start = i + 1
+
+        ! Check for ${var} format
+        if (input(var_start:var_start) == '{') then
+          var_start = var_start + 1
+          var_end = var_start
+          do while (var_end <= len_trim(input) .and. input(var_end:var_end) /= '}')
+            var_end = var_end + 1
+          end do
+          if (var_end <= len_trim(input)) then
+            var_name = input(var_start:var_end-1)
+            var_value = get_shell_variable(shell, trim(var_name))
+            output(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+            i = var_end + 1
+          else
+            output(j:j) = '$'
+            j = j + 1
+            i = i + 1
+          end if
+        else
+          ! Check for $var format
+          var_end = var_start
+          do while (var_end <= len_trim(input) .and. &
+                   ((input(var_end:var_end) >= 'A' .and. input(var_end:var_end) <= 'Z') .or. &
+                    (input(var_end:var_end) >= 'a' .and. input(var_end:var_end) <= 'z') .or. &
+                    (input(var_end:var_end) >= '0' .and. input(var_end:var_end) <= '9') .or. &
+                    input(var_end:var_end) == '_'))
+            var_end = var_end + 1
+          end do
+          if (var_end > var_start) then
+            var_name = input(var_start:var_end-1)
+            var_value = get_shell_variable(shell, trim(var_name))
+            output(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+            i = var_end
+          else
+            output(j:j) = '$'
+            j = j + 1
+            i = i + 1
+          end if
+        end if
+      else
+        output(j:j) = input(i:i)
+        j = j + 1
+        i = i + 1
+      end if
+    end do
+  end function
 
   ! Extract heredoc content from input string (for -c mode)
   subroutine extract_heredoc_from_input(input, delimiter, content)
