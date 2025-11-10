@@ -111,7 +111,7 @@ contains
       end if
       if (tok%token_type == TOKEN_OPERATOR .and. (trim(tok%value) == ')' .or. trim(tok%value) == '}')) exit
       if (tok%token_type == TOKEN_OPERATOR) then
-        if (trim(tok%value) == ';') then
+        if (trim(tok%value) == ';' .or. trim(tok%value) == ';;') then
           sep_type = LIST_SEP_SEQUENTIAL
           call advance(state)
         else if (trim(tok%value) == '&') then

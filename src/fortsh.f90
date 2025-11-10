@@ -647,10 +647,14 @@ contains
 
   subroutine process_source_file(shell)
     use variables, only: add_function
+    use grammar_parser, only: parse_command_line
+    use command_tree, only: destroy_command_node, command_node_t
+    use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line, proc_subst_line, continuation_line
-    integer :: file_unit, iostat, i, brace_depth, func_line_count
+    character(len=1024) :: input_line, proc_subst_line, continuation_line, converted_line
+    integer :: file_unit, iostat, i, brace_depth, func_line_count, exit_code
     type(pipeline_t) :: pipeline
+    type(command_node_t), pointer :: ast_root
     character(len=:), allocatable :: expanded_line, history_expanded
     logical :: in_function
     character(len=256) :: func_name
@@ -753,33 +757,41 @@ contains
       ! Process substitutions <() and >() before parsing
       call process_substitutions(shell, expanded_line, proc_subst_line)
 
-      ! Parse and execute pipeline (use new parser if feature flag is enabled)
+      ! Parse and execute (use new AST parser by default)
       if (shell%use_new_parser) then
-        call parse_with_grammar(proc_subst_line, pipeline, shell)
-      else
-        call parse_pipeline(proc_subst_line, pipeline)
-      end if
-
-      if (pipeline%num_commands > 0) then
-        call execute_pipeline(pipeline, shell, expanded_line)
-
-        ! Check if we need to replay loop body (only if NOT currently capturing)
-        if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-          call replay_loop_if_needed(shell)
+        ! NEW PARSER PATH: Parse to AST and execute directly
+        converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+        ast_root => parse_command_line(converted_line)
+        if (associated(ast_root)) then
+          exit_code = execute_ast(ast_root, shell)
+          shell%last_exit_status = exit_code
+          call destroy_command_node(ast_root)
         end if
+      else
+        ! OLD PARSER PATH: Parse to pipeline and execute
+        call parse_pipeline(proc_subst_line, pipeline)
 
-        ! Clean up pipeline
-        if (allocated(pipeline%commands)) then
-          do i = 1, pipeline%num_commands
-            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-          end do
-          deallocate(pipeline%commands)
+        if (pipeline%num_commands > 0) then
+          call execute_pipeline(pipeline, shell, expanded_line)
+
+          ! Check if we need to replay loop body (only if NOT currently capturing)
+          if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+            call replay_loop_if_needed(shell)
+          end if
+
+          ! Clean up pipeline
+          if (allocated(pipeline%commands)) then
+            do i = 1, pipeline%num_commands
+              if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+              if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+              if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+              if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+              if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+              if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+              if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+            end do
+            deallocate(pipeline%commands)
+          end if
         end if
       end if
 
