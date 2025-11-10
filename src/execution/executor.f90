@@ -47,10 +47,8 @@ contains
 
       case(SEP_SEMICOLON, SEP_NONE)
         call execute_single(pipeline%commands(i), shell, original_input)
-        ! Process any sourced files immediately (for dot command in semicolon lists)
-        if (shell%should_source) then
-          call process_source_inline(shell)
-        end if
+        ! NOTE: Sourcing is now handled at the AST level (in execute_ast) or by the caller
+        ! We don't process sourced files inline here to avoid double-processing
         call check_errexit(shell, shell%last_exit_status)
         ! Check if shell should exit (e.g., due to ${VAR?error})
         if (.not. shell%running) exit
