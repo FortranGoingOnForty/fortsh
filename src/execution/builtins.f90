@@ -113,7 +113,7 @@ contains
   subroutine execute_builtin(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     select case(trim(cmd%tokens(1)))
     case('exit')
       call builtin_exit(cmd, shell)
@@ -206,6 +206,8 @@ contains
       call builtin_return(cmd, shell)
     case('exec')
       call builtin_exec(cmd, shell)
+    case('eval')
+      call builtin_eval(cmd, shell)
     case('hash')
       call builtin_hash(cmd, shell)
     case('umask')
@@ -2009,6 +2011,40 @@ contains
     ! Report error
     write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': cannot execute'
     shell%last_exit_status = 126
+  end subroutine
+
+  subroutine builtin_eval(cmd, shell)
+    use grammar_parser, only: parse_command_line
+    use ast_executor, only: execute_ast
+    use command_tree, only: command_node_t, destroy_command_node
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, exit_code
+    character(len=4096) :: eval_command
+    type(command_node_t), pointer :: ast_root
+
+    ! If no arguments, just return success
+    if (cmd%num_tokens < 2) then
+      shell%last_exit_status = 0
+      return
+    end if
+
+    ! Concatenate all arguments into a single command string
+    eval_command = trim(cmd%tokens(2))
+    do i = 3, cmd%num_tokens
+      eval_command = trim(eval_command) // ' ' // trim(cmd%tokens(i))
+    end do
+
+    ! Use NEW parser to parse and execute the command
+    ast_root => parse_command_line(trim(eval_command))
+    if (associated(ast_root)) then
+      exit_code = execute_ast(ast_root, shell)
+      shell%last_exit_status = exit_code
+      call destroy_command_node(ast_root)
+    else
+      ! Failed to parse
+      shell%last_exit_status = 1
+    end if
   end subroutine
 
   subroutine builtin_hash(cmd, shell)
