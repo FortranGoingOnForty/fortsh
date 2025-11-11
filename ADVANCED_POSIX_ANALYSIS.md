@@ -1,25 +1,26 @@
 # Advanced POSIX Test Analysis - Path to 100%
 
-**Current Status: 96/117 tests passing (82%)** ⬆️ from 77/117 (66%)
+**Current Status: 98/117 tests passing (83%)** ⬆️ from 96/117 (82%)
 
 **Goal: Achieve 100% Advanced POSIX compliance**
 
 **Recent Commits:**
-- `d223333` - Complete half-baked features: alias expansion, arithmetic errors (95/117 = 81%)
-- `8d1b340` - Fix arithmetic error exit code to match POSIX (96/117 = 82%)
+- `07a4afc` - Add semicolon syntax error detection (;; and leading ;)
+- `f7bafef` - Fix comment-alone parsing to continue execution (98/117 = 83%)
 
 ---
 
 ## Executive Summary
 
-We have **21 failing tests** remaining in Advanced POSIX. Major progress has been made:
+We have **19 failing tests** remaining in Advanced POSIX. Major progress has been made:
 - ✅ Break/Continue loops - All 8 tests PASSING
 - ✅ Arithmetic operations - Most working
 - ✅ Alias expansion - Fully implemented
 - ✅ Shell options - noglob, xtrace, allexport working
+- ✅ Comment-alone parsing - Fixed to continue execution after comments
 
 **Remaining failures by category:**
-- **Parsing issues** (4 tests) - Multiple semicolons, comments, adjacent quotes
+- **Parsing issues** (3 tests) - Semicolons (behavior correct, message format differs), adjacent quotes
 - **Trap signals** (5 tests) - Format mismatch with POSIX sh
 - **Parameter expansion** (3 tests) - ${#var} length operator
 - **Exec builtin** (2 tests) - Redirection and no-command cases
