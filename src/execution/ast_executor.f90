@@ -414,6 +414,9 @@ contains
         ! Close all pipe fds
         call close_all_pipes(pipefd, num_pipes)
 
+        ! POSIX: Traps are NOT inherited by subshells (including pipeline commands)
+        shell%num_traps = 0
+
         ! Execute command
         status = execute_ast_node(node%pipeline%commands(i), shell)
         call c_exit(status)
@@ -860,6 +863,8 @@ contains
     pid = c_fork()
     if (pid == 0) then
       ! Child process - execute commands in subshell
+      ! POSIX: Traps are NOT inherited by subshells
+      shell%num_traps = 0
       status = execute_ast_node(node%subshell, shell)
       call c_exit(status)
     else if (pid > 0) then

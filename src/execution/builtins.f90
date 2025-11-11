@@ -1039,7 +1039,8 @@ contains
             return
           end if
           ! Print trap for this signal if it exists
-          do k = 1, size(shell%traps)
+          ! Use num_traps instead of size(traps) so that subshells can clear traps
+          do k = 1, shell%num_traps
             if (shell%traps(k)%signal == signum .and. shell%traps(k)%active) then
               write(output_unit, '(a)') 'trap -- ' // "'" // &
                                         trim(shell%traps(k)%command) // "' " // &
