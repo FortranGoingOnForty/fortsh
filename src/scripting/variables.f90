@@ -60,7 +60,8 @@ contains
         return
       case ('IFS')
         shell%ifs = value
-        return
+        ! Don't return - continue to add IFS to variables array too
+        ! This allows checking if IFS was explicitly set vs using default
       case ('HISTFILE')
         shell%histfile = value
         return

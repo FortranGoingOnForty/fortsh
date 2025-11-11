@@ -1147,8 +1147,8 @@ contains
     character(len=1024) :: split_words(30)
     character(len=MAX_TOKEN_LEN) :: word
     character(len=256) :: ifs_to_use
-    integer :: word_count, start_pos, pos, k
-    logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char
+    integer :: word_count, start_pos, pos, k, ifs_check_i
+    logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
@@ -1156,9 +1156,21 @@ contains
 
     ! Determine IFS characters to use
     ! Interpret escape sequences in IFS (\t -> tab, \n -> newline)
-    if (len_trim(shell%ifs) > 0) then
+    ! POSIX: When IFS is set to empty, field splitting is disabled
+    ! Check if IFS was explicitly set by the user (exists in variables array)
+    ifs_explicitly_set = .false.
+    do ifs_check_i = 1, shell%num_variables
+      if (trim(shell%variables(ifs_check_i)%name) == 'IFS') then
+        ifs_explicitly_set = .true.
+        exit
+      end if
+    end do
+
+    if (ifs_explicitly_set) then
+      ! IFS is explicitly set - use its value (even if empty)
       call interpret_ifs_escapes(trim(shell%ifs), ifs_to_use)
     else
+      ! IFS not set - use default
       ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline (default IFS)
     end if
 
