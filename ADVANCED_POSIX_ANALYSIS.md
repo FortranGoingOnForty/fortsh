@@ -1,10 +1,11 @@
 # Advanced POSIX Test Analysis - Path to 100%
 
-**Current Status: 98/117 tests passing (83%)** ⬆️ from 96/117 (82%)
+**Current Status: 101/117 tests passing (86%)** ⬆️ from 98/117 (83%)
 
 **Goal: Achieve 100% Advanced POSIX compliance**
 
 **Recent Commits:**
+- `e1df54c` - Fix lexer to keep ${ tokens together (101/117 = 86%)
 - `07a4afc` - Add semicolon syntax error detection (;; and leading ;)
 - `f7bafef` - Fix comment-alone parsing to continue execution (98/117 = 83%)
 
@@ -12,17 +13,17 @@
 
 ## Executive Summary
 
-We have **19 failing tests** remaining in Advanced POSIX. Major progress has been made:
+We have **16 failing tests** remaining in Advanced POSIX. Major progress has been made:
 - ✅ Break/Continue loops - All 8 tests PASSING
 - ✅ Arithmetic operations - Most working
 - ✅ Alias expansion - Fully implemented
 - ✅ Shell options - noglob, xtrace, allexport working
 - ✅ Comment-alone parsing - Fixed to continue execution after comments
+- ✅ Parameter length ${#var}, ${#@}, ${#*}, ${#1} - FIXED!
 
 **Remaining failures by category:**
-- **Parsing issues** (3 tests) - Semicolons (behavior correct, message format differs), adjacent quotes
+- **Parsing issues** (2 tests) - Semicolons (behavior correct, message format differs), adjacent quotes
 - **Trap signals** (5 tests) - Format mismatch with POSIX sh
-- **Parameter expansion** (3 tests) - ${#var} length operator
 - **Exec builtin** (2 tests) - Redirection and no-command cases
 - **Edge cases** (7 tests) - FD operations, wait, IFS, functions, redirections
 
@@ -30,30 +31,16 @@ We have **19 failing tests** remaining in Advanced POSIX. Major progress has bee
 
 ## Recommended Focus Areas
 
-### 🎯 HIGH PRIORITY - Quick Wins (8 tests → 89%)
+### 🎯 HIGH PRIORITY - Quick Wins (5 tests → 90%)
 
-#### 1. Parsing Issues (4 tests) ⚠️ BLOCKING
+#### 1. Parsing Issues (2 tests) ⚠️ BLOCKING
 **Impact:** Core shell functionality
 **Effort:** Low-Medium
 
-- ✗ multiple semicolons - `echo a;; echo b` should work
-- ✗ semicolon at start - `;echo test` should work
-- ✗ comment alone - `# comment` on its own line
+- ✗ multiple semicolons - `echo a;; echo b` should work (behavior correct, error message differs)
 - ✗ adjacent quotes - `echo 'hello'"world"` should output `helloworld`
 
 **Fix:** Parser/lexer improvements for edge cases
-
----
-
-#### 2. Parameter Length ${#var} (3 tests) ⚠️ PARTIALLY WORKING
-**Impact:** Common shell feature
-**Effort:** Low (already implemented, just needs fixing)
-
-- ✗ length of positional params - `${#1}` should return length of $1
-- ✗ length of variable - `${#var}` returns wrong values
-- ✗ length of special - Other ${#} expansions
-
-**Fix:** Debug existing implementation in expansion.f90
 
 ---
 
@@ -109,14 +96,15 @@ We have **19 failing tests** remaining in Advanced POSIX. Major progress has bee
 
 **Phase 3 Cleanup (Current):**
 1. ✅ Fix arithmetic error exit codes (DONE - 96/117)
-2. 🎯 Fix parsing edge cases (4 tests → 100/117 = 85%)
-3. 🎯 Fix ${#var} parameter length (3 tests → 103/117 = 88%)
+2. ✅ Fix ${#var} parameter length (DONE - 101/117 = 86%)
+3. 🎯 Fix parsing edge cases (2 tests → 103/117 = 88%)
 4. 🎯 Fix expansion error exit code (1 test → 104/117 = 89%)
 
 **Phase 4 - Format & Edge Cases:**
 5. Fix trap listing format (5 tests → 109/117 = 93%)
 6. Fix exec builtin cases (2 tests → 111/117 = 95%)
-7. Fix remaining edge cases (6 tests → 117/117 = 100%) 🎉
+7. Fix remaining edge cases (5 tests → 116/117 = 99%)
+8. Fix final edge case (1 test → 117/117 = 100%) 🎉
 
 ---
 
@@ -131,10 +119,10 @@ We have **19 failing tests** remaining in Advanced POSIX. Major progress has bee
 - [x] Alias definition and expansion
 - [x] Read builtin improvements
 - [x] Arithmetic error exit codes
+- [x] Parameter length ${#var}, ${#@}, ${#*}, ${#1} (3 tests)
 
 ### In Progress 🚧
-- [ ] Parsing edge cases (semicolons, comments, quotes)
-- [ ] Parameter length ${#var}
+- [ ] Parsing edge cases (semicolons, adjacent quotes)
 - [ ] Trap output format
 - [ ] Exec builtin edge cases
 
@@ -150,7 +138,7 @@ We have **19 failing tests** remaining in Advanced POSIX. Major progress has bee
 
 - **Basic POSIX**: ~100% (assumed passing)
 - **Extended POSIX**: ~91% (91/99 tests)
-- **Advanced POSIX**: **82% (96/117 tests)** ⬅️ Current Focus
+- **Advanced POSIX**: **86% (101/117 tests)** ⬅️ Current Focus
 - **POSIX Builtins**: Status unknown
 
 **Overall Goal**: 100% on all test suites
