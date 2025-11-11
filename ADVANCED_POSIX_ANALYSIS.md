@@ -1,10 +1,11 @@
 # Advanced POSIX Test Analysis - Path to 100%
 
-**Current Status: 101/117 tests passing (86%)** ⬆️ from 98/117 (83%)
+**Current Status: 106/117 tests passing (90%)** ⬆️ from 101/117 (86%)
 
 **Goal: Achieve 100% Advanced POSIX compliance**
 
 **Recent Commits:**
+- `6ca1ff9` - Fix trap inheritance: traps no longer inherited by subshells (106/117 = 90%)
 - `e1df54c` - Fix lexer to keep ${ tokens together (101/117 = 86%)
 - `07a4afc` - Add semicolon syntax error detection (;; and leading ;)
 - `f7bafef` - Fix comment-alone parsing to continue execution (98/117 = 83%)
@@ -13,17 +14,17 @@
 
 ## Executive Summary
 
-We have **16 failing tests** remaining in Advanced POSIX. Major progress has been made:
+We have **11 failing tests** remaining in Advanced POSIX. Major progress has been made:
 - ✅ Break/Continue loops - All 8 tests PASSING
 - ✅ Arithmetic operations - Most working
 - ✅ Alias expansion - Fully implemented
 - ✅ Shell options - noglob, xtrace, allexport working
 - ✅ Comment-alone parsing - Fixed to continue execution after comments
 - ✅ Parameter length ${#var}, ${#@}, ${#*}, ${#1} - FIXED!
+- ✅ Trap inheritance - Traps no longer inherited by subshells - FIXED!
 
 **Remaining failures by category:**
 - **Parsing issues** (2 tests) - Semicolons (behavior correct, message format differs), adjacent quotes
-- **Trap signals** (5 tests) - Format mismatch with POSIX sh
 - **Exec builtin** (2 tests) - Redirection and no-command cases
 - **Edge cases** (7 tests) - FD operations, wait, IFS, functions, redirections
 
@@ -31,7 +32,7 @@ We have **16 failing tests** remaining in Advanced POSIX. Major progress has bee
 
 ## Recommended Focus Areas
 
-### 🎯 HIGH PRIORITY - Quick Wins (5 tests → 90%)
+### 🎯 HIGH PRIORITY - Quick Wins (3 tests → 93%)
 
 #### 1. Parsing Issues (2 tests) ⚠️ BLOCKING
 **Impact:** Core shell functionality
@@ -44,7 +45,7 @@ We have **16 failing tests** remaining in Advanced POSIX. Major progress has bee
 
 ---
 
-#### 3. Expansion Error Exit Code (1 test) ⚠️ TRIVIAL
+#### 2. Expansion Error Exit Code (1 test) ⚠️ TRIVIAL
 **Impact:** POSIX compliance
 **Effort:** Very Low
 
@@ -54,36 +55,16 @@ We have **16 failing tests** remaining in Advanced POSIX. Major progress has bee
 
 ---
 
-### 🔧 MEDIUM PRIORITY - Format Fixes (5 tests → 93%)
+### 📋 MEDIUM PRIORITY - Edge Cases (8 tests → 100%)
 
-#### 4. Trap Signal Listing (5 tests)
-**Impact:** Test compatibility (functionality works)
-**Effort:** Low
-
-- ✗ trap INT signal - Output format doesn't match sh
-- ✗ trap TERM signal
-- ✗ trap HUP signal
-- ✗ trap with number
-- ✗ trap not inherited
-
-**Note:** Our traps work correctly, just output format differs from POSIX sh
-- We output: `trap -- 'echo caught' SIGINT`
-- sh outputs: (empty or different format)
-
-**Fix:** Investigate what POSIX sh actually outputs for `trap | grep INT`
-
----
-
-### 📋 LOWER PRIORITY - Edge Cases (7 tests → 99%)
-
-#### 5. Exec Builtin (2 tests)
+#### 3. Exec Builtin (2 tests)
 - ✗ exec with redirect - `exec 2>&1` in subshell
 - ✗ exec without command - `exec` with just redirects
 
-#### 6. File Descriptors (1 test)
+#### 4. File Descriptors (1 test)
 - ✗ dup stdin from fd - Advanced FD manipulation
 
-#### 7. Other Edge Cases (4 tests)
+#### 5. Other Edge Cases (6 tests)
 - ✗ wait nonexistent PID - Should handle gracefully
 - ✗ empty IFS - IFS="" handling
 - ✗ function recursion - Recursive function calls
@@ -97,14 +78,13 @@ We have **16 failing tests** remaining in Advanced POSIX. Major progress has bee
 **Phase 3 Cleanup (Current):**
 1. ✅ Fix arithmetic error exit codes (DONE - 96/117)
 2. ✅ Fix ${#var} parameter length (DONE - 101/117 = 86%)
-3. 🎯 Fix parsing edge cases (2 tests → 103/117 = 88%)
-4. 🎯 Fix expansion error exit code (1 test → 104/117 = 89%)
+3. ✅ Fix trap inheritance in subshells (DONE - 106/117 = 90%)
+4. 🎯 Fix parsing edge cases (2 tests → 108/117 = 92%)
+5. 🎯 Fix expansion error exit code (1 test → 109/117 = 93%)
 
 **Phase 4 - Format & Edge Cases:**
-5. Fix trap listing format (5 tests → 109/117 = 93%)
 6. Fix exec builtin cases (2 tests → 111/117 = 95%)
-7. Fix remaining edge cases (5 tests → 116/117 = 99%)
-8. Fix final edge case (1 test → 117/117 = 100%) 🎉
+7. Fix remaining edge cases (6 tests → 117/117 = 100%) 🎉
 
 ---
 
@@ -120,10 +100,10 @@ We have **16 failing tests** remaining in Advanced POSIX. Major progress has bee
 - [x] Read builtin improvements
 - [x] Arithmetic error exit codes
 - [x] Parameter length ${#var}, ${#@}, ${#*}, ${#1} (3 tests)
+- [x] Trap inheritance - subshells no longer inherit traps (5 tests)
 
 ### In Progress 🚧
 - [ ] Parsing edge cases (semicolons, adjacent quotes)
-- [ ] Trap output format
 - [ ] Exec builtin edge cases
 
 ### Not Started ⏳
@@ -138,7 +118,7 @@ We have **16 failing tests** remaining in Advanced POSIX. Major progress has bee
 
 - **Basic POSIX**: ~100% (assumed passing)
 - **Extended POSIX**: ~91% (91/99 tests)
-- **Advanced POSIX**: **86% (101/117 tests)** ⬅️ Current Focus
+- **Advanced POSIX**: **90% (106/117 tests)** ⬅️ Current Focus
 - **POSIX Builtins**: Status unknown
 
 **Overall Goal**: 100% on all test suites
