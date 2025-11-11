@@ -948,6 +948,7 @@ contains
           end if
         end if
       end do
+      shell%last_exit_status = 0
     else
       ! Wait for specific job or PID
       do i = 2, cmd%num_tokens
@@ -979,15 +980,11 @@ contains
               shell%last_exit_status = 1
             end if
           else
-            write(error_unit, '(a,i15,a)') 'wait: pid ', target_pid, ' is not a child of this shell'
+            ! PID is not a child of this shell (or doesn't exist)
             shell%last_exit_status = 127
           end if
         end if
       end do
-    end if
-    
-    if (shell%last_exit_status /= 1) then
-      shell%last_exit_status = 0
     end if
   end subroutine
 
