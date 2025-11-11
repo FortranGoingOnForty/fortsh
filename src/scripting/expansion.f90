@@ -362,7 +362,7 @@ contains
     if (dash_pos > 0 .or. plus_pos > 0 .or. equals_pos > 0 .or. question_pos > 0) then
       ! ${var-word}, ${var:-word}, ${var+word}, ${var:+word}, ${var=word}, ${var:=word}, ${var?word}, ${var:?word}
     !       write(error_unit, '(A,I0,A,I0,A,I0,A,I0)') 'DEBUG: dash=', dash_pos, &
-           ' plus=', plus_pos, ' eq=', equals_pos, ' q=', question_pos
+    !        ' plus=', plus_pos, ' eq=', equals_pos, ' q=', question_pos
 
       ! Determine which operator we have
       if (dash_pos > 0 .and. (plus_pos == 0 .or. dash_pos < plus_pos) .and. &
@@ -379,12 +379,12 @@ contains
         end if
 
     !         write(error_unit, '(A,L1,A,A,A,A,A)') 'DEBUG: has_colon=', has_colon, &
-             ' op=', trim(operation), ' param1=', trim(param1)
+    !          ' op=', trim(operation), ' param1=', trim(param1)
         var_is_set = is_shell_variable_set(shell, trim(operation))
         var_value = get_shell_variable(shell, trim(operation))
         var_is_null = (len_trim(var_value) == 0)
     !         write(error_unit, '(A,L1,A,A,A,L1)') 'DEBUG: var_is_set=', var_is_set, &
-             ' val=', trim(var_value), ' null=', var_is_null
+    !          ' val=', trim(var_value), ' null=', var_is_null
 
         ! ${var-word}: use word if var is unset
         ! ${var:-word}: use word if var is unset or null
@@ -924,6 +924,8 @@ contains
     ! Clear any previous error
     arithmetic_error = .false.
     arithmetic_error_msg = ''
+    shell%arithmetic_error = .false.
+    shell%arithmetic_error_msg = ''
 
     ! Expand ALL parameter expansions ($var, $1, $(cmd), etc.) before evaluation
     ! This handles variables, positional parameters, and command substitutions
@@ -936,6 +938,8 @@ contains
     if (arithmetic_error) then
       write(error_unit, '(a,a)') 'fortsh: arithmetic expression: ', trim(arithmetic_error_msg)
       shell%last_exit_status = 1
+      shell%arithmetic_error = .true.
+      shell%arithmetic_error_msg = trim(arithmetic_error_msg)
       result_value = ''  ! Return empty string to signal error
     else
       write(result_value, '(I0)') result_int

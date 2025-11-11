@@ -257,6 +257,8 @@ module shell_types
     logical :: is_interactive = .false.
     logical :: running = .true.
     logical :: fatal_expansion_error = .false.  ! Set by ${VAR?error} to abort execution
+    logical :: arithmetic_error = .false.        ! Set when arithmetic expansion fails
+    character(len=256) :: arithmetic_error_msg = ''  ! Error message from arithmetic expansion
     type(job_t) :: jobs(MAX_JOBS)
     integer :: num_jobs = 0
     integer :: next_job_id = 1
