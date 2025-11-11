@@ -920,10 +920,68 @@ contains
     character(len=*), intent(in) :: expr
     integer(kind=8) :: value
 
-    value = eval_logical_or(trim(adjustl(expr)))
+    value = eval_ternary(trim(adjustl(expr)))
   end function
 
-  ! Logical OR (lowest precedence)
+  ! Ternary conditional operator (? :)
+  recursive function eval_ternary(expr) result(value)
+    character(len=*), intent(in) :: expr
+    integer(kind=8) :: value, true_val, false_val
+    integer :: qmark_pos, colon_pos, depth, i
+    character(len=512) :: condition_expr, true_expr, false_expr
+
+    ! Find ? outside parentheses
+    qmark_pos = 0
+    depth = 0
+    do i = 1, len_trim(expr)
+      if (expr(i:i) == '(') then
+        depth = depth + 1
+      else if (expr(i:i) == ')') then
+        depth = depth - 1
+      else if (depth == 0 .and. expr(i:i) == '?') then
+        qmark_pos = i
+        exit
+      end if
+    end do
+
+    if (qmark_pos > 0) then
+      ! Find matching : after the ?
+      colon_pos = 0
+      depth = 0
+      do i = qmark_pos + 1, len_trim(expr)
+        if (expr(i:i) == '(') then
+          depth = depth + 1
+        else if (expr(i:i) == ')') then
+          depth = depth - 1
+        else if (depth == 0 .and. expr(i:i) == ':') then
+          colon_pos = i
+          exit
+        end if
+      end do
+
+      if (colon_pos > 0) then
+        condition_expr = expr(:qmark_pos-1)
+        true_expr = expr(qmark_pos+1:colon_pos-1)
+        false_expr = expr(colon_pos+1:)
+
+        ! Evaluate condition
+        value = eval_logical_or(trim(adjustl(condition_expr)))
+        if (value /= 0) then
+          ! Condition is true, evaluate true expression
+          value = eval_ternary(trim(adjustl(true_expr)))
+        else
+          ! Condition is false, evaluate false expression
+          value = eval_ternary(trim(adjustl(false_expr)))
+        end if
+        return
+      end if
+    end if
+
+    ! No ternary operator found
+    value = eval_logical_or(expr)
+  end function
+
+  ! Logical OR (lowest precedence except ternary)
   recursive function eval_logical_or(expr) result(value)
     character(len=*), intent(in) :: expr
     integer(kind=8) :: value, right_val
@@ -1419,9 +1477,68 @@ contains
       write(var_value_str, '(I0)') value
       call set_shell_variable(shell, trim(var_name), trim(var_value_str))
     else
-      ! No assignment, evaluate as logical OR
-      value = eval_logical_or_shell(expr, shell)
+      ! No assignment, evaluate as ternary
+      value = eval_ternary_shell(expr, shell)
     end if
+  end function
+
+  ! Ternary conditional operator (? :)
+  recursive function eval_ternary_shell(expr, shell) result(value)
+    character(len=*), intent(in) :: expr
+    type(shell_state_t), intent(inout) :: shell
+    integer(kind=8) :: value, true_val, false_val
+    integer :: qmark_pos, colon_pos, depth, i
+    character(len=512) :: condition_expr, true_expr, false_expr
+
+    ! Find ? outside parentheses
+    qmark_pos = 0
+    depth = 0
+    do i = 1, len_trim(expr)
+      if (expr(i:i) == '(') then
+        depth = depth + 1
+      else if (expr(i:i) == ')') then
+        depth = depth - 1
+      else if (depth == 0 .and. expr(i:i) == '?') then
+        qmark_pos = i
+        exit
+      end if
+    end do
+
+    if (qmark_pos > 0) then
+      ! Find matching : after the ?
+      colon_pos = 0
+      depth = 0
+      do i = qmark_pos + 1, len_trim(expr)
+        if (expr(i:i) == '(') then
+          depth = depth + 1
+        else if (expr(i:i) == ')') then
+          depth = depth - 1
+        else if (depth == 0 .and. expr(i:i) == ':') then
+          colon_pos = i
+          exit
+        end if
+      end do
+
+      if (colon_pos > 0) then
+        condition_expr = expr(:qmark_pos-1)
+        true_expr = expr(qmark_pos+1:colon_pos-1)
+        false_expr = expr(colon_pos+1:)
+
+        ! Evaluate condition
+        value = eval_logical_or_shell(trim(adjustl(condition_expr)), shell)
+        if (value /= 0) then
+          ! Condition is true, evaluate true expression
+          value = eval_ternary_shell(trim(adjustl(true_expr)), shell)
+        else
+          ! Condition is false, evaluate false expression
+          value = eval_ternary_shell(trim(adjustl(false_expr)), shell)
+        end if
+        return
+      end if
+    end if
+
+    ! No ternary operator found
+    value = eval_logical_or_shell(expr, shell)
   end function
 
   ! Helper function to find leftmost assignment operator (for right-associativity)
