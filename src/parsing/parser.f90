@@ -1426,7 +1426,7 @@ contains
           i = i + 1
           var_start = i
           brace_depth = 1
-          
+
           do while (i <= len_trim(working_token) .and. brace_depth > 0)
             if (working_token(i:i) == '{') then
               brace_depth = brace_depth + 1

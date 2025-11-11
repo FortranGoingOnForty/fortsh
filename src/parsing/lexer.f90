@@ -232,6 +232,18 @@ contains
           cycle
         end if
 
+        ! Check for ${ - parameter expansion should be kept in word tokens
+        if (ch == '$' .and. pos < input_len .and. next_ch == '{') then
+          ! This is parameter expansion - include in word
+          state = LEX_IN_WORD
+          token_start = pos
+          token_len = 2
+          current_token = '${'
+          paren_depth = 1  ! Track that we're inside ${
+          pos = pos + 2
+          cycle
+        end if
+
         ! Assignment detection: VAR=value
         ! (This is complex - we'll detect it as WORD and let parser handle it)
 
@@ -337,6 +349,39 @@ contains
             end if
             pos = pos + 1
           end if
+        ! Check if we're inside ${ - if so, keep EVERYTHING until closing }
+        else if (index(current_token(1:token_len), '${') > 0) then
+          ! Inside parameter expansion - track brace depth
+          if (ch == '{') then
+            paren_depth = paren_depth + 1
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          else if (ch == '}') then
+            paren_depth = paren_depth - 1
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+            ! If paren_depth hits 0, we closed the ${...}
+            if (paren_depth == 0) then
+              ! End of parameter expansion - finish token
+              call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                      token_start, pos-1, .false., in_escape)
+              state = LEX_NORMAL
+              in_escape = .false.
+            end if
+          else
+            ! Inside ${ - keep EVERYTHING including spaces
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          end if
         else if (ch == '\' .and. pos < input_len) then
           ! Backslash escape in word
           if (token_len < MAX_TOKEN_LEN) then
@@ -376,6 +421,16 @@ contains
             paren_depth = 1  ! Track that we're inside $(
           end if
           pos = pos + 2
+        else if (ch == '$' .and. pos < input_len .and. next_ch == '{') then
+          ! ${ for parameter expansion - keep in word
+          if (token_len < MAX_TOKEN_LEN - 1) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = ch
+            token_len = token_len + 1
+            current_token(token_len:token_len) = next_ch
+            paren_depth = 1  ! Track that we're inside ${
+          end if
+          pos = pos + 2
         else if ((ch >= '0' .and. ch <= '9') .or. ch == '+' .or. ch == '-' .or. &
                  ch == '*' .or. ch == '/' .or. ch == '%') then
           ! Keep these chars in word (for variables and arithmetic)
@@ -403,6 +458,30 @@ contains
             pos = pos + 1
           else
             ! Not in substitution - end word, let paren be operator
+            call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                    token_start, pos-1, .false., in_escape)
+            state = LEX_NORMAL
+            in_escape = .false.
+          end if
+        else if (ch == '{' .or. ch == '}') then
+          ! Braces: Keep ONLY if inside ${
+          ! Check if current token ends with $ (for ${var})
+          if (token_len >= 1 .and. current_token(token_len:token_len) == '$') then
+            ! Just added $, now seeing { - this is ${ expansion - keep both
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          else if (token_len >= 2 .and. index(current_token(1:token_len), '${') > 0) then
+            ! Already inside ${...} - keep braces
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
+          else
+            ! Not in parameter expansion - end word, let brace be operator
             call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
                                     token_start, pos-1, .false., in_escape)
             state = LEX_NORMAL

@@ -42,7 +42,6 @@ contains
     ! Remove ${ and }
     if (len_trim(expression) < 4) return
     var_name = expression(3:len_trim(expression)-1)
-    ! write(error_unit, '(A,A,A)') 'DEBUG START: var_name=[', trim(var_name), ']'
 
     ! ========================================================================
     ! Check for array bracket syntax FIRST: ${array[key]}, ${!array[@]}, ${#array[@]}
@@ -272,18 +271,15 @@ contains
       ! Check if this is just ${#} (number of positional params)
       if (len_trim(var_name) == 1) then
         ! ${#} alone - return number of positional parameters
-    !         write(error_unit, '(A,I0)') 'DEBUG: Returning num_positional for ${#}: ', shell%num_positional
         write(expanded, '(I0)') shell%num_positional
         return
       else if (len_trim(var_name) > 1) then
         ! ${#var} length expansion
         operation = var_name(2:)
-    !         write(error_unit, '(A,A,A,I0,A)') 'DEBUG LENGTH: hash_pos=1 operation=[', trim(operation), '] num_pos=', shell%num_positional, ']'
 
         ! Check for special parameters
         if (trim(operation) == '@' .or. trim(operation) == '*') then
           ! ${#@} or ${#*} - return number of positional parameters
-    !           write(error_unit, '(A,I0,A)') 'DEBUG: Returning num_positional=', shell%num_positional, ' for ${#@} or ${#*}'
           write(expanded, '(I0)') shell%num_positional
           return
         else if (len(trim(operation)) > 0) then
@@ -2338,9 +2334,7 @@ contains
 
         if (bracket_count == 0) then
           var_expr = input(start_pos:i-1)
-    !           write(error_unit, '(A,A,A)') 'DEBUG BEFORE CALL: var_expr=[', trim(var_expr), ']'
           var_value = parameter_expansion(shell, var_expr)
-    !           write(error_unit, '(A,A,A)') 'DEBUG AFTER CALL: var_value=[', trim(var_value), ']'
           result = trim(result) // trim(var_value)
         end if
         
