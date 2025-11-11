@@ -12,6 +12,10 @@ module expansion
   ! Recursion depth limits
   integer, parameter :: MAX_RECURSION_DEPTH = 1000
 
+  ! Arithmetic error tracking
+  logical :: arithmetic_error = .false.
+  character(len=256) :: arithmetic_error_msg = ''
+
 contains
 
   ! Parameter expansion: ${var:offset:length}
@@ -886,9 +890,20 @@ contains
     if (len_trim(expression) < 6) return
     expr = adjustl(expression(4:len_trim(expression)-2))
 
+    ! Clear any previous error
+    arithmetic_error = .false.
+    arithmetic_error_msg = ''
+
     ! Evaluate the arithmetic expression (without shell context for variable resolution)
     result_int = eval_expression(trim(expr))
-    write(result_value, '(I0)') result_int
+
+    ! Check for arithmetic errors
+    if (arithmetic_error) then
+      write(error_unit, '(a,a)') 'fortsh: arithmetic expression: ', trim(arithmetic_error_msg)
+      result_value = ''  ! Return empty string to signal error
+    else
+      write(result_value, '(I0)') result_int
+    end if
   end function
 
   ! Version with shell context for variable resolution
@@ -906,13 +921,25 @@ contains
     if (len_trim(expression) < 6) return
     expr = adjustl(expression(4:len_trim(expression)-2))
 
+    ! Clear any previous error
+    arithmetic_error = .false.
+    arithmetic_error_msg = ''
+
     ! Expand ALL parameter expansions ($var, $1, $(cmd), etc.) before evaluation
     ! This handles variables, positional parameters, and command substitutions
     call enhanced_expand_variables(expr, expanded_expr, shell)
 
     ! Evaluate with shell context for any remaining variable resolution
     result_int = eval_expression_shell(trim(expanded_expr), shell)
-    write(result_value, '(I0)') result_int
+
+    ! Check for arithmetic errors
+    if (arithmetic_error) then
+      write(error_unit, '(a,a)') 'fortsh: arithmetic expression: ', trim(arithmetic_error_msg)
+      shell%last_exit_status = 1
+      result_value = ''  ! Return empty string to signal error
+    else
+      write(result_value, '(I0)') result_int
+    end if
   end function
 
   ! Main expression evaluator - handles full expressions
@@ -1279,12 +1306,16 @@ contains
         if (right_val /= 0) then
           value = value / right_val
         else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
           value = 0  ! Division by zero
         end if
       case ('%')
         if (right_val /= 0) then
           value = mod(value, right_val)
         else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
           value = 0  ! Modulo by zero
         end if
       end select
@@ -1460,12 +1491,16 @@ contains
           if (right_val /= 0) then
             value = current_val / right_val
           else
+            arithmetic_error = .true.
+            arithmetic_error_msg = 'division by zero'
             value = 0
           end if
         case ('%=')
           if (right_val /= 0) then
             value = mod(current_val, right_val)
           else
+            arithmetic_error = .true.
+            arithmetic_error_msg = 'division by zero'
             value = 0
           end if
         case default
@@ -1853,9 +1888,21 @@ contains
       select case (op)
       case ('*'); value = value * right_val
       case ('/')
-        if (right_val /= 0) then; value = value / right_val; else; value = 0; end if
+        if (right_val /= 0) then
+          value = value / right_val
+        else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
+          value = 0
+        end if
       case ('%')
-        if (right_val /= 0) then; value = mod(value, right_val); else; value = 0; end if
+        if (right_val /= 0) then
+          value = mod(value, right_val)
+        else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
+          value = 0
+        end if
       end select
     else
       value = eval_power_shell(expr, shell)
