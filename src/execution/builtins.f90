@@ -429,9 +429,10 @@ contains
       ! Add NEW directory to history so nextd can go forward to it
       call add_to_dir_history(shell, shell%cwd)
 
-      ! Print new directory if cd -
+      ! Print new directory if cd - or CDPATH was used
       if (print_dir) then
         write(output_unit, '(a)') trim(shell%cwd)
+        flush(output_unit)
       end if
 
       shell%last_exit_status = 0
