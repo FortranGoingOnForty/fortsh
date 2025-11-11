@@ -2148,60 +2148,99 @@ contains
     character(len=*), intent(in) :: input, ifs_chars
     character(len=1024), intent(out) :: fields(:)
     integer, intent(out) :: field_count
-    
-    integer :: i, start_pos, field_idx
-    logical :: in_field, is_ifs_char
+
+    integer :: i, field_idx, input_len
+    logical :: prev_was_ifs, is_ifs_char, is_whitespace_ifs
     character(len=1024) :: current_field
-    
+    logical :: has_whitespace_ifs
+
     field_count = 0
     field_idx = 1
-    start_pos = 1
-    in_field = .false.
     current_field = ''
-    
+    prev_was_ifs = .false.
+
     ! Handle empty input
-    if (len_trim(input) == 0) then
+    input_len = len_trim(input)
+    if (input_len == 0) then
       return
     end if
-    
-    do i = 1, len_trim(input)
+
+    ! Check if IFS contains whitespace characters
+    has_whitespace_ifs = (index(ifs_chars, ' ') > 0) .or. &
+                         (index(ifs_chars, char(9)) > 0) .or. &
+                         (index(ifs_chars, char(10)) > 0)
+
+    ! Special handling for first character
+    is_ifs_char = index(ifs_chars, input(1:1)) > 0
+    is_whitespace_ifs = is_ifs_char .and. &
+                        (input(1:1) == ' ' .or. input(1:1) == char(9) .or. input(1:1) == char(10))
+
+    ! Leading non-whitespace IFS characters create empty fields
+    if (is_ifs_char .and. .not. is_whitespace_ifs) then
+      ! Add empty field for leading delimiter
+      if (field_idx <= size(fields)) then
+        fields(field_idx) = ''
+        field_idx = field_idx + 1
+        field_count = field_count + 1
+      end if
+      prev_was_ifs = .true.
+    else if (.not. is_ifs_char) then
+      ! Start with non-IFS character
+      current_field = input(1:1)
+      prev_was_ifs = .false.
+    else
+      ! Leading whitespace IFS - skip
+      prev_was_ifs = .true.
+    end if
+
+    ! Process remaining characters
+    do i = 2, input_len
       is_ifs_char = index(ifs_chars, input(i:i)) > 0
-      
+      is_whitespace_ifs = is_ifs_char .and. &
+                          (input(i:i) == ' ' .or. input(i:i) == char(9) .or. input(i:i) == char(10))
+
       if (.not. is_ifs_char) then
         ! Non-IFS character
-        if (.not. in_field) then
-          ! Start of new field
-          in_field = .true.
-          start_pos = i
-          current_field = input(i:i)
-        else
-          ! Continue current field
-          current_field = trim(current_field) // input(i:i)
-        end if
-      else
-        ! IFS character - end current field if we were in one
-        if (in_field) then
+        if (prev_was_ifs .and. len_trim(current_field) > 0) then
+          ! Save previous field
           if (field_idx <= size(fields)) then
-            fields(field_idx) = trim(current_field)
+            fields(field_idx) = current_field
             field_idx = field_idx + 1
             field_count = field_count + 1
           end if
-          in_field = .false.
           current_field = ''
         end if
+        current_field = trim(current_field) // input(i:i)
+        prev_was_ifs = .false.
+      else
+        ! IFS character
+        if (len_trim(current_field) > 0 .or. (.not. prev_was_ifs .and. .not. is_whitespace_ifs)) then
+          ! Save current field
+          if (field_idx <= size(fields)) then
+            fields(field_idx) = current_field
+            field_idx = field_idx + 1
+            field_count = field_count + 1
+          end if
+          current_field = ''
+        end if
+        ! Non-whitespace IFS after non-whitespace IFS creates empty field
+        if (prev_was_ifs .and. .not. is_whitespace_ifs) then
+          if (field_idx <= size(fields)) then
+            fields(field_idx) = ''
+            field_idx = field_idx + 1
+            field_count = field_count + 1
+          end if
+        end if
+        prev_was_ifs = .true.
       end if
     end do
-    
-    ! Handle last field if we ended in one
-    if (in_field .and. field_idx <= size(fields)) then
-      fields(field_idx) = trim(current_field)
-      field_count = field_count + 1
-    end if
-    
-    ! If no fields were created but input wasn't empty, create one field
-    if (field_count == 0 .and. len_trim(input) > 0) then
-      fields(1) = trim(input)
-      field_count = 1
+
+    ! Handle last field
+    if (len_trim(current_field) > 0 .or. (prev_was_ifs .and. input_len > 0)) then
+      if (field_idx <= size(fields)) then
+        fields(field_idx) = current_field
+        field_count = field_count + 1
+      end if
     end if
   end subroutine
   
@@ -2211,16 +2250,30 @@ contains
     character(len=*), intent(in) :: input
     character(len=1024), intent(out) :: words(:)
     integer, intent(out) :: word_count
-    
+
     character(len=256) :: ifs_to_use
-    
-    ! Use shell's IFS or default
-    if (len_trim(shell%ifs) > 0) then
-      ifs_to_use = trim(shell%ifs)
+    logical :: ifs_is_set
+
+    ! Check if IFS is explicitly set (even if empty)
+    ifs_is_set = is_shell_variable_set(shell, 'IFS')
+    write(error_unit, '(A,L1,A,A,A)') 'DEBUG word_split: ifs_is_set=', ifs_is_set, ' input=[', input, ']'
+
+    if (ifs_is_set) then
+      ifs_to_use = shell%ifs
+      write(error_unit, '(A,A,A,I0)') 'DEBUG: IFS=[', ifs_to_use, '] len_trim=', len_trim(ifs_to_use)
+      ! If IFS is set to empty string, no field splitting occurs
+      if (len_trim(ifs_to_use) == 0) then
+        ! Empty IFS - return the entire input as a single field
+        write(error_unit, '(A)') 'DEBUG: Empty IFS detected, no splitting'
+        words(1) = input
+        word_count = 1
+        return
+      end if
     else
+      ! IFS not set - use default
       ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline
     end if
-    
+
     call field_split(input, trim(ifs_to_use), words, word_count)
   end subroutine
 
