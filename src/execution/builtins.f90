@@ -457,8 +457,9 @@ contains
   subroutine builtin_pwd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    write(output_unit, '(a)') trim(shell%cwd)
+
+    ! Use FD-aware I/O to respect redirections
+    call write_stdout(trim(shell%cwd))
     shell%last_exit_status = 0
   end subroutine
 

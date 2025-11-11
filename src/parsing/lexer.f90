@@ -127,7 +127,7 @@ contains
     character(len=1) :: ch, next_ch
     character(len=MAX_TOKEN_LEN) :: current_token
     integer :: token_len, paren_depth
-    logical :: in_escape
+    logical :: in_escape, continuing_word
 
     num_tokens = 0
     pos = 1
@@ -138,6 +138,7 @@ contains
     token_len = 0
     in_escape = .false.
     paren_depth = 0
+    continuing_word = .false.
 
     do while (pos <= input_len .and. num_tokens < size(tokens))
       ch = input(pos:pos)
@@ -179,9 +180,12 @@ contains
         ! Single quote: literal string
         if (ch == "'") then
           state = LEX_IN_SINGLE_QUOTE
-          token_start = pos
-          token_len = 0
-          current_token = ''
+          ! Only reset token if we're NOT continuing a word
+          if (.not. continuing_word) then
+            token_start = pos
+            token_len = 0
+            current_token = ''
+          end if
           pos = pos + 1
           cycle
         end if
@@ -189,9 +193,12 @@ contains
         ! Double quote: expandable string
         if (ch == '"') then
           state = LEX_IN_DOUBLE_QUOTE
-          token_start = pos
-          token_len = 0
-          current_token = ''
+          ! Only reset token if we're NOT continuing a word
+          if (.not. continuing_word) then
+            token_start = pos
+            token_len = 0
+            current_token = ''
+          end if
           pos = pos + 1
           cycle
         end if
@@ -258,10 +265,33 @@ contains
       case(LEX_IN_SINGLE_QUOTE)
         if (ch == "'") then
           ! End of single-quoted string
-          call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
-                         token_start, pos, .true., quote_type=QUOTE_SINGLE)
-          state = LEX_NORMAL
-          pos = pos + 1
+          pos = pos + 1  ! Move past closing quote
+          ! Check if next character continues the word (adjacent quote or word char)
+          if (pos <= input_len) then
+            next_ch = input(pos:pos)
+            if (next_ch == "'" .or. next_ch == '"') then
+              ! Adjacent quote follows - continue building this token
+              state = LEX_IN_WORD
+              continuing_word = .false.
+              cycle
+            else if (is_word_char(next_ch)) then
+              ! Word character follows - continue building this token
+              state = LEX_IN_WORD
+              continuing_word = .false.
+              cycle
+            end if
+          end if
+          ! No adjacent quote or word char - finalize token
+          if (continuing_word) then
+            ! We're building a multi-part word - go back to LEX_IN_WORD
+            state = LEX_IN_WORD
+            continuing_word = .false.
+          else
+            ! Standalone quoted string - emit token
+            call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
+                           token_start, pos-1, .true., quote_type=QUOTE_SINGLE)
+            state = LEX_NORMAL
+          end if
         else
           ! Add character to token (everything is literal)
           if (token_len < MAX_TOKEN_LEN) then
@@ -301,10 +331,33 @@ contains
           end if
         else if (ch == '"') then
           ! End of double-quoted string
-          call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
-                         token_start, pos, .true., quote_type=QUOTE_DOUBLE)
-          state = LEX_NORMAL
-          pos = pos + 1
+          pos = pos + 1  ! Move past closing quote
+          ! Check if next character continues the word (adjacent quote or word char)
+          if (pos <= input_len) then
+            next_ch = input(pos:pos)
+            if (next_ch == "'" .or. next_ch == '"') then
+              ! Adjacent quote follows - continue building this token
+              state = LEX_IN_WORD
+              continuing_word = .false.
+              cycle
+            else if (is_word_char(next_ch)) then
+              ! Word character follows - continue building this token
+              state = LEX_IN_WORD
+              continuing_word = .false.
+              cycle
+            end if
+          end if
+          ! No adjacent quote or word char - finalize token
+          if (continuing_word) then
+            ! We're building a multi-part word - go back to LEX_IN_WORD
+            state = LEX_IN_WORD
+            continuing_word = .false.
+          else
+            ! Standalone quoted string - emit token
+            call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
+                           token_start, pos-1, .true., quote_type=QUOTE_DOUBLE)
+            state = LEX_NORMAL
+          end if
         else
           ! Add character to token
           if (token_len < MAX_TOKEN_LEN) then
@@ -390,13 +443,16 @@ contains
           end if
           pos = pos + 2
         else if (ch == "'" .or. ch == '"') then
-          ! Quote in middle of word - need to handle this specially
-          ! For now, end the word and let the quote start a new token
-          call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                  token_start, pos-1, .false., in_escape)
-          state = LEX_NORMAL
-          in_escape = .false.
-          ! Don't increment pos, let NORMAL state handle the quote
+          ! Quote in middle of word - continue building the same token
+          ! Mark that we're continuing a word so quote handler doesn't reset the token
+          continuing_word = .true.
+          ! Transition to appropriate quote state
+          if (ch == "'") then
+            state = LEX_IN_SINGLE_QUOTE
+          else
+            state = LEX_IN_DOUBLE_QUOTE
+          end if
+          pos = pos + 1  ! Skip the opening quote
         else if (ch == '#') then
           ! # is normally comment, but in $# it's part of variable
           ! Keep it if current token is just $

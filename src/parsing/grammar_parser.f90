@@ -108,7 +108,17 @@ contains
     type(token_t) :: tok
     integer :: sep_type
     node => parse_and_or(state)
-    if (.not. associated(node)) return
+    if (.not. associated(node)) then
+      ! Check for leading separator (syntax error)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_OPERATOR .and. &
+          (trim(tok%value) == ';' .or. trim(tok%value) == ';;' .or. trim(tok%value) == '&')) then
+        write(error_unit, '(A)') 'fortsh: syntax error near unexpected token `' // trim(tok%value) // "'"
+        state%has_error = .true.
+        state%error_msg = 'syntax error near unexpected token ' // trim(tok%value)
+      end if
+      return
+    end if
     do while (.true.)
       tok = current_token(state)
       if (tok%token_type == TOKEN_KEYWORD) then
@@ -123,10 +133,10 @@ contains
           call advance(state)
         else if (trim(tok%value) == ';;') then
           ! ;; is only valid in case statements, not here
-          write(error_unit, '(A)') 'fortsh: syntax error: unexpected token `;;'''
+          write(error_unit, '(A)') 'fortsh: syntax error near unexpected token `;;'''
           ! Set error and return null
           state%has_error = .true.
-          state%error_msg = 'unexpected token ;;'
+          state%error_msg = 'syntax error near unexpected token ;;'
           nullify(node)
           return
         else if (trim(tok%value) == '&') then

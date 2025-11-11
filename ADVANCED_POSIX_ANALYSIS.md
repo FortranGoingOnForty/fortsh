@@ -1,20 +1,23 @@
 # Advanced POSIX Test Analysis - Path to 100%
 
-**Current Status: 106/117 tests passing (90%)** ⬆️ from 101/117 (86%)
+**Current Status: 108/117 tests passing (92%)** ⬆️ from 106/117 (90%)
 
 **Goal: Achieve 100% Advanced POSIX compliance**
 
-**Recent Commits:**
+**Recent Progress:**
+- Fixed adjacent quotes tokenization: `"a"b"c"` now correctly outputs `abc` (107/117 = 91%)
+- Fixed semicolon error messages to match POSIX format with "near unexpected token"
+- Fixed pwd builtin to use FD-aware I/O, respecting redirections (108/117 = 92%)
+
+**Previous Commits:**
 - `6ca1ff9` - Fix trap inheritance: traps no longer inherited by subshells (106/117 = 90%)
 - `e1df54c` - Fix lexer to keep ${ tokens together (101/117 = 86%)
-- `07a4afc` - Add semicolon syntax error detection (;; and leading ;)
-- `f7bafef` - Fix comment-alone parsing to continue execution (98/117 = 83%)
 
 ---
 
 ## Executive Summary
 
-We have **11 failing tests** remaining in Advanced POSIX. Major progress has been made:
+We have **9 failing tests** remaining in Advanced POSIX. Major progress has been made:
 - ✅ Break/Continue loops - All 8 tests PASSING
 - ✅ Arithmetic operations - Most working
 - ✅ Alias expansion - Fully implemented
@@ -22,11 +25,13 @@ We have **11 failing tests** remaining in Advanced POSIX. Major progress has bee
 - ✅ Comment-alone parsing - Fixed to continue execution after comments
 - ✅ Parameter length ${#var}, ${#@}, ${#*}, ${#1} - FIXED!
 - ✅ Trap inheritance - Traps no longer inherited by subshells - FIXED!
+- ✅ Adjacent quotes - `"a"b"c"` now correctly tokenizes as single word - FIXED!
+- ✅ Pwd redirection - pwd now uses FD-aware I/O - FIXED!
 
 **Remaining failures by category:**
-- **Parsing issues** (2 tests) - Semicolons (behavior correct, message format differs), adjacent quotes
-- **Exec builtin** (2 tests) - Redirection and no-command cases
-- **Edge cases** (7 tests) - FD operations, wait, IFS, functions, redirections
+- **Semicolon errors** (2 tests) - Message format differs slightly (includes line number)
+- **Exec builtin** (1 test) - FD close issue (`exec 3>&-` stops execution)
+- **Edge cases** (6 tests) - FD operations, wait, IFS, functions, redirections
 
 ---
 
