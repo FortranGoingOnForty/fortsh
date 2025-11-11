@@ -916,8 +916,8 @@ contains
               shell%last_exit_status = 1
             end if
           else
-            write(error_unit, '(a,i15)') 'wait: pid ', target_pid, ' is not a child of this shell'
-            shell%last_exit_status = 1
+            write(error_unit, '(a,i15,a)') 'wait: pid ', target_pid, ' is not a child of this shell'
+            shell%last_exit_status = 127
           end if
         end if
       end do
