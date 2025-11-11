@@ -135,8 +135,8 @@ program fortran_shell
         exit_code = execute_ast(ast_root, shell)
         shell%last_exit_status = exit_code
         call destroy_command_node(ast_root)
-      else
-        ! Parse error occurred
+      else if (last_parse_had_error) then
+        ! Parse error occurred (not just empty command)
         shell%last_exit_status = 2
       end if
     else
@@ -306,8 +306,8 @@ program fortran_shell
         ! Increment command number for next prompt
         shell%command_number = shell%command_number + 1
         call increment_prompt_history()
-      else
-        ! Parse error occurred
+      else if (last_parse_had_error) then
+        ! Parse error occurred (not just empty command)
         shell%last_exit_status = 2
       end if
     else
@@ -663,7 +663,7 @@ contains
 
   subroutine process_source_file(shell)
     use variables, only: add_function
-    use grammar_parser, only: parse_command_line
+    use grammar_parser, only: parse_command_line, last_parse_had_error
     use command_tree, only: destroy_command_node, command_node_t
     use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
@@ -782,8 +782,8 @@ contains
           exit_code = execute_ast(ast_root, shell)
           shell%last_exit_status = exit_code
           call destroy_command_node(ast_root)
-        else
-          ! Parse error occurred
+        else if (last_parse_had_error) then
+          ! Parse error occurred (not just empty command)
           shell%last_exit_status = 2
         end if
       else
@@ -1064,7 +1064,7 @@ contains
   end subroutine
 
   subroutine execute_trap_for_signal(shell, signum)
-    use grammar_parser, only: parse_command_line
+    use grammar_parser, only: parse_command_line, last_parse_had_error
     use ast_executor, only: execute_ast_node
     use command_tree, only: command_node_t, destroy_command_node
     type(shell_state_t), intent(inout) :: shell
@@ -1101,8 +1101,8 @@ contains
       if (associated(trap_ast)) then
         trap_exit_code = execute_ast_node(trap_ast, shell)
         call destroy_command_node(trap_ast)
-      else
-        ! Parse error occurred in trap command
+      else if (last_parse_had_error) then
+        ! Parse error occurred in trap command (not just empty)
         shell%last_exit_status = 2
       end if
     else

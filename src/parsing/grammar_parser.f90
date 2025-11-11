@@ -11,7 +11,10 @@ module grammar_parser
                           LIST_SEP_AND, LIST_SEP_OR, LIST_SEP_BACKGROUND
   implicit none
   private
-  public :: parse_with_grammar, parse_command_line
+  public :: parse_with_grammar, parse_command_line, last_parse_had_error
+
+  ! Module-level variable to track if last parse had an error
+  logical :: last_parse_had_error = .false.
 
   type :: parser_state_t
     type(token_t) :: tokens(MAX_TOKENS)
@@ -36,6 +39,8 @@ contains
       call destroy_command_node(root)
       nullify(root)
     end if
+    ! Expose error status to caller
+    last_parse_had_error = state%has_error
   end function
 
   subroutine parse_with_grammar(input, pipeline, shell)
@@ -87,6 +92,8 @@ contains
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node
     type(token_t) :: tok
+    ! Skip leading newlines (e.g., from comment-only lines)
+    call skip_newlines(state)
     node => parse_list(state)
     tok = current_token(state)
     do while (tok%token_type == TOKEN_NEWLINE)
@@ -118,6 +125,8 @@ contains
           ! ;; is only valid in case statements, not here
           write(error_unit, '(A)') 'fortsh: syntax error: unexpected token `;;'''
           ! Set error and return null
+          state%has_error = .true.
+          state%error_msg = 'unexpected token ;;'
           nullify(node)
           return
         else if (trim(tok%value) == '&') then
@@ -129,6 +138,8 @@ contains
       else if (tok%token_type == TOKEN_NEWLINE) then
         sep_type = LIST_SEP_SEQUENTIAL
         call advance(state)
+        ! Skip any additional newlines (e.g., from comment-only lines)
+        call skip_newlines(state)
       else
         exit
       end if
