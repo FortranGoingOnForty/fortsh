@@ -2256,15 +2256,12 @@ contains
 
     ! Check if IFS is explicitly set (even if empty)
     ifs_is_set = is_shell_variable_set(shell, 'IFS')
-    write(error_unit, '(A,L1,A,A,A)') 'DEBUG word_split: ifs_is_set=', ifs_is_set, ' input=[', input, ']'
 
     if (ifs_is_set) then
       ifs_to_use = shell%ifs
-      write(error_unit, '(A,A,A,I0)') 'DEBUG: IFS=[', ifs_to_use, '] len_trim=', len_trim(ifs_to_use)
       ! If IFS is set to empty string, no field splitting occurs
       if (len_trim(ifs_to_use) == 0) then
         ! Empty IFS - return the entire input as a single field
-        write(error_unit, '(A)') 'DEBUG: Empty IFS detected, no splitting'
         words(1) = input
         word_count = 1
         return
