@@ -358,8 +358,22 @@ contains
   function pattern_matches(pattern, filename) result(matches)
     character(len=*), intent(in) :: pattern, filename
     logical :: matches
-    
-    matches = glob_match_recursive(pattern, filename, 1, 1)
+
+    ! POSIX: * and ? should not match files starting with . (dotfiles)
+    ! unless the pattern explicitly starts with .
+    if (len_trim(filename) > 0 .and. filename(1:1) == '.') then
+      ! This is a dotfile
+      if (len_trim(pattern) > 0 .and. pattern(1:1) == '.') then
+        ! Pattern explicitly starts with ., so allow matching
+        matches = glob_match_recursive(pattern, filename, 1, 1)
+      else
+        ! Pattern doesn't start with ., so don't match dotfiles
+        matches = .false.
+      end if
+    else
+      ! Not a dotfile, normal matching
+      matches = glob_match_recursive(pattern, filename, 1, 1)
+    end if
   end function
 
   ! Recursive pattern matching function
@@ -417,10 +431,26 @@ contains
         return
       end if
       
-      ! Find end of bracket expression
+      ! Find end of bracket expression (handling nested [:...:])
       bracket_end = p_pos + 1
-      do while (bracket_end <= p_len .and. pattern(bracket_end:bracket_end) /= ']')
-        bracket_end = bracket_end + 1
+      do while (bracket_end <= p_len)
+        ! Check for character class [:...:] and skip over it
+        if (bracket_end + 1 <= p_len .and. pattern(bracket_end:bracket_end+1) == '[:') then
+          ! Skip to the end of the character class
+          bracket_end = bracket_end + 2
+          do while (bracket_end + 1 <= p_len)
+            if (pattern(bracket_end:bracket_end+1) == ':]') then
+              bracket_end = bracket_end + 2
+              exit
+            end if
+            bracket_end = bracket_end + 1
+          end do
+        else if (pattern(bracket_end:bracket_end) == ']') then
+          ! Found the closing bracket
+          exit
+        else
+          bracket_end = bracket_end + 1
+        end if
       end do
       
       if (bracket_end > p_len) then
@@ -448,56 +478,151 @@ contains
     end select
   end function
 
-  ! Match bracket expression [abc], [a-z], [!abc]
-  function match_bracket_expression(bracket_content, char) result(matches)
+  ! Match bracket expression [abc], [a-z], [!abc], [[:class:]]
+  function match_bracket_expression(bracket_content, test_char) result(matches)
     character(len=*), intent(in) :: bracket_content
-    character(len=1), intent(in) :: char
+    character(len=1), intent(in) :: test_char
     logical :: matches
-    
+
     logical :: negated, found
-    integer :: i, content_len
+    integer :: i, content_len, class_end
     character(len=1) :: current_char, next_char, range_start
-    
+    character(len=20) :: char_class
+
     content_len = len_trim(bracket_content)
     if (content_len == 0) then
       matches = .false.
       return
     end if
-    
+
     ! Check for negation
     negated = (bracket_content(1:1) == '!')
     i = 1
     if (negated) i = 2
-    
+
     found = .false.
-    
+
     do while (i <= content_len .and. .not. found)
       current_char = bracket_content(i:i)
-      
+
+      ! Check for POSIX character class [:class:]
+      if (i + 3 <= content_len .and. bracket_content(i:i+1) == '[:') then
+        ! Find the closing :]
+        class_end = index(bracket_content(i+2:), ':]')
+        if (class_end > 0) then
+          ! Extract the class name
+          char_class = bracket_content(i+2:i+class_end)
+
+          ! Check if character matches the class
+          found = match_char_class(trim(char_class), test_char)
+
+          ! Move past the character class
+          i = i + class_end + 3  ! Move past [:class:]
+        else
+          ! Malformed character class, treat as literal characters
+          if (test_char == current_char) then
+            found = .true.
+          end if
+          i = i + 1
+        end if
       ! Check for range (a-z)
-      if (i + 2 <= content_len .and. bracket_content(i+1:i+1) == '-') then
+      else if (i + 2 <= content_len .and. bracket_content(i+1:i+1) == '-') then
         range_start = current_char
         next_char = bracket_content(i+2:i+2)
-        
+
         ! Check if character is in range
-        if (ichar(char) >= ichar(range_start) .and. ichar(char) <= ichar(next_char)) then
+        if (ichar(test_char) >= ichar(range_start) .and. ichar(test_char) <= ichar(next_char)) then
           found = .true.
         end if
         i = i + 3
       else
         ! Single character match
-        if (char == current_char) then
+        if (test_char == current_char) then
           found = .true.
         end if
         i = i + 1
       end if
     end do
-    
+
     if (negated) then
       matches = .not. found
     else
       matches = found
     end if
+  end function
+
+  ! Match POSIX character class
+  function match_char_class(class_name, test_char) result(matches)
+    character(len=*), intent(in) :: class_name
+    character(len=1), intent(in) :: test_char
+    logical :: matches
+    integer :: char_code
+
+    char_code = ichar(test_char)
+    matches = .false.
+
+    select case (trim(class_name))
+      case ('alnum')
+        ! Alphanumeric: [A-Za-z0-9]
+        matches = (char_code >= ichar('A') .and. char_code <= ichar('Z')) .or. &
+                  (char_code >= ichar('a') .and. char_code <= ichar('z')) .or. &
+                  (char_code >= ichar('0') .and. char_code <= ichar('9'))
+
+      case ('alpha')
+        ! Alphabetic: [A-Za-z]
+        matches = (char_code >= ichar('A') .and. char_code <= ichar('Z')) .or. &
+                  (char_code >= ichar('a') .and. char_code <= ichar('z'))
+
+      case ('blank')
+        ! Space and tab
+        matches = (test_char == ' ' .or. test_char == char(9))
+
+      case ('cntrl')
+        ! Control characters (0-31, 127)
+        matches = (char_code >= 0 .and. char_code <= 31) .or. char_code == 127
+
+      case ('digit')
+        ! Digits: [0-9]
+        matches = (char_code >= ichar('0') .and. char_code <= ichar('9'))
+
+      case ('graph')
+        ! Visible characters (33-126)
+        matches = (char_code >= 33 .and. char_code <= 126)
+
+      case ('lower')
+        ! Lowercase letters: [a-z]
+        matches = (char_code >= ichar('a') .and. char_code <= ichar('z'))
+
+      case ('print')
+        ! Printable characters (32-126)
+        matches = (char_code >= 32 .and. char_code <= 126)
+
+      case ('punct')
+        ! Punctuation (visible non-alphanumeric)
+        matches = ((char_code >= 33 .and. char_code <= 47) .or. &
+                   (char_code >= 58 .and. char_code <= 64) .or. &
+                   (char_code >= 91 .and. char_code <= 96) .or. &
+                   (char_code >= 123 .and. char_code <= 126))
+
+      case ('space')
+        ! Whitespace: space, tab, newline, etc.
+        matches = (test_char == ' ' .or. test_char == char(9) .or. test_char == char(10) .or. &
+                   test_char == char(11) .or. test_char == char(12) .or. test_char == char(13))
+
+      case ('upper')
+        ! Uppercase letters: [A-Z]
+        matches = (char_code >= ichar('A') .and. char_code <= ichar('Z'))
+
+      case ('xdigit')
+        ! Hexadecimal digits: [0-9A-Fa-f]
+        matches = (char_code >= ichar('0') .and. char_code <= ichar('9')) .or. &
+                  (char_code >= ichar('A') .and. char_code <= ichar('F')) .or. &
+                  (char_code >= ichar('a') .and. char_code <= ichar('f'))
+
+      case default
+        ! Unknown character class
+        matches = .false.
+    end select
   end function
 
   ! Sort matches alphabetically (simple bubble sort)
