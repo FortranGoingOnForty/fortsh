@@ -1,395 +1,155 @@
 # Advanced POSIX Test Analysis - Path to 100%
 
-**Current Status: 60/117 tests passing (51%)**
+**Current Status: 96/117 tests passing (82%)** ⬆️ from 77/117 (66%)
 
-**Goal: Achieve 4/4 test suites at 100% completion**
+**Goal: Achieve 100% Advanced POSIX compliance**
+
+**Recent Commits:**
+- `d223333` - Complete half-baked features: alias expansion, arithmetic errors (95/117 = 81%)
+- `8d1b340` - Fix arithmetic error exit code to match POSIX (96/117 = 82%)
 
 ---
 
 ## Executive Summary
 
-We have **57 failing tests** in Advanced POSIX, categorized into 11 feature areas. The failures range from missing builtins (`break`/`continue`) to edge cases in existing features (quoting, globbing).
+We have **21 failing tests** remaining in Advanced POSIX. Major progress has been made:
+- ✅ Break/Continue loops - All 8 tests PASSING
+- ✅ Arithmetic operations - Most working
+- ✅ Alias expansion - Fully implemented
+- ✅ Shell options - noglob, xtrace, allexport working
 
-**Quick wins** (17 tests, ~30%): Loop control, read improvements, fd operations
-**Medium effort** (20 tests, ~35%): Shell options, traps, special parameters
-**Complex** (20 tests, ~35%): Arithmetic operations, advanced globbing, error handling
-
----
-
-## Failure Categories (57 total)
-
-### 1. LOOP CONTROL - 8 failures ⚠️ HIGH IMPACT
-**Status:** Missing `break` and `continue` builtins
-
-- ✗ break in for loop
-- ✗ continue in for loop
-- ✗ break in while loop
-- ✗ continue in while loop
-- ✗ break in until loop
-- ✗ break inner loop
-- ✗ break with level (e.g., `break 2`)
-- ✗ continue outer loop
-
-**Impact:** 8 tests (14% of failures)
-**Complexity:** Medium - Need to implement break/continue builtins with level support
-**Priority:** HIGH - Common shell feature
+**Remaining failures by category:**
+- **Parsing issues** (4 tests) - Multiple semicolons, comments, adjacent quotes
+- **Trap signals** (5 tests) - Format mismatch with POSIX sh
+- **Parameter expansion** (3 tests) - ${#var} length operator
+- **Exec builtin** (2 tests) - Redirection and no-command cases
+- **Edge cases** (7 tests) - FD operations, wait, IFS, functions, redirections
 
 ---
 
-### 2. READ BUILTIN ENHANCEMENTS - 3 failures ⚠️ QUICK WIN
-**Status:** Partially implemented, needs IFS handling improvements
+## Recommended Focus Areas
 
-- ✗ read multiple vars (assigns "one two three" to single var instead of splitting)
-  - Expected: `a=one b=two c=three`
-  - Got: `a="one two three"`
-- ✗ read with IFS (doesn't respect custom IFS)
-  - Expected: `a=a b=b c=c` (with IFS=:)
-  - Got: `a=a b=bc`
-- ✗ read remaining to last (doesn't append extra words to last variable)
-  - Expected: `c="c d e"`
-  - Got: `b="b c d e"`
+### 🎯 HIGH PRIORITY - Quick Wins (8 tests → 89%)
 
-**Impact:** 3 tests (5% of failures)
-**Complexity:** Low-Medium - Enhance existing read builtin
-**Priority:** HIGH - Quick win, useful feature
+#### 1. Parsing Issues (4 tests) ⚠️ BLOCKING
+**Impact:** Core shell functionality
+**Effort:** Low-Medium
+
+- ✗ multiple semicolons - `echo a;; echo b` should work
+- ✗ semicolon at start - `;echo test` should work
+- ✗ comment alone - `# comment` on its own line
+- ✗ adjacent quotes - `echo 'hello'"world"` should output `helloworld`
+
+**Fix:** Parser/lexer improvements for edge cases
 
 ---
 
-### 3. EXEC BUILTIN - 2 failures ⚠️ MEDIUM
-**Status:** Partially implemented
+#### 2. Parameter Length ${#var} (3 tests) ⚠️ PARTIALLY WORKING
+**Impact:** Common shell feature
+**Effort:** Low (already implemented, just needs fixing)
 
-- ✗ exec with redirect (should apply redirects then exit)
-  - Test: `exec > file; echo test`
-  - Expected: Output redirected, "done" printed
-- ✗ exec without command (should only apply redirects)
-  - Current: Shows usage error
-  - Expected: Applies redirects to current shell
+- ✗ length of positional params - `${#1}` should return length of $1
+- ✗ length of variable - `${#var}` returns wrong values
+- ✗ length of special - Other ${#} expansions
 
-**Impact:** 2 tests (4% of failures)
-**Complexity:** Medium - Need to handle redirect-only exec
-**Priority:** MEDIUM
+**Fix:** Debug existing implementation in expansion.f90
 
 ---
 
-### 4. FILE DESCRIPTOR OPERATIONS - 2 failures ⚠️ MEDIUM
-**Status:** Basic redirection works, advanced fd ops missing
+#### 3. Expansion Error Exit Code (1 test) ⚠️ TRIVIAL
+**Impact:** POSIX compliance
+**Effort:** Very Low
 
-- ✗ dup stdout to fd3 (`exec 3>&1`)
-- ✗ dup stdin from fd (`exec 0<&3`)
+- ✗ expansion error - `set -u; echo $UNDEFINED` should exit with 127, not 1
 
-**Impact:** 2 tests (4% of failures)
-**Complexity:** Medium - Extend fd redirection system
-**Priority:** MEDIUM - Less commonly used
+**Fix:** Change exit code in check_nounset function
 
 ---
 
-### 5. SHELL OPTIONS (set -f, set -x, set -a) - 6 failures ⚠️ HIGH IMPACT
-**Status:** Partially implemented
+### 🔧 MEDIUM PRIORITY - Format Fixes (5 tests → 93%)
 
-**Globbing control (set -f / noglob):**
-- ✗ noglob disables expansion (outputs literal instead of expanding)
-- ✗ noglob with literal star (expands when it shouldn't)
-  - Got massive expansion of `*` in current directory
-- ✗ glob after set +f (error: "unknown option: -f")
+#### 4. Trap Signal Listing (5 tests)
+**Impact:** Test compatibility (functionality works)
+**Effort:** Low
 
-**Tracing (set -x / xtrace):**
-- ✗ xtrace shows commands (should prefix with `+`)
-- ✗ xtrace in function (should trace function internals)
+- ✗ trap INT signal - Output format doesn't match sh
+- ✗ trap TERM signal
+- ✗ trap HUP signal
+- ✗ trap with number
+- ✗ trap not inherited
 
-**Auto-export (set -a / allexport):**
-- ✗ allexport exports vars (variables not exported automatically)
+**Note:** Our traps work correctly, just output format differs from POSIX sh
+- We output: `trap -- 'echo caught' SIGINT`
+- sh outputs: (empty or different format)
 
-**Impact:** 6 tests (11% of failures)
-**Complexity:** Medium - Extend shell options system
-**Priority:** HIGH - Common debugging/scripting features
+**Fix:** Investigate what POSIX sh actually outputs for `trap | grep INT`
 
 ---
 
-### 6. TRAP SIGNAL HANDLING - 5 failures ⚠️ HIGH IMPACT
-**Status:** EXIT trap works, signal traps missing
+### 📋 LOWER PRIORITY - Edge Cases (7 tests → 99%)
 
-- ✗ trap INT signal (INT/SIGINT not caught)
-- ✗ trap TERM signal (TERM not caught)
-- ✗ trap HUP signal (HUP not caught)
-- ✗ trap with number (signal numbers not working)
-- ✗ trap not inherited (traps incorrectly inherited by subshells)
+#### 5. Exec Builtin (2 tests)
+- ✗ exec with redirect - `exec 2>&1` in subshell
+- ✗ exec without command - `exec` with just redirects
 
-**Impact:** 5 tests (9% of failures)
-**Complexity:** Medium-High - Need signal handling infrastructure
-**Priority:** HIGH - Important for robust scripts
+#### 6. File Descriptors (1 test)
+- ✗ dup stdin from fd - Advanced FD manipulation
 
----
-
-### 7. SPECIAL PARAMETERS & EXPANSION - 4 failures ⚠️ MEDIUM
-**Status:** Basic parameter expansion works, special cases missing
-
-- ✗ length of positional params (`${#@}` or `${##}`)
-- ✗ length of array/string (two unnamed tests, likely `${#var}`)
-- ✗ wait nonexistent PID (should return specific exit code)
-
-**Impact:** 4 tests (7% of failures)
-**Complexity:** Low-Medium - Extend parameter expansion
-**Priority:** MEDIUM
+#### 7. Other Edge Cases (4 tests)
+- ✗ wait nonexistent PID - Should handle gracefully
+- ✗ empty IFS - IFS="" handling
+- ✗ function recursion - Recursive function calls
+- ✗ multiple redirects - Complex redirection chains
+- ✗ redirect compound cmd - Redirect entire compound statements
 
 ---
 
-### 8. IFS HANDLING - 2 failures ⚠️ LOW-MEDIUM
-**Status:** Basic IFS works, edge cases missing
+## Suggested Approach
 
-- ✗ empty IFS (treats as no splitting instead of char-by-char)
-- ✗ IFS leading delimiters (incorrect handling of leading delimiters)
+**Phase 3 Cleanup (Current):**
+1. ✅ Fix arithmetic error exit codes (DONE - 96/117)
+2. 🎯 Fix parsing edge cases (4 tests → 100/117 = 85%)
+3. 🎯 Fix ${#var} parameter length (3 tests → 103/117 = 88%)
+4. 🎯 Fix expansion error exit code (1 test → 104/117 = 89%)
 
-**Impact:** 2 tests (4% of failures)
-**Complexity:** Medium - Complex parsing behavior
-**Priority:** LOW-MEDIUM - Edge case
-
----
-
-### 9. ARITHMETIC OPERATORS - 6 failures ⚠️ MEDIUM
-**Status:** Basic arithmetic works, advanced operators missing
-
-**Bitwise operations:**
-- ✗ bitwise NOT (`~`)
-- ✗ left shift (`<<`)
-- ✗ right shift (`>>`)
-
-**Ternary operator:**
-- ✗ ternary true (`expr ? val1 : val2`)
-- ✗ ternary false
-- ✗ ternary nested
-
-**Impact:** 6 tests (11% of failures)
-**Complexity:** Medium - Extend arithmetic evaluator
-**Priority:** MEDIUM - Less commonly used
+**Phase 4 - Format & Edge Cases:**
+5. Fix trap listing format (5 tests → 109/117 = 93%)
+6. Fix exec builtin cases (2 tests → 111/117 = 95%)
+7. Fix remaining edge cases (6 tests → 117/117 = 100%) 🎉
 
 ---
 
-### 10. CD & DIRECTORY BUILTINS - 3 failures ⚠️ MEDIUM
-**Status:** Basic cd works, special features missing
+## Progress Tracking
 
-- ✗ CDPATH usage (doesn't search CDPATH for directories)
-- ✗ OLDPWD set (OLDPWD not being set)
-- ✗ cd - uses OLDPWD (`cd -` not implemented)
+### Completed Features ✅
+- [x] Break and continue in loops (8 tests)
+- [x] Arithmetic operations (bitwise, ternary)
+- [x] For loop glob expansion
+- [x] Trap signal handling (basic)
+- [x] Shell options (noglob, xtrace, allexport)
+- [x] Alias definition and expansion
+- [x] Read builtin improvements
+- [x] Arithmetic error exit codes
 
-**Impact:** 3 tests (5% of failures)
-**Complexity:** Low-Medium - Enhance cd builtin
-**Priority:** MEDIUM - Common feature
+### In Progress 🚧
+- [ ] Parsing edge cases (semicolons, comments, quotes)
+- [ ] Parameter length ${#var}
+- [ ] Trap output format
+- [ ] Exec builtin edge cases
 
----
-
-### 11. PATTERN MATCHING & GLOBBING - 7 failures ⚠️ MEDIUM-HIGH
-**Status:** Basic globbing works, advanced patterns missing
-
-**Bracket expressions:**
-- ✗ bracket char class (`[a-z]` not working)
-- ✗ case bracket (bracket patterns in case statements)
-
-**Glob behavior:**
-- ✗ star no dotfiles (`*` should not match dotfiles)
-- ✗ for with glob (glob expansion in for loops)
-- ✗ case question mark (`?` in case patterns)
-
-**Impact:** 5 tests (9% of failures)
-**Complexity:** Medium-High - Enhance glob system
-**Priority:** MEDIUM-HIGH
+### Not Started ⏳
+- [ ] Advanced FD operations
+- [ ] Empty IFS handling
+- [ ] Function recursion
+- [ ] Complex redirections
 
 ---
 
-### 12. FUNCTION HANDLING - 2 failures ⚠️ LOW
-**Status:** Functions work, edge cases missing
+## Test Suite Overview
 
-- ✗ function recursion (returns 0 instead of 120)
-  - Likely recursion depth or calculation issue
-- ✗ function unset (`unset -f` not working properly)
+- **Basic POSIX**: ~100% (assumed passing)
+- **Extended POSIX**: ~91% (91/99 tests)
+- **Advanced POSIX**: **82% (96/117 tests)** ⬅️ Current Focus
+- **POSIX Builtins**: Status unknown
 
-**Impact:** 2 tests (4% of failures)
-**Complexity:** Low-Medium
-**Priority:** LOW - Edge cases
-
----
-
-### 13. MISCELLANEOUS - 8 failures ⚠️ VARIES
-**Status:** Various edge cases and features
-
-**Compound command redirection:**
-- ✗ redirect compound cmd (redirection on compound commands)
-
-**Error handling:**
-- ✗ division by zero (exit code 0 instead of 127)
-- ✗ expansion error (exit code 1 instead of 127)
-
-**Alias handling:**
-- ✗ alias definition (command not working)
-- ✗ unalias removes (alias not being removed)
-
-**Syntax edge cases:**
-- ✗ multiple semicolons (should be syntax error)
-- ✗ semicolon at start (should be syntax error)
-- ✗ comment alone (comment on line by itself)
-
-**Quoting:**
-- ✗ adjacent quotes (`"a""b""c"` becomes `a b c` instead of `abc`)
-
-**Impact:** 8 tests (14% of failures)
-**Complexity:** Varies - Mix of easy and hard
-**Priority:** LOW-MEDIUM - Cleanup phase
-
----
-
-## Implementation Roadmap - Path to 100%
-
-### PHASE 1: Quick Wins (17 tests → 77/117 = 66%) 🎯
-**Estimated effort: 1-2 sessions**
-
-1. **Loop Control (8 tests)** - Implement break/continue builtins
-   - Add `builtin_break` and `builtin_continue`
-   - Track loop depth in shell state
-   - Support level argument (`break 2`)
-
-2. **Read Builtin (3 tests)** - Fix IFS handling
-   - Split input by IFS characters
-   - Assign to multiple variables
-   - Append extras to last variable
-
-3. **CD Enhancements (3 tests)** - OLDPWD and cd -
-   - Set OLDPWD when changing directories
-   - Implement `cd -` to use OLDPWD
-   - Add CDPATH search
-
-4. **Special Parameters (3 tests)** - Length operators
-   - Implement `${#@}` for positional param count
-   - Implement `${#var}` for string length
-   - Fix `wait` exit codes
-
-### PHASE 2: Core Features (20 tests → 97/117 = 83%) 🎯
-**Estimated effort: 2-3 sessions**
-
-5. **Shell Options (6 tests)** - Extend options system
-   - Implement `set -f` / `set +f` (noglob)
-   - Implement `set -x` / `set +x` (xtrace)
-   - Implement `set -a` / `set +a` (allexport)
-
-6. **Trap Signals (5 tests)** - Signal handling
-   - Implement signal traps (INT, TERM, HUP)
-   - Support trap by signal number
-   - Ensure traps not inherited by subshells
-
-7. **Arithmetic Operators (6 tests)** - Extend evaluator
-   - Bitwise: `~`, `<<`, `>>`
-   - Ternary: `expr ? val1 : val2`
-
-8. **IFS Edge Cases (2 tests)** - Fix edge cases
-   - Empty IFS (char-by-char splitting)
-   - Leading delimiter handling
-
-9. **Pattern Matching (1 test)** - Dotfile handling
-   - Make `*` not match dotfiles
-
-### PHASE 3: Advanced Features (20 tests → 117/117 = 100%) 🎯
-**Estimated effort: 3-4 sessions**
-
-10. **Advanced Globbing (6 tests)** - Bracket expressions
-    - Character classes `[a-z]`, `[0-9]`
-    - Bracket patterns in case statements
-    - Glob expansion in for loops
-    - `?` in case patterns
-
-11. **File Descriptor Ops (2 tests)** - Advanced redirection
-    - `exec 3>&1` style fd duplication
-    - `exec 0<&3` style fd input
-
-12. **Exec Builtin (2 tests)** - Redirect-only exec
-    - Handle `exec` without command
-    - Apply redirects then continue
-
-13. **Error Handling (2 tests)** - Exit codes
-    - Division by zero → exit 127
-    - Expansion errors → exit 127
-
-14. **Function Edge Cases (2 tests)** - Advanced features
-    - Fix recursive function calls
-    - Implement `unset -f`
-
-15. **Syntax & Parsing (4 tests)** - Edge cases
-    - Reject multiple semicolons
-    - Reject leading semicolons
-    - Handle standalone comments
-    - Fix adjacent quote concatenation
-
-16. **Alias System (2 tests)** - Fix alias/unalias
-    - Fix alias definition syntax
-    - Fix unalias command
-
-17. **Misc (1 test)** - Compound redirects
-    - Apply redirects to compound commands
-
----
-
-## Prioritized Implementation Order
-
-### Tier 1: High Impact, Quick Wins (27 tests - 47%)
-1. Loop control (break/continue) - 8 tests
-2. Read builtin improvements - 3 tests
-3. Shell options (set -f, -x, -a) - 6 tests
-4. Trap signal handling - 5 tests
-5. CD enhancements - 3 tests
-6. Special parameters - 2 tests
-
-### Tier 2: Medium Features (18 tests - 32%)
-7. Arithmetic operators - 6 tests
-8. Pattern matching basics - 2 tests
-9. IFS edge cases - 2 tests
-10. Exec builtin - 2 tests
-11. FD operations - 2 tests
-12. Error handling - 2 tests
-13. Function edge cases - 2 tests
-
-### Tier 3: Polish & Edge Cases (12 tests - 21%)
-14. Advanced globbing - 4 tests
-15. Syntax edge cases - 4 tests
-16. Alias system - 2 tests
-17. Compound redirects - 1 test
-18. Quoting edge case - 1 test
-
----
-
-## Estimated Complexity
-
-| Feature | Tests | Effort | ROI |
-|---------|-------|--------|-----|
-| Loop control | 8 | Medium | ⭐⭐⭐⭐⭐ |
-| Read improvements | 3 | Low | ⭐⭐⭐⭐⭐ |
-| Shell options | 6 | Medium | ⭐⭐⭐⭐ |
-| Trap signals | 5 | High | ⭐⭐⭐⭐ |
-| CD enhancements | 3 | Low | ⭐⭐⭐⭐ |
-| Special params | 4 | Low | ⭐⭐⭐ |
-| Arithmetic ops | 6 | Medium | ⭐⭐⭐ |
-| Advanced globbing | 6 | High | ⭐⭐⭐ |
-| IFS edge cases | 2 | Medium | ⭐⭐ |
-| Exec/FD ops | 4 | Medium | ⭐⭐ |
-| Misc/Edge cases | 10 | Varies | ⭐⭐ |
-
----
-
-## Success Metrics
-
-**Current:** 60/117 (51%)
-**After Tier 1:** 87/117 (74%)
-**After Tier 2:** 105/117 (90%)
-**After Tier 3:** 117/117 (100%) ✓
-
----
-
-## Recommendations
-
-1. **Start with loop control** - Biggest impact (8 tests), commonly used
-2. **Follow with read improvements** - Quick win (3 tests), easy to implement
-3. **Tackle shell options** - Important debugging features (6 tests)
-4. **Save complex globbing for last** - Most effort, least commonly used
-
-**Target: 117/117 tests passing = 4/4 test suites at 100%** 🎯
-
----
-
-*Analysis created: 2025-01-10*
-*Current status: 332/389 total tests passing (85.3%)*
+**Overall Goal**: 100% on all test suites
