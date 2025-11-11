@@ -959,7 +959,7 @@ contains
         ! Check if arithmetic expansion error occurred
         if (shell%arithmetic_error) then
           shell%arithmetic_error = .false.  ! Reset flag
-          shell%last_exit_status = 1
+          shell%last_exit_status = 127  ! POSIX sh returns 127 for arithmetic errors
           return  ! Abort assignment
         end if
 
