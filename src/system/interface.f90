@@ -1281,4 +1281,23 @@ contains
     end if
   end function
 
+  ! Check if a path is a directory
+  function test_is_directory(path) result(is_dir)
+    character(len=*), intent(in) :: path
+    logical :: is_dir
+    integer :: stat_result
+    type(stat_t) :: file_stat
+    character(len=len(path)+1), target :: c_path
+
+    is_dir = .false.
+    c_path = trim(path) // c_null_char
+
+    stat_result = c_stat(c_loc(c_path), file_stat)
+    if (stat_result == 0) then
+      ! Check if S_IFDIR bit is set in st_mode
+      ! S_IFDIR = 0040000 (octal) = 16384 (decimal)
+      is_dir = iand(file_stat%st_mode, 16384) /= 0
+    end if
+  end function
+
 end module system_interface

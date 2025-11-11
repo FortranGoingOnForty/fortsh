@@ -324,11 +324,72 @@ contains
 #endif
       print_dir = .true.
     else
+      ! Check if directory contains slash - if so, don't use CDPATH
+      if (index(cmd%tokens(2), '/') == 0) then
+        ! Try CDPATH directories
+        block
+          character(len=4096) :: cdpath, path_elem
+          character(len=MAX_PATH_LEN) :: test_path
+          integer :: start_pos, colon_pos
+          logical :: found
+
+          ! Check both shell variable and environment variable
+          cdpath = get_shell_variable(shell, 'CDPATH')
+          if (len_trim(cdpath) == 0) then
+            cdpath = get_environment_var('CDPATH')
+          end if
+          found = .false.
+
+          if (len_trim(cdpath) > 0) then
+            start_pos = 1
+            do while (start_pos <= len_trim(cdpath))
+              colon_pos = index(cdpath(start_pos:), ':')
+              if (colon_pos > 0) then
+                path_elem = cdpath(start_pos:start_pos+colon_pos-2)
+                start_pos = start_pos + colon_pos
+              else
+                path_elem = cdpath(start_pos:)
+                start_pos = len_trim(cdpath) + 1
+              end if
+
+              ! Construct test path
+              if (len_trim(path_elem) > 0) then
+                test_path = trim(path_elem) // '/' // trim(cmd%tokens(2))
+              else
+                test_path = trim(cmd%tokens(2))
+              end if
+
+              ! Test if this path exists and is a directory
+              if (test_is_directory(test_path)) then
 #ifdef USE_MEMORY_POOL
-      target_dir_ref%data = trim(cmd%tokens(2))
+                target_dir_ref%data = trim(test_path)
 #else
-      target_dir = trim(cmd%tokens(2))
+                target_dir = trim(test_path)
 #endif
+                found = .true.
+                print_dir = .true.  ! Print directory when using CDPATH
+                exit
+              end if
+            end do
+          end if
+
+          if (.not. found) then
+            ! CDPATH didn't find it, use original argument
+#ifdef USE_MEMORY_POOL
+            target_dir_ref%data = trim(cmd%tokens(2))
+#else
+            target_dir = trim(cmd%tokens(2))
+#endif
+          end if
+        end block
+      else
+        ! Contains slash - use as-is
+#ifdef USE_MEMORY_POOL
+        target_dir_ref%data = trim(cmd%tokens(2))
+#else
+        target_dir = trim(cmd%tokens(2))
+#endif
+      end if
     end if
 
 #ifdef USE_MEMORY_POOL
