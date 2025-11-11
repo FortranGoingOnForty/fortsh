@@ -41,9 +41,10 @@ module fd_redirection
   integer, parameter :: FD_FD_O_RDONLY = int(Z'00000000')
   integer, parameter :: FD_O_WRONLY = int(Z'00000001')
   integer, parameter :: FD_O_RDWR = int(Z'00000002')
-  integer, parameter :: FD_O_CREAT = int(Z'00000040')
-  integer, parameter :: FD_O_TRUNC = int(Z'00000200')
-  integer, parameter :: FD_O_APPEND = int(Z'00000400')
+  ! macOS values (TODO: add Linux support with preprocessor)
+  integer, parameter :: FD_O_CREAT = 512   ! 0x200 on macOS, 0x40 on Linux
+  integer, parameter :: FD_O_TRUNC = 1024  ! 0x400 on macOS, 0x200 on Linux
+  integer, parameter :: FD_O_APPEND = 8    ! 0x8 on macOS, 0x400 on Linux
 
   ! Standard file descriptors - use local names to avoid conflicts
   integer, parameter :: FD_STDIN = 0
@@ -106,8 +107,9 @@ contains
       case (REDIR_OUT)
         ! > file (redirect stdout to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 577, mode)
+        mode = 420  ! rw-r--r-- (octal 0644)
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
@@ -124,8 +126,9 @@ contains
       case (REDIR_APPEND)
         ! >> file (append stdout to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 1089, mode)
+        mode = 420  ! rw-r--r-- (octal 0644)
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
@@ -157,10 +160,11 @@ contains
         end if
         
       case (REDIR_FD_OUT)
-        ! n> file (redirect fd n to file) 
+        ! n> file (redirect fd n to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 577, mode)
+        mode = 420  ! rw-r--r-- (octal 0644)
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
@@ -177,8 +181,9 @@ contains
       case (REDIR_FD_APPEND)
         ! n>> file (append fd n to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 1089, mode)
+        mode = 420  ! rw-r--r-- (octal 0644)
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
