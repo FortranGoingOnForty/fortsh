@@ -11,7 +11,7 @@ module executor
   use control_flow
   use error_handling
   use performance
-  use aliases, only: expand_alias
+  use aliases, only: expand_alias, is_alias, get_alias
   use shell_options
   use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR
   use better_errors
@@ -525,6 +525,14 @@ contains
       return  ! Abort command execution
     end if
 
+    ! Check if arithmetic expansion error occurred
+    if (shell%arithmetic_error) then
+      shell%arithmetic_error = .false.  ! Reset flag
+      ! End performance timing
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      return  ! Abort command execution
+    end if
+
     ! Check for variable assignment (after expansion so ${...} is processed)
     ! DISABLED: Now that we skip expand_tokens for assignments (line 503-506),
     ! all assignments should go through execute_assignment which properly handles
@@ -592,6 +600,85 @@ contains
         cmd%num_tokens = 2
       end block
       call execute_builtin_with_redirects(cmd, shell)
+    ! Check for alias expansion
+    else if (is_alias(shell, cmd%tokens(1))) then
+      block
+        character(len=:), allocatable :: alias_command, expanded_command
+        character(len=4096) :: rest_of_command
+        integer :: j
+        type(pipeline_t) :: alias_pipeline
+
+        ! Get the alias command
+        alias_command = get_alias(shell, cmd%tokens(1))
+
+        ! Build the rest of the command (arguments after the aliased command)
+        rest_of_command = ''
+        do j = 2, cmd%num_tokens
+          if (j > 2) rest_of_command = trim(rest_of_command) // ' '
+          rest_of_command = trim(rest_of_command) // trim(cmd%tokens(j))
+        end do
+
+        ! Combine alias expansion with rest of arguments
+        if (len_trim(rest_of_command) > 0) then
+          expanded_command = trim(alias_command) // ' ' // trim(rest_of_command)
+        else
+          expanded_command = trim(alias_command)
+        end if
+
+        ! Parse the expanded command
+        call parse_pipeline(expanded_command, alias_pipeline)
+
+        if (alias_pipeline%num_commands > 0) then
+          ! Execute the expanded command
+          if (alias_pipeline%num_commands == 1) then
+            ! Single command - execute it directly with current redirections
+            ! Copy over any redirections from the original command
+            if (allocated(cmd%input_file)) then
+              alias_pipeline%commands(1)%input_file = cmd%input_file
+            end if
+            if (allocated(cmd%output_file)) then
+              alias_pipeline%commands(1)%output_file = cmd%output_file
+              alias_pipeline%commands(1)%append_output = cmd%append_output
+              alias_pipeline%commands(1)%force_clobber = cmd%force_clobber
+            end if
+            if (allocated(cmd%error_file)) then
+              alias_pipeline%commands(1)%error_file = cmd%error_file
+              alias_pipeline%commands(1)%append_error = cmd%append_error
+            end if
+            ! Copy other redirection flags
+            alias_pipeline%commands(1)%redirect_stderr_to_stdout = cmd%redirect_stderr_to_stdout
+            alias_pipeline%commands(1)%redirect_stdout_to_stderr = cmd%redirect_stdout_to_stderr
+            alias_pipeline%commands(1)%redirect_both_to_file = cmd%redirect_both_to_file
+            if (allocated(cmd%here_string)) then
+              alias_pipeline%commands(1)%here_string = cmd%here_string
+            end if
+            if (allocated(cmd%heredoc_delimiter)) then
+              alias_pipeline%commands(1)%heredoc_delimiter = cmd%heredoc_delimiter
+              alias_pipeline%commands(1)%heredoc_content = cmd%heredoc_content
+              alias_pipeline%commands(1)%heredoc_quoted = cmd%heredoc_quoted
+            end if
+
+            ! Execute the single command recursively
+            call execute_single(alias_pipeline%commands(1), shell, expanded_command)
+          else
+            ! Multiple commands - execute as pipeline
+            call execute_pipeline(alias_pipeline, shell, expanded_command)
+          end if
+
+          ! Clean up
+          do j = 1, alias_pipeline%num_commands
+            if (allocated(alias_pipeline%commands(j)%tokens)) deallocate(alias_pipeline%commands(j)%tokens)
+            if (allocated(alias_pipeline%commands(j)%input_file)) deallocate(alias_pipeline%commands(j)%input_file)
+            if (allocated(alias_pipeline%commands(j)%output_file)) deallocate(alias_pipeline%commands(j)%output_file)
+            if (allocated(alias_pipeline%commands(j)%error_file)) deallocate(alias_pipeline%commands(j)%error_file)
+            if (allocated(alias_pipeline%commands(j)%heredoc_delimiter)) deallocate(alias_pipeline%commands(j)%heredoc_delimiter)
+            if (allocated(alias_pipeline%commands(j)%heredoc_content)) deallocate(alias_pipeline%commands(j)%heredoc_content)
+            if (allocated(alias_pipeline%commands(j)%here_string)) deallocate(alias_pipeline%commands(j)%here_string)
+            if (allocated(alias_pipeline%commands(j)%group_content)) deallocate(alias_pipeline%commands(j)%group_content)
+          end do
+          if (allocated(alias_pipeline%commands)) deallocate(alias_pipeline%commands)
+        end if
+      end block
     else if (is_builtin(cmd%tokens(1))) then
       call execute_builtin_with_redirects(cmd, shell)
     else
@@ -767,6 +854,13 @@ contains
     ! Evaluate arithmetic expression
     result_str = arithmetic_expansion_shell(trim(arith_expr), shell)
 
+    ! Check if there was an error (empty result indicates error)
+    if (len_trim(result_str) == 0) then
+      ! There was an arithmetic error, exit status already set by arithmetic_expansion_shell
+      ! Just return without changing it
+      return
+    end if
+
     ! Convert result to integer
     read(result_str, *, iostat=iostat) result_val
     if (iostat /= 0) result_val = 0
@@ -861,6 +955,14 @@ contains
       ! expand_variables will strip outer quotes automatically
       if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
         call expand_variables(var_value, expanded_value, shell)
+
+        ! Check if arithmetic expansion error occurred
+        if (shell%arithmetic_error) then
+          shell%arithmetic_error = .false.  ! Reset flag
+          shell%last_exit_status = 1
+          return  ! Abort assignment
+        end if
+
         if (allocated(expanded_value)) then
           ! For expanded values, use the allocated length
           call var_set_shell_variable(shell, trim(var_name), expanded_value, len(expanded_value))
