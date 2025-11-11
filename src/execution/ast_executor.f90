@@ -640,9 +640,13 @@ contains
   recursive function execute_for_node(node, shell) result(exit_status)
     use variables, only: set_shell_variable
     use control_flow, only: push_control_block, pop_control_block, BLOCK_FOR
+    use glob, only: glob_match, has_unescaped_glob_chars
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, i
+    integer :: exit_status, i, j, glob_count, word_idx
+    character(len=MAX_TOKEN_LEN) :: glob_matches(MAX_TOKEN_LEN)
+    character(len=MAX_TOKEN_LEN), allocatable :: expanded_words(:)
+    integer :: total_words
 
     exit_status = 0
 
@@ -650,14 +654,47 @@ contains
       return
     end if
 
+    ! First, expand any glob patterns in the word list
+    allocate(expanded_words(MAX_TOKEN_LEN))
+    total_words = 0
+
+    do i = 1, node%for_loop%num_words
+      ! Check if this word contains glob characters
+      if (has_unescaped_glob_chars(trim(node%for_loop%words(i)))) then
+        ! Expand the glob pattern
+        call glob_match(trim(node%for_loop%words(i)), glob_matches, glob_count)
+        if (glob_count > 0) then
+          ! Add all matched files
+          do j = 1, glob_count
+            if (total_words < MAX_TOKEN_LEN) then
+              total_words = total_words + 1
+              expanded_words(total_words) = glob_matches(j)
+            end if
+          end do
+        else
+          ! No matches - use the pattern literally
+          if (total_words < MAX_TOKEN_LEN) then
+            total_words = total_words + 1
+            expanded_words(total_words) = node%for_loop%words(i)
+          end if
+        end if
+      else
+        ! Not a glob pattern - use the word as-is
+        if (total_words < MAX_TOKEN_LEN) then
+          total_words = total_words + 1
+          expanded_words(total_words) = node%for_loop%words(i)
+        end if
+      end if
+    end do
+
     ! Push loop control block so break/continue can find it
     call push_control_block(shell, BLOCK_FOR, .true.)
 
-    ! Iterate over words
-    do i = 1, node%for_loop%num_words
+    ! Iterate over expanded words
+    do word_idx = 1, total_words
       ! Set loop variable
-      call set_shell_variable(shell, trim(node%for_loop%variable), trim(node%for_loop%words(i)), &
-                              len_trim(node%for_loop%words(i)))
+      call set_shell_variable(shell, trim(node%for_loop%variable), trim(expanded_words(word_idx)), &
+                              len_trim(expanded_words(word_idx)))
 
       ! Execute body
       if (associated(node%for_loop%body)) then
@@ -707,6 +744,9 @@ contains
 
     ! Pop loop control block
     call pop_control_block(shell)
+
+    ! Clean up
+    if (allocated(expanded_words)) deallocate(expanded_words)
 
   end function execute_for_node
 
