@@ -110,14 +110,16 @@ contains
 
   function execute_simple_command(node, shell) result(exit_status)
     use executor, only: execute_pipeline
+    use fd_redirection, only: apply_single_redirection
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
     integer :: i, func_idx, old_num_positional, j
     type(pipeline_t) :: temp_pipeline
+    type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
     character(len=1024), allocatable :: old_params(:)
-    logical :: needs_quotes
+    logical :: needs_quotes, redir_success
 
     exit_status = 0
 
@@ -129,6 +131,39 @@ contains
     if (node%simple_cmd%num_words == 0) then
       exit_status = 0
       return
+    end if
+
+    ! Special handling for exec with redirections
+    if (node%simple_cmd%num_words >= 1 .and. trim(node%simple_cmd%words(1)) == 'exec') then
+      ! Check if this is exec with only redirections (no command to execute)
+      if (node%simple_cmd%num_words == 1 .and. node%simple_cmd%num_redirects > 0) then
+        ! exec without arguments but with redirections - apply redirections permanently
+        do i = 1, node%simple_cmd%num_redirects
+          ! Convert AST redirection to fd_redirection format
+          temp_redirect%type = node%simple_cmd%redirects(i)%type
+          temp_redirect%fd = node%simple_cmd%redirects(i)%fd
+          temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
+          if (allocated(node%simple_cmd%redirects(i)%filename)) then
+            temp_redirect%filename = trim(node%simple_cmd%redirects(i)%filename)
+          else
+            temp_redirect%filename = ''
+          end if
+          temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
+
+          call apply_single_redirection(temp_redirect, redir_success)
+          if (.not. redir_success) then
+            exit_status = 1
+            return
+          end if
+        end do
+        exit_status = 0
+        return
+      else if (node%simple_cmd%num_words == 1) then
+        ! exec without arguments or redirections - just return success
+        exit_status = 0
+        return
+      end if
+      ! If we get here, exec has arguments, so fall through to normal execution
     end if
 
     ! Check if this is a function call
