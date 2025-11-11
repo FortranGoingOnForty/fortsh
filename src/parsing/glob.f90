@@ -376,6 +376,15 @@ contains
     end if
   end function
 
+  ! Pattern matching without dotfile exclusion (for case statements, etc.)
+  function pattern_matches_no_dotfile_check(pattern, text) result(matches)
+    character(len=*), intent(in) :: pattern, text
+    logical :: matches
+
+    ! Direct pattern matching without dotfile exclusion
+    matches = glob_match_recursive(pattern, text, 1, 1)
+  end function
+
   ! Recursive pattern matching function
   recursive function glob_match_recursive(pattern, text, p_pos, t_pos) result(matches)
     character(len=*), intent(in) :: pattern, text

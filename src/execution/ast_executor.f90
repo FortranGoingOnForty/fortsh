@@ -14,6 +14,7 @@ module ast_executor
   use shell_types
   use command_tree
   use system_interface
+  use glob, only: pattern_matches_no_dotfile_check
   implicit none
   private
 
@@ -722,7 +723,6 @@ contains
     integer :: item_idx, pattern_idx
     logical :: matched
     character(len=MAX_TOKEN_LEN) :: pattern
-    character(len=256) :: suffix, prefix
 
     exit_status = 0
 
@@ -745,33 +745,8 @@ contains
       do pattern_idx = 1, node%case_stmt%items(item_idx)%num_patterns
         pattern = trim(node%case_stmt%items(item_idx)%patterns(pattern_idx))
 
-        ! Match pattern (simple implementation)
-        if (trim(pattern) == '*') then
-          ! Wildcard matches everything
-          matched = .true.
-        else if (index(pattern, '*') > 0) then
-          ! Prefix/suffix wildcard (h* or *x or *mid*)
-          if (pattern(1:1) == '*') then
-            ! Suffix match: *suffix
-            suffix = pattern(2:)
-            if (len_trim(case_value) >= len_trim(suffix)) then
-              if (case_value(len_trim(case_value)-len_trim(suffix)+1:) == trim(suffix)) then
-                matched = .true.
-              end if
-            end if
-          else if (pattern(len_trim(pattern):len_trim(pattern)) == '*') then
-            ! Prefix match: prefix*
-            prefix = pattern(1:len_trim(pattern)-1)
-            if (case_value(1:len_trim(prefix)) == trim(prefix)) then
-              matched = .true.
-            end if
-          end if
-        else
-          ! Exact match
-          if (trim(case_value) == trim(pattern)) then
-            matched = .true.
-          end if
-        end if
+        ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
+        matched = pattern_matches_no_dotfile_check(trim(pattern), trim(case_value))
 
         if (matched) exit
       end do
