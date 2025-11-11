@@ -1078,8 +1078,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value <= right_val) then
         value = 1
       else
@@ -1093,8 +1093,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value >= right_val) then
         value = 1
       else
@@ -1108,8 +1108,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value < right_val) then
         value = 1
       else
@@ -1123,8 +1123,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value > right_val) then
         value = 1
       else
@@ -1133,6 +1133,41 @@ contains
       return
     end if
 
+    value = eval_shift(expr)
+  end function
+
+  ! Shift operations (<<, >>)
+  recursive function eval_shift(expr) result(value)
+    character(len=*), intent(in) :: expr
+    integer(kind=8) :: value, right_val
+    integer :: pos
+    character(len=512) :: left_expr, right_expr
+
+    ! Try << (left shift)
+    pos = find_operator(expr, '<<')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive(trim(adjustl(left_expr)))  ! Changed from eval_shift
+      right_val = eval_additive(trim(adjustl(right_expr)))
+      ! Left shift by right_val bits
+      value = ishft(value, int(right_val))
+      return
+    end if
+
+    ! Try >> (right shift)
+    pos = find_operator(expr, '>>')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive(trim(adjustl(left_expr)))  ! Changed from eval_shift
+      right_val = eval_additive(trim(adjustl(right_expr)))
+      ! Right shift by right_val bits (negative for right shift in ishft)
+      value = ishft(value, -int(right_val))
+      return
+    end if
+
+    ! No shift operator found
     value = eval_additive(expr)
   end function
 
@@ -1249,6 +1284,15 @@ contains
       else
         value = 0
       end if
+      return
+    end if
+
+    ! Bitwise NOT (~)
+    if (expr(1:1) == '~') then
+      rest = adjustl(expr(2:))
+      value = eval_unary(rest)
+      ! Bitwise NOT in two's complement: ~n = -(n + 1)
+      value = -(value + 1)
       return
     end if
 
@@ -1577,8 +1621,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value <= right_val) then; value = 1; else; value = 0; end if
       return
     end if
@@ -1587,8 +1631,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value >= right_val) then; value = 1; else; value = 0; end if
       return
     end if
@@ -1597,8 +1641,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value < right_val) then; value = 1; else; value = 0; end if
       return
     end if
@@ -1607,12 +1651,48 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value > right_val) then; value = 1; else; value = 0; end if
       return
     end if
 
+    value = eval_shift_shell(expr, shell)
+  end function
+
+  ! Shift operations (<<, >>)
+  recursive function eval_shift_shell(expr, shell) result(value)
+    character(len=*), intent(in) :: expr
+    type(shell_state_t), intent(inout) :: shell
+    integer(kind=8) :: value, right_val
+    integer :: pos
+    character(len=512) :: left_expr, right_expr
+
+    ! Try << (left shift)
+    pos = find_operator(expr, '<<')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive_shell(trim(adjustl(left_expr)), shell)  ! Changed from eval_shift_shell
+      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      ! Left shift by right_val bits
+      value = ishft(value, int(right_val))
+      return
+    end if
+
+    ! Try >> (right shift)
+    pos = find_operator(expr, '>>')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive_shell(trim(adjustl(left_expr)), shell)  ! Changed from eval_shift_shell
+      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      ! Right shift by right_val bits (negative for right shift in ishft)
+      value = ishft(value, -int(right_val))
+      return
+    end if
+
+    ! No shift operator found
     value = eval_additive_shell(expr, shell)
   end function
 
@@ -1743,6 +1823,15 @@ contains
       rest = adjustl(expr(2:))
       value = eval_unary_shell(rest, shell)
       if (value == 0) then; value = 1; else; value = 0; end if
+      return
+    end if
+
+    ! Bitwise NOT (~)
+    if (expr(1:1) == '~') then
+      rest = adjustl(expr(2:))
+      value = eval_unary_shell(rest, shell)
+      ! Bitwise NOT in two's complement: ~n = -(n + 1)
+      value = -(value + 1)
       return
     end if
 
@@ -1903,6 +1992,9 @@ contains
         if (i > 1) then
           if (op == '=' .and. (expr(i-1:i-1) == '=' .or. expr(i-1:i-1) == '!' .or. &
                                expr(i-1:i-1) == '<' .or. expr(i-1:i-1) == '>')) cycle
+          ! Also check if < or > is the second char of << or >>
+          if (op == '<' .and. expr(i-1:i-1) == '<') cycle
+          if (op == '>' .and. expr(i-1:i-1) == '>') cycle
         end if
         pos = i
         return
