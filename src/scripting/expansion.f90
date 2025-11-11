@@ -42,7 +42,7 @@ contains
     ! Remove ${ and }
     if (len_trim(expression) < 4) return
     var_name = expression(3:len_trim(expression)-1)
-    write(error_unit, '(A,A,A)') 'DEBUG START: var_name=[', trim(var_name), ']'
+    ! write(error_unit, '(A,A,A)') 'DEBUG START: var_name=[', trim(var_name), ']'
 
     ! ========================================================================
     ! Check for array bracket syntax FIRST: ${array[key]}, ${!array[@]}, ${#array[@]}
@@ -220,7 +220,7 @@ contains
     percent_pos = index(var_name, '%')
     hash_pos = index(var_name, '#')
     slash_pos = index(var_name, '/')
-    write(error_unit, '(A,A,A,I0)') 'DEBUG AFTER OPS: var_name=[', trim(var_name), '] dash_pos=', dash_pos
+    !     write(error_unit, '(A,A,A,I0)') 'DEBUG AFTER OPS: var_name=[', trim(var_name), '] dash_pos=', dash_pos
 
     ! Pattern replacement: ${var/pattern/replacement} or ${var//pattern/replacement}
     if (slash_pos > 0) then
@@ -272,18 +272,18 @@ contains
       ! Check if this is just ${#} (number of positional params)
       if (len_trim(var_name) == 1) then
         ! ${#} alone - return number of positional parameters
-        write(error_unit, '(A,I0)') 'DEBUG: Returning num_positional for ${#}: ', shell%num_positional
+    !         write(error_unit, '(A,I0)') 'DEBUG: Returning num_positional for ${#}: ', shell%num_positional
         write(expanded, '(I0)') shell%num_positional
         return
       else if (len_trim(var_name) > 1) then
         ! ${#var} length expansion
         operation = var_name(2:)
-        write(error_unit, '(A,A,A,I0,A)') 'DEBUG LENGTH: hash_pos=1 operation=[', trim(operation), '] num_pos=', shell%num_positional, ']'
+    !         write(error_unit, '(A,A,A,I0,A)') 'DEBUG LENGTH: hash_pos=1 operation=[', trim(operation), '] num_pos=', shell%num_positional, ']'
 
         ! Check for special parameters
         if (trim(operation) == '@' .or. trim(operation) == '*') then
           ! ${#@} or ${#*} - return number of positional parameters
-          write(error_unit, '(A,I0,A)') 'DEBUG: Returning num_positional=', shell%num_positional, ' for ${#@} or ${#*}'
+    !           write(error_unit, '(A,I0,A)') 'DEBUG: Returning num_positional=', shell%num_positional, ' for ${#@} or ${#*}'
           write(expanded, '(I0)') shell%num_positional
           return
         else if (len(trim(operation)) > 0) then
@@ -361,14 +361,14 @@ contains
 
     if (dash_pos > 0 .or. plus_pos > 0 .or. equals_pos > 0 .or. question_pos > 0) then
       ! ${var-word}, ${var:-word}, ${var+word}, ${var:+word}, ${var=word}, ${var:=word}, ${var?word}, ${var:?word}
-      write(error_unit, '(A,I0,A,I0,A,I0,A,I0)') 'DEBUG: dash=', dash_pos, &
+    !       write(error_unit, '(A,I0,A,I0,A,I0,A,I0)') 'DEBUG: dash=', dash_pos, &
            ' plus=', plus_pos, ' eq=', equals_pos, ' q=', question_pos
 
       ! Determine which operator we have
       if (dash_pos > 0 .and. (plus_pos == 0 .or. dash_pos < plus_pos) .and. &
           (equals_pos == 0 .or. dash_pos < equals_pos) .and. (question_pos == 0 .or. dash_pos < question_pos)) then
         ! Dash operator
-        write(error_unit, '(A)') 'DEBUG: Entering dash operator handler'
+    !         write(error_unit, '(A)') 'DEBUG: Entering dash operator handler'
         has_colon = (dash_pos > 1 .and. var_name(dash_pos-1:dash_pos-1) == ':')
         if (has_colon) then
           operation = var_name(:dash_pos-2)
@@ -378,12 +378,12 @@ contains
           param1 = var_name(dash_pos+1:)
         end if
 
-        write(error_unit, '(A,L1,A,A,A,A,A)') 'DEBUG: has_colon=', has_colon, &
+    !         write(error_unit, '(A,L1,A,A,A,A,A)') 'DEBUG: has_colon=', has_colon, &
              ' op=', trim(operation), ' param1=', trim(param1)
         var_is_set = is_shell_variable_set(shell, trim(operation))
         var_value = get_shell_variable(shell, trim(operation))
         var_is_null = (len_trim(var_value) == 0)
-        write(error_unit, '(A,L1,A,A,A,L1)') 'DEBUG: var_is_set=', var_is_set, &
+    !         write(error_unit, '(A,L1,A,A,A,L1)') 'DEBUG: var_is_set=', var_is_set, &
              ' val=', trim(var_value), ' null=', var_is_null
 
         ! ${var-word}: use word if var is unset
@@ -401,7 +401,7 @@ contains
             expanded = trim(var_value)
           end if
         end if
-        write(error_unit, '(A,A,A)') 'DEBUG: expanded=', trim(expanded), '|'
+    !         write(error_unit, '(A,A,A)') 'DEBUG: expanded=', trim(expanded), '|'
 
       else if (plus_pos > 0 .and. (equals_pos == 0 .or. plus_pos < equals_pos) .and. &
                (question_pos == 0 .or. plus_pos < question_pos)) then
@@ -2334,9 +2334,9 @@ contains
 
         if (bracket_count == 0) then
           var_expr = input(start_pos:i-1)
-          write(error_unit, '(A,A,A)') 'DEBUG BEFORE CALL: var_expr=[', trim(var_expr), ']'
+    !           write(error_unit, '(A,A,A)') 'DEBUG BEFORE CALL: var_expr=[', trim(var_expr), ']'
           var_value = parameter_expansion(shell, var_expr)
-          write(error_unit, '(A,A,A)') 'DEBUG AFTER CALL: var_value=[', trim(var_value), ']'
+    !           write(error_unit, '(A,A,A)') 'DEBUG AFTER CALL: var_value=[', trim(var_value), ']'
           result = trim(result) // trim(var_value)
         end if
         
