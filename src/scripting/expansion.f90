@@ -528,7 +528,7 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (len_trim(var_value) == 0 .and. .not. is_shell_variable_set(shell, trim(var_name))) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 1
+          shell%last_exit_status = 127  ! POSIX sh returns 127 for expansion errors
           shell%fatal_expansion_error = .true.
           expanded = ''
           return
