@@ -135,12 +135,18 @@ program fortran_shell
         exit_code = execute_ast(ast_root, shell)
         shell%last_exit_status = exit_code
         call destroy_command_node(ast_root)
+      else
+        ! Parse error occurred
+        shell%last_exit_status = 2
       end if
     else
       ! OLD PARSER PATH: Parse to pipeline and execute
       call parse_pipeline(proc_subst_line, pipeline)
 
-      if (pipeline%num_commands > 0) then
+      ! Check for syntax errors
+      if (pipeline%parse_error) then
+        shell%last_exit_status = 2  ! Syntax error
+      else if (pipeline%num_commands > 0) then
         call execute_pipeline(pipeline, shell, trim(command_string))
 
         ! Check if we need to replay loop body (for loops, while, until)
@@ -300,12 +306,18 @@ program fortran_shell
         ! Increment command number for next prompt
         shell%command_number = shell%command_number + 1
         call increment_prompt_history()
+      else
+        ! Parse error occurred
+        shell%last_exit_status = 2
       end if
     else
       ! OLD PARSER PATH: Parse to pipeline and execute
       call parse_pipeline(proc_subst_line, pipeline)
 
-      if (pipeline%num_commands > 0) then
+      ! Check for syntax errors
+      if (pipeline%parse_error) then
+        shell%last_exit_status = 2  ! Syntax error
+      else if (pipeline%num_commands > 0) then
         ! Track command duration (Fish-style)
         call system_clock(cmd_start_time, clock_rate)
 
@@ -770,12 +782,18 @@ contains
           exit_code = execute_ast(ast_root, shell)
           shell%last_exit_status = exit_code
           call destroy_command_node(ast_root)
+        else
+          ! Parse error occurred
+          shell%last_exit_status = 2
         end if
       else
         ! OLD PARSER PATH: Parse to pipeline and execute
         call parse_pipeline(proc_subst_line, pipeline)
 
-        if (pipeline%num_commands > 0) then
+        ! Check for syntax errors
+        if (pipeline%parse_error) then
+          shell%last_exit_status = 2  ! Syntax error
+        else if (pipeline%num_commands > 0) then
           call execute_pipeline(pipeline, shell, expanded_line)
 
           ! Check if we need to replay loop body (only if NOT currently capturing)
@@ -1083,12 +1101,17 @@ contains
       if (associated(trap_ast)) then
         trap_exit_code = execute_ast_node(trap_ast, shell)
         call destroy_command_node(trap_ast)
+      else
+        ! Parse error occurred in trap command
+        shell%last_exit_status = 2
       end if
     else
       call parse_pipeline(trim(trap_command), trap_pipeline)
 
-      ! Execute the trap command if parsing succeeded
-      if (trap_pipeline%num_commands > 0) then
+      ! Check for syntax errors
+      if (trap_pipeline%parse_error) then
+        shell%last_exit_status = 2  ! Syntax error
+      else if (trap_pipeline%num_commands > 0) then
         call execute_pipeline(trap_pipeline, shell, trim(trap_command))
       end if
 

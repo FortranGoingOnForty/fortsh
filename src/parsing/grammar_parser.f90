@@ -111,9 +111,15 @@ contains
       end if
       if (tok%token_type == TOKEN_OPERATOR .and. (trim(tok%value) == ')' .or. trim(tok%value) == '}')) exit
       if (tok%token_type == TOKEN_OPERATOR) then
-        if (trim(tok%value) == ';' .or. trim(tok%value) == ';;') then
+        if (trim(tok%value) == ';') then
           sep_type = LIST_SEP_SEQUENTIAL
           call advance(state)
+        else if (trim(tok%value) == ';;') then
+          ! ;; is only valid in case statements, not here
+          write(error_unit, '(A)') 'fortsh: syntax error: unexpected token `;;'''
+          ! Set error and return null
+          nullify(node)
+          return
         else if (trim(tok%value) == '&') then
           sep_type = LIST_SEP_BACKGROUND
           call advance(state)

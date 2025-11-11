@@ -291,6 +291,7 @@ contains
               ! Syntax error: ;; outside case statement
               call parser_error(102, 'Syntax error: ";;" is only valid in case statements', 'parse_pipeline')
               pipeline%num_commands = 0
+              pipeline%parse_error = .true.
               return
             end if
             cmd_count = cmd_count + 1
@@ -309,6 +310,7 @@ contains
             if (i == start) then
               call parser_error(103, 'Syntax error: unexpected ";"', 'parse_pipeline')
               pipeline%num_commands = 0
+              pipeline%parse_error = .true.
               return
             end if
             cmd_count = cmd_count + 1

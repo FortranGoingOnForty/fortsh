@@ -142,6 +142,7 @@ module shell_types
   type :: pipeline_t
     type(command_t), allocatable :: commands(:)
     integer :: num_commands = 0
+    logical :: parse_error = .false.  ! Set when a syntax error occurs during parsing
   end type pipeline_t
 
   type :: job_t
