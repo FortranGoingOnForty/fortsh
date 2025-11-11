@@ -1137,32 +1137,41 @@ contains
   subroutine builtin_alias(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: eq_pos
+    integer :: eq_pos, i, full_len
     character(len=256) :: alias_name, alias_command
-    
+    character(len=1024) :: full_arg
+
     if (cmd%num_tokens == 1) then
       ! Show all aliases
       call show_aliases(shell)
-    else if (cmd%num_tokens == 2) then
+    else if (cmd%num_tokens >= 2) then
+      ! Reconstruct the full argument from all tokens
+      full_arg = trim(cmd%tokens(2))
+      do i = 3, cmd%num_tokens
+        full_arg = trim(full_arg) // ' ' // trim(cmd%tokens(i))
+      end do
+
       ! Check for alias=command format
-      eq_pos = index(cmd%tokens(2), '=')
+      eq_pos = index(full_arg, '=')
       if (eq_pos > 0) then
-        alias_name = cmd%tokens(2)(:eq_pos-1)
-        alias_command = cmd%tokens(2)(eq_pos+1:)
-        
+        alias_name = full_arg(:eq_pos-1)
+        alias_command = full_arg(eq_pos+1:)
+
         ! Remove quotes if present
-        if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
-          alias_command = alias_command(2:len_trim(alias_command)-1)
-        else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
-          alias_command = alias_command(2:len_trim(alias_command)-1)
+        if (len_trim(alias_command) >= 2) then
+          if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
+            alias_command = alias_command(2:len_trim(alias_command)-1)
+          else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
+            alias_command = alias_command(2:len_trim(alias_command)-1)
+          end if
         end if
-        
+
         call set_alias(shell, trim(alias_name), trim(alias_command))
-      else
-        ! Show specific alias
+      else if (cmd%num_tokens == 2) then
+        ! Show specific alias (only if single argument without =)
         alias_name = cmd%tokens(2)
         alias_command = get_alias(shell, trim(alias_name))
-        if (len(alias_command) > 0) then
+        if (len_trim(alias_command) > 0) then
           write(output_unit, '(a)') 'alias ' // trim(alias_name) // &
                                    '=' // "'" // trim(alias_command) // "'"
         else
@@ -1170,13 +1179,13 @@ contains
           shell%last_exit_status = 1
           return
         end if
+      else
+        write(error_unit, '(a)') 'alias: usage: alias [name[=value]...]'
+        shell%last_exit_status = 1
+        return
       end if
-    else
-      write(error_unit, '(a)') 'alias: usage: alias [name[=value]...]'
-      shell%last_exit_status = 1
-      return
     end if
-    
+
     shell%last_exit_status = 0
   end subroutine
 
