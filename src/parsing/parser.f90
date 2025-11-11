@@ -2321,6 +2321,13 @@ contains
 
     ! Not array access - fall back to original length logic
     if (is_length) then
+      ! Special handling for @ and * parameters, or empty (just ${#}) - return count, not string length
+      if (trim(var_name) == '@' .or. trim(var_name) == '*' .or. len_trim(var_name) == 0) then
+        write(length_str, '(I0)') shell%num_positional
+        result_value = trim(length_str)
+        return
+      end if
+
       ! Get actual stored length from variable
       call get_variable_length(shell, trim(var_name), str_length)
       if (str_length >= 0) then

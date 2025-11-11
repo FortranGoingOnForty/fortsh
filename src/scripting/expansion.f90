@@ -264,12 +264,43 @@ contains
 
     ! Prefix removal: ${var#pattern} or ${var##pattern}
     ! But first check if it's ${#var} (length)
-    if (hash_pos == 1 .and. len_trim(var_name) > 1) then
-      ! ${#var} length expansion
-      operation = var_name(2:)
-      var_value = get_shell_variable(shell, trim(operation))
-      write(expanded, '(I0)') len_trim(var_value)
-      return
+    if (hash_pos == 1) then
+      ! Check if this is just ${#} (number of positional params)
+      if (len_trim(var_name) == 1) then
+        ! ${#} alone - return number of positional parameters
+        write(error_unit, '(A,I0)') 'DEBUG: Returning num_positional for ${#}: ', shell%num_positional
+        write(expanded, '(I0)') shell%num_positional
+        return
+      else if (len_trim(var_name) > 1) then
+        ! ${#var} length expansion
+        operation = var_name(2:)
+        write(error_unit, '(A,A,A,I0,A)') 'DEBUG LENGTH: hash_pos=1 operation=[', trim(operation), '] num_pos=', shell%num_positional, ']'
+
+        ! Check for special parameters
+        if (trim(operation) == '@' .or. trim(operation) == '*') then
+          ! ${#@} or ${#*} - return number of positional parameters
+          write(error_unit, '(A,I0,A)') 'DEBUG: Returning num_positional=', shell%num_positional, ' for ${#@} or ${#*}'
+          write(expanded, '(I0)') shell%num_positional
+          return
+        else if (len(trim(operation)) > 0) then
+          ! Check if it's a positional parameter (digit)
+          read(operation, *, iostat=i) j
+          if (i == 0 .and. j > 0) then
+            ! ${#1}, ${#2}, etc. - return length of specific positional parameter
+            if (j <= shell%num_positional) then
+              write(expanded, '(I0)') len_trim(shell%positional_params(j))
+            else
+              expanded = '0'
+            end if
+            return
+          else
+            ! Regular variable length
+            var_value = get_shell_variable(shell, trim(operation))
+            write(expanded, '(I0)') len_trim(var_value)
+            return
+          end if
+        end if
+      end if
     else if (hash_pos > 1) then
       ! Check for ##
       if (hash_pos < len_trim(var_name) .and. var_name(hash_pos+1:hash_pos+1) == '#') then

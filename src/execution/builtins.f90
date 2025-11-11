@@ -1971,6 +1971,7 @@ contains
 
   subroutine builtin_exec(cmd, shell)
     use command_builtin, only: find_command_full_path
+    use fd_redirection, only: apply_single_redirection
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -1979,12 +1980,26 @@ contains
     type(c_ptr), allocatable, target :: argv(:)
     integer :: i, ret
     character(len=MAX_PATH_LEN) :: prog_path
+    logical :: redir_success
 
-    ! exec without arguments is an error (could be used for redirections in future)
+    ! exec without arguments but with redirections applies them to the current shell
     if (cmd%num_tokens < 2) then
-      write(error_unit, '(a)') 'exec: usage: exec command [arguments ...]'
-      shell%last_exit_status = 2
-      return
+      if (cmd%num_redirections > 0) then
+        ! Apply redirections to the current shell process
+        do i = 1, cmd%num_redirections
+          call apply_single_redirection(cmd%redirections(i), redir_success)
+          if (.not. redir_success) then
+            shell%last_exit_status = 1
+            return
+          end if
+        end do
+        shell%last_exit_status = 0
+        return
+      else
+        ! No command and no redirections - just return success
+        shell%last_exit_status = 0
+        return
+      end if
     end if
 
     ! Get the command name
@@ -2018,6 +2033,17 @@ contains
 
     ! NULL-terminate the argv array
     argv(cmd%num_tokens) = c_null_ptr
+
+    ! Apply any redirections before exec
+    if (cmd%num_redirections > 0) then
+      do i = 1, cmd%num_redirections
+        call apply_single_redirection(cmd%redirections(i), redir_success)
+        if (.not. redir_success) then
+          shell%last_exit_status = 1
+          return
+        end if
+      end do
+    end if
 
     ! Replace the current process with the new command
     ! If execvp succeeds, this function never returns
