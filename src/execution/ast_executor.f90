@@ -847,11 +847,14 @@ contains
   ! =====================================
 
   recursive function execute_subshell_node(node, shell) result(exit_status)
+    use fd_redirection, only: apply_single_redirection
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
     integer(c_pid_t) :: pid
-    integer :: status
+    integer :: status, i
+    type(redirection_t) :: temp_redirect
+    logical :: redir_success
 
     exit_status = 0
 
@@ -865,6 +868,26 @@ contains
       ! Child process - execute commands in subshell
       ! POSIX: Traps are NOT inherited by subshells
       shell%num_traps = 0
+
+      ! Apply redirections in child process
+      if (node%num_redirects > 0) then
+        do i = 1, node%num_redirects
+          temp_redirect%type = node%redirects(i)%type
+          temp_redirect%fd = node%redirects(i)%fd
+          temp_redirect%target_fd = node%redirects(i)%target_fd
+          if (allocated(node%redirects(i)%filename)) then
+            allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+          end if
+          temp_redirect%force_clobber = node%redirects(i)%force_clobber
+
+          call apply_single_redirection(temp_redirect, redir_success)
+          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+          if (.not. redir_success) then
+            call c_exit(1)
+          end if
+        end do
+      end if
+
       status = execute_ast_node(node%subshell, shell)
       call c_exit(status)
     else if (pid > 0) then
@@ -883,9 +906,13 @@ contains
   ! =====================================
 
   recursive function execute_brace_group_node(node, shell) result(exit_status)
+    use fd_redirection, only: apply_single_redirection, restore_fds
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
+    integer :: i
+    type(redirection_t) :: temp_redirect
+    logical :: redir_success
 
     exit_status = 0
 
@@ -893,8 +920,34 @@ contains
       return
     end if
 
+    ! Apply redirections if present
+    if (node%num_redirects > 0) then
+      do i = 1, node%num_redirects
+        temp_redirect%type = node%redirects(i)%type
+        temp_redirect%fd = node%redirects(i)%fd
+        temp_redirect%target_fd = node%redirects(i)%target_fd
+        if (allocated(node%redirects(i)%filename)) then
+          allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+        end if
+        temp_redirect%force_clobber = node%redirects(i)%force_clobber
+
+        call apply_single_redirection(temp_redirect, redir_success)
+        if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+        if (.not. redir_success) then
+          exit_status = 1
+          call restore_fds()
+          return
+        end if
+      end do
+    end if
+
     ! Execute in current shell (no fork)
     exit_status = execute_ast_node(node%subshell, shell)
+
+    ! Restore file descriptors
+    if (node%num_redirects > 0) then
+      call restore_fds()
+    end if
 
   end function execute_brace_group_node
 

@@ -178,6 +178,10 @@ module command_tree
     type(case_data_t), pointer :: case_stmt => null()
     type(function_def_data_t), pointer :: function_def => null()
     type(command_node_t), pointer :: subshell => null()       ! For subshells/groups
+
+    ! Redirections (can apply to any command type, not just simple commands)
+    type(redirection_t), allocatable :: redirects(:)
+    integer :: num_redirects = 0
   end type command_node_t
 
 contains
@@ -401,6 +405,9 @@ contains
         deallocate(node%function_def)
       end if
     end select
+
+    ! Clean up node-level redirections
+    if (allocated(node%redirects)) deallocate(node%redirects)
 
     deallocate(node)
     nullify(node)
