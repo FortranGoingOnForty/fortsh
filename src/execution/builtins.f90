@@ -1174,12 +1174,12 @@ contains
           write(output_unit, '(a)') 'alias ' // trim(alias_name) // &
                                    '=' // "'" // trim(alias_command) // "'"
         else
-          write(error_unit, '(a)') 'alias: ' // trim(alias_name) // ': not found'
+          call write_stderr('alias: ' // trim(alias_name) // ': not found')
           shell%last_exit_status = 1
           return
         end if
       else
-        write(error_unit, '(a)') 'alias: usage: alias [name[=value]...]'
+        call write_stderr('alias: usage: alias [name[=value]...]')
         shell%last_exit_status = 1
         return
       end if
@@ -1194,7 +1194,7 @@ contains
     integer :: i
 
     if (cmd%num_tokens < 2) then
-      write(error_unit, '(a)') 'unalias: usage: unalias name...'
+      call write_stderr('unalias: usage: unalias name...')
       shell%last_exit_status = 1
       return
     end if

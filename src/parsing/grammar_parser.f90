@@ -113,7 +113,10 @@ contains
       tok = current_token(state)
       if (tok%token_type == TOKEN_OPERATOR .and. &
           (trim(tok%value) == ';' .or. trim(tok%value) == ';;' .or. trim(tok%value) == '&')) then
-        write(error_unit, '(A)') 'fortsh: syntax error near unexpected token `' // trim(tok%value) // "'"
+        write(error_unit, '(A)') 'sh: -c: line 0: syntax error near unexpected token `' // trim(tok%value) // "'"
+        if (allocated(state%raw_input)) then
+          write(error_unit, '(A)') "sh: -c: line 0: `" // trim(state%raw_input) // "'"
+        end if
         state%has_error = .true.
         state%error_msg = 'syntax error near unexpected token ' // trim(tok%value)
       end if
@@ -133,7 +136,10 @@ contains
           call advance(state)
         else if (trim(tok%value) == ';;') then
           ! ;; is only valid in case statements, not here
-          write(error_unit, '(A)') 'fortsh: syntax error near unexpected token `;;'''
+          write(error_unit, '(A)') 'sh: -c: line 0: syntax error near unexpected token `;;'''
+          if (allocated(state%raw_input)) then
+            write(error_unit, '(A)') "sh: -c: line 0: `" // trim(state%raw_input) // "'"
+          end if
           ! Set error and return null
           state%has_error = .true.
           state%error_msg = 'syntax error near unexpected token ;;'
