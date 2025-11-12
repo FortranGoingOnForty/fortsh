@@ -200,17 +200,31 @@ contains
         end if
         
       case (REDIR_DUP_IN)
-        ! <&n (duplicate fd n to stdin)
-        call save_fd(FD_STDIN)
-        if (c_dup2(redir%target_fd, FD_STDIN) < 0) then
-          success = .false.
+        ! n<&m (duplicate fd m to fd n, default n=0)
+        if (redir%fd < 0) then
+          call save_fd(FD_STDIN)
+          if (c_dup2(redir%target_fd, FD_STDIN) < 0) then
+            success = .false.
+          end if
+        else
+          call save_fd(redir%fd)
+          if (c_dup2(redir%target_fd, redir%fd) < 0) then
+            success = .false.
+          end if
         end if
-        
+
       case (REDIR_DUP_OUT)
-        ! >&n (duplicate fd n to stdout)
-        call save_fd(FD_STDOUT)
-        if (c_dup2(redir%target_fd, FD_STDOUT) < 0) then
-          success = .false.
+        ! n>&m (duplicate fd m to fd n, default n=1)
+        if (redir%fd < 0) then
+          call save_fd(FD_STDOUT)
+          if (c_dup2(redir%target_fd, FD_STDOUT) < 0) then
+            success = .false.
+          end if
+        else
+          call save_fd(redir%fd)
+          if (c_dup2(redir%target_fd, redir%fd) < 0) then
+            success = .false.
+          end if
         end if
         
       case (REDIR_CLOSE)

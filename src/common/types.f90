@@ -307,6 +307,7 @@ module shell_types
     logical :: option_allexport = .false.      ! set -a (auto export)
     logical :: option_noglob = .false.         ! set -f (disable glob expansion)
     logical :: option_vi = .false.             ! set -o vi (vi editing mode)
+    integer :: original_stderr_fd = 2          ! Saved copy of original stderr for shell messages
     ! Bash-style shell options (shopt)
     logical :: shopt_nullglob = .false.        ! nullglob (empty glob matches)
     logical :: shopt_failglob = .false.        ! failglob (error on no glob matches)
