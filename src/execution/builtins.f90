@@ -2063,7 +2063,7 @@ contains
       if (cmd%num_redirections > 0) then
         ! Apply redirections to the current shell process
         do i = 1, cmd%num_redirections
-          call apply_single_redirection(cmd%redirections(i), redir_success)
+          call apply_single_redirection(cmd%redirections(i), redir_success, shell%option_noclobber)
           if (.not. redir_success) then
             shell%last_exit_status = 1
             return
@@ -2113,7 +2113,7 @@ contains
     ! Apply any redirections before exec
     if (cmd%num_redirections > 0) then
       do i = 1, cmd%num_redirections
-        call apply_single_redirection(cmd%redirections(i), redir_success)
+        call apply_single_redirection(cmd%redirections(i), redir_success, shell%option_noclobber)
         if (.not. redir_success) then
           shell%last_exit_status = 1
           return

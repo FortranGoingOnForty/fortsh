@@ -79,14 +79,19 @@ contains
   end subroutine
 
   ! Apply a single redirection
-  subroutine apply_single_redirection(redir, success)
+  subroutine apply_single_redirection(redir, success, noclobber)
     use iso_c_binding, only: c_int
+    use system_interface, only: file_exists
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
+    logical, intent(in), optional :: noclobber
     integer(c_int) :: file_fd, target_fd, flags, mode
     character(len=1024) :: filename_c
+    logical :: check_noclobber
 
     success = .true.
+    check_noclobber = .false.
+    if (present(noclobber)) check_noclobber = noclobber
 
     select case (redir%type)
       case (REDIR_IN)
@@ -105,9 +110,16 @@ contains
         if (c_close(file_fd) < 0) then
           ! Error closing file descriptor
         end if
-        
+
       case (REDIR_OUT)
         ! > file (redirect stdout to file)
+        ! Check noclobber option (set -C) - prevents overwriting existing files
+        if (check_noclobber .and. .not. redir%force_clobber .and. file_exists(trim(redir%filename))) then
+          write(error_unit, '(a)') 'fortsh: cannot overwrite existing file: ' // trim(redir%filename)
+          success = .false.
+          return
+        end if
+
         filename_c = trim(redir%filename) // c_null_char
         mode = 420  ! 0644 octal = 420 decimal = rw-r--r--
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
@@ -163,6 +175,13 @@ contains
         
       case (REDIR_FD_OUT)
         ! n> file (redirect fd n to file)
+        ! Check noclobber option (set -C)
+        if (check_noclobber .and. .not. redir%force_clobber .and. file_exists(trim(redir%filename))) then
+          write(error_unit, '(a)') 'fortsh: cannot overwrite existing file: ' // trim(redir%filename)
+          success = .false.
+          return
+        end if
+
         filename_c = trim(redir%filename) // c_null_char
         mode = 420  ! rw-r--r--
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
