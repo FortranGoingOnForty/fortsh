@@ -153,7 +153,7 @@ contains
           end if
           temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
 
-          call apply_single_redirection(temp_redirect, redir_success)
+          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
           if (.not. redir_success) then
             exit_status = 1
             return
@@ -199,7 +199,16 @@ contains
 
             ! Copy arguments (skip function name at index 1)
             do k = 1, temp_cmd%num_tokens
-              temp_cmd%tokens(k) = trim(node%simple_cmd%words(k + 1))
+              ! For quoted words, use word_lengths to extract exact content (preserves trailing whitespace)
+              if (allocated(node%simple_cmd%word_was_quoted) .and. k+1 <= size(node%simple_cmd%word_was_quoted) .and. &
+                  node%simple_cmd%word_was_quoted(k + 1) .and. &
+                  allocated(node%simple_cmd%word_lengths) .and. k+1 <= size(node%simple_cmd%word_lengths)) then
+                ! Quoted word - use actual length to preserve trailing whitespace
+                temp_cmd%tokens(k) = node%simple_cmd%words(k + 1)(1:node%simple_cmd%word_lengths(k + 1))
+              else
+                ! Unquoted word - trim is safe
+                temp_cmd%tokens(k) = trim(node%simple_cmd%words(k + 1))
+              end if
               if (allocated(node%simple_cmd%word_was_quoted) .and. k+1 <= size(node%simple_cmd%word_was_quoted)) then
                 temp_cmd%token_quoted(k) = node%simple_cmd%word_was_quoted(k + 1)
               else
@@ -296,8 +305,19 @@ contains
 
     ! Copy words to tokens and metadata
     do i = 1, node%simple_cmd%num_words
-      ! Simply copy the words as-is without adding quotes
-      temp_pipeline%commands(1)%tokens(i) = trim(node%simple_cmd%words(i))
+      ! For quoted words, use word_lengths to extract exact content (preserves trailing whitespace)
+      ! For unquoted words, trim is safe
+      if (allocated(node%simple_cmd%word_was_quoted) .and. &
+          i <= size(node%simple_cmd%word_was_quoted) .and. &
+          node%simple_cmd%word_was_quoted(i) .and. &
+          allocated(node%simple_cmd%word_lengths) .and. &
+          i <= size(node%simple_cmd%word_lengths)) then
+        ! Quoted word - use actual length to preserve trailing whitespace
+        temp_pipeline%commands(1)%tokens(i) = node%simple_cmd%words(i)(1:node%simple_cmd%word_lengths(i))
+      else
+        ! Unquoted word - trim is safe
+        temp_pipeline%commands(1)%tokens(i) = trim(node%simple_cmd%words(i))
+      end if
 
       ! Copy metadata if available
       if (allocated(node%simple_cmd%word_was_quoted) .and. &
@@ -335,7 +355,7 @@ contains
         end if
         temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
 
-        call apply_single_redirection(temp_redirect, redir_success)
+        call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
         if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
         if (.not. redir_success) then
           exit_status = 1
@@ -918,7 +938,7 @@ contains
           end if
           temp_redirect%force_clobber = node%redirects(i)%force_clobber
 
-          call apply_single_redirection(temp_redirect, redir_success)
+          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
           if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
           if (.not. redir_success) then
             call c_exit(1)
@@ -969,7 +989,7 @@ contains
         end if
         temp_redirect%force_clobber = node%redirects(i)%force_clobber
 
-        call apply_single_redirection(temp_redirect, redir_success)
+        call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
         if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
         if (.not. redir_success) then
           exit_status = 1

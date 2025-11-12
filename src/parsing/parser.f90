@@ -1474,8 +1474,9 @@ contains
                 ! Variable is not set - check if set -u is enabled
                 if (.not. is_shell_variable_set(shell, trim(var_name))) then
                   if (check_nounset(shell, trim(var_name))) then
-                    shell%last_exit_status = 127  ! POSIX sh returns 127 for expansion errors
+                    shell%last_exit_status = 1  ! set -u error causes shell to exit with status 1
                     shell%fatal_expansion_error = .true.
+                    shell%running = .false.  ! Stop shell execution
                     expanded = ''
                     return
                   end if
@@ -2694,8 +2695,9 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (.not. var_is_set) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 127  ! POSIX sh returns 127 for expansion errors
+          shell%last_exit_status = 1  ! set -u error causes shell to exit with status 1
           shell%fatal_expansion_error = .true.
+          shell%running = .false.  ! Stop shell execution
           result_value = ''
           return
         end if
