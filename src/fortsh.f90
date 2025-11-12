@@ -1018,6 +1018,13 @@ contains
     ! Initialize shell options and special variables
     call initialize_shell_options(shell)
 
+    ! Save original stderr for shell messages (xtrace, errors, etc.)
+    ! This ensures shell meta-output isn't affected by command redirections
+    shell%original_stderr_fd = c_dup(STDERR_FD)
+    if (shell%original_stderr_fd < 0) then
+      shell%original_stderr_fd = STDERR_FD  ! Fallback if dup fails
+    end if
+
     ! Initialize special shell variables
     shell%uid = get_uid()
     shell%euid = get_euid()
