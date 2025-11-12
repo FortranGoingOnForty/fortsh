@@ -110,7 +110,7 @@ contains
 
   function execute_simple_command(node, shell) result(exit_status)
     use executor, only: execute_pipeline
-    use fd_redirection, only: apply_single_redirection
+    use fd_redirection, only: apply_single_redirection, restore_fds
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
@@ -120,6 +120,7 @@ contains
     character(len=MAX_TOKEN_LEN) :: cmd_name
     character(len=1024), allocatable :: old_params(:)
     logical :: needs_quotes, redir_success
+    logical :: has_redirects
 
     exit_status = 0
 
@@ -267,56 +268,40 @@ contains
       end if
     end do
 
-    ! Convert redirections to old executor format
-    if (node%simple_cmd%num_redirects > 0) then
-      do i = 1, node%simple_cmd%num_redirects
-        select case(node%simple_cmd%redirects(i)%type)
-        case(REDIR_IN)
-          ! < file
-          if (allocated(node%simple_cmd%redirects(i)%filename)) then
-            temp_pipeline%commands(1)%input_file = trim(node%simple_cmd%redirects(i)%filename)
-          end if
-        case(REDIR_OUT)
-          ! > file or >| file
-          if (allocated(node%simple_cmd%redirects(i)%filename)) then
-            temp_pipeline%commands(1)%output_file = trim(node%simple_cmd%redirects(i)%filename)
-            ! Check if this is >| (force clobber)
-            if (node%simple_cmd%redirects(i)%force_clobber) then
-              temp_pipeline%commands(1)%force_clobber = .true.
-            end if
-          end if
-        case(REDIR_APPEND)
-          ! >> file
-          if (allocated(node%simple_cmd%redirects(i)%filename)) then
-            temp_pipeline%commands(1)%output_file = trim(node%simple_cmd%redirects(i)%filename)
-            temp_pipeline%commands(1)%append_output = .true.
-          end if
-        case(REDIR_FD_OUT)
-          ! 2> file (stderr redirect)
-          if (node%simple_cmd%redirects(i)%fd == 2) then
-            if (allocated(node%simple_cmd%redirects(i)%filename)) then
-              temp_pipeline%commands(1)%error_file = trim(node%simple_cmd%redirects(i)%filename)
-            end if
-          end if
-        case(REDIR_DUP_OUT)
-          ! n>&m (duplicate fd m to fd n)
-          if (node%simple_cmd%redirects(i)%fd == 2 .and. &
-              node%simple_cmd%redirects(i)%target_fd == 1) then
-            ! 2>&1 - redirect stderr to stdout
-            temp_pipeline%commands(1)%redirect_stderr_to_stdout = .true.
-          else if (node%simple_cmd%redirects(i)%fd == 1 .and. &
-                   node%simple_cmd%redirects(i)%target_fd == 2) then
-            ! 1>&2 - redirect stdout to stderr
-            temp_pipeline%commands(1)%redirect_stdout_to_stderr = .true.
-          end if
-        end select
-      end do
-    end if
-
     ! Copy heredoc delimiter if present (content will be read by executor)
     if (len_trim(node%simple_cmd%heredoc_delimiter) > 0) then
       temp_pipeline%commands(1)%heredoc_delimiter = trim(node%simple_cmd%heredoc_delimiter)
       temp_pipeline%commands(1)%heredoc_quoted = node%simple_cmd%heredoc_quoted
+    end if
+
+    ! Apply redirections directly (in order, left-to-right) before executing
+    ! This preserves proper ordering for cases like: echo test >/tmp/r1 2>&1 >/tmp/r2
+    has_redirects = (node%simple_cmd%num_redirects > 0)
+    if (has_redirects) then
+      do i = 1, node%simple_cmd%num_redirects
+        temp_redirect%type = node%simple_cmd%redirects(i)%type
+        temp_redirect%fd = node%simple_cmd%redirects(i)%fd
+        temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
+        if (allocated(node%simple_cmd%redirects(i)%filename)) then
+          allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(i)%filename))
+        end if
+        temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
+
+        call apply_single_redirection(temp_redirect, redir_success)
+        if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+        if (.not. redir_success) then
+          exit_status = 1
+          if (allocated(temp_pipeline%commands)) then
+            if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
+            if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
+            if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
+            if (allocated(temp_pipeline%commands(1)%token_quote_type)) deallocate(temp_pipeline%commands(1)%token_quote_type)
+            deallocate(temp_pipeline%commands)
+          end if
+          call restore_fds()
+          return
+        end if
+      end do
     end if
 
     ! Execute using existing executor
@@ -324,6 +309,11 @@ contains
     call execute_pipeline(temp_pipeline, shell, '')
 
     exit_status = shell%last_exit_status
+
+    ! Restore file descriptors if we applied any redirections
+    if (has_redirects) then
+      call restore_fds()
+    end if
 
     ! If a trap command was queued, execute it now (unless we're already executing a trap)
     if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap) then

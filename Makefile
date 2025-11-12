@@ -320,9 +320,13 @@ $(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/syst
 $(BUILDDIR)/c_interop/fortsh_strings.o: src/c_interop/fortsh_strings.c src/c_interop/fortsh_strings.h | $(BUILDDIR)/c_interop
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Compile C file descriptor wrapper (workaround for Fortran C binding mode_t bug)
+$(BUILDDIR)/c_interop/fd_wrapper.o: src/c_interop/fd_wrapper.c | $(BUILDDIR)/c_interop
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # Create static library from C objects
-$(BUILDDIR)/c_interop/libfortsh_strings.a: $(BUILDDIR)/c_interop/fortsh_strings.o
-	ar rcs $@ $<
+$(BUILDDIR)/c_interop/libfortsh_strings.a: $(BUILDDIR)/c_interop/fortsh_strings.o $(BUILDDIR)/c_interop/fd_wrapper.o
+	ar rcs $@ $^
 
 # Compile Fortran wrapper module (depends on C library for testing)
 $(BUILDDIR)/c_interop/fortsh_c_strings.o: src/c_interop/fortsh_c_strings.f90 | $(BUILDDIR)/c_interop

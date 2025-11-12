@@ -10,27 +10,28 @@ module fd_redirection
   implicit none
 
   interface
-    ! C library functions for file descriptor manipulation
-    function c_open(pathname, flags, mode) bind(C, name="open")
+    ! C wrapper functions for file descriptor manipulation
+    ! (Using wrappers to work around Fortran C binding mode_t bug)
+    function c_open(pathname, flags, mode) bind(C, name="fortsh_open")
       use iso_c_binding
       character(kind=c_char), intent(in) :: pathname(*)
       integer(c_int), value :: flags, mode
       integer(c_int) :: c_open
     end function c_open
-    
-    function c_close(fd) bind(C, name="close")
+
+    function c_close(fd) bind(C, name="fortsh_close")
       use iso_c_binding
       integer(c_int), value :: fd
       integer(c_int) :: c_close
     end function c_close
-    
-    function c_dup2(oldfd, newfd) bind(C, name="dup2")
+
+    function c_dup2(oldfd, newfd) bind(C, name="fortsh_dup2")
       use iso_c_binding
       integer(c_int), value :: oldfd, newfd
       integer(c_int) :: c_dup2
     end function c_dup2
-    
-    function c_dup(fd) bind(C, name="dup")
+
+    function c_dup(fd) bind(C, name="fortsh_dup")
       use iso_c_binding
       integer(c_int), value :: fd
       integer(c_int) :: c_dup
@@ -79,9 +80,10 @@ contains
 
   ! Apply a single redirection
   subroutine apply_single_redirection(redir, success)
+    use iso_c_binding, only: c_int
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
-    integer :: file_fd, target_fd, flags, mode
+    integer(c_int) :: file_fd, target_fd, flags, mode
     character(len=1024) :: filename_c
 
     success = .true.
