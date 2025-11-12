@@ -1672,9 +1672,10 @@ contains
   end subroutine
 
   subroutine builtin_unset(cmd, shell)
+    use ast_executor, only: unset_ast_function
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     logical :: unset_functions = .false.
     character(len=256) :: var_name
     integer :: i, j, start_idx
@@ -1700,7 +1701,9 @@ contains
       var_name = trim(cmd%tokens(i))
       
       if (unset_functions) then
-        ! Unset function
+        ! Unset function from both old and new function storage
+
+        ! Clear from old executor's function storage
         do j = 1, shell%num_functions
           if (trim(shell%functions(j)%name) == var_name) then
             shell%functions(j)%name = ''
@@ -1709,6 +1712,9 @@ contains
             exit
           end if
         end do
+
+        ! Clear from AST executor's function cache
+        call unset_ast_function(var_name)
       else
         ! Unset variable
         do j = 1, shell%num_variables

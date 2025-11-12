@@ -261,7 +261,7 @@ $(BUILDDIR)/scripting/getopts_builtin.o: src/scripting/getopts_builtin.f90 $(BUI
 $(BUILDDIR)/scripting/directory_builtin.o: src/scripting/directory_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/command_builtin.o: src/scripting/command_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/command_builtin.o: src/scripting/command_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/ast_executor.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/variables.o: src/scripting/variables.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting

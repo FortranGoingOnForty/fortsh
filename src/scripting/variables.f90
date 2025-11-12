@@ -655,7 +655,7 @@ contains
     character(len=*), intent(in) :: name
     character(len=1024), allocatable :: body(:)
     integer :: i
-    
+
     do i = 1, shell%num_functions
       if (trim(shell%functions(i)%name) == trim(name)) then
         if (allocated(shell%functions(i)%body)) then

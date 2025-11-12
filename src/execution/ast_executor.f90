@@ -21,6 +21,8 @@ module ast_executor
   ! Public interface
   public :: execute_ast
   public :: execute_ast_node
+  public :: unset_ast_function
+  public :: is_ast_function
 
   ! C bindings for process control
   interface
@@ -1139,5 +1141,36 @@ contains
     close(file_unit)
     shell%source_file = ''
   end subroutine process_source_inline_ast
+
+  ! Unset a function from the AST cache
+  subroutine unset_ast_function(func_name)
+    character(len=*), intent(in) :: func_name
+    integer :: i
+
+    do i = 1, num_cached_functions
+      if (trim(function_ast_cache(i)%name) == trim(func_name)) then
+        ! Clear this function from the cache
+        function_ast_cache(i)%name = ''
+        function_ast_cache(i)%body => null()
+        exit
+      end if
+    end do
+  end subroutine unset_ast_function
+
+  ! Check if a function exists in the AST cache
+  function is_ast_function(func_name) result(exists)
+    character(len=*), intent(in) :: func_name
+    logical :: exists
+    integer :: i
+
+    exists = .false.
+    do i = 1, num_cached_functions
+      if (trim(function_ast_cache(i)%name) == trim(func_name) .and. &
+          len_trim(function_ast_cache(i)%name) > 0) then
+        exists = .true.
+        return
+      end if
+    end do
+  end function is_ast_function
 
 end module ast_executor
