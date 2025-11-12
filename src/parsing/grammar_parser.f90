@@ -240,28 +240,43 @@ contains
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node
     type(token_t) :: tok
+    logical :: is_compound
     tok = current_token(state)
+    is_compound = .false.
     if (tok%token_type == TOKEN_KEYWORD) then
       select case(trim(tok%value))
       case('if')
         node => parse_if_stmt(state)
+        is_compound = .true.
       case('while')
         node => parse_while_stmt(state, .false.)
+        is_compound = .true.
       case('until')
         node => parse_while_stmt(state, .true.)
+        is_compound = .true.
       case('for')
         node => parse_for_stmt(state)
+        is_compound = .true.
       case('case')
         node => parse_case_stmt(state)
+        is_compound = .true.
       case('{')
         node => parse_brace_group(state)
+        is_compound = .true.
       case default
         node => parse_simple_cmd(state)
       end select
     else if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
       node => parse_subshell(state)
+      is_compound = .true.
     else
       node => parse_simple_cmd(state)
+    end if
+
+    ! Parse trailing redirections for compound commands
+    ! (simple commands already handle redirections internally)
+    if (is_compound .and. associated(node)) then
+      call parse_trailing_redirections(state, node)
     end if
   end function
 
@@ -754,6 +769,68 @@ contains
       call advance(state)
       tok = current_token(state)
     end do
+  end subroutine
+
+  ! Parse trailing redirections for compound commands
+  subroutine parse_trailing_redirections(state, node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer, intent(inout) :: node
+    type(redirection_t) :: redirects(10)
+    integer :: num_redirects, fd_num, io_stat
+    type(token_t) :: tok
+
+    if (.not. associated(node)) return
+
+    num_redirects = 0
+    tok = current_token(state)
+
+    ! Parse any trailing redirect operators
+    do while (tok%token_type == TOKEN_REDIRECT .and. num_redirects < 10)
+      num_redirects = num_redirects + 1
+
+      select case(trim(tok%value))
+      case('<')
+        redirects(num_redirects)%type = REDIR_IN
+      case('>')
+        redirects(num_redirects)%type = REDIR_OUT
+      case('>|')
+        redirects(num_redirects)%type = REDIR_OUT
+        redirects(num_redirects)%force_clobber = .true.
+      case('>>')
+        redirects(num_redirects)%type = REDIR_APPEND
+      case('>&')
+        redirects(num_redirects)%type = REDIR_DUP_OUT
+      case default
+        num_redirects = num_redirects - 1
+        exit
+      end select
+
+      call advance(state)
+      tok = current_token(state)
+
+      if (tok%token_type == TOKEN_WORD) then
+        ! For >&, check if it's a file descriptor or filename
+        if (redirects(num_redirects)%type == REDIR_DUP_OUT) then
+          read(tok%value, *, iostat=io_stat) fd_num
+          if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
+            redirects(num_redirects)%target_fd = fd_num
+          else
+            allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+          end if
+        else
+          allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+        end if
+        call advance(state)
+        tok = current_token(state)
+      end if
+    end do
+
+    ! Store redirections in node if any were found
+    if (num_redirects > 0) then
+      allocate(node%redirects(num_redirects))
+      node%num_redirects = num_redirects
+      node%redirects(1:num_redirects) = redirects(1:num_redirects)
+    end if
   end subroutine
 
 end module grammar_parser

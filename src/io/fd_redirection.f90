@@ -83,9 +83,9 @@ contains
     logical, intent(out) :: success
     integer :: file_fd, target_fd, flags, mode
     character(len=1024) :: filename_c
-    
+
     success = .true.
-    
+
     select case (redir%type)
       case (REDIR_IN)
         ! < file (redirect stdin from file)
@@ -107,7 +107,7 @@ contains
       case (REDIR_OUT)
         ! > file (redirect stdout to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = 420  ! rw-r--r-- (octal 0644)
+        mode = 420  ! 0644 octal = 420 decimal = rw-r--r--
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
@@ -126,7 +126,7 @@ contains
       case (REDIR_APPEND)
         ! >> file (append stdout to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = 420  ! rw-r--r-- (octal 0644)
+        mode = 420  ! 0644 octal = 420 decimal = rw-r--r--
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
@@ -162,7 +162,7 @@ contains
       case (REDIR_FD_OUT)
         ! n> file (redirect fd n to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = 420  ! rw-r--r-- (octal 0644)
+        mode = 420  ! rw-r--r--
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
@@ -181,7 +181,7 @@ contains
       case (REDIR_FD_APPEND)
         ! n>> file (append fd n to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = 420  ! rw-r--r-- (octal 0644)
+        mode = 420  ! rw-r--r--
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
