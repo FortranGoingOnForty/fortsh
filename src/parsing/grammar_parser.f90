@@ -373,9 +373,11 @@ contains
         if (num_redirects < 10) then
           num_redirects = num_redirects + 1
 
-          ! Check if previous word was a file descriptor number (e.g., "2" before ">" or ">&")
+          ! Check if previous word was a file descriptor number (e.g., "2" before ">", "3" before "<&")
           ! FD must be a single digit (0-9) to avoid false positives like "/tmp"
-          if (num_words > 0 .and. (trim(tok%value) == '>' .or. trim(tok%value) == '>&')) then
+          if (num_words > 0 .and. (trim(tok%value) == '>' .or. trim(tok%value) == '>&' .or. &
+                                    trim(tok%value) == '<' .or. trim(tok%value) == '<&' .or. &
+                                    trim(tok%value) == '>>')) then
             ! Only treat as FD if it's exactly one digit character
             if (len_trim(words(num_words)) == 1 .and. &
                 index('0123456789', trim(words(num_words))) > 0) then
@@ -387,24 +389,40 @@ contains
             end if
             if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
               ! Previous word was a single digit - this is fd redirection
-              if (trim(tok%value) == '>&') then
+              select case(trim(tok%value))
+              case('>&')
                 redirects(num_redirects)%type = REDIR_DUP_OUT
-              else
+              case('<&')
+                redirects(num_redirects)%type = REDIR_DUP_IN
+              case('>>')
+                redirects(num_redirects)%type = REDIR_FD_APPEND
+              case('<')
+                redirects(num_redirects)%type = REDIR_FD_IN
+              case default  ! '>'
                 redirects(num_redirects)%type = REDIR_FD_OUT
-              end if
+              end select
               redirects(num_redirects)%fd = fd_num
               num_words = num_words - 1  ! Remove fd from words
             else
-              if (trim(tok%value) == '>&') then
+              select case(trim(tok%value))
+              case('>&')
                 redirects(num_redirects)%type = REDIR_DUP_OUT
-              else
+              case('<&')
+                redirects(num_redirects)%type = REDIR_DUP_IN
+              case('>>')
+                redirects(num_redirects)%type = REDIR_APPEND
+              case('<')
+                redirects(num_redirects)%type = REDIR_IN
+              case default  ! '>'
                 redirects(num_redirects)%type = REDIR_OUT
-              end if
+              end select
             end if
           else
             select case(trim(tok%value))
             case('<')
               redirects(num_redirects)%type = REDIR_IN
+            case('<&')
+              redirects(num_redirects)%type = REDIR_DUP_IN
             case('>')
               redirects(num_redirects)%type = REDIR_OUT
             case('>|')
@@ -434,12 +452,13 @@ contains
             call advance(state)
             tok = current_token(state)
             if (tok%token_type == TOKEN_WORD) then
-              ! For >&, check if the "filename" is actually a file descriptor number
-              if (redirects(num_redirects)%type == REDIR_DUP_OUT) then
+              ! For >& and <&, check if the "filename" is actually a file descriptor number
+              if (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
+                  redirects(num_redirects)%type == REDIR_DUP_IN) then
                 ! Try to parse as fd number
                 read(tok%value, *, iostat=io_stat) fd_num
                 if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
-                  ! It's a target fd like in 2>&1
+                  ! It's a target fd like in 2>&1 or 3<&0
                   redirects(num_redirects)%target_fd = fd_num
                 else
                   ! It's a filename (rare but possible)
@@ -791,6 +810,8 @@ contains
       select case(trim(tok%value))
       case('<')
         redirects(num_redirects)%type = REDIR_IN
+      case('<&')
+        redirects(num_redirects)%type = REDIR_DUP_IN
       case('>')
         redirects(num_redirects)%type = REDIR_OUT
       case('>|')
@@ -809,8 +830,9 @@ contains
       tok = current_token(state)
 
       if (tok%token_type == TOKEN_WORD) then
-        ! For >&, check if it's a file descriptor or filename
-        if (redirects(num_redirects)%type == REDIR_DUP_OUT) then
+        ! For >& and <&, check if it's a file descriptor or filename
+        if (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
+            redirects(num_redirects)%type == REDIR_DUP_IN) then
           read(tok%value, *, iostat=io_stat) fd_num
           if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
             redirects(num_redirects)%target_fd = fd_num
