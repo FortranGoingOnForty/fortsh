@@ -5,6 +5,7 @@
 module aliases
   use shell_types
   use iso_fortran_env, only: output_unit, error_unit
+  use io_helpers, only: write_stderr
   implicit none
 
 contains
@@ -33,7 +34,7 @@ contains
       shell%aliases(empty_slot)%command = command
       shell%num_aliases = shell%num_aliases + 1
     else
-      write(error_unit, '(a)') 'alias: too many aliases defined'
+      call write_stderr('alias: too many aliases defined')
     end if
   end subroutine
 
@@ -66,8 +67,8 @@ contains
         return
       end if
     end do
-    
-    write(error_unit, '(a)') 'unalias: ' // trim(alias_name) // ': not found'
+
+    call write_stderr('unalias: ' // trim(alias_name) // ': not found')
   end subroutine
 
   subroutine show_aliases(shell)
