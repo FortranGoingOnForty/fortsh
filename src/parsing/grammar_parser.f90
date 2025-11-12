@@ -331,7 +331,10 @@ contains
 
     do while (.true.)
       tok = current_token(state)
-      if (tok%token_type == TOKEN_WORD) then
+      ! Accept TOKEN_WORD, or TOKEN_KEYWORD if we already have a command (num_words > 0)
+      ! This allows "echo done" to work while preventing "done" from being a command
+      if (tok%token_type == TOKEN_WORD .or. &
+          (tok%token_type == TOKEN_KEYWORD .and. num_words > 0)) then
         ! Check if this is an assignment (VAR= followed by value)
         ! Only merge if first token (assignments come before commands)
         if (num_words == 0 .and. index(tok%value, '=') > 0 .and. index(tok%value, '=') == len_trim(tok%value)) then
@@ -452,9 +455,16 @@ contains
             call advance(state)
             tok = current_token(state)
             if (tok%token_type == TOKEN_WORD) then
-              ! For >& and <&, check if the "filename" is actually a file descriptor number
-              if (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
-                  redirects(num_redirects)%type == REDIR_DUP_IN) then
+              ! Check for >&- or <&- (close fd) syntax
+              if (trim(tok%value) == '-' .and. &
+                  (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
+                   redirects(num_redirects)%type == REDIR_DUP_IN)) then
+                ! This is n>&- or n<&- (close fd n)
+                redirects(num_redirects)%type = REDIR_CLOSE
+                call advance(state)
+              else if (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
+                       redirects(num_redirects)%type == REDIR_DUP_IN) then
+                ! For >& and <&, check if the "filename" is actually a file descriptor number
                 ! Try to parse as fd number
                 read(tok%value, *, iostat=io_stat) fd_num
                 if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
@@ -464,11 +474,12 @@ contains
                   ! It's a filename (rare but possible)
                   allocate(redirects(num_redirects)%filename, source=trim(tok%value))
                 end if
+                call advance(state)
               else
                 ! Regular filename for other redirects
                 allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+                call advance(state)
               end if
-              call advance(state)
             end if
           end if
         end if
@@ -830,20 +841,30 @@ contains
       tok = current_token(state)
 
       if (tok%token_type == TOKEN_WORD) then
-        ! For >& and <&, check if it's a file descriptor or filename
-        if (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
-            redirects(num_redirects)%type == REDIR_DUP_IN) then
+        ! Check for >&- or <&- (close fd) syntax
+        if (trim(tok%value) == '-' .and. &
+            (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
+             redirects(num_redirects)%type == REDIR_DUP_IN)) then
+          ! This is n>&- or n<&- (close fd n)
+          redirects(num_redirects)%type = REDIR_CLOSE
+          call advance(state)
+          tok = current_token(state)
+        else if (redirects(num_redirects)%type == REDIR_DUP_OUT .or. &
+                 redirects(num_redirects)%type == REDIR_DUP_IN) then
+          ! For >& and <&, check if it's a file descriptor or filename
           read(tok%value, *, iostat=io_stat) fd_num
           if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
             redirects(num_redirects)%target_fd = fd_num
           else
             allocate(redirects(num_redirects)%filename, source=trim(tok%value))
           end if
+          call advance(state)
+          tok = current_token(state)
         else
           allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+          call advance(state)
+          tok = current_token(state)
         end if
-        call advance(state)
-        tok = current_token(state)
       end if
     end do
 
