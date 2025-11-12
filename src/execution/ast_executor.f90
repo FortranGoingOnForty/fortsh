@@ -183,19 +183,65 @@ contains
         end if
 
         ! Set new positional parameters from function arguments
-        shell%num_positional = node%simple_cmd%num_words - 1  ! Exclude function name
-        if (shell%num_positional > 0) then
-          if (.not. allocated(shell%positional_params)) then
-            allocate(shell%positional_params(shell%num_positional))
-            shell%positional_params_capacity = shell%num_positional
-          else if (shell%positional_params_capacity < shell%num_positional) then
-            deallocate(shell%positional_params)
-            allocate(shell%positional_params(shell%num_positional))
-            shell%positional_params_capacity = shell%num_positional
-          end if
-          do j = 1, shell%num_positional
-            shell%positional_params(j) = trim(node%simple_cmd%words(j + 1))
-          end do
+        ! Need to expand arguments (variable expansion, command substitution, etc.)
+        if (node%simple_cmd%num_words > 1) then
+          ! Create temporary command to expand arguments
+          block
+            use executor, only: expand_tokens
+            type(command_t) :: temp_cmd
+            integer :: k
+
+            temp_cmd%num_tokens = node%simple_cmd%num_words - 1  ! Exclude function name
+            allocate(character(len=MAX_TOKEN_LEN) :: temp_cmd%tokens(temp_cmd%num_tokens))
+            allocate(temp_cmd%token_quoted(temp_cmd%num_tokens))
+            allocate(temp_cmd%token_escaped(temp_cmd%num_tokens))
+            allocate(temp_cmd%token_quote_type(temp_cmd%num_tokens))
+
+            ! Copy arguments (skip function name at index 1)
+            do k = 1, temp_cmd%num_tokens
+              temp_cmd%tokens(k) = trim(node%simple_cmd%words(k + 1))
+              if (allocated(node%simple_cmd%word_was_quoted) .and. k+1 <= size(node%simple_cmd%word_was_quoted)) then
+                temp_cmd%token_quoted(k) = node%simple_cmd%word_was_quoted(k + 1)
+              else
+                temp_cmd%token_quoted(k) = .false.
+              end if
+              if (allocated(node%simple_cmd%word_was_escaped) .and. k+1 <= size(node%simple_cmd%word_was_escaped)) then
+                temp_cmd%token_escaped(k) = node%simple_cmd%word_was_escaped(k + 1)
+              else
+                temp_cmd%token_escaped(k) = .false.
+              end if
+              if (allocated(node%simple_cmd%word_quote_type) .and. k+1 <= size(node%simple_cmd%word_quote_type)) then
+                temp_cmd%token_quote_type(k) = node%simple_cmd%word_quote_type(k + 1)
+              else
+                temp_cmd%token_quote_type(k) = QUOTE_NONE
+              end if
+            end do
+
+            ! Expand the tokens (command substitution, arithmetic, variables, etc.)
+            call expand_tokens(temp_cmd, shell)
+
+            ! Now use expanded tokens as positional parameters
+            shell%num_positional = temp_cmd%num_tokens
+            if (shell%num_positional > 0) then
+              if (.not. allocated(shell%positional_params)) then
+                allocate(shell%positional_params(shell%num_positional))
+                shell%positional_params_capacity = shell%num_positional
+              else if (shell%positional_params_capacity < shell%num_positional) then
+                deallocate(shell%positional_params)
+                allocate(shell%positional_params(shell%num_positional))
+                shell%positional_params_capacity = shell%num_positional
+              end if
+              do k = 1, shell%num_positional
+                shell%positional_params(k) = trim(temp_cmd%tokens(k))
+              end do
+            end if
+
+            ! Cleanup
+            if (allocated(temp_cmd%tokens)) deallocate(temp_cmd%tokens)
+            if (allocated(temp_cmd%token_quoted)) deallocate(temp_cmd%token_quoted)
+            if (allocated(temp_cmd%token_escaped)) deallocate(temp_cmd%token_escaped)
+            if (allocated(temp_cmd%token_quote_type)) deallocate(temp_cmd%token_quote_type)
+          end block
         else
           shell%num_positional = 0
         end if
