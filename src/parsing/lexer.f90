@@ -548,30 +548,13 @@ contains
             token_has_quoted_part = .false.
           end if
         else if (ch == '{' .or. ch == '}') then
-          ! Braces: Keep ONLY if inside ${
-          ! Check if current token ends with $ (for ${var})
-          if (token_len >= 1 .and. current_token(token_len:token_len) == '$') then
-            ! Just added $, now seeing { - this is ${ expansion - keep both
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
-            pos = pos + 1
-          else if (token_len >= 2 .and. index(current_token(1:token_len), '${') > 0) then
-            ! Already inside ${...} - keep braces
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
-            pos = pos + 1
-          else
-            ! Not in parameter expansion - end word, let brace be operator
-            call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                    token_start, pos-1, token_has_quoted_part, in_escape)
-            state = LEX_NORMAL
-            in_escape = .false.
-            token_has_quoted_part = .false.
+          ! Braces: Keep in word for brace expansion (e.g., {1,2,3} or file{a,b}.txt)
+          ! They're only command group operators when surrounded by whitespace
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = ch
           end if
+          pos = pos + 1
         else if (is_word_char(ch)) then
           ! Continue word
           if (token_len < MAX_TOKEN_LEN) then
