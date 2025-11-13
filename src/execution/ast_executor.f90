@@ -802,14 +802,17 @@ contains
   ! =====================================
 
   recursive function execute_for_node(node, shell) result(exit_status)
-    use variables, only: set_shell_variable
+    use variables, only: set_shell_variable, get_shell_variable
     use control_flow, only: push_control_block, pop_control_block, BLOCK_FOR
     use glob, only: glob_match, has_unescaped_glob_chars
+    use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, i, j, glob_count, word_idx
+    integer :: exit_status, i, j, glob_count, word_idx, k, split_count
     character(len=MAX_TOKEN_LEN) :: glob_matches(MAX_TOKEN_LEN)
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_words(:)
+    character(len=:), allocatable :: expanded_word, ifs_chars
+    character(len=MAX_TOKEN_LEN) :: split_words(MAX_TOKEN_LEN)
     integer :: total_words
 
     exit_status = 0
@@ -818,37 +821,51 @@ contains
       return
     end if
 
-    ! First, expand any glob patterns in the word list
+    ! Get IFS for word splitting
+    ifs_chars = get_shell_variable(shell, 'IFS')
+    if (.not. allocated(ifs_chars) .or. len_trim(ifs_chars) == 0) then
+      ifs_chars = ' ' // achar(9) // new_line('a')  ! Default: space, tab, newline
+    end if
+
+    ! First, expand variables and split on IFS, then expand globs
     allocate(expanded_words(MAX_TOKEN_LEN))
     total_words = 0
 
     do i = 1, node%for_loop%num_words
-      ! Check if this word contains glob characters
-      if (has_unescaped_glob_chars(trim(node%for_loop%words(i)))) then
-        ! Expand the glob pattern
-        call glob_match(trim(node%for_loop%words(i)), glob_matches, glob_count)
-        if (glob_count > 0) then
-          ! Add all matched files
-          do j = 1, glob_count
+      ! First expand variables (e.g., $*, $@, $var)
+      call expand_variables(trim(node%for_loop%words(i)), expanded_word, shell, was_quoted_in=.false.)
+
+      ! Split the expanded word on IFS characters
+      call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
+
+      ! Now process each split word for globs
+      do k = 1, split_count
+        if (has_unescaped_glob_chars(trim(split_words(k)))) then
+          ! Expand the glob pattern
+          call glob_match(trim(split_words(k)), glob_matches, glob_count)
+          if (glob_count > 0) then
+            ! Add all matched files
+            do j = 1, glob_count
+              if (total_words < MAX_TOKEN_LEN) then
+                total_words = total_words + 1
+                expanded_words(total_words) = glob_matches(j)
+              end if
+            end do
+          else
+            ! No matches - use the pattern literally
             if (total_words < MAX_TOKEN_LEN) then
               total_words = total_words + 1
-              expanded_words(total_words) = glob_matches(j)
+              expanded_words(total_words) = split_words(k)
             end if
-          end do
+          end if
         else
-          ! No matches - use the pattern literally
+          ! Not a glob pattern - use the word as-is
           if (total_words < MAX_TOKEN_LEN) then
             total_words = total_words + 1
-            expanded_words(total_words) = node%for_loop%words(i)
+            expanded_words(total_words) = split_words(k)
           end if
         end if
-      else
-        ! Not a glob pattern - use the word as-is
-        if (total_words < MAX_TOKEN_LEN) then
-          total_words = total_words + 1
-          expanded_words(total_words) = node%for_loop%words(i)
-        end if
-      end if
+      end do
     end do
 
     ! Push loop control block so break/continue can find it
@@ -1320,5 +1337,53 @@ contains
       end if
     end do
   end function is_ast_function
+
+  ! Split a string on IFS characters
+  subroutine split_on_ifs(str, ifs_chars, words, word_count)
+    character(len=*), intent(in) :: str
+    character(len=*), intent(in) :: ifs_chars
+    character(len=MAX_TOKEN_LEN), intent(out) :: words(MAX_TOKEN_LEN)
+    integer, intent(out) :: word_count
+    integer :: i, start, str_len
+    logical :: in_word
+    character(len=MAX_TOKEN_LEN) :: current_word
+
+    word_count = 0
+    current_word = ''
+    in_word = .false.
+    start = 1
+    str_len = len_trim(str)
+
+    ! Handle empty string
+    if (str_len == 0) then
+      return
+    end if
+
+    do i = 1, str_len
+      if (index(ifs_chars, str(i:i)) > 0) then
+        ! IFS character - end current word if in one
+        if (in_word) then
+          word_count = word_count + 1
+          if (word_count <= MAX_TOKEN_LEN) then
+            words(word_count) = current_word
+          end if
+          current_word = ''
+          in_word = .false.
+        end if
+      else
+        ! Non-IFS character - add to current word
+        current_word = trim(current_word) // str(i:i)
+        in_word = .true.
+      end if
+    end do
+
+    ! Add final word if any
+    if (in_word) then
+      word_count = word_count + 1
+      if (word_count <= MAX_TOKEN_LEN) then
+        words(word_count) = current_word
+      end if
+    end if
+  end subroutine split_on_ifs
 
 end module ast_executor
