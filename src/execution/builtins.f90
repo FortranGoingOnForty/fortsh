@@ -723,7 +723,7 @@ contains
     ! This avoids circular dependency issues
     shell%source_file = filename
     shell%should_source = .true.
-    shell%last_exit_status = 0
+    ! Don't set exit status here - will be set by the sourced file execution
   end subroutine
 
   subroutine builtin_history(cmd, shell)
@@ -2059,8 +2059,7 @@ contains
     integer :: return_code, iostat
 
     ! POSIX: return outside function/sourced script should fail
-    ! TODO: Also check for sourced script context
-    if (shell%function_depth == 0) then
+    if (shell%function_depth == 0 .and. shell%source_depth == 0) then
       write(error_unit, '(a)') 'return: can only return from a function or sourced script'
       shell%last_exit_status = 1
       return

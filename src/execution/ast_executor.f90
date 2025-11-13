@@ -601,6 +601,11 @@ contains
 
     case(LIST_SEP_AND)
       ! && - Execute right only if left succeeded
+      ! But first, handle any sourcing queued by the left side (e.g., dot command)
+      if (shell%should_source) then
+        call process_source_inline_ast(shell)
+        left_status = shell%last_exit_status
+      end if
       if (left_status == 0) then
         if (associated(node%list%right)) then
           exit_status = execute_ast_node(node%list%right, shell)
@@ -611,6 +616,11 @@ contains
 
     case(LIST_SEP_OR)
       ! || - Execute right only if left failed
+      ! But first, handle any sourcing queued by the left side (e.g., dot command)
+      if (shell%should_source) then
+        call process_source_inline_ast(shell)
+        left_status = shell%last_exit_status
+      end if
       if (left_status /= 0) then
         if (associated(node%list%right)) then
           exit_status = execute_ast_node(node%list%right, shell)
@@ -1230,6 +1240,9 @@ contains
       return
     end if
 
+    ! Increment source depth for return tracking
+    shell%source_depth = shell%source_depth + 1
+
     ! Execute each line in the file
     do
       read(file_unit, '(a)', iostat=iostat) input_line
@@ -1248,7 +1261,18 @@ contains
 
       ! Stop execution if exit command was encountered
       if (.not. shell%running) exit
+
+      ! Stop execution if return was called from sourced script
+      if (shell%function_return_pending .and. shell%source_depth > 0) exit
     end do
+
+    ! Decrement source depth
+    shell%source_depth = shell%source_depth - 1
+
+    ! Clear the return flag if we're exiting due to return in sourced script
+    if (shell%function_return_pending .and. shell%function_depth == 0) then
+      shell%function_return_pending = .false.
+    end if
 
     close(file_unit)
     shell%source_file = ''

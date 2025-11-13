@@ -728,6 +728,9 @@ contains
       return
     end if
 
+    ! Increment source depth for return tracking
+    shell%source_depth = shell%source_depth + 1
+
     ! Initialize function capture state
     in_function = .false.
     brace_depth = 0
@@ -859,7 +862,18 @@ contains
 
       ! Stop execution if exit command was encountered
       if (.not. shell%running) exit
+
+      ! Stop execution if return was called from sourced script
+      if (shell%function_return_pending .and. shell%source_depth > 0) exit
     end do
+
+    ! Decrement source depth
+    shell%source_depth = shell%source_depth - 1
+
+    ! Clear the return flag if we're exiting due to return in sourced script
+    if (shell%function_return_pending .and. shell%function_depth == 0) then
+      shell%function_return_pending = .false.
+    end if
 
     close(file_unit)
     shell%source_file = ''
