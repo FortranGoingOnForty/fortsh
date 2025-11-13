@@ -423,12 +423,34 @@ contains
             pos = pos + 1
             ! If paren_depth hits 0, we closed the ${...}
             if (paren_depth == 0) then
-              ! End of parameter expansion - finish token
-              call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                      token_start, pos-1, token_has_quoted_part, in_escape)
-              state = LEX_NORMAL
-              in_escape = .false.
-              token_has_quoted_part = .false.
+              ! Check if next character continues the word (e.g., ${A}${B})
+              ! Don't end token if next char is $ or other word character
+              if (pos <= input_len) then
+                next_ch = input(pos:pos)
+                ! If next character starts a new expansion or is alphanumeric, continue token
+                if (next_ch == '$' .or. next_ch == '{' .or. &
+                    (next_ch >= 'a' .and. next_ch <= 'z') .or. &
+                    (next_ch >= 'A' .and. next_ch <= 'Z') .or. &
+                    (next_ch >= '0' .and. next_ch <= '9') .or. &
+                    next_ch == '_' .or. next_ch == '-' .or. next_ch == '.') then
+                  ! Continue building the same token - don't end it yet
+                  ! state stays LEX_WORD
+                else
+                  ! End of parameter expansion - finish token
+                  call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                          token_start, pos-1, token_has_quoted_part, in_escape)
+                  state = LEX_NORMAL
+                  in_escape = .false.
+                  token_has_quoted_part = .false.
+                end if
+              else
+                ! End of input - finish token
+                call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                        token_start, pos-1, token_has_quoted_part, in_escape)
+                state = LEX_NORMAL
+                in_escape = .false.
+                token_has_quoted_part = .false.
+              end if
             end if
           else
             ! Inside ${ - keep EVERYTHING including spaces
