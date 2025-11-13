@@ -600,8 +600,8 @@ contains
         cmd%num_tokens = 2
       end block
       call execute_builtin_with_redirects(cmd, shell)
-    ! Check for alias expansion
-    else if (is_alias(shell, cmd%tokens(1))) then
+    ! Check for alias expansion (unless bypass_aliases is set by 'command' builtin)
+    else if (.not. shell%bypass_aliases .and. is_alias(shell, cmd%tokens(1))) then
       block
         character(len=:), allocatable :: alias_command, expanded_command
         character(len=4096) :: rest_of_command
