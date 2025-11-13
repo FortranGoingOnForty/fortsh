@@ -1993,9 +1993,9 @@ contains
       end if
     end do
 
-    ! No loop found
+    ! No loop found - POSIX: exit status should be 0, not 1
     write(error_unit, '(a)') 'break: not in a loop'
-    shell%last_exit_status = 1
+    shell%last_exit_status = 0
   end subroutine
 
   subroutine builtin_continue(cmd, shell)
@@ -2034,9 +2034,9 @@ contains
       end if
     end do
 
-    ! No loop found
+    ! No loop found - POSIX: exit status should be 0, not 1
     write(error_unit, '(a)') 'continue: not in a loop'
-    shell%last_exit_status = 1
+    shell%last_exit_status = 0
   end subroutine
 
   subroutine builtin_return(cmd, shell)
