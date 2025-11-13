@@ -132,6 +132,7 @@ module command_tree
   type :: for_data_t
     character(len=MAX_TOKEN_LEN) :: variable                  ! Loop variable
     character(len=MAX_TOKEN_LEN), allocatable :: words(:)     ! for x in word1 word2 ...
+    logical, allocatable :: words_was_quoted(:)               ! Track if each word was quoted
     integer :: num_words = 0
     type(command_node_t), pointer :: body => null()           ! Loop body
   end type for_data_t
@@ -268,11 +269,12 @@ contains
     node%while_loop%is_until = is_until
   end function create_while_loop
 
-  function create_for_loop(variable, words, num_words, body) result(node)
+  function create_for_loop(variable, words, num_words, body, quote_types) result(node)
     character(len=*), intent(in) :: variable
     character(len=*), intent(in) :: words(:)
     integer, intent(in) :: num_words
     type(command_node_t), pointer, intent(in) :: body
+    integer, intent(in), optional :: quote_types(:)
     type(command_node_t), pointer :: node
     integer :: i
 
@@ -281,9 +283,15 @@ contains
     allocate(node%for_loop)
     node%for_loop%variable = variable
     allocate(node%for_loop%words(num_words))
+    allocate(node%for_loop%words_was_quoted(num_words))
     node%for_loop%num_words = num_words
     do i = 1, num_words
       node%for_loop%words(i) = words(i)
+      if (present(quote_types)) then
+        node%for_loop%words_was_quoted(i) = (quote_types(i) /= QUOTE_NONE)
+      else
+        node%for_loop%words_was_quoted(i) = .false.
+      end if
     end do
     node%for_loop%body => body
   end function create_for_loop

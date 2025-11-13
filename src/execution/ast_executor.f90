@@ -832,6 +832,20 @@ contains
     total_words = 0
 
     do i = 1, node%for_loop%num_words
+      ! Special handling for quoted "$@" - each positional parameter becomes a separate word
+      if (trim(node%for_loop%words(i)) == '$@' .and. &
+          allocated(node%for_loop%words_was_quoted) .and. &
+          node%for_loop%words_was_quoted(i)) then
+        ! Quoted $@ - add each positional parameter as separate word without IFS splitting
+        do j = 1, shell%num_positional
+          if (total_words < MAX_TOKEN_LEN) then
+            total_words = total_words + 1
+            expanded_words(total_words) = shell%positional_params(j)
+          end if
+        end do
+        cycle  ! Skip normal expansion for this word
+      end if
+
       ! First expand variables (e.g., $*, $@, $var)
       call expand_variables(trim(node%for_loop%words(i)), expanded_word, shell, was_quoted_in=.false.)
 
