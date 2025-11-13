@@ -725,28 +725,88 @@ contains
   end subroutine
 
   subroutine builtin_source(cmd, shell)
+    use variables, only: get_shell_variable
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024) :: filename
-    logical :: file_exists
-    integer :: i
-    
+    character(len=1024) :: filename, path_var, dir, candidate
+    character(len=:), allocatable :: path_str
+    logical :: file_exists, found_in_path
+    integer :: i, path_start, path_end, path_len
+
     ! Check if filename provided
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'source: usage: source filename [arguments...]'
       shell%last_exit_status = 1
       return
     end if
-    
+
     filename = trim(cmd%tokens(2))
-    
-    ! Check if file exists and is readable
-    inquire(file=filename, exist=file_exists)
-    if (.not. file_exists) then
-      write(error_unit, '(a)') 'source: ' // trim(filename) // ': No such file or directory'
-      shell%last_exit_status = 1
-      return
+
+    ! POSIX: If filename doesn't contain '/', search PATH
+    if (index(filename, '/') == 0) then
+      ! Get PATH variable
+      path_str = get_shell_variable(shell, 'PATH')
+      if (allocated(path_str)) then
+        path_var = path_str
+      else
+        path_var = ''
+      end if
+      path_len = len_trim(path_var)
+
+      found_in_path = .false.
+      path_start = 1
+
+      ! Search each directory in PATH
+      do while (path_start <= path_len .and. .not. found_in_path)
+        ! Find next colon or end of string
+        path_end = index(path_var(path_start:), ':')
+        if (path_end == 0) then
+          path_end = path_len + 1
+        else
+          path_end = path_start + path_end - 1
+        end if
+
+        ! Extract directory
+        if (path_end > path_start) then
+          dir = trim(path_var(path_start:path_end-1))
+          ! Build candidate path
+          if (len_trim(dir) > 0) then
+            candidate = trim(dir) // '/' // trim(filename)
+          else
+            ! Empty PATH component means current directory
+            candidate = trim(filename)
+          end if
+
+          ! Check if candidate exists
+          inquire(file=candidate, exist=file_exists)
+          if (file_exists) then
+            filename = candidate
+            found_in_path = .true.
+          end if
+        end if
+
+        ! Move to next PATH component
+        path_start = path_end + 1
+      end do
+
+      ! If not found in PATH, try current directory as fallback
+      if (.not. found_in_path) then
+        inquire(file=filename, exist=file_exists)
+        if (.not. file_exists) then
+          write(error_unit, '(a)') 'source: ' // trim(cmd%tokens(2)) // ': No such file or directory'
+          shell%last_exit_status = 1
+          return
+        end if
+      end if
+    else
+      ! Contains '/' - use as-is, no PATH search
+      inquire(file=filename, exist=file_exists)
+      if (.not. file_exists) then
+        write(error_unit, '(a)') 'source: ' // trim(filename) // ': No such file or directory'
+        shell%last_exit_status = 1
+        return
+      end if
     end if
     
     ! Set positional parameters from remaining arguments
