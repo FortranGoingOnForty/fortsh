@@ -558,10 +558,12 @@ contains
   subroutine builtin_echo(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i
-    logical :: first
+    integer :: i, j, len_token
+    logical :: first, suppress_newline
+    character(len=:), allocatable :: processed
+    character(len=MAX_TOKEN_LEN) :: token
 
-    ! Simple echo implementation - uses C FD-aware I/O
+    ! POSIX echo implementation - interprets backslash escape sequences
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens < 1) then
       call write_stdout('')
       shell%last_exit_status = 0
@@ -569,15 +571,63 @@ contains
     end if
 
     first = .true.
+    suppress_newline = .false.
+
     do i = 2, cmd%num_tokens
       ! POSIX: Skip empty tokens (unquoted empty variables disappear)
       if (len_trim(cmd%tokens(i)) == 0) cycle
 
       if (.not. first) call write_stdout_nonl(' ')
-      call write_stdout_nonl(trim(cmd%tokens(i)))
+
+      ! Process escape sequences in token
+      token = cmd%tokens(i)
+      len_token = len_trim(token)
+      processed = ''
+      j = 1
+
+      do while (j <= len_token)
+        if (token(j:j) == '\' .and. j < len_token) then
+          ! Escape sequence
+          j = j + 1
+          select case (token(j:j))
+            case ('a')
+              processed = processed // achar(7)  ! Alert (bell)
+            case ('b')
+              processed = processed // achar(8)  ! Backspace
+            case ('c')
+              suppress_newline = .true.
+              exit  ! Stop processing
+            case ('f')
+              processed = processed // achar(12) ! Form feed
+            case ('n')
+              processed = processed // new_line('a')  ! Newline
+            case ('r')
+              processed = processed // achar(13) ! Carriage return
+            case ('t')
+              processed = processed // achar(9)  ! Tab
+            case ('v')
+              processed = processed // achar(11) ! Vertical tab
+            case ('\')
+              processed = processed // '\'       ! Backslash
+            case default
+              ! Unknown escape - keep literal backslash and character
+              processed = processed // '\' // token(j:j)
+          end select
+          j = j + 1
+        else
+          ! Regular character
+          processed = processed // token(j:j)
+          j = j + 1
+        end if
+      end do
+
+      call write_stdout_nonl(processed)
       first = .false.
+
+      if (suppress_newline) exit
     end do
-    call write_stdout('')
+
+    if (.not. suppress_newline) call write_stdout('')
 
     shell%last_exit_status = 0
   end subroutine
