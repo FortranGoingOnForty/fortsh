@@ -1961,9 +1961,11 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: break_count, i, iostat
+    logical :: invalid_count
 
     ! Default to breaking 1 level
     break_count = 1
+    invalid_count = .false.
 
     ! Parse optional numeric argument
     if (cmd%num_tokens > 1) then
@@ -1975,8 +1977,8 @@ contains
       end if
       if (break_count < 1) then
         write(error_unit, '(a)') 'break: count must be >= 1'
-        shell%last_exit_status = 1
-        return
+        invalid_count = .true.
+        break_count = 1  ! Still break, but at level 1
       end if
     end if
 
@@ -1988,7 +1990,12 @@ contains
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
         shell%control_stack(i)%break_requested = .true.
         shell%control_stack(i)%break_level = break_count
-        shell%last_exit_status = 0
+        ! POSIX: invalid count still breaks loop, but with exit status 1
+        if (invalid_count) then
+          shell%last_exit_status = 1
+        else
+          shell%last_exit_status = 0
+        end if
         return
       end if
     end do
@@ -2002,9 +2009,11 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: continue_count, i, iostat
+    logical :: invalid_count
 
     ! Default to continuing 1 level
     continue_count = 1
+    invalid_count = .false.
 
     ! Parse optional numeric argument
     if (cmd%num_tokens > 1) then
@@ -2016,8 +2025,8 @@ contains
       end if
       if (continue_count < 1) then
         write(error_unit, '(a)') 'continue: count must be >= 1'
-        shell%last_exit_status = 1
-        return
+        invalid_count = .true.
+        continue_count = 1  ! Still continue, but at level 1
       end if
     end if
 
@@ -2029,7 +2038,12 @@ contains
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
         shell%control_stack(i)%continue_requested = .true.
         shell%control_stack(i)%continue_level = continue_count
-        shell%last_exit_status = 0
+        ! POSIX: invalid count still continues loop, but with exit status 1
+        if (invalid_count) then
+          shell%last_exit_status = 1
+        else
+          shell%last_exit_status = 0
+        end if
         return
       end if
     end do
