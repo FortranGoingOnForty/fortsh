@@ -493,7 +493,7 @@ contains
     integer :: content_start, content_end, next_cmd_start
     character(len=256) :: delimiter
     character(len=4096) :: heredoc_content
-    logical :: quoted_delimiter
+    logical :: quoted_delimiter, strip_tabs
 
     ! write(error_unit, '(A,A,A)') 'DEBUG: preprocess input=|', input(1:min(200,len_trim(input))), '|'
 
@@ -505,8 +505,16 @@ contains
       return  ! No heredoc
     end if
 
-    ! Skip spaces after <<
-    j = i + 2
+    ! Check for <<- (strip tabs)
+    strip_tabs = .false.
+    if (i + 2 <= len_trim(input) .and. input(i+2:i+2) == '-') then
+      strip_tabs = .true.
+      j = i + 3
+    else
+      j = i + 2
+    end if
+
+    ! Skip spaces after << or <<-
     do while (j <= len_trim(input) .and. input(j:j) == ' ')
       j = j + 1
     end do
@@ -600,11 +608,43 @@ contains
       heredoc_content = ''
     end if
 
+    ! Strip leading tabs if requested
+    if (strip_tabs) then
+      block
+        integer :: k, m, line_pos
+        character(len=4096) :: stripped_content
+        logical :: at_line_start
+
+        stripped_content = ''
+        k = 1
+        m = 1
+        at_line_start = .true.
+
+        do while (k <= len_trim(heredoc_content))
+          if (at_line_start .and. heredoc_content(k:k) == char(9)) then
+            ! Skip leading tab
+            k = k + 1
+          else
+            ! Copy character
+            at_line_start = .false.
+            stripped_content(m:m) = heredoc_content(k:k)
+            if (heredoc_content(k:k) == char(10)) then
+              at_line_start = .true.
+            end if
+            m = m + 1
+            k = k + 1
+          end if
+        end do
+
+        heredoc_content = stripped_content
+      end block
+    end if
 
     ! Store heredoc content in shell state
     shell%pending_heredoc = trim(heredoc_content)
     shell%pending_heredoc_delimiter = trim(delimiter)
     shell%pending_heredoc_quoted = quoted_delimiter
+    shell%pending_heredoc_strip_tabs = strip_tabs
     shell%has_pending_heredoc = .true.
 
     ! Return the command without the heredoc content

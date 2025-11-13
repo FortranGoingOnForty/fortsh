@@ -85,6 +85,7 @@ module command_tree
     ! Heredoc support (delimiter only, content handled at execution)
     character(len=MAX_TOKEN_LEN) :: heredoc_delimiter = ''    ! Delimiter word (EOF)
     logical :: heredoc_quoted = .false.                       ! Was delimiter quoted? (suppress expansion)
+    logical :: heredoc_strip_tabs = .false.                   ! True for <<- (strip leading tabs)
   end type simple_command_data_t
 
   ! =====================================

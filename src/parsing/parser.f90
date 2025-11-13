@@ -1532,22 +1532,27 @@ contains
     
   end subroutine
 
-  subroutine read_heredoc(delimiter, content, shell)
+  subroutine read_heredoc(delimiter, content, shell, strip_tabs)
     use shell_types, only: shell_state_t
     use variables, only: get_shell_variable
     character(len=*), intent(in) :: delimiter
     character(len=:), allocatable, intent(out) :: content
     type(shell_state_t), intent(inout) :: shell
+    logical, intent(in), optional :: strip_tabs
 
     character(len=MAX_TOKEN_LEN) :: line
     character(len=MAX_HEREDOC_LEN) :: buffer
-    integer :: iostat, pos
-    logical :: should_expand
+    integer :: iostat, pos, tab_pos
+    logical :: should_expand, do_strip_tabs
+
+    ! Determine if we should strip tabs
+    do_strip_tabs = .false.
+    if (present(strip_tabs)) do_strip_tabs = strip_tabs
 
     ! Check if we have pending heredoc content from -c flag
     if (shell%has_pending_heredoc .and. &
         trim(shell%pending_heredoc_delimiter) == trim(delimiter)) then
-      ! Use the pre-stored content
+      ! Use the pre-stored content (tabs already stripped by preprocess_heredocs_for_c if needed)
       buffer = trim(shell%pending_heredoc)
 
       ! Check if we should expand variables
@@ -1566,6 +1571,7 @@ contains
       shell%pending_heredoc = ''
       shell%pending_heredoc_delimiter = ''
       shell%pending_heredoc_quoted = .false.
+      shell%pending_heredoc_strip_tabs = .false.
       return
     end if
 
@@ -1574,24 +1580,33 @@ contains
     pos = 1
 
     write(*, '(a)', advance='no') '> '
-    
+
     do
       read(*, '(a)', iostat=iostat) line
       if (iostat /= 0) exit
-      
+
       if (trim(line) == trim(delimiter)) exit
-      
+
+      ! Strip leading tabs if requested
+      if (do_strip_tabs) then
+        tab_pos = 1
+        do while (tab_pos <= len_trim(line) .and. line(tab_pos:tab_pos) == char(9))
+          tab_pos = tab_pos + 1
+        end do
+        line = line(tab_pos:)
+      end if
+
       if (pos > 1) then
         buffer(pos:pos) = char(10)  ! newline
         pos = pos + 1
       end if
-      
+
       buffer(pos:pos+len_trim(line)-1) = trim(line)
       pos = pos + len_trim(line)
-      
+
       write(*, '(a)', advance='no') '> '
     end do
-    
+
     allocate(character(len=pos-1) :: content)
     content = buffer(:pos-1)
   end subroutine
@@ -1658,6 +1673,35 @@ contains
         end if
       else
         output(j:j) = input(i:i)
+        j = j + 1
+        i = i + 1
+      end if
+    end do
+  end function
+
+  ! Strip leading tabs from each line in heredoc content
+  function strip_leading_tabs(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=MAX_HEREDOC_LEN) :: output
+    integer :: i, j, line_start
+    logical :: at_line_start
+
+    output = ''
+    i = 1
+    j = 1
+    at_line_start = .true.
+
+    do while (i <= len_trim(input))
+      if (at_line_start .and. input(i:i) == char(9)) then
+        ! Skip leading tab
+        i = i + 1
+      else
+        ! Copy character
+        at_line_start = .false.
+        output(j:j) = input(i:i)
+        if (input(i:i) == char(10)) then
+          at_line_start = .true.
+        end if
         j = j + 1
         i = i + 1
       end if

@@ -294,6 +294,7 @@ contains
     integer :: quote_types(MAX_TOKENS), word_lens(MAX_TOKENS)
     character(len=MAX_TOKEN_LEN) :: saved_heredoc_delimiter
     logical :: saved_heredoc_quoted
+    logical :: saved_heredoc_strip_tabs
     logical :: has_heredoc
     type(redirection_t) :: redirects(10)
     integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos
@@ -307,6 +308,7 @@ contains
     word_lens = 0
     has_heredoc = .false.
     saved_heredoc_quoted = .false.
+    saved_heredoc_strip_tabs = .false.
     saved_heredoc_delimiter = ''
 
     ! Check for function definition: name() { ... }
@@ -487,6 +489,21 @@ contains
                 has_heredoc = .true.
                 saved_heredoc_delimiter = delimiter
                 saved_heredoc_quoted = delim_tok%quoted
+                saved_heredoc_strip_tabs = .false.
+                call advance(state)
+                ! Don't add as regular redirect
+                num_redirects = num_redirects - 1
+              end if
+            case('<<-')
+              ! Heredoc with tab stripping - store delimiter and set strip_tabs flag
+              call advance(state)
+              delim_tok = current_token(state)
+              if (delim_tok%token_type == TOKEN_WORD) then
+                delimiter = trim(delim_tok%value)
+                has_heredoc = .true.
+                saved_heredoc_delimiter = delimiter
+                saved_heredoc_quoted = delim_tok%quoted
+                saved_heredoc_strip_tabs = .true.
                 call advance(state)
                 ! Don't add as regular redirect
                 num_redirects = num_redirects - 1
@@ -494,7 +511,7 @@ contains
             end select
           end if
 
-          if (trim(tok%value) /= '<<') then
+          if (trim(tok%value) /= '<<' .and. trim(tok%value) /= '<<-') then
             call advance(state)
             tok = current_token(state)
             if (tok%token_type == TOKEN_WORD) then
@@ -547,6 +564,7 @@ contains
         if (has_heredoc) then
           node%simple_cmd%heredoc_delimiter = saved_heredoc_delimiter
           node%simple_cmd%heredoc_quoted = saved_heredoc_quoted
+          node%simple_cmd%heredoc_strip_tabs = saved_heredoc_strip_tabs
         end if
 
         if (num_redirects > 0) then
