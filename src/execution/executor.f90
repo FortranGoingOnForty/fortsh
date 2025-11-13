@@ -2189,6 +2189,12 @@ contains
     ! Check if we have enough tokens
     if (cmd%num_tokens < 1) return
 
+    ! IMPORTANT: Don't treat quoted strings as function definitions
+    ! If the first token is quoted, it cannot be a function definition
+    if (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1) then
+      if (cmd%token_quoted(1)) return
+    end if
+
     ! Reconstruct the full command to analyze it
     call reconstruct_command_from_tokens(cmd, reconstructed)
 
@@ -2200,6 +2206,11 @@ contains
     ! Extract function name (everything before ())
     func_name = adjustl(reconstructed(1:paren_pos-1))
     if (len_trim(func_name) == 0) return
+
+    ! IMPORTANT: Function names cannot contain spaces
+    ! This prevents "echo 'a() { }'" from being treated as a function definition
+    ! (it would reconstruct to "echo a() { }" with func_name="echo a")
+    if (index(func_name, ' ') > 0) return
 
     ! Check if there's a { after the ()
     brace_start = index(reconstructed(paren_pos:), '{')
