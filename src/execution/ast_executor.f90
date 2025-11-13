@@ -281,6 +281,12 @@ contains
           deallocate(old_params)
         end if
 
+        ! POSIX: exit in function should exit shell, not just return from function
+        ! Preserve shell%last_exit_status which was set by builtin_exit
+        if (.not. shell%running) then
+          exit_status = shell%last_exit_status
+        end if
+
         return
       end if
     end do
