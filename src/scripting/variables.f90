@@ -59,7 +59,8 @@ contains
         end if
         return
       case ('IFS')
-        shell%ifs = value
+        shell%ifs = value(1:actual_len)
+        shell%ifs_len = actual_len
         ! Don't return - continue to add IFS to variables array too
         ! This allows checking if IFS was explicitly set vs using default
       case ('HISTFILE')
@@ -92,7 +93,7 @@ contains
           end if
           return
         end if
-        shell%variables(i)%value = value
+        shell%variables(i)%value = value(1:actual_len)
         shell%variables(i)%value_len = actual_len  ! Store actual length
         ! If exported, update environment
         if (shell%variables(i)%exported) then
@@ -116,7 +117,7 @@ contains
     ! Add new variable
     if (empty_slot > 0) then
       shell%variables(empty_slot)%name = name
-      shell%variables(empty_slot)%value = value
+      shell%variables(empty_slot)%value = value(1:actual_len)
       shell%variables(empty_slot)%value_len = actual_len  ! Store actual length
       shell%num_variables = shell%num_variables + 1
     end if
@@ -205,8 +206,12 @@ contains
         call get_all_positional_params(shell, value, .false.)
         return
       case ('IFS')
-        ! Internal field separator
-        value = shell%ifs
+        ! Internal field separator - use ifs_len to preserve whitespace
+        if (shell%ifs_len > 0) then
+          value = shell%ifs(1:shell%ifs_len)
+        else
+          value = ''
+        end if
         return
       case ('PS1')
         value = shell%ps1
@@ -249,7 +254,12 @@ contains
     ! Handle regular shell variables
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
-        value = shell%variables(i)%value
+        ! Use value_len to preserve trailing whitespace
+        if (shell%variables(i)%value_len > 0) then
+          value = shell%variables(i)%value(1:shell%variables(i)%value_len)
+        else
+          value = shell%variables(i)%value
+        end if
         return
       end if
     end do

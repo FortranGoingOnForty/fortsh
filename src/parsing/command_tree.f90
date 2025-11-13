@@ -73,6 +73,7 @@ module command_tree
   ! =====================================
   type :: simple_command_data_t
     character(len=MAX_TOKEN_LEN), allocatable :: words(:)     ! Command words
+    integer, allocatable :: word_lengths(:)                   ! Actual length of each word (for trailing space preservation)
     logical, allocatable :: word_was_quoted(:)                ! Track quoted tokens for old executor
     logical, allocatable :: word_was_escaped(:)               ! Track escaped tokens (prevent glob expansion)
     integer, allocatable :: word_quote_type(:)                ! Track quote type (QUOTE_* constant)
@@ -346,6 +347,7 @@ contains
     case(NODE_SIMPLE)
       if (associated(node%simple_cmd)) then
         if (allocated(node%simple_cmd%words)) deallocate(node%simple_cmd%words)
+        if (allocated(node%simple_cmd%word_lengths)) deallocate(node%simple_cmd%word_lengths)
         if (allocated(node%simple_cmd%redirects)) deallocate(node%simple_cmd%redirects)
         if (allocated(node%simple_cmd%assignments)) deallocate(node%simple_cmd%assignments)
         deallocate(node%simple_cmd)

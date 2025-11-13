@@ -291,7 +291,7 @@ contains
     type(command_node_t), pointer :: node, func_body
     character(len=MAX_TOKEN_LEN) :: words(MAX_TOKENS), func_name, delimiter, merged_word
     logical :: was_quoted(MAX_TOKENS), was_escaped(MAX_TOKENS)
-    integer :: quote_types(MAX_TOKENS)
+    integer :: quote_types(MAX_TOKENS), word_lens(MAX_TOKENS)
     character(len=MAX_TOKEN_LEN) :: saved_heredoc_delimiter
     logical :: saved_heredoc_quoted
     logical :: has_heredoc
@@ -304,6 +304,7 @@ contains
     was_quoted = .false.
     was_escaped = .false.
     quote_types = QUOTE_NONE
+    word_lens = 0
     has_heredoc = .false.
     saved_heredoc_quoted = .false.
     saved_heredoc_delimiter = ''
@@ -343,18 +344,40 @@ contains
           (tok%token_type == TOKEN_KEYWORD .and. num_words > 0)) then
         ! Check if this is an assignment (VAR= followed by value)
         ! Only merge if first token (assignments come before commands)
-        if (num_words == 0 .and. index(tok%value, '=') > 0 .and. index(tok%value, '=') == len_trim(tok%value)) then
+        ! Use actual token length (end_pos - start_pos + 1) instead of len_trim to preserve whitespace
+        if (num_words == 0 .and. index(tok%value, '=') > 0 .and. &
+            index(tok%value, '=') == (tok%end_pos - tok%start_pos + 1)) then
           ! This ends with = , check if next token is the value
           call advance(state)
           next_tok = current_token(state)
           if (next_tok%token_type == TOKEN_WORD) then
             ! Merge: VAR= + value → VAR=value
-            merged_word = trim(tok%value) // trim(next_tok%value)
+            ! For quoted tokens, preserve whitespace by using actual token length
+            if (next_tok%quoted) then
+              ! Quoted value - preserve full content including trailing whitespace
+              ! Calculate actual length: len(VAR=) + actual_value_length
+              ! Subtract 2 for quotes since lexer already stripped them from value
+              merged_word = trim(tok%value) // next_tok%value(1:next_tok%end_pos - next_tok%start_pos + 1 - 2)
+            else
+              ! Unquoted value - use trim as before
+              merged_word = trim(tok%value) // trim(next_tok%value)
+            end if
             if (num_words < MAX_TOKENS) then
               num_words = num_words + 1
               words(num_words) = merged_word
               was_quoted(num_words) = next_tok%quoted
               was_escaped(num_words) = next_tok%escaped
+              quote_types(num_words) = next_tok%quote_type
+              ! Calculate actual word length
+              if (next_tok%quoted) then
+                ! Quoted value: length = len(VAR=) + actual_value_length
+                ! Subtract 2 from position calculation because end_pos/start_pos include the quotes
+                ! but the token value has quotes stripped
+                word_lens(num_words) = len_trim(tok%value) + (next_tok%end_pos - next_tok%start_pos + 1 - 2)
+              else
+                ! Unquoted value: use len_trim of merged result
+                word_lens(num_words) = len_trim(merged_word)
+              end if
             end if
             call advance(state)
           else
@@ -365,16 +388,30 @@ contains
               was_quoted(num_words) = tok%quoted
               was_escaped(num_words) = tok%escaped
               quote_types(num_words) = tok%quote_type
+              ! For quoted tokens, subtract 2 for quotes; for unquoted, use full length
+              if (tok%quoted) then
+                word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
+              else
+                word_lens(num_words) = tok%end_pos - tok%start_pos + 1
+              end if
             end if
           end if
         else
           ! Regular word
           if (num_words < MAX_TOKENS) then
             num_words = num_words + 1
+            ! For quoted tokens, preserve whitespace - just use full token value
+            ! The lexer already stripped quotes and preserved content
             words(num_words) = tok%value
             was_quoted(num_words) = tok%quoted
             was_escaped(num_words) = tok%escaped
             quote_types(num_words) = tok%quote_type
+            ! For quoted tokens, subtract 2 for quotes; for unquoted, use full length
+            if (tok%quoted) then
+              word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
+            else
+              word_lens(num_words) = tok%end_pos - tok%start_pos + 1
+            end if
           end if
           call advance(state)
         end if
@@ -503,6 +540,8 @@ contains
         node%simple_cmd%word_was_escaped(1:num_words) = was_escaped(1:num_words)
         allocate(node%simple_cmd%word_quote_type(num_words))
         node%simple_cmd%word_quote_type(1:num_words) = quote_types(1:num_words)
+        allocate(node%simple_cmd%word_lengths(num_words))
+        node%simple_cmd%word_lengths(1:num_words) = word_lens(1:num_words)
 
         ! Store heredoc delimiter if present
         if (has_heredoc) then

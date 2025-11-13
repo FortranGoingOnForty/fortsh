@@ -107,6 +107,7 @@ module shell_types
     character(len=:), allocatable :: tokens(:)
     integer :: num_tokens = 0
     ! Token metadata arrays - track per-token properties from lexer
+    integer, allocatable :: token_lengths(:)  ! Actual length of each token (for trailing space preservation)
     logical, allocatable :: token_quoted(:)   ! Was token quoted? (prevents field splitting)
     logical, allocatable :: token_escaped(:)  ! Was token escaped? (prevents glob expansion)
     integer, allocatable :: token_quote_type(:)  ! Quote type for each token (QUOTE_* constant)
@@ -344,6 +345,7 @@ module shell_types
     integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting
     character(len=256) :: ifs = ' \t\n'       ! $IFS (internal field separator)
+    integer :: ifs_len = 0                    ! Actual length of IFS (preserves trailing spaces)
     ! History control
     character(len=MAX_PATH_LEN) :: histfile = ''  ! $HISTFILE (history file path)
     integer :: histsize = 1000                ! $HISTSIZE (max commands in memory)

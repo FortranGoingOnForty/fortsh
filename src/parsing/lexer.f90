@@ -127,7 +127,7 @@ contains
     character(len=1) :: ch, next_ch
     character(len=MAX_TOKEN_LEN) :: current_token
     integer :: token_len, paren_depth
-    logical :: in_escape, continuing_word
+    logical :: in_escape, continuing_word, token_has_quoted_part
 
     num_tokens = 0
     pos = 1
@@ -139,6 +139,7 @@ contains
     in_escape = .false.
     paren_depth = 0
     continuing_word = .false.
+    token_has_quoted_part = .false.
 
     do while (pos <= input_len .and. num_tokens < size(tokens))
       ch = input(pos:pos)
@@ -390,9 +391,10 @@ contains
             if (paren_depth == 0) then
               ! End of command substitution - finish token
               call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                      token_start, pos-1, .false., in_escape)
+                                      token_start, pos-1, token_has_quoted_part, in_escape)
               state = LEX_NORMAL
               in_escape = .false.
+              token_has_quoted_part = .false.
             end if
           else
             ! Inside $() - keep EVERYTHING including spaces
@@ -423,9 +425,10 @@ contains
             if (paren_depth == 0) then
               ! End of parameter expansion - finish token
               call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                      token_start, pos-1, .false., in_escape)
+                                      token_start, pos-1, token_has_quoted_part, in_escape)
               state = LEX_NORMAL
               in_escape = .false.
+              token_has_quoted_part = .false.
             end if
           else
             ! Inside ${ - keep EVERYTHING including spaces
@@ -446,6 +449,7 @@ contains
           ! Quote in middle of word - continue building the same token
           ! Mark that we're continuing a word so quote handler doesn't reset the token
           continuing_word = .true.
+          token_has_quoted_part = .true.  ! Track that this word contains quoted content
           ! Transition to appropriate quote state
           if (ch == "'") then
             state = LEX_IN_SINGLE_QUOTE
@@ -463,9 +467,10 @@ contains
           else
             ! End word, let # start a comment
             call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                    token_start, pos-1, .false., in_escape)
+                                    token_start, pos-1, token_has_quoted_part, in_escape)
             state = LEX_NORMAL
             in_escape = .false.
+            token_has_quoted_part = .false.
           end if
         else if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
           ! $( for command/arithmetic substitution - keep in word
@@ -515,9 +520,10 @@ contains
           else
             ! Not in substitution - end word, let paren be operator
             call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                    token_start, pos-1, .false., in_escape)
+                                    token_start, pos-1, token_has_quoted_part, in_escape)
             state = LEX_NORMAL
             in_escape = .false.
+            token_has_quoted_part = .false.
           end if
         else if (ch == '{' .or. ch == '}') then
           ! Braces: Keep ONLY if inside ${
@@ -539,9 +545,10 @@ contains
           else
             ! Not in parameter expansion - end word, let brace be operator
             call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                    token_start, pos-1, .false., in_escape)
+                                    token_start, pos-1, token_has_quoted_part, in_escape)
             state = LEX_NORMAL
             in_escape = .false.
+            token_has_quoted_part = .false.
           end if
         else if (is_word_char(ch)) then
           ! Continue word
@@ -553,9 +560,10 @@ contains
         else
           ! End of word
           call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                  token_start, pos-1, .false., in_escape)
+                                  token_start, pos-1, token_has_quoted_part, in_escape)
           state = LEX_NORMAL
           in_escape = .false.
+          token_has_quoted_part = .false.
           ! Don't increment pos, let NORMAL state handle this character
         end if
 
@@ -679,7 +687,7 @@ contains
     ! Flush any remaining token
     if (state == LEX_IN_WORD .and. token_len > 0) then
       call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                              token_start, input_len, .false., in_escape)
+                              token_start, input_len, token_has_quoted_part, in_escape)
     else if (state == LEX_IN_SINGLE_QUOTE .or. state == LEX_IN_DOUBLE_QUOTE) then
       ! Unterminated quote - add as word with error marker
       if (state == LEX_IN_SINGLE_QUOTE) then
