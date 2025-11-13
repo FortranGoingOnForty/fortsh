@@ -54,22 +54,26 @@ contains
     end do
   end function
 
-  subroutine unset_alias(shell, alias_name)
+  function unset_alias(shell, alias_name) result(found)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: alias_name
+    logical :: found
     integer :: i
-    
+
+    found = .false.
+
     do i = 1, size(shell%aliases)
       if (trim(shell%aliases(i)%name) == trim(alias_name)) then
         shell%aliases(i)%name = ''
         shell%aliases(i)%command = ''
         shell%num_aliases = shell%num_aliases - 1
+        found = .true.
         return
       end if
     end do
 
     call write_stderr('unalias: ' // trim(alias_name) // ': not found')
-  end subroutine
+  end function
 
   subroutine show_aliases(shell)
     type(shell_state_t), intent(in) :: shell

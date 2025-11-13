@@ -1195,6 +1195,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i
+    logical :: found, any_not_found
 
     if (cmd%num_tokens < 2) then
       call write_stderr('unalias: usage: unalias name...')
@@ -1202,12 +1203,19 @@ contains
       return
     end if
 
+    any_not_found = .false.
+
     ! Remove each specified alias
     do i = 2, cmd%num_tokens
-      call unset_alias(shell, trim(cmd%tokens(i)))
+      found = unset_alias(shell, trim(cmd%tokens(i)))
+      if (.not. found) any_not_found = .true.
     end do
 
-    shell%last_exit_status = 0
+    if (any_not_found) then
+      shell%last_exit_status = 1
+    else
+      shell%last_exit_status = 0
+    end if
   end subroutine
 
   subroutine builtin_abbr(cmd, shell)
