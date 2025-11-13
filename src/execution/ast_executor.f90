@@ -387,6 +387,29 @@ contains
 
     exit_status = shell%last_exit_status
 
+    ! Check if fatal expansion error occurred (e.g., set -u with undefined variable)
+    if (shell%fatal_expansion_error) then
+      shell%fatal_expansion_error = .false.  ! Reset flag
+      ! POSIX: In non-interactive shells, exit the shell entirely
+      if (.not. shell%is_interactive) then
+        shell%running = .false.
+      end if
+      ! Exit status was already set by expansion code (usually 127)
+      ! Just clean up and return
+      if (has_redirects) then
+        call restore_fds()
+      end if
+      if (allocated(temp_pipeline%commands)) then
+        if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
+        if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
+        if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
+        if (allocated(temp_pipeline%commands(1)%token_quote_type)) deallocate(temp_pipeline%commands(1)%token_quote_type)
+        if (allocated(temp_pipeline%commands(1)%token_lengths)) deallocate(temp_pipeline%commands(1)%token_lengths)
+        deallocate(temp_pipeline%commands)
+      end if
+      return
+    end if
+
     ! Restore file descriptors if we applied any redirections
     if (has_redirects) then
       call restore_fds()
