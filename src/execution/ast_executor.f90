@@ -534,8 +534,9 @@ contains
         ! Close all pipe fds
         call close_all_pipes(pipefd, num_pipes)
 
-        ! POSIX: Traps are NOT inherited by subshells (including pipeline commands)
-        shell%num_traps = 0
+        ! POSIX: Traps should remain visible in subshells for display by trap builtin
+        ! They won't be executed because each process has separate signal handlers
+        ! Don't clear shell%num_traps - keep traps visible for display
 
         ! Execute command
         status = execute_ast_node(node%pipeline%commands(i), shell)
@@ -1032,8 +1033,9 @@ contains
     pid = c_fork()
     if (pid == 0) then
       ! Child process - execute commands in subshell
-      ! POSIX: Traps are NOT inherited by subshells
-      shell%num_traps = 0
+      ! POSIX: Traps should remain visible in subshells for display by trap builtin
+      ! They won't be executed because each process has separate signal handlers
+      ! Don't clear shell%num_traps - keep traps visible for display
 
       ! Apply redirections in child process
       if (node%num_redirects > 0) then
