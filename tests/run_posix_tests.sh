@@ -50,6 +50,7 @@ posix_compliance_test.sh
 posix_compliance_extended.sh
 posix_compliance_builtins.sh
 posix_compliance_advanced.sh
+posix_compliance_gaps.sh
 "
 
 # Print header
