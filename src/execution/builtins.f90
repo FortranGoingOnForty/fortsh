@@ -570,6 +570,9 @@ contains
 
     first = .true.
     do i = 2, cmd%num_tokens
+      ! POSIX: Skip empty tokens (unquoted empty variables disappear)
+      if (len_trim(cmd%tokens(i)) == 0) cycle
+
       if (.not. first) call write_stdout_nonl(' ')
       call write_stdout_nonl(trim(cmd%tokens(i)))
       first = .false.
