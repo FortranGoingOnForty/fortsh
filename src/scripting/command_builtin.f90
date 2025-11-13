@@ -237,10 +237,12 @@ contains
         end if
       end do
 
-      ! Set bypass flag and execute
+      ! Set bypass flags and execute
       shell%bypass_functions = .true.
+      shell%bypass_aliases = .true.
       call execute_pipeline(temp_pipeline, shell, '')
       shell%bypass_functions = .false.
+      shell%bypass_aliases = .false.
 
       ! Cleanup
       if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
