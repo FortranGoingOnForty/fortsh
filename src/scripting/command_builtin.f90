@@ -140,23 +140,25 @@ contains
   end subroutine
 
   subroutine builtin_command(cmd, shell)
+    use executor, only: execute_pipeline
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    integer :: arg_index
+
+    integer :: arg_index, j
     logical :: path_flag, verbose_flag
     character(len=256) :: command_name
-    
+    type(pipeline_t) :: temp_pipeline
+
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'command: usage: command [-pVv] command [arg ...]'
       shell%last_exit_status = 2
       return
     end if
-    
+
     path_flag = .false.
     verbose_flag = .false.
     arg_index = 2
-    
+
     ! Parse options
     do while (arg_index <= cmd%num_tokens)
       if (cmd%tokens(arg_index)(1:1) == '-') then
@@ -180,13 +182,13 @@ contains
         exit
       end if
     end do
-    
+
     if (arg_index > cmd%num_tokens) then
       write(error_unit, '(a)') 'command: usage: command [-pVv] command [arg ...]'
       shell%last_exit_status = 2
       return
     end if
-    
+
     command_name = cmd%tokens(arg_index)
 
     if (verbose_flag) then
@@ -194,9 +196,59 @@ contains
       call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true.)
       ! Don't overwrite exit status set by identify_command_type
     else
-      ! Execute the command (simplified - would need full execution logic)
-      write(output_unit, '(a,a)') 'command: would execute ', trim(command_name)
-      shell%last_exit_status = 0
+      ! Execute the command bypassing functions
+      ! Build a pipeline directly from the tokens we already have
+      allocate(temp_pipeline%commands(1))
+      temp_pipeline%num_commands = 1
+      temp_pipeline%commands(1)%num_tokens = cmd%num_tokens - arg_index + 1
+      temp_pipeline%commands(1)%separator = SEP_NONE
+      temp_pipeline%commands(1)%background = .false.
+      temp_pipeline%commands(1)%num_redirections = 0
+      temp_pipeline%commands(1)%num_prefix_assignments = 0
+
+      ! Allocate and copy tokens directly from cmd
+      allocate(character(len=MAX_TOKEN_LEN) :: temp_pipeline%commands(1)%tokens(temp_pipeline%commands(1)%num_tokens))
+      allocate(temp_pipeline%commands(1)%token_quoted(temp_pipeline%commands(1)%num_tokens))
+      allocate(temp_pipeline%commands(1)%token_escaped(temp_pipeline%commands(1)%num_tokens))
+      allocate(temp_pipeline%commands(1)%token_quote_type(temp_pipeline%commands(1)%num_tokens))
+      allocate(temp_pipeline%commands(1)%token_lengths(temp_pipeline%commands(1)%num_tokens))
+
+      do j = 1, temp_pipeline%commands(1)%num_tokens
+        temp_pipeline%commands(1)%tokens(j) = cmd%tokens(arg_index + j - 1)
+        if (allocated(cmd%token_quoted)) then
+          temp_pipeline%commands(1)%token_quoted(j) = cmd%token_quoted(arg_index + j - 1)
+        else
+          temp_pipeline%commands(1)%token_quoted(j) = .false.
+        end if
+        if (allocated(cmd%token_escaped)) then
+          temp_pipeline%commands(1)%token_escaped(j) = cmd%token_escaped(arg_index + j - 1)
+        else
+          temp_pipeline%commands(1)%token_escaped(j) = .false.
+        end if
+        if (allocated(cmd%token_quote_type)) then
+          temp_pipeline%commands(1)%token_quote_type(j) = cmd%token_quote_type(arg_index + j - 1)
+        else
+          temp_pipeline%commands(1)%token_quote_type(j) = QUOTE_NONE
+        end if
+        if (allocated(cmd%token_lengths)) then
+          temp_pipeline%commands(1)%token_lengths(j) = cmd%token_lengths(arg_index + j - 1)
+        else
+          temp_pipeline%commands(1)%token_lengths(j) = len_trim(cmd%tokens(arg_index + j - 1))
+        end if
+      end do
+
+      ! Set bypass flag and execute
+      shell%bypass_functions = .true.
+      call execute_pipeline(temp_pipeline, shell, '')
+      shell%bypass_functions = .false.
+
+      ! Cleanup
+      if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
+      if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
+      if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
+      if (allocated(temp_pipeline%commands(1)%token_quote_type)) deallocate(temp_pipeline%commands(1)%token_quote_type)
+      if (allocated(temp_pipeline%commands(1)%token_lengths)) deallocate(temp_pipeline%commands(1)%token_lengths)
+      deallocate(temp_pipeline%commands)
     end if
   end subroutine
 

@@ -169,10 +169,16 @@ contains
       ! If we get here, exec has arguments, so fall through to normal execution
     end if
 
-    ! Check if this is a function call
-    cmd_name = trim(node%simple_cmd%words(1))
-    do func_idx = 1, num_cached_functions
-      if (trim(function_ast_cache(func_idx)%name) == trim(cmd_name)) then
+    ! Check if this is a function call (unless bypass_functions is set)
+    if (node%simple_cmd%num_words >= 1) then
+      cmd_name = trim(node%simple_cmd%words(1))
+    else
+      cmd_name = ''
+    end if
+
+    if (.not. shell%bypass_functions .and. len_trim(cmd_name) > 0) then
+      do func_idx = 1, num_cached_functions
+        if (trim(function_ast_cache(func_idx)%name) == trim(cmd_name)) then
         ! This is a function call! Execute the cached AST body
 
         ! Save old positional parameters
@@ -290,6 +296,7 @@ contains
         return
       end if
     end do
+    end if  ! .not. shell%bypass_functions
 
     ! TEMPORARY: Convert AST simple command back to old command_t format
     ! This delegates to the existing, battle-tested executor

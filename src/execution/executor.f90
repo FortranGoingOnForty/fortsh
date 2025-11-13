@@ -579,8 +579,8 @@ contains
         cmd%tokens(1)(1:2) == '((' .and. &
         cmd%tokens(1)(len_trim(cmd%tokens(1))-1:len_trim(cmd%tokens(1))) == '))') then
       call execute_arithmetic_command(cmd, shell)
-    ! Check if it's a user-defined function
-    else if (is_function(shell, cmd%tokens(1))) then
+    ! Check if it's a user-defined function (unless bypass_functions is set)
+    else if (.not. shell%bypass_functions .and. is_function(shell, cmd%tokens(1))) then
       call execute_function(cmd, shell)
     ! Eval is now handled as a regular builtin (no special case needed)
     ! Check for cd-less navigation: if single token is a directory, treat as 'cd'
