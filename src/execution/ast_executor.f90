@@ -259,12 +259,18 @@ contains
           shell%num_positional = 0
         end if
 
+        ! Increment function depth for return/exit context tracking
+        shell%function_depth = shell%function_depth + 1
+
         ! Execute function body
         if (associated(function_ast_cache(func_idx)%body)) then
           exit_status = execute_ast_node(function_ast_cache(func_idx)%body, shell)
         else
           exit_status = 0
         end if
+
+        ! Decrement function depth
+        shell%function_depth = shell%function_depth - 1
 
         ! Restore old positional parameters
         shell%num_positional = old_num_positional
