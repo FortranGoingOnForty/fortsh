@@ -348,6 +348,7 @@ contains
     if (len_trim(node%simple_cmd%heredoc_delimiter) > 0) then
       temp_pipeline%commands(1)%heredoc_delimiter = trim(node%simple_cmd%heredoc_delimiter)
       temp_pipeline%commands(1)%heredoc_quoted = node%simple_cmd%heredoc_quoted
+      temp_pipeline%commands(1)%heredoc_strip_tabs = node%simple_cmd%heredoc_strip_tabs
     end if
 
     ! Apply redirections directly (in order, left-to-right) before executing

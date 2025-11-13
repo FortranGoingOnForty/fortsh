@@ -117,6 +117,7 @@ module shell_types
     character(len=:), allocatable :: heredoc_delimiter
     character(len=:), allocatable :: heredoc_content
     logical :: heredoc_quoted = .false.  ! delimiter was quoted (suppress variable expansion)
+    logical :: heredoc_strip_tabs = .false.  ! <<- operator (strip leading tabs)
     logical :: append_output = .false.
     logical :: append_error = .false.
     logical :: force_clobber = .false.  ! >| operator (override noclobber)
@@ -367,6 +368,7 @@ module shell_types
     character(len=4096) :: pending_heredoc = ''
     character(len=256) :: pending_heredoc_delimiter = ''
     logical :: pending_heredoc_quoted = .false.
+    logical :: pending_heredoc_strip_tabs = .false.
     logical :: has_pending_heredoc = .false.
   end type shell_state_t
 
