@@ -1639,19 +1639,22 @@ contains
   subroutine builtin_type(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     character(len=256) :: command_name
     integer :: i
-    
+    logical :: any_not_found
+
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'type: usage: type name [name ...]'
       shell%last_exit_status = 1
       return
     end if
-    
+
+    any_not_found = .false.
+
     do i = 2, cmd%num_tokens
       command_name = trim(cmd%tokens(i))
-      
+
       if (is_builtin(command_name)) then
         write(output_unit, '(a)') trim(command_name) // ' is a shell builtin'
       else if (is_alias(shell, command_name)) then
@@ -1665,13 +1668,17 @@ contains
         if (shell%last_exit_status == 0) then
           write(output_unit, '(a)') trim(command_name) // ' is hashed'
         else
-          write(output_unit, '(a)') trim(command_name) // ': not found'
-          shell%last_exit_status = 1
+          write(error_unit, '(a)') trim(command_name) // ': not found'
+          any_not_found = .true.
         end if
       end if
     end do
-    
-    shell%last_exit_status = 0
+
+    if (any_not_found) then
+      shell%last_exit_status = 1
+    else
+      shell%last_exit_status = 0
+    end if
   end subroutine
 
   subroutine builtin_unset(cmd, shell)
