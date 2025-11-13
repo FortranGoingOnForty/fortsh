@@ -218,8 +218,13 @@ contains
       end if
     else
       call set_shell_variable(shell, 'OPTARG', '')
+      ! Check if we've finished processing the current argument
+      if (current_pos > len_trim(current_arg)) then
+        optind = optind + 1
+        current_pos = 2
+      end if
     end if
-    
+
     ! Update OPTIND and OPTPOS
     write(optind_str, '(I0)') optind
     call set_shell_variable(shell, 'OPTIND', trim(optind_str))
