@@ -1428,9 +1428,14 @@ contains
           brace_depth = 1
 
           do while (i <= len_trim(working_token) .and. brace_depth > 0)
-            if (working_token(i:i) == '{') then
-              brace_depth = brace_depth + 1
-            else if (working_token(i:i) == '}') then
+            ! Check for nested ${ pattern (not standalone {)
+            if (i > 1 .and. i < len_trim(working_token)) then
+              if (working_token(i-1:i) == '${') then
+                brace_depth = brace_depth + 1
+                i = i + 1  ! Skip the { part of ${
+              end if
+            end if
+            if (working_token(i:i) == '}') then
               brace_depth = brace_depth - 1
             end if
             i = i + 1
@@ -2459,6 +2464,16 @@ contains
       operation = param_expr(op_pos:op_pos+1)
       default_value = param_expr(op_pos+2:)
 
+      ! Expand nested parameter expansions in pattern (e.g., ${VAR%/*} in ${VAR#${VAR%/*}})
+      if (index(default_value, '${') > 0) then
+        block
+          character(len=:), allocatable :: expanded_pattern
+          call expand_variables(trim(default_value), expanded_pattern, shell)
+          default_value = expanded_pattern
+          deallocate(expanded_pattern)
+        end block
+      end if
+
       current_value = get_shell_variable(shell, trim(var_name))
       if (len_trim(current_value) == 0) then
         current_value = get_environment_var(trim(var_name))
@@ -2477,6 +2492,16 @@ contains
         var_name = param_expr(:op_pos-1)
         operation = param_expr(op_pos:op_pos)
         default_value = param_expr(op_pos+1:)
+
+        ! Expand nested parameter expansions in pattern
+        if (index(default_value, '${') > 0) then
+          block
+            character(len=:), allocatable :: expanded_pattern
+            call expand_variables(trim(default_value), expanded_pattern, shell)
+            default_value = expanded_pattern
+            deallocate(expanded_pattern)
+          end block
+        end if
 
         current_value = get_shell_variable(shell, trim(var_name))
         if (len_trim(current_value) == 0) then
@@ -2499,6 +2524,16 @@ contains
       operation = param_expr(op_pos:op_pos+1)
       default_value = param_expr(op_pos+2:)
 
+      ! Expand nested parameter expansions in pattern
+      if (index(default_value, '${') > 0) then
+        block
+          character(len=:), allocatable :: expanded_pattern
+          call expand_variables(trim(default_value), expanded_pattern, shell)
+          default_value = expanded_pattern
+          deallocate(expanded_pattern)
+        end block
+      end if
+
       current_value = get_shell_variable(shell, trim(var_name))
       if (len_trim(current_value) == 0) then
         current_value = get_environment_var(trim(var_name))
@@ -2515,6 +2550,16 @@ contains
       var_name = param_expr(:op_pos-1)
       operation = param_expr(op_pos:op_pos)
       default_value = param_expr(op_pos+1:)
+
+      ! Expand nested parameter expansions in pattern
+      if (index(default_value, '${') > 0) then
+        block
+          character(len=:), allocatable :: expanded_pattern
+          call expand_variables(trim(default_value), expanded_pattern, shell)
+          default_value = expanded_pattern
+          deallocate(expanded_pattern)
+        end block
+      end if
 
       current_value = get_shell_variable(shell, trim(var_name))
       if (len_trim(current_value) == 0) then
@@ -2717,12 +2762,22 @@ contains
       ! Extract variable name and default value
       var_name = param_expr(:op_pos-1)
       default_value = param_expr(op_pos+op_len:)
+
+      ! Expand nested parameter expansions in default_value (e.g., ${B} in ${A:-${B}})
+      if (index(default_value, '${') > 0) then
+        block
+          character(len=:), allocatable :: expanded_default
+          call expand_variables(trim(default_value), expanded_default, shell)
+          default_value = expanded_default
+          deallocate(expanded_default)
+        end block
+      end if
     else
       ! Simple ${VAR} expansion
       var_name = param_expr
       default_value = ''
     end if
-    
+
     ! Get current variable value and check if set
     var_is_set = is_shell_variable_set(shell, trim(var_name))
     current_value = get_shell_variable(shell, trim(var_name))
