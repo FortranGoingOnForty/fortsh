@@ -951,6 +951,7 @@ contains
 
   function execute_case_node(node, shell) result(exit_status)
     use variables, only: get_shell_variable
+    use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
@@ -958,6 +959,7 @@ contains
     integer :: item_idx, pattern_idx
     logical :: matched
     character(len=MAX_TOKEN_LEN) :: pattern
+    character(len=:), allocatable :: expanded_pattern
 
     exit_status = 0
 
@@ -980,8 +982,11 @@ contains
       do pattern_idx = 1, node%case_stmt%items(item_idx)%num_patterns
         pattern = trim(node%case_stmt%items(item_idx)%patterns(pattern_idx))
 
+        ! Expand variables in pattern (e.g., $P)
+        call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
+
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        matched = pattern_matches_no_dotfile_check(trim(pattern), trim(case_value))
+        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), trim(case_value))
 
         if (matched) exit
       end do
