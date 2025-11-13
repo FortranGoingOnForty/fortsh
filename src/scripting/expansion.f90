@@ -2490,7 +2490,8 @@ contains
     end do
 
     ! Handle last field
-    if (len_trim(current_field) > 0 .or. (prev_was_ifs .and. input_len > 0)) then
+    ! Note: Trailing IFS delimiters should NOT create empty fields (POSIX)
+    if (len_trim(current_field) > 0) then
       if (field_idx <= size(fields)) then
         fields(field_idx) = current_field
         field_count = field_count + 1
@@ -2532,6 +2533,29 @@ contains
       ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline
       call field_split(input, trim(ifs_to_use), words, word_count)
     end if
+
+    ! POSIX: Remove null (empty) fields after field splitting
+    ! Empty unquoted fields should be discarded
+    call remove_null_fields(words, word_count)
+  end subroutine
+
+  ! Remove null (empty) fields from word list
+  ! According to POSIX, after field splitting, null fields should be removed
+  subroutine remove_null_fields(words, word_count)
+    character(len=*), intent(inout) :: words(:)
+    integer, intent(inout) :: word_count
+    integer :: i, j
+
+    j = 1
+    do i = 1, word_count
+      if (len_trim(words(i)) > 0) then
+        if (i /= j) then
+          words(j) = words(i)
+        end if
+        j = j + 1
+      end if
+    end do
+    word_count = j - 1
   end subroutine
 
   ! Quote removal - removes outer quotes from strings
@@ -2964,11 +2988,9 @@ contains
     ! TODO: Track whether original input was quoted to skip field splitting
     call word_split(shell, quote_removed, expanded_words, word_count)
 
-    ! If no words resulted, return the processed result as single word
-    if (word_count == 0) then
-      word_count = 1
-      expanded_words(1) = quote_removed
-    end if
+    ! POSIX: If field splitting results in zero words (empty unquoted expansion),
+    ! keep it as zero words - don't add back an empty field
+    ! Note: This means unquoted empty variables disappear from the command line
   end subroutine
 
   ! Helper to grow an allocatable string buffer
