@@ -123,7 +123,11 @@ contains
     end do
     
     pgid = 0
-    
+
+    ! Flush all output before forking to prevent buffer duplication
+    flush(output_unit)
+    flush(error_unit)
+
     ! Fork all processes
     do i = start_idx, end_idx
       pids(i - start_idx + 1) = c_fork()
