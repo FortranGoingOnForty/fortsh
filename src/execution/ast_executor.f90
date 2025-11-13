@@ -511,6 +511,10 @@ contains
       end if
     end do
 
+    ! Flush all output before forking to prevent buffer duplication
+    flush(output_unit)
+    flush(error_unit)
+
     ! Fork and execute each command in the pipeline
     do i = 1, node%pipeline%num_commands
       pids(i) = c_fork()
