@@ -1184,8 +1184,9 @@ contains
       end if
     end if
 
-    ! Check for removal syntax: trap - signal or trap "" signal
-    if (trim(action) == '-' .or. len_trim(action) == 0) then
+    ! Check for removal syntax: trap - signal
+    ! Note: trap "" signal (empty action) means ignore the signal, not remove the trap
+    if (trim(action) == '-') then
       remove_mode = .true.
     end if
 
