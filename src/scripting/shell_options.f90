@@ -157,38 +157,64 @@ contains
               i = i + 1
               option_name = trim(cmd%tokens(i))
               select case (trim(option_name))
-                case ('pipefail')
-                  shell%option_pipefail = enable_option
-                  if (enable_option .and. shell%option_verbose) then
-                    write(output_unit, '(a)') 'set: pipefail enabled'
-                  end if
-                case ('errexit')
-                  shell%option_errexit = enable_option
-                case ('nounset')
-                  shell%option_nounset = enable_option
-                case ('verbose')
-                  shell%option_verbose = enable_option
-                case ('xtrace')
-                  shell%option_xtrace = enable_option
-                case ('noclobber')
-                  shell%option_noclobber = enable_option
-                case ('monitor')
-                  shell%option_monitor = enable_option
                 case ('allexport')
                   shell%option_allexport = enable_option
-                case ('vi')
-                  shell%option_vi = enable_option
-                  call set_global_editing_mode(enable_option)
-                  if (enable_option .and. shell%option_verbose) then
-                    write(output_unit, '(a)') 'set: vi editing mode enabled'
-                  end if
+                case ('braceexpand')
+                  shell%option_braceexpand = enable_option
                 case ('emacs')
-                  ! Emacs is the default, so disabling vi enables emacs
+                  shell%option_emacs = enable_option
                   shell%option_vi = .not. enable_option
                   call set_global_editing_mode(.not. enable_option)
-                  if (enable_option .and. shell%option_verbose) then
-                    write(output_unit, '(a)') 'set: emacs editing mode enabled'
-                  end if
+                case ('errexit')
+                  shell%option_errexit = enable_option
+                case ('errtrace')
+                  shell%option_errtrace = enable_option
+                case ('functrace')
+                  shell%option_functrace = enable_option
+                case ('hashall')
+                  shell%option_hashall = enable_option
+                case ('histexpand')
+                  shell%option_histexpand = enable_option
+                case ('history')
+                  shell%option_history = enable_option
+                case ('ignoreeof')
+                  shell%option_ignoreeof = enable_option
+                case ('interactive-comments')
+                  shell%option_interactive_comments = enable_option
+                case ('keyword')
+                  shell%option_keyword = enable_option
+                case ('monitor')
+                  shell%option_monitor = enable_option
+                case ('noclobber')
+                  shell%option_noclobber = enable_option
+                case ('noexec')
+                  shell%option_noexec = enable_option
+                case ('noglob')
+                  shell%option_noglob = enable_option
+                case ('nolog')
+                  shell%option_nolog = enable_option
+                case ('notify')
+                  shell%option_notify = enable_option
+                case ('nounset')
+                  shell%option_nounset = enable_option
+                case ('onecmd')
+                  shell%option_onecmd = enable_option
+                case ('physical')
+                  shell%option_physical = enable_option
+                case ('pipefail')
+                  shell%option_pipefail = enable_option
+                case ('posix')
+                  shell%option_posix = enable_option
+                case ('privileged')
+                  shell%option_privileged = enable_option
+                case ('verbose')
+                  shell%option_verbose = enable_option
+                case ('vi')
+                  shell%option_vi = enable_option
+                  shell%option_emacs = .not. enable_option
+                  call set_global_editing_mode(enable_option)
+                case ('xtrace')
+                  shell%option_xtrace = enable_option
                 case default
                   write(error_unit, '(a)') 'set: unknown option: ' // trim(option_name)
                   shell%last_exit_status = 1
@@ -385,66 +411,48 @@ contains
   subroutine list_shell_options(shell)
     type(shell_state_t), intent(in) :: shell
 
-    ! Print each option with its current state (on/off)
-    if (shell%option_allexport) then
-      write(output_unit, '(a)') 'allexport      	on'
-    else
-      write(output_unit, '(a)') 'allexport      	off'
-    end if
+    ! Print each option with its current state (on/off), alphabetically sorted
+    call print_option('allexport', shell%option_allexport)
+    call print_option('braceexpand', shell%option_braceexpand)
+    call print_option('emacs', shell%option_emacs)
+    call print_option('errexit', shell%option_errexit)
+    call print_option('errtrace', shell%option_errtrace)
+    call print_option('functrace', shell%option_functrace)
+    call print_option('hashall', shell%option_hashall)
+    call print_option('histexpand', shell%option_histexpand)
+    call print_option('history', shell%option_history)
+    call print_option('ignoreeof', shell%option_ignoreeof)
+    call print_option('interactive-comments', shell%option_interactive_comments)
+    call print_option('keyword', shell%option_keyword)
+    call print_option('monitor', shell%option_monitor)
+    call print_option('noclobber', shell%option_noclobber)
+    call print_option('noexec', shell%option_noexec)
+    call print_option('noglob', shell%option_noglob)
+    call print_option('nolog', shell%option_nolog)
+    call print_option('notify', shell%option_notify)
+    call print_option('nounset', shell%option_nounset)
+    call print_option('onecmd', shell%option_onecmd)
+    call print_option('physical', shell%option_physical)
+    call print_option('pipefail', shell%option_pipefail)
+    call print_option('posix', shell%option_posix)
+    call print_option('privileged', shell%option_privileged)
+    call print_option('verbose', shell%option_verbose)
+    call print_option('vi', shell%option_vi)
+    call print_option('xtrace', shell%option_xtrace)
+  end subroutine
 
-    if (shell%option_errexit) then
-      write(output_unit, '(a)') 'errexit        	on'
-    else
-      write(output_unit, '(a)') 'errexit        	off'
-    end if
+  ! Helper to print an option with proper formatting
+  subroutine print_option(name, value)
+    character(len=*), intent(in) :: name
+    logical, intent(in) :: value
+    character(len=32) :: status
 
-    if (shell%option_monitor) then
-      write(output_unit, '(a)') 'monitor        	on'
+    if (value) then
+      status = 'on'
     else
-      write(output_unit, '(a)') 'monitor        	off'
+      status = 'off'
     end if
-
-    if (shell%option_noclobber) then
-      write(output_unit, '(a)') 'noclobber      	on'
-    else
-      write(output_unit, '(a)') 'noclobber      	off'
-    end if
-
-    if (shell%option_noglob) then
-      write(output_unit, '(a)') 'noglob         	on'
-    else
-      write(output_unit, '(a)') 'noglob         	off'
-    end if
-
-    if (shell%option_nounset) then
-      write(output_unit, '(a)') 'nounset        	on'
-    else
-      write(output_unit, '(a)') 'nounset        	off'
-    end if
-
-    if (shell%option_pipefail) then
-      write(output_unit, '(a)') 'pipefail       	on'
-    else
-      write(output_unit, '(a)') 'pipefail       	off'
-    end if
-
-    if (shell%option_verbose) then
-      write(output_unit, '(a)') 'verbose        	on'
-    else
-      write(output_unit, '(a)') 'verbose        	off'
-    end if
-
-    if (shell%option_vi) then
-      write(output_unit, '(a)') 'vi             	on'
-    else
-      write(output_unit, '(a)') 'vi             	off'
-    end if
-
-    if (shell%option_xtrace) then
-      write(output_unit, '(a)') 'xtrace         	on'
-    else
-      write(output_unit, '(a)') 'xtrace         	off'
-    end if
+    write(output_unit, '(a,a,a)') name, '      	', trim(status)
   end subroutine
 
 end module shell_options
