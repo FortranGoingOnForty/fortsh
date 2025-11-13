@@ -1265,7 +1265,14 @@ contains
       if (should_split) then
         ! Split the expanded string using IFS characters
         word_count = 0
-        call field_split(expanded, ifs_to_use(1:ifs_len_to_use), split_words, word_count)
+        ! Pass ifs_to_use with exact length - use substring to avoid trailing blanks
+        if (ifs_len_to_use > 0) then
+          call field_split(expanded, ifs_to_use(1:ifs_len_to_use), split_words, word_count)
+        else
+          ! Empty IFS - no splitting should happen (but we shouldn't reach here)
+          split_words(1) = expanded
+          word_count = 1
+        end if
 
         ! Add all split words as separate tokens
         do j = 1, word_count

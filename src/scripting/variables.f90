@@ -195,7 +195,7 @@ contains
         return
       case ('#')
         ! Number of positional parameters
-        write(value, '(i15)') shell%num_positional
+        write(value, '(I0)') shell%num_positional
         return
       case ('*')
         ! All positional parameters as single word (IFS separated)
