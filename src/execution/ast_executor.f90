@@ -99,7 +99,12 @@ contains
       ! Function definitions: Store in shell state
       exit_status = execute_function_def(node, shell)
     case default
-      write(error_unit, '(A,I0)') 'fortsh: unknown node type: ', node%node_type
+      ! node_type = 0 usually means uninitialized/invalid AST node from parser
+      if (node%node_type == 0) then
+        write(error_unit, '(A)') 'sh: -c: line 1: syntax error: unexpected end of file'
+      else
+        write(error_unit, '(A,I0)') 'fortsh: unknown node type: ', node%node_type
+      end if
       exit_status = 1
     end select
 
