@@ -534,9 +534,9 @@ contains
         ! Close all pipe fds
         call close_all_pipes(pipefd, num_pipes)
 
-        ! POSIX: Traps should remain visible in subshells for display by trap builtin
-        ! They won't be executed because each process has separate signal handlers
-        ! Don't clear shell%num_traps - keep traps visible for display
+        ! POSIX: Only ignored traps (empty action) are visible in subshells
+        ! Remove traps with commands, but keep traps with empty actions (ignore)
+        call filter_traps_for_subshell(shell)
 
         ! Execute command
         status = execute_ast_node(node%pipeline%commands(i), shell)
@@ -1033,9 +1033,9 @@ contains
     pid = c_fork()
     if (pid == 0) then
       ! Child process - execute commands in subshell
-      ! POSIX: Traps should remain visible in subshells for display by trap builtin
-      ! They won't be executed because each process has separate signal handlers
-      ! Don't clear shell%num_traps - keep traps visible for display
+      ! POSIX: Only ignored traps (empty action) are visible in subshells
+      ! Remove traps with commands, but keep traps with empty actions (ignore)
+      call filter_traps_for_subshell(shell)
 
       ! Apply redirections in child process
       if (node%num_redirects > 0) then
@@ -1410,5 +1410,24 @@ contains
       end if
     end if
   end subroutine split_on_ifs
+
+  ! Filter traps for subshell: keep only ignored traps (empty action)
+  ! POSIX: Ignored signals remain ignored in subshells, but trap actions are not inherited
+  subroutine filter_traps_for_subshell(shell)
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, j
+
+    j = 0
+    do i = 1, shell%num_traps
+      ! Keep trap if it's active and has empty command (ignore trap)
+      if (shell%traps(i)%active .and. len_trim(shell%traps(i)%command) == 0) then
+        j = j + 1
+        if (j /= i) then
+          shell%traps(j) = shell%traps(i)
+        end if
+      end if
+    end do
+    shell%num_traps = j
+  end subroutine filter_traps_for_subshell
 
 end module ast_executor
