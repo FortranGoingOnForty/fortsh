@@ -228,13 +228,23 @@ contains
         call advance(state)
         call skip_newlines(state)
         if (num_commands >= 10) exit
-        num_commands = num_commands + 1
         temp_node => parse_command_node(state)
-        if (.not. associated(temp_node)) exit
+        if (.not. associated(temp_node)) then
+          ! Incomplete pipeline - set error, print message, and exit
+          write(error_unit, '(A)') 'sh: -c: line 1: syntax error: unexpected end of file'
+          state%has_error = .true.
+          exit
+        end if
+        num_commands = num_commands + 1
         commands(num_commands) = temp_node
         tok = current_token(state)
       end do
-      node => create_pipeline(commands, num_commands, negate)
+      if (state%has_error) then
+        ! Error occurred - return null
+        nullify(node)
+      else
+        node => create_pipeline(commands, num_commands, negate)
+      end if
     else if (negate) then
       allocate(commands(1))
       commands(1) = node
