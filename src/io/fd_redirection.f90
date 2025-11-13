@@ -10,27 +10,28 @@ module fd_redirection
   implicit none
 
   interface
-    ! C library functions for file descriptor manipulation
-    function c_open(pathname, flags, mode) bind(C, name="open")
+    ! C wrapper functions for file descriptor manipulation
+    ! (Using wrappers to work around Fortran C binding mode_t bug)
+    function c_open(pathname, flags, mode) bind(C, name="fortsh_open")
       use iso_c_binding
       character(kind=c_char), intent(in) :: pathname(*)
       integer(c_int), value :: flags, mode
       integer(c_int) :: c_open
     end function c_open
-    
-    function c_close(fd) bind(C, name="close")
+
+    function c_close(fd) bind(C, name="fortsh_close")
       use iso_c_binding
       integer(c_int), value :: fd
       integer(c_int) :: c_close
     end function c_close
-    
-    function c_dup2(oldfd, newfd) bind(C, name="dup2")
+
+    function c_dup2(oldfd, newfd) bind(C, name="fortsh_dup2")
       use iso_c_binding
       integer(c_int), value :: oldfd, newfd
       integer(c_int) :: c_dup2
     end function c_dup2
-    
-    function c_dup(fd) bind(C, name="dup")
+
+    function c_dup(fd) bind(C, name="fortsh_dup")
       use iso_c_binding
       integer(c_int), value :: fd
       integer(c_int) :: c_dup
@@ -41,9 +42,10 @@ module fd_redirection
   integer, parameter :: FD_FD_O_RDONLY = int(Z'00000000')
   integer, parameter :: FD_O_WRONLY = int(Z'00000001')
   integer, parameter :: FD_O_RDWR = int(Z'00000002')
-  integer, parameter :: FD_O_CREAT = int(Z'00000040')
-  integer, parameter :: FD_O_TRUNC = int(Z'00000200')
-  integer, parameter :: FD_O_APPEND = int(Z'00000400')
+  ! macOS values (TODO: add Linux support with preprocessor)
+  integer, parameter :: FD_O_CREAT = 512   ! 0x200 on macOS, 0x40 on Linux
+  integer, parameter :: FD_O_TRUNC = 1024  ! 0x400 on macOS, 0x200 on Linux
+  integer, parameter :: FD_O_APPEND = 8    ! 0x8 on macOS, 0x400 on Linux
 
   ! Standard file descriptors - use local names to avoid conflicts
   integer, parameter :: FD_STDIN = 0
@@ -77,14 +79,20 @@ contains
   end subroutine
 
   ! Apply a single redirection
-  subroutine apply_single_redirection(redir, success)
+  subroutine apply_single_redirection(redir, success, noclobber)
+    use iso_c_binding, only: c_int
+    use system_interface, only: file_exists
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
-    integer :: file_fd, target_fd, flags, mode
+    logical, intent(in), optional :: noclobber
+    integer(c_int) :: file_fd, target_fd, flags, mode
     character(len=1024) :: filename_c
-    
+    logical :: check_noclobber
+
     success = .true.
-    
+    check_noclobber = .false.
+    if (present(noclobber)) check_noclobber = noclobber
+
     select case (redir%type)
       case (REDIR_IN)
         ! < file (redirect stdin from file)
@@ -102,12 +110,20 @@ contains
         if (c_close(file_fd) < 0) then
           ! Error closing file descriptor
         end if
-        
+
       case (REDIR_OUT)
         ! > file (redirect stdout to file)
+        ! Check noclobber option (set -C) - prevents overwriting existing files
+        if (check_noclobber .and. .not. redir%force_clobber .and. file_exists(trim(redir%filename))) then
+          write(error_unit, '(a)') 'fortsh: cannot overwrite existing file: ' // trim(redir%filename)
+          success = .false.
+          return
+        end if
+
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 577, mode)
+        mode = 420  ! 0644 octal = 420 decimal = rw-r--r--
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
@@ -124,8 +140,9 @@ contains
       case (REDIR_APPEND)
         ! >> file (append stdout to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 1089, mode)
+        mode = 420  ! 0644 octal = 420 decimal = rw-r--r--
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
@@ -157,10 +174,18 @@ contains
         end if
         
       case (REDIR_FD_OUT)
-        ! n> file (redirect fd n to file) 
+        ! n> file (redirect fd n to file)
+        ! Check noclobber option (set -C)
+        if (check_noclobber .and. .not. redir%force_clobber .and. file_exists(trim(redir%filename))) then
+          write(error_unit, '(a)') 'fortsh: cannot overwrite existing file: ' // trim(redir%filename)
+          success = .false.
+          return
+        end if
+
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 577, mode)
+        mode = 420  ! rw-r--r--
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
@@ -177,8 +202,9 @@ contains
       case (REDIR_FD_APPEND)
         ! n>> file (append fd n to file)
         filename_c = trim(redir%filename) // c_null_char
-        mode = int(Z'644')  ! rw-r--r--
-        file_fd = c_open(filename_c, 1089, mode)
+        mode = 420  ! rw-r--r--
+        flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
+        file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
           write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
           success = .false.
@@ -193,17 +219,31 @@ contains
         end if
         
       case (REDIR_DUP_IN)
-        ! <&n (duplicate fd n to stdin)
-        call save_fd(FD_STDIN)
-        if (c_dup2(redir%target_fd, FD_STDIN) < 0) then
-          success = .false.
+        ! n<&m (duplicate fd m to fd n, default n=0)
+        if (redir%fd < 0) then
+          call save_fd(FD_STDIN)
+          if (c_dup2(redir%target_fd, FD_STDIN) < 0) then
+            success = .false.
+          end if
+        else
+          call save_fd(redir%fd)
+          if (c_dup2(redir%target_fd, redir%fd) < 0) then
+            success = .false.
+          end if
         end if
-        
+
       case (REDIR_DUP_OUT)
-        ! >&n (duplicate fd n to stdout)
-        call save_fd(FD_STDOUT)
-        if (c_dup2(redir%target_fd, FD_STDOUT) < 0) then
-          success = .false.
+        ! n>&m (duplicate fd m to fd n, default n=1)
+        if (redir%fd < 0) then
+          call save_fd(FD_STDOUT)
+          if (c_dup2(redir%target_fd, FD_STDOUT) < 0) then
+            success = .false.
+          end if
+        else
+          call save_fd(redir%fd)
+          if (c_dup2(redir%target_fd, redir%fd) < 0) then
+            success = .false.
+          end if
         end if
         
       case (REDIR_CLOSE)

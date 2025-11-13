@@ -5,6 +5,7 @@
 module substitution
   use shell_types
   use system_interface
+  use command_capture, only: execute_command_and_capture
   use iso_fortran_env, only: output_unit, error_unit
   use iso_c_binding
   implicit none
@@ -136,85 +137,6 @@ contains
     end do
   end subroutine
 
-  subroutine execute_command_and_capture(shell, command, output)
-    use parser, only: parse_pipeline
-    use executor, only: execute_pipeline
-    type(shell_state_t), intent(inout) :: shell
-    character(len=*), intent(in) :: command
-    character(len=*), intent(out) :: output
-
-    type(pipeline_t) :: pipeline
-    integer(c_int), target :: pipefd(2)
-    integer(c_int) :: saved_stdout, ret
-    integer(c_size_t) :: bytes_read
-    character(kind=c_char), target :: buffer(4096)
-    integer :: i, pos
-
-    output = ''
-
-    ! Parse the command
-    call parse_pipeline(command, pipeline)
-    if (pipeline%num_commands == 0) then
-      return
-    end if
-
-    ! Create a pipe
-    ret = c_pipe(c_loc(pipefd))
-    if (ret /= 0) then
-      if (allocated(pipeline%commands)) deallocate(pipeline%commands)
-      return
-    end if
-    ! pipefd(1) is read end, pipefd(2) is write end
-
-    ! Save current stdout
-    saved_stdout = dup(int(1, c_int))
-    if (saved_stdout < 0) then
-      ret = close(pipefd(1))
-      ret = close(pipefd(2))
-      if (allocated(pipeline%commands)) deallocate(pipeline%commands)
-      return
-    end if
-
-    ! Redirect stdout to the write end of the pipe
-    ret = dup2(pipefd(2), int(1, c_int))
-    ret = close(pipefd(2))  ! Close write end in parent, stdout now points to it
-
-    ! Execute the command in the current shell context
-    call execute_pipeline(pipeline, shell, command)
-
-    ! Flush and restore stdout
-    ret = c_fsync(int(1, c_int))
-    ret = dup2(saved_stdout, int(1, c_int))
-    ret = close(saved_stdout)
-
-    ! Read from the read end of the pipe
-    pos = 1
-    do
-      bytes_read = c_read(pipefd(1), c_loc(buffer), int(4096, c_size_t))
-      if (bytes_read <= 0) exit
-
-      ! Copy to output
-      do i = 1, int(bytes_read)
-        if (pos > len(output)) exit
-        output(pos:pos) = buffer(i)
-        pos = pos + 1
-      end do
-
-      if (bytes_read < 4096) exit  ! End of data
-    end do
-
-    ! Close read end
-    ret = close(pipefd(1))
-
-    ! Remove trailing newlines (bash behavior)
-    do while (pos > 1 .and. output(pos-1:pos-1) == char(10))
-      output(pos-1:pos-1) = ' '
-      pos = pos - 1
-    end do
-
-    ! Clean up pipeline
-    if (allocated(pipeline%commands)) deallocate(pipeline%commands)
-  end subroutine
 
   ! Process substitution: <(command) and >(command)
   function create_process_substitution(command, is_input) result(proc_subst)

@@ -186,49 +186,49 @@ contains
 
     select case(signum)
     case(SIGHUP)
-      name = 'HUP'
+      name = 'SIGHUP'
     case(SIGINT)
-      name = 'INT'
+      name = 'SIGINT'
     case(SIGQUIT)
-      name = 'QUIT'
+      name = 'SIGQUIT'
     case(SIGILL)
-      name = 'ILL'
+      name = 'SIGILL'
     case(SIGTRAP)
-      name = 'TRAP'
+      name = 'SIGTRAP'
     case(SIGABRT)
-      name = 'ABRT'
+      name = 'SIGABRT'
     case(SIGBUS)
-      name = 'BUS'
+      name = 'SIGBUS'
     case(SIGFPE)
-      name = 'FPE'
+      name = 'SIGFPE'
     case(SIGKILL)
-      name = 'KILL'
+      name = 'SIGKILL'
     case(SIGUSR1)
-      name = 'USR1'
+      name = 'SIGUSR1'
     case(SIGSEGV)
-      name = 'SEGV'
+      name = 'SIGSEGV'
     case(SIGUSR2)
-      name = 'USR2'
+      name = 'SIGUSR2'
     case(SIGPIPE)
-      name = 'PIPE'
+      name = 'SIGPIPE'
     case(SIGALRM)
-      name = 'ALRM'
+      name = 'SIGALRM'
     case(SIGTERM)
-      name = 'TERM'
+      name = 'SIGTERM'
     case(SIGSTKFLT)
-      name = 'STKFLT'
+      name = 'SIGSTKFLT'
     case(SIGCHLD)
-      name = 'CHLD'
+      name = 'SIGCHLD'
     case(SIGCONT)
-      name = 'CONT'
+      name = 'SIGCONT'
     case(SIGSTOP)
-      name = 'STOP'
+      name = 'SIGSTOP'
     case(SIGTSTP)
-      name = 'TSTP'
+      name = 'SIGTSTP'
     case(SIGTTIN)
-      name = 'TTIN'
+      name = 'SIGTTIN'
     case(SIGTTOU)
-      name = 'TTOU'
+      name = 'SIGTTOU'
     case(TRAP_EXIT)
       name = 'EXIT'
     case(TRAP_DEBUG)
@@ -334,7 +334,8 @@ contains
     integer :: i
     character(len=16) :: sig_name
 
-    do i = 1, size(shell%traps)
+    ! Use num_traps instead of size(traps) so that subshells can clear traps
+    do i = 1, shell%num_traps
       if (shell%traps(i)%active) then
         sig_name = signal_number_to_name(shell%traps(i)%signal)
         write(output_unit, '(a)') 'trap -- ' // "'" // trim(shell%traps(i)%command) // &

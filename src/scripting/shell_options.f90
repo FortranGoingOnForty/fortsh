@@ -30,6 +30,7 @@ contains
     shell%option_noclobber = .false.
     shell%option_monitor = .true.     ! Enable job control by default
     shell%option_allexport = .false.
+    shell%option_noglob = .false.
     shell%option_vi = .false.         ! Emacs mode by default
 
     ! Set default bash-style options
@@ -144,6 +145,8 @@ contains
             shell%option_monitor = enable_option
           case ('a')
             shell%option_allexport = enable_option
+          case ('f')
+            shell%option_noglob = enable_option
           case ('o')
             ! Handle -o followed by option name (should be separate argument)
             if (i < cmd%num_tokens) then
@@ -343,14 +346,37 @@ contains
   ! Trace command execution if xtrace is enabled
   subroutine trace_command(shell, command_line)
     use prompt_formatting, only: expand_prompt
+    use iso_c_binding, only: c_size_t, c_loc, c_char
+    use system_interface, only: c_write
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_line
     character(len=1024) :: expanded_ps4
+    character(len=2048) :: trace_line
+    integer :: ps4_actual_len, trace_len
+    character(kind=c_char), target, allocatable :: c_trace(:)
+    integer(c_size_t) :: bytes_written
+    integer :: i
 
     if (shell%option_xtrace) then
       ! Expand PS4 prompt (supports escape sequences like \h, \w, etc.)
       expanded_ps4 = expand_prompt(shell%ps4, shell, shell%ps4_len)
-      write(error_unit, '(a)') trim(expanded_ps4) // trim(command_line)
+      ! Don't trim PS4 - it typically has a trailing space (e.g., '+ ')
+      ps4_actual_len = shell%ps4_len
+      if (ps4_actual_len > len(expanded_ps4)) ps4_actual_len = len_trim(expanded_ps4)
+
+      ! Build trace line
+      trace_line = expanded_ps4(1:ps4_actual_len) // trim(command_line)
+      trace_len = len_trim(trace_line)
+
+      ! Write to original stderr (not affected by command redirections like 2>&1)
+      allocate(c_trace(trace_len + 1))
+      do i = 1, trace_len
+        c_trace(i) = trace_line(i:i)
+      end do
+      c_trace(trace_len + 1) = char(10)  ! newline
+
+      bytes_written = c_write(shell%original_stderr_fd, c_loc(c_trace), int(trace_len + 1, c_size_t))
+      deallocate(c_trace)
     end if
   end subroutine
 

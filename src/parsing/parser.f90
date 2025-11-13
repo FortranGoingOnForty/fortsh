@@ -6,12 +6,14 @@ module parser
   use shell_types
   use system_interface
   use variables  ! includes check_nounset
-  use expansion
   use glob
   use error_handling
   use performance
   use iso_fortran_env, only: error_unit, input_unit
   implicit none
+
+  ! Export backtick conversion for new parser
+  public :: convert_backticks_to_dollar_paren
 
 contains
 
@@ -289,6 +291,7 @@ contains
               ! Syntax error: ;; outside case statement
               call parser_error(102, 'Syntax error: ";;" is only valid in case statements', 'parse_pipeline')
               pipeline%num_commands = 0
+              pipeline%parse_error = .true.
               return
             end if
             cmd_count = cmd_count + 1
@@ -307,6 +310,7 @@ contains
             if (i == start) then
               call parser_error(103, 'Syntax error: unexpected ";"', 'parse_pipeline')
               pipeline%num_commands = 0
+              pipeline%parse_error = .true.
               return
             end if
             cmd_count = cmd_count + 1
@@ -1216,6 +1220,7 @@ contains
   end function
 
   subroutine expand_variables(token, expanded, shell)
+    use expansion, only: expand_braces, arithmetic_expansion_shell
     character(len=*), intent(in) :: token
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
@@ -1259,18 +1264,27 @@ contains
     j = 1
 
     do while (i <= len_trim(working_token))
-      ! Check for backslash escape in double-quoted strings
-      if (is_quoted .and. .not. is_single_quoted .and. working_token(i:i) == '\' .and. &
-          i < len_trim(working_token)) then
-        ! In double quotes, backslash escapes: $ ` " \ and newline
-        if (working_token(i+1:i+1) == '$' .or. working_token(i+1:i+1) == '`' .or. &
-            working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
-          ! Skip the backslash and add the escaped character
-          i = i + 1
-          result(j:j) = working_token(i:i)
+      ! Check for backslash escape
+      ! Handle \$ even outside quotes since lexer may have already removed quotes
+      if (working_token(i:i) == '\' .and. i < len_trim(working_token)) then
+        if (working_token(i+1:i+1) == '$') then
+          ! \$ -> literal $
+          i = i + 1  ! Skip backslash
+          result(j:j) = '$'
           i = i + 1
           j = j + 1
           cycle
+        else if (is_quoted .and. .not. is_single_quoted) then
+          ! In double quotes, backslash also escapes: ` " \ and newline
+          if (working_token(i+1:i+1) == '`' .or. &
+              working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
+            ! Skip the backslash and add the escaped character
+            i = i + 1
+            result(j:j) = working_token(i:i)
+            i = i + 1
+            j = j + 1
+            cycle
+          end if
         end if
         ! Otherwise, keep the backslash (it's not escaping anything special)
       end if
@@ -1412,7 +1426,7 @@ contains
           i = i + 1
           var_start = i
           brace_depth = 1
-          
+
           do while (i <= len_trim(working_token) .and. brace_depth > 0)
             if (working_token(i:i) == '{') then
               brace_depth = brace_depth + 1
@@ -1460,8 +1474,9 @@ contains
                 ! Variable is not set - check if set -u is enabled
                 if (.not. is_shell_variable_set(shell, trim(var_name))) then
                   if (check_nounset(shell, trim(var_name))) then
-                    shell%last_exit_status = 1
+                    shell%last_exit_status = 127  ! POSIX: expansion errors return 127
                     shell%fatal_expansion_error = .true.
+                    shell%running = .false.  ! Stop shell execution
                     expanded = ''
                     return
                   end if
@@ -1517,17 +1532,47 @@ contains
     
   end subroutine
 
-  subroutine read_heredoc(delimiter, content)
+  subroutine read_heredoc(delimiter, content, shell)
+    use shell_types, only: shell_state_t
+    use variables, only: get_shell_variable
     character(len=*), intent(in) :: delimiter
     character(len=:), allocatable, intent(out) :: content
+    type(shell_state_t), intent(inout) :: shell
 
     character(len=MAX_TOKEN_LEN) :: line
     character(len=MAX_HEREDOC_LEN) :: buffer
     integer :: iostat, pos
+    logical :: should_expand
 
+    ! Check if we have pending heredoc content from -c flag
+    if (shell%has_pending_heredoc .and. &
+        trim(shell%pending_heredoc_delimiter) == trim(delimiter)) then
+      ! Use the pre-stored content
+      buffer = trim(shell%pending_heredoc)
+
+      ! Check if we should expand variables
+      should_expand = .not. shell%pending_heredoc_quoted
+
+      ! Expand variables if needed
+      if (should_expand) then
+        buffer = expand_heredoc_variables(buffer, shell)
+      end if
+
+      allocate(character(len=len_trim(buffer)) :: content)
+      content = trim(buffer)
+
+      ! Clear the pending heredoc
+      shell%has_pending_heredoc = .false.
+      shell%pending_heredoc = ''
+      shell%pending_heredoc_delimiter = ''
+      shell%pending_heredoc_quoted = .false.
+      return
+    end if
+
+    ! Fall back to reading from stdin
     buffer = ''
     pos = 1
-    
+
     write(*, '(a)', advance='no') '> '
     
     do
@@ -1550,6 +1595,74 @@ contains
     allocate(character(len=pos-1) :: content)
     content = buffer(:pos-1)
   end subroutine
+
+  ! Expand variables in heredoc content
+  function expand_heredoc_variables(input, shell) result(output)
+    use shell_types, only: shell_state_t
+    use variables, only: get_shell_variable
+    character(len=*), intent(in) :: input
+    type(shell_state_t), intent(in) :: shell
+    character(len=MAX_HEREDOC_LEN) :: output
+
+    integer :: i, j, var_start, var_end
+    character(len=256) :: var_name, var_value
+
+    output = ''
+    i = 1
+    j = 1
+
+    do while (i <= len_trim(input))
+      if (input(i:i) == '$' .and. i < len_trim(input)) then
+        ! Found potential variable
+        var_start = i + 1
+
+        ! Check for ${var} format
+        if (input(var_start:var_start) == '{') then
+          var_start = var_start + 1
+          var_end = var_start
+          do while (var_end <= len_trim(input) .and. input(var_end:var_end) /= '}')
+            var_end = var_end + 1
+          end do
+          if (var_end <= len_trim(input)) then
+            var_name = input(var_start:var_end-1)
+            var_value = get_shell_variable(shell, trim(var_name))
+            output(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+            i = var_end + 1
+          else
+            output(j:j) = '$'
+            j = j + 1
+            i = i + 1
+          end if
+        else
+          ! Check for $var format
+          var_end = var_start
+          do while (var_end <= len_trim(input) .and. &
+                   ((input(var_end:var_end) >= 'A' .and. input(var_end:var_end) <= 'Z') .or. &
+                    (input(var_end:var_end) >= 'a' .and. input(var_end:var_end) <= 'z') .or. &
+                    (input(var_end:var_end) >= '0' .and. input(var_end:var_end) <= '9') .or. &
+                    input(var_end:var_end) == '_'))
+            var_end = var_end + 1
+          end do
+          if (var_end > var_start) then
+            var_name = input(var_start:var_end-1)
+            var_value = get_shell_variable(shell, trim(var_name))
+            output(j:j+len_trim(var_value)-1) = trim(var_value)
+            j = j + len_trim(var_value)
+            i = var_end
+          else
+            output(j:j) = '$'
+            j = j + 1
+            i = i + 1
+          end if
+        end if
+      else
+        output(j:j) = input(i:i)
+        j = j + 1
+        i = i + 1
+      end if
+    end do
+  end function
 
   ! Extract heredoc content from input string (for -c mode)
   subroutine extract_heredoc_from_input(input, delimiter, content)
@@ -1653,21 +1766,57 @@ contains
   end subroutine
 
   ! Expand glob patterns in command tokens
-  subroutine expand_command_globs(cmd)
+  subroutine expand_command_globs(cmd, shell)
     type(command_t), intent(inout) :: cmd
-    
+    type(shell_state_t), intent(in) :: shell
+
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_tokens(:)
     character(len=MAX_TOKEN_LEN), allocatable :: original_tokens(:)
-    integer :: expanded_count, i
-    
+    character(len=MAX_TOKEN_LEN), allocatable :: filtered_tokens(:)
+    integer :: expanded_count, i, filtered_count
+    logical :: has_expandable
+
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
-    
+
+    ! Skip glob expansion if noglob option is enabled (set -f)
+    if (shell%option_noglob) return
+
     ! Save original tokens
     allocate(original_tokens(cmd%num_tokens))
     do i = 1, cmd%num_tokens
       original_tokens(i) = cmd%tokens(i)
     end do
-    
+
+    ! Don't glob expand tokens that were escaped or have backslashes
+    ! Check metadata if available, otherwise fall back to checking for backslash
+    has_expandable = .false.
+    do i = 1, cmd%num_tokens
+      ! Skip if token was escaped (metadata available) or has backslash (fallback)
+      if (allocated(cmd%token_escaped)) then
+        ! Use metadata if available
+        if (i <= size(cmd%token_escaped) .and. cmd%token_escaped(i)) then
+          cycle  ! Skip this token - it was escaped
+        end if
+      else if (index(cmd%tokens(i), '\') > 0) then
+        ! Fallback: check for backslash in token
+        cycle  ! Skip this token - it has a backslash
+      end if
+
+      ! Check if token has glob characters
+      if (index(cmd%tokens(i), '*') > 0 .or. &
+          index(cmd%tokens(i), '?') > 0 .or. &
+          index(cmd%tokens(i), '[') > 0) then
+        has_expandable = .true.
+        exit
+      end if
+    end do
+
+    if (.not. has_expandable) then
+      ! No tokens need glob expansion
+      if (allocated(original_tokens)) deallocate(original_tokens)
+      return
+    end if
+
     ! Expand glob patterns
     call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count)
     
@@ -1750,7 +1899,7 @@ contains
   end function
 
   subroutine execute_command_substitution(command, output, shell)
-    use substitution, only: execute_command_and_capture
+    use command_capture, only: execute_command_and_capture
     character(len=*), intent(in) :: command
     character(len=:), allocatable, intent(out) :: output
     type(shell_state_t), intent(inout) :: shell
@@ -2175,6 +2324,13 @@ contains
 
     ! Not array access - fall back to original length logic
     if (is_length) then
+      ! Special handling for @ and * parameters, or empty (just ${#}) - return count, not string length
+      if (trim(var_name) == '@' .or. trim(var_name) == '*' .or. len_trim(var_name) == 0) then
+        write(length_str, '(I0)') shell%num_positional
+        result_value = trim(length_str)
+        return
+      end if
+
       ! Get actual stored length from variable
       call get_variable_length(shell, trim(var_name), str_length)
       if (str_length >= 0) then
@@ -2539,8 +2695,9 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (.not. var_is_set) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 1
+          shell%last_exit_status = 127  ! POSIX: expansion errors return 127
           shell%fatal_expansion_error = .true.
+          shell%running = .false.  ! Stop shell execution
           result_value = ''
           return
         end if

@@ -5,12 +5,16 @@
 module expansion
   use shell_types
   use variables  ! includes check_nounset
-  use substitution, only: execute_command_and_capture
+  use command_capture, only: execute_command_and_capture
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
   ! Recursion depth limits
   integer, parameter :: MAX_RECURSION_DEPTH = 1000
+
+  ! Arithmetic error tracking
+  logical :: arithmetic_error = .false.
+  character(len=256) :: arithmetic_error_msg = ''
 
 contains
 
@@ -38,7 +42,6 @@ contains
     ! Remove ${ and }
     if (len_trim(expression) < 4) return
     var_name = expression(3:len_trim(expression)-1)
-    write(error_unit, '(A,A,A)') 'DEBUG START: var_name=[', trim(var_name), ']'
 
     ! ========================================================================
     ! Check for array bracket syntax FIRST: ${array[key]}, ${!array[@]}, ${#array[@]}
@@ -216,7 +219,7 @@ contains
     percent_pos = index(var_name, '%')
     hash_pos = index(var_name, '#')
     slash_pos = index(var_name, '/')
-    write(error_unit, '(A,A,A,I0)') 'DEBUG AFTER OPS: var_name=[', trim(var_name), '] dash_pos=', dash_pos
+    !     write(error_unit, '(A,A,A,I0)') 'DEBUG AFTER OPS: var_name=[', trim(var_name), '] dash_pos=', dash_pos
 
     ! Pattern replacement: ${var/pattern/replacement} or ${var//pattern/replacement}
     if (slash_pos > 0) then
@@ -264,12 +267,40 @@ contains
 
     ! Prefix removal: ${var#pattern} or ${var##pattern}
     ! But first check if it's ${#var} (length)
-    if (hash_pos == 1 .and. len_trim(var_name) > 1) then
-      ! ${#var} length expansion
-      operation = var_name(2:)
-      var_value = get_shell_variable(shell, trim(operation))
-      write(expanded, '(I0)') len_trim(var_value)
-      return
+    if (hash_pos == 1) then
+      ! Check if this is just ${#} (number of positional params)
+      if (len_trim(var_name) == 1) then
+        ! ${#} alone - return number of positional parameters
+        write(expanded, '(I0)') shell%num_positional
+        return
+      else if (len_trim(var_name) > 1) then
+        ! ${#var} length expansion
+        operation = var_name(2:)
+
+        ! Check for special parameters
+        if (trim(operation) == '@' .or. trim(operation) == '*') then
+          ! ${#@} or ${#*} - return number of positional parameters
+          write(expanded, '(I0)') shell%num_positional
+          return
+        else if (len(trim(operation)) > 0) then
+          ! Check if it's a positional parameter (digit)
+          read(operation, *, iostat=i) j
+          if (i == 0 .and. j > 0) then
+            ! ${#1}, ${#2}, etc. - return length of specific positional parameter
+            if (j <= shell%num_positional) then
+              write(expanded, '(I0)') len_trim(shell%positional_params(j))
+            else
+              expanded = '0'
+            end if
+            return
+          else
+            ! Regular variable length
+            var_value = get_shell_variable(shell, trim(operation))
+            write(expanded, '(I0)') len_trim(var_value)
+            return
+          end if
+        end if
+      end if
     else if (hash_pos > 1) then
       ! Check for ##
       if (hash_pos < len_trim(var_name) .and. var_name(hash_pos+1:hash_pos+1) == '#') then
@@ -326,14 +357,14 @@ contains
 
     if (dash_pos > 0 .or. plus_pos > 0 .or. equals_pos > 0 .or. question_pos > 0) then
       ! ${var-word}, ${var:-word}, ${var+word}, ${var:+word}, ${var=word}, ${var:=word}, ${var?word}, ${var:?word}
-      write(error_unit, '(A,I0,A,I0,A,I0,A,I0)') 'DEBUG: dash=', dash_pos, &
-           ' plus=', plus_pos, ' eq=', equals_pos, ' q=', question_pos
+    !       write(error_unit, '(A,I0,A,I0,A,I0,A,I0)') 'DEBUG: dash=', dash_pos, &
+    !        ' plus=', plus_pos, ' eq=', equals_pos, ' q=', question_pos
 
       ! Determine which operator we have
       if (dash_pos > 0 .and. (plus_pos == 0 .or. dash_pos < plus_pos) .and. &
           (equals_pos == 0 .or. dash_pos < equals_pos) .and. (question_pos == 0 .or. dash_pos < question_pos)) then
         ! Dash operator
-        write(error_unit, '(A)') 'DEBUG: Entering dash operator handler'
+    !         write(error_unit, '(A)') 'DEBUG: Entering dash operator handler'
         has_colon = (dash_pos > 1 .and. var_name(dash_pos-1:dash_pos-1) == ':')
         if (has_colon) then
           operation = var_name(:dash_pos-2)
@@ -343,13 +374,13 @@ contains
           param1 = var_name(dash_pos+1:)
         end if
 
-        write(error_unit, '(A,L1,A,A,A,A,A)') 'DEBUG: has_colon=', has_colon, &
-             ' op=', trim(operation), ' param1=', trim(param1)
+    !         write(error_unit, '(A,L1,A,A,A,A,A)') 'DEBUG: has_colon=', has_colon, &
+    !          ' op=', trim(operation), ' param1=', trim(param1)
         var_is_set = is_shell_variable_set(shell, trim(operation))
         var_value = get_shell_variable(shell, trim(operation))
         var_is_null = (len_trim(var_value) == 0)
-        write(error_unit, '(A,L1,A,A,A,L1)') 'DEBUG: var_is_set=', var_is_set, &
-             ' val=', trim(var_value), ' null=', var_is_null
+    !         write(error_unit, '(A,L1,A,A,A,L1)') 'DEBUG: var_is_set=', var_is_set, &
+    !          ' val=', trim(var_value), ' null=', var_is_null
 
         ! ${var-word}: use word if var is unset
         ! ${var:-word}: use word if var is unset or null
@@ -366,7 +397,7 @@ contains
             expanded = trim(var_value)
           end if
         end if
-        write(error_unit, '(A,A,A)') 'DEBUG: expanded=', trim(expanded), '|'
+    !         write(error_unit, '(A,A,A)') 'DEBUG: expanded=', trim(expanded), '|'
 
       else if (plus_pos > 0 .and. (equals_pos == 0 .or. plus_pos < equals_pos) .and. &
                (question_pos == 0 .or. plus_pos < question_pos)) then
@@ -493,7 +524,7 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (len_trim(var_value) == 0 .and. .not. is_shell_variable_set(shell, trim(var_name))) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 1
+          shell%last_exit_status = 127  ! POSIX sh returns 127 for expansion errors
           shell%fatal_expansion_error = .true.
           expanded = ''
           return
@@ -855,9 +886,20 @@ contains
     if (len_trim(expression) < 6) return
     expr = adjustl(expression(4:len_trim(expression)-2))
 
+    ! Clear any previous error
+    arithmetic_error = .false.
+    arithmetic_error_msg = ''
+
     ! Evaluate the arithmetic expression (without shell context for variable resolution)
     result_int = eval_expression(trim(expr))
-    write(result_value, '(I0)') result_int
+
+    ! Check for arithmetic errors
+    if (arithmetic_error) then
+      write(error_unit, '(a,a)') 'fortsh: arithmetic expression: ', trim(arithmetic_error_msg)
+      result_value = ''  ! Return empty string to signal error
+    else
+      write(result_value, '(I0)') result_int
+    end if
   end function
 
   ! Version with shell context for variable resolution
@@ -875,13 +917,29 @@ contains
     if (len_trim(expression) < 6) return
     expr = adjustl(expression(4:len_trim(expression)-2))
 
+    ! Clear any previous error
+    arithmetic_error = .false.
+    arithmetic_error_msg = ''
+    shell%arithmetic_error = .false.
+    shell%arithmetic_error_msg = ''
+
     ! Expand ALL parameter expansions ($var, $1, $(cmd), etc.) before evaluation
     ! This handles variables, positional parameters, and command substitutions
     call enhanced_expand_variables(expr, expanded_expr, shell)
 
     ! Evaluate with shell context for any remaining variable resolution
     result_int = eval_expression_shell(trim(expanded_expr), shell)
-    write(result_value, '(I0)') result_int
+
+    ! Check for arithmetic errors
+    if (arithmetic_error) then
+      write(error_unit, '(a,a)') 'fortsh: arithmetic expression: ', trim(arithmetic_error_msg)
+      shell%last_exit_status = 127  ! POSIX sh returns 127 for arithmetic errors
+      shell%arithmetic_error = .true.
+      shell%arithmetic_error_msg = trim(arithmetic_error_msg)
+      result_value = ''  ! Return empty string to signal error
+    else
+      write(result_value, '(I0)') result_int
+    end if
   end function
 
   ! Main expression evaluator - handles full expressions
@@ -889,10 +947,68 @@ contains
     character(len=*), intent(in) :: expr
     integer(kind=8) :: value
 
-    value = eval_logical_or(trim(adjustl(expr)))
+    value = eval_ternary(trim(adjustl(expr)))
   end function
 
-  ! Logical OR (lowest precedence)
+  ! Ternary conditional operator (? :)
+  recursive function eval_ternary(expr) result(value)
+    character(len=*), intent(in) :: expr
+    integer(kind=8) :: value, true_val, false_val
+    integer :: qmark_pos, colon_pos, depth, i
+    character(len=512) :: condition_expr, true_expr, false_expr
+
+    ! Find ? outside parentheses
+    qmark_pos = 0
+    depth = 0
+    do i = 1, len_trim(expr)
+      if (expr(i:i) == '(') then
+        depth = depth + 1
+      else if (expr(i:i) == ')') then
+        depth = depth - 1
+      else if (depth == 0 .and. expr(i:i) == '?') then
+        qmark_pos = i
+        exit
+      end if
+    end do
+
+    if (qmark_pos > 0) then
+      ! Find matching : after the ?
+      colon_pos = 0
+      depth = 0
+      do i = qmark_pos + 1, len_trim(expr)
+        if (expr(i:i) == '(') then
+          depth = depth + 1
+        else if (expr(i:i) == ')') then
+          depth = depth - 1
+        else if (depth == 0 .and. expr(i:i) == ':') then
+          colon_pos = i
+          exit
+        end if
+      end do
+
+      if (colon_pos > 0) then
+        condition_expr = expr(:qmark_pos-1)
+        true_expr = expr(qmark_pos+1:colon_pos-1)
+        false_expr = expr(colon_pos+1:)
+
+        ! Evaluate condition
+        value = eval_logical_or(trim(adjustl(condition_expr)))
+        if (value /= 0) then
+          ! Condition is true, evaluate true expression
+          value = eval_ternary(trim(adjustl(true_expr)))
+        else
+          ! Condition is false, evaluate false expression
+          value = eval_ternary(trim(adjustl(false_expr)))
+        end if
+        return
+      end if
+    end if
+
+    ! No ternary operator found
+    value = eval_logical_or(expr)
+  end function
+
+  ! Logical OR (lowest precedence except ternary)
   recursive function eval_logical_or(expr) result(value)
     character(len=*), intent(in) :: expr
     integer(kind=8) :: value, right_val
@@ -1047,8 +1163,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value <= right_val) then
         value = 1
       else
@@ -1062,8 +1178,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value >= right_val) then
         value = 1
       else
@@ -1077,8 +1193,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value < right_val) then
         value = 1
       else
@@ -1092,8 +1208,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive(trim(adjustl(left_expr)))
-      right_val = eval_additive(trim(adjustl(right_expr)))
+      value = eval_shift(trim(adjustl(left_expr)))
+      right_val = eval_shift(trim(adjustl(right_expr)))
       if (value > right_val) then
         value = 1
       else
@@ -1102,6 +1218,41 @@ contains
       return
     end if
 
+    value = eval_shift(expr)
+  end function
+
+  ! Shift operations (<<, >>)
+  recursive function eval_shift(expr) result(value)
+    character(len=*), intent(in) :: expr
+    integer(kind=8) :: value, right_val
+    integer :: pos
+    character(len=512) :: left_expr, right_expr
+
+    ! Try << (left shift)
+    pos = find_operator(expr, '<<')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive(trim(adjustl(left_expr)))  ! Changed from eval_shift
+      right_val = eval_additive(trim(adjustl(right_expr)))
+      ! Left shift by right_val bits
+      value = ishft(value, int(right_val))
+      return
+    end if
+
+    ! Try >> (right shift)
+    pos = find_operator(expr, '>>')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive(trim(adjustl(left_expr)))  ! Changed from eval_shift
+      right_val = eval_additive(trim(adjustl(right_expr)))
+      ! Right shift by right_val bits (negative for right shift in ishft)
+      value = ishft(value, -int(right_val))
+      return
+    end if
+
+    ! No shift operator found
     value = eval_additive(expr)
   end function
 
@@ -1155,12 +1306,16 @@ contains
         if (right_val /= 0) then
           value = value / right_val
         else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
           value = 0  ! Division by zero
         end if
       case ('%')
         if (right_val /= 0) then
           value = mod(value, right_val)
         else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
           value = 0  ! Modulo by zero
         end if
       end select
@@ -1218,6 +1373,15 @@ contains
       else
         value = 0
       end if
+      return
+    end if
+
+    ! Bitwise NOT (~)
+    if (expr(1:1) == '~') then
+      rest = adjustl(expr(2:))
+      value = eval_unary(rest)
+      ! Bitwise NOT in two's complement: ~n = -(n + 1)
+      value = -(value + 1)
       return
     end if
 
@@ -1327,12 +1491,16 @@ contains
           if (right_val /= 0) then
             value = current_val / right_val
           else
+            arithmetic_error = .true.
+            arithmetic_error_msg = 'division by zero'
             value = 0
           end if
         case ('%=')
           if (right_val /= 0) then
             value = mod(current_val, right_val)
           else
+            arithmetic_error = .true.
+            arithmetic_error_msg = 'division by zero'
             value = 0
           end if
         case default
@@ -1344,9 +1512,68 @@ contains
       write(var_value_str, '(I0)') value
       call set_shell_variable(shell, trim(var_name), trim(var_value_str))
     else
-      ! No assignment, evaluate as logical OR
-      value = eval_logical_or_shell(expr, shell)
+      ! No assignment, evaluate as ternary
+      value = eval_ternary_shell(expr, shell)
     end if
+  end function
+
+  ! Ternary conditional operator (? :)
+  recursive function eval_ternary_shell(expr, shell) result(value)
+    character(len=*), intent(in) :: expr
+    type(shell_state_t), intent(inout) :: shell
+    integer(kind=8) :: value, true_val, false_val
+    integer :: qmark_pos, colon_pos, depth, i
+    character(len=512) :: condition_expr, true_expr, false_expr
+
+    ! Find ? outside parentheses
+    qmark_pos = 0
+    depth = 0
+    do i = 1, len_trim(expr)
+      if (expr(i:i) == '(') then
+        depth = depth + 1
+      else if (expr(i:i) == ')') then
+        depth = depth - 1
+      else if (depth == 0 .and. expr(i:i) == '?') then
+        qmark_pos = i
+        exit
+      end if
+    end do
+
+    if (qmark_pos > 0) then
+      ! Find matching : after the ?
+      colon_pos = 0
+      depth = 0
+      do i = qmark_pos + 1, len_trim(expr)
+        if (expr(i:i) == '(') then
+          depth = depth + 1
+        else if (expr(i:i) == ')') then
+          depth = depth - 1
+        else if (depth == 0 .and. expr(i:i) == ':') then
+          colon_pos = i
+          exit
+        end if
+      end do
+
+      if (colon_pos > 0) then
+        condition_expr = expr(:qmark_pos-1)
+        true_expr = expr(qmark_pos+1:colon_pos-1)
+        false_expr = expr(colon_pos+1:)
+
+        ! Evaluate condition
+        value = eval_logical_or_shell(trim(adjustl(condition_expr)), shell)
+        if (value /= 0) then
+          ! Condition is true, evaluate true expression
+          value = eval_ternary_shell(trim(adjustl(true_expr)), shell)
+        else
+          ! Condition is false, evaluate false expression
+          value = eval_ternary_shell(trim(adjustl(false_expr)), shell)
+        end if
+        return
+      end if
+    end if
+
+    ! No ternary operator found
+    value = eval_logical_or_shell(expr, shell)
   end function
 
   ! Helper function to find leftmost assignment operator (for right-associativity)
@@ -1546,8 +1773,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value <= right_val) then; value = 1; else; value = 0; end if
       return
     end if
@@ -1556,8 +1783,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+2:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value >= right_val) then; value = 1; else; value = 0; end if
       return
     end if
@@ -1566,8 +1793,8 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value < right_val) then; value = 1; else; value = 0; end if
       return
     end if
@@ -1576,12 +1803,48 @@ contains
     if (pos > 0) then
       left_expr = expr(:pos-1)
       right_expr = expr(pos+1:)
-      value = eval_additive_shell(trim(adjustl(left_expr)), shell)
-      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      value = eval_shift_shell(trim(adjustl(left_expr)), shell)
+      right_val = eval_shift_shell(trim(adjustl(right_expr)), shell)
       if (value > right_val) then; value = 1; else; value = 0; end if
       return
     end if
 
+    value = eval_shift_shell(expr, shell)
+  end function
+
+  ! Shift operations (<<, >>)
+  recursive function eval_shift_shell(expr, shell) result(value)
+    character(len=*), intent(in) :: expr
+    type(shell_state_t), intent(inout) :: shell
+    integer(kind=8) :: value, right_val
+    integer :: pos
+    character(len=512) :: left_expr, right_expr
+
+    ! Try << (left shift)
+    pos = find_operator(expr, '<<')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive_shell(trim(adjustl(left_expr)), shell)  ! Changed from eval_shift_shell
+      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      ! Left shift by right_val bits
+      value = ishft(value, int(right_val))
+      return
+    end if
+
+    ! Try >> (right shift)
+    pos = find_operator(expr, '>>')
+    if (pos > 0) then
+      left_expr = expr(:pos-1)
+      right_expr = expr(pos+2:)
+      value = eval_additive_shell(trim(adjustl(left_expr)), shell)  ! Changed from eval_shift_shell
+      right_val = eval_additive_shell(trim(adjustl(right_expr)), shell)
+      ! Right shift by right_val bits (negative for right shift in ishft)
+      value = ishft(value, -int(right_val))
+      return
+    end if
+
+    ! No shift operator found
     value = eval_additive_shell(expr, shell)
   end function
 
@@ -1625,9 +1888,21 @@ contains
       select case (op)
       case ('*'); value = value * right_val
       case ('/')
-        if (right_val /= 0) then; value = value / right_val; else; value = 0; end if
+        if (right_val /= 0) then
+          value = value / right_val
+        else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
+          value = 0
+        end if
       case ('%')
-        if (right_val /= 0) then; value = mod(value, right_val); else; value = 0; end if
+        if (right_val /= 0) then
+          value = mod(value, right_val)
+        else
+          arithmetic_error = .true.
+          arithmetic_error_msg = 'division by zero'
+          value = 0
+        end if
       end select
     else
       value = eval_power_shell(expr, shell)
@@ -1712,6 +1987,15 @@ contains
       rest = adjustl(expr(2:))
       value = eval_unary_shell(rest, shell)
       if (value == 0) then; value = 1; else; value = 0; end if
+      return
+    end if
+
+    ! Bitwise NOT (~)
+    if (expr(1:1) == '~') then
+      rest = adjustl(expr(2:))
+      value = eval_unary_shell(rest, shell)
+      ! Bitwise NOT in two's complement: ~n = -(n + 1)
+      value = -(value + 1)
       return
     end if
 
@@ -1872,6 +2156,9 @@ contains
         if (i > 1) then
           if (op == '=' .and. (expr(i-1:i-1) == '=' .or. expr(i-1:i-1) == '!' .or. &
                                expr(i-1:i-1) == '<' .or. expr(i-1:i-1) == '>')) cycle
+          ! Also check if < or > is the second char of << or >>
+          if (op == '<' .and. expr(i-1:i-1) == '<') cycle
+          if (op == '>' .and. expr(i-1:i-1) == '>') cycle
         end if
         pos = i
         return
@@ -2047,19 +2334,27 @@ contains
 
         if (bracket_count == 0) then
           var_expr = input(start_pos:i-1)
-          write(error_unit, '(A,A,A)') 'DEBUG BEFORE CALL: var_expr=[', trim(var_expr), ']'
           var_value = parameter_expansion(shell, var_expr)
-          write(error_unit, '(A,A,A)') 'DEBUG AFTER CALL: var_value=[', trim(var_value), ']'
           result = trim(result) // trim(var_value)
         end if
         
       else if (input(i:i) == '$') then
-        ! Simple variable expansion $var or special parameters
-        start_pos = i + 1
-        i = i + 1
+        ! Check if $ is escaped with backslash
+        if (i > 1 .and. input(i-1:i-1) == '\') then
+          ! Escaped $ - output literal $ (backslash already in result)
+          write(error_unit, '(A,I0,A,A)') 'ESCAPED $ at pos ', i, ' input=', input(i:min(i+10, len_trim(input)))
+          ! Just add the $ and don't expand
+          result = trim(result) // '$'
+          i = i + 1
+          write(error_unit, '(A,I0)') 'After escape, i=', i
+          cycle  ! Skip the rest of $ expansion logic
+        else
+          ! Simple variable expansion $var or special parameters
+          start_pos = i + 1
+          i = i + 1
 
-        ! Check for special parameters first (single character)
-        if (i <= len_trim(input)) then
+          ! Check for special parameters first (single character)
+          if (i <= len_trim(input)) then
           ! POSIX special parameters: $, !, ?, 0, -, _, #, *, @
           if (index('$!?0-_#*@', input(i:i)) > 0) then
             var_expr = input(i:i)
@@ -2081,6 +2376,7 @@ contains
         else
           ! $ at end of string
           result = trim(result) // '$'
+        end if
         end if
         
       else
@@ -2106,60 +2402,99 @@ contains
     character(len=*), intent(in) :: input, ifs_chars
     character(len=1024), intent(out) :: fields(:)
     integer, intent(out) :: field_count
-    
-    integer :: i, start_pos, field_idx
-    logical :: in_field, is_ifs_char
+
+    integer :: i, field_idx, input_len
+    logical :: prev_was_ifs, is_ifs_char, is_whitespace_ifs
     character(len=1024) :: current_field
-    
+    logical :: has_whitespace_ifs
+
     field_count = 0
     field_idx = 1
-    start_pos = 1
-    in_field = .false.
     current_field = ''
-    
+    prev_was_ifs = .false.
+
     ! Handle empty input
-    if (len_trim(input) == 0) then
+    input_len = len_trim(input)
+    if (input_len == 0) then
       return
     end if
-    
-    do i = 1, len_trim(input)
+
+    ! Check if IFS contains whitespace characters
+    has_whitespace_ifs = (index(ifs_chars, ' ') > 0) .or. &
+                         (index(ifs_chars, char(9)) > 0) .or. &
+                         (index(ifs_chars, char(10)) > 0)
+
+    ! Special handling for first character
+    is_ifs_char = index(ifs_chars, input(1:1)) > 0
+    is_whitespace_ifs = is_ifs_char .and. &
+                        (input(1:1) == ' ' .or. input(1:1) == char(9) .or. input(1:1) == char(10))
+
+    ! Leading non-whitespace IFS characters create empty fields
+    if (is_ifs_char .and. .not. is_whitespace_ifs) then
+      ! Add empty field for leading delimiter
+      if (field_idx <= size(fields)) then
+        fields(field_idx) = ''
+        field_idx = field_idx + 1
+        field_count = field_count + 1
+      end if
+      prev_was_ifs = .true.
+    else if (.not. is_ifs_char) then
+      ! Start with non-IFS character
+      current_field = input(1:1)
+      prev_was_ifs = .false.
+    else
+      ! Leading whitespace IFS - skip
+      prev_was_ifs = .true.
+    end if
+
+    ! Process remaining characters
+    do i = 2, input_len
       is_ifs_char = index(ifs_chars, input(i:i)) > 0
-      
+      is_whitespace_ifs = is_ifs_char .and. &
+                          (input(i:i) == ' ' .or. input(i:i) == char(9) .or. input(i:i) == char(10))
+
       if (.not. is_ifs_char) then
         ! Non-IFS character
-        if (.not. in_field) then
-          ! Start of new field
-          in_field = .true.
-          start_pos = i
-          current_field = input(i:i)
-        else
-          ! Continue current field
-          current_field = trim(current_field) // input(i:i)
-        end if
-      else
-        ! IFS character - end current field if we were in one
-        if (in_field) then
+        if (prev_was_ifs .and. len_trim(current_field) > 0) then
+          ! Save previous field
           if (field_idx <= size(fields)) then
-            fields(field_idx) = trim(current_field)
+            fields(field_idx) = current_field
             field_idx = field_idx + 1
             field_count = field_count + 1
           end if
-          in_field = .false.
           current_field = ''
         end if
+        current_field = trim(current_field) // input(i:i)
+        prev_was_ifs = .false.
+      else
+        ! IFS character
+        if (len_trim(current_field) > 0 .or. (.not. prev_was_ifs .and. .not. is_whitespace_ifs)) then
+          ! Save current field
+          if (field_idx <= size(fields)) then
+            fields(field_idx) = current_field
+            field_idx = field_idx + 1
+            field_count = field_count + 1
+          end if
+          current_field = ''
+        end if
+        ! Non-whitespace IFS after non-whitespace IFS creates empty field
+        if (prev_was_ifs .and. .not. is_whitespace_ifs) then
+          if (field_idx <= size(fields)) then
+            fields(field_idx) = ''
+            field_idx = field_idx + 1
+            field_count = field_count + 1
+          end if
+        end if
+        prev_was_ifs = .true.
       end if
     end do
-    
-    ! Handle last field if we ended in one
-    if (in_field .and. field_idx <= size(fields)) then
-      fields(field_idx) = trim(current_field)
-      field_count = field_count + 1
-    end if
-    
-    ! If no fields were created but input wasn't empty, create one field
-    if (field_count == 0 .and. len_trim(input) > 0) then
-      fields(1) = trim(input)
-      field_count = 1
+
+    ! Handle last field
+    if (len_trim(current_field) > 0 .or. (prev_was_ifs .and. input_len > 0)) then
+      if (field_idx <= size(fields)) then
+        fields(field_idx) = current_field
+        field_count = field_count + 1
+      end if
     end if
   end subroutine
   
@@ -2169,17 +2504,34 @@ contains
     character(len=*), intent(in) :: input
     character(len=1024), intent(out) :: words(:)
     integer, intent(out) :: word_count
-    
+
     character(len=256) :: ifs_to_use
-    
-    ! Use shell's IFS or default
-    if (len_trim(shell%ifs) > 0) then
-      ifs_to_use = trim(shell%ifs)
+    logical :: ifs_is_set
+    integer :: ifs_actual_len
+
+    ! Check if IFS is explicitly set (even if empty)
+    ifs_is_set = is_shell_variable_set(shell, 'IFS')
+
+    if (ifs_is_set) then
+      ifs_to_use = shell%ifs
+      ! Get the actual length of IFS from shell%ifs_len (preserves whitespace-only values)
+      ifs_actual_len = shell%ifs_len
+
+      ! If IFS is set to empty string (length 0), no field splitting occurs
+      ! But if IFS=" " (length 1), we should still split on that space
+      if (ifs_actual_len == 0) then
+        ! Empty IFS - return the entire input as a single field
+        words(1) = input
+        word_count = 1
+        return
+      end if
+      ! Use the actual IFS length, not trimmed length
+      call field_split(input, ifs_to_use(1:ifs_actual_len), words, word_count)
     else
+      ! IFS not set - use default
       ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline
+      call field_split(input, trim(ifs_to_use), words, word_count)
     end if
-    
-    call field_split(input, trim(ifs_to_use), words, word_count)
   end subroutine
 
   ! Quote removal - removes outer quotes from strings
