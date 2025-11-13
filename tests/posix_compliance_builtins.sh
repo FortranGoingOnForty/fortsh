@@ -118,10 +118,11 @@ test_p0_set_u() {
     fi
 
     # Test 3: Non-interactive shell exits on unbound variable
+    # POSIX: Expansion errors should return exit code 127, not 1
     $FORTSH_BIN -c 'set -u; echo $UNDEF; echo SHOULD_NOT_PRINT' >/dev/null 2>&1
     exit_code=$?
     output=$($FORTSH_BIN -c 'set -u; echo $UNDEF; echo SHOULD_NOT_PRINT' 2>&1)
-    if [ $exit_code -eq 1 ] && ! echo "$output" | grep -q "SHOULD_NOT_PRINT"; then
+    if [ $exit_code -eq 127 ] && ! echo "$output" | grep -q "SHOULD_NOT_PRINT"; then
         pass "P0-2.3: Non-interactive shell exits on unbound variable"
     else
         fail "P0-2.3: Non-interactive shell exits on unbound variable" "Exit code: $exit_code"
@@ -553,11 +554,12 @@ test_edge_cases() {
     fi
 
     # Test semicolon alone
+    # POSIX: Semicolon alone is a syntax error (exit code 2), not success
     $FORTSH_BIN -c ';' >/dev/null 2>&1
-    if [ $? -eq 0 ]; then
-        pass "EDGE-2: Semicolon alone succeeds"
+    if [ $? -eq 2 ]; then
+        pass "EDGE-2: Semicolon alone is syntax error"
     else
-        fail "EDGE-2: Semicolon alone succeeds"
+        fail "EDGE-2: Semicolon alone is syntax error" "Expected exit 2, got $?"
     fi
 
     # Test comment handling
