@@ -1424,9 +1424,9 @@ contains
       end if
     end if
 
-    ! Try to parse as number
+    ! Try to parse as number (with octal/hex support)
     temp_expr = trim(adjustl(expr))
-    read(temp_expr, *, iostat=iostat) value
+    value = parse_arithmetic_number(temp_expr, iostat)
     if (iostat == 0) return
 
     ! Variable without shell context - return 0
@@ -2074,15 +2074,15 @@ contains
       end if
     end if
 
-    ! Try to parse as number
+    ! Try to parse as number (with octal/hex support)
     temp_expr = trim(adjustl(expr))
-    read(temp_expr, *, iostat=iostat) value
+    value = parse_arithmetic_number(temp_expr, iostat)
     if (iostat == 0) return
 
     ! Resolve as variable
     var_value = get_shell_variable(shell, trim(adjustl(expr)))
     if (len_trim(var_value) > 0) then
-      read(var_value, *, iostat=iostat) value
+      value = parse_arithmetic_number(trim(var_value), iostat)
       if (iostat == 0) return
     end if
 
@@ -3031,5 +3031,66 @@ contains
 
     deallocate(temp)
   end subroutine
+
+  ! Parse arithmetic number with octal and hex support
+  ! Returns value and sets iostat (0 = success, non-zero = error)
+  function parse_arithmetic_number(str, iostat) result(value)
+    character(len=*), intent(in) :: str
+    integer, intent(out) :: iostat
+    integer(kind=8) :: value
+    integer :: i, len_str, digit
+    character(len=256) :: trimmed_str
+
+    value = 0
+    iostat = 0
+    trimmed_str = trim(adjustl(str))
+    len_str = len_trim(trimmed_str)
+
+    if (len_str == 0) then
+      iostat = 1
+      return
+    end if
+
+    ! Check for hexadecimal (0x or 0X)
+    if (len_str >= 3 .and. trimmed_str(1:1) == '0' .and. &
+        (trimmed_str(2:2) == 'x' .or. trimmed_str(2:2) == 'X')) then
+      ! Parse hexadecimal
+      do i = 3, len_str
+        if (trimmed_str(i:i) >= '0' .and. trimmed_str(i:i) <= '9') then
+          digit = ichar(trimmed_str(i:i)) - ichar('0')
+        else if (trimmed_str(i:i) >= 'a' .and. trimmed_str(i:i) <= 'f') then
+          digit = ichar(trimmed_str(i:i)) - ichar('a') + 10
+        else if (trimmed_str(i:i) >= 'A' .and. trimmed_str(i:i) <= 'F') then
+          digit = ichar(trimmed_str(i:i)) - ichar('A') + 10
+        else
+          iostat = 1
+          return
+        end if
+        value = value * 16 + digit
+      end do
+      return
+    end if
+
+    ! Check for octal (starts with 0 and has only 0-7 digits)
+    if (len_str >= 2 .and. trimmed_str(1:1) == '0') then
+      ! Verify all digits are 0-7 for octal
+      do i = 2, len_str
+        if (trimmed_str(i:i) < '0' .or. trimmed_str(i:i) > '7') then
+          ! Not a valid octal, try decimal
+          read(trimmed_str, *, iostat=iostat) value
+          return
+        end if
+      end do
+      ! Parse as octal
+      do i = 1, len_str
+        digit = ichar(trimmed_str(i:i)) - ichar('0')
+        value = value * 8 + digit
+      end do
+      return
+    end if
+
+    ! Default: parse as decimal
+    read(trimmed_str, *, iostat=iostat) value
+  end function
 
 end module expansion
