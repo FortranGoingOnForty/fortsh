@@ -148,8 +148,12 @@ contains
           case ('f')
             shell%option_noglob = enable_option
           case ('o')
-            ! Handle -o followed by option name (should be separate argument)
-            if (i < cmd%num_tokens) then
+            ! POSIX: set -o without argument lists all options
+            if (i >= cmd%num_tokens) then
+              call list_shell_options(shell)
+              shell%last_exit_status = 0
+            else
+              ! Handle -o followed by option name (should be separate argument)
               i = i + 1
               option_name = trim(cmd%tokens(i))
               select case (trim(option_name))
@@ -189,9 +193,6 @@ contains
                   write(error_unit, '(a)') 'set: unknown option: ' // trim(option_name)
                   shell%last_exit_status = 1
               end select
-            else
-              write(error_unit, '(a)') 'set: option -o requires an argument'
-              shell%last_exit_status = 1
             end if
           case default
             write(error_unit, '(a)') 'set: unknown option: -' // option_name(1:1)
@@ -377,6 +378,72 @@ contains
 
       bytes_written = c_write(shell%original_stderr_fd, c_loc(c_trace), int(trace_len + 1, c_size_t))
       deallocate(c_trace)
+    end if
+  end subroutine
+
+  ! List all shell options (for set -o)
+  subroutine list_shell_options(shell)
+    type(shell_state_t), intent(in) :: shell
+
+    ! Print each option with its current state (on/off)
+    if (shell%option_allexport) then
+      write(output_unit, '(a)') 'allexport      	on'
+    else
+      write(output_unit, '(a)') 'allexport      	off'
+    end if
+
+    if (shell%option_errexit) then
+      write(output_unit, '(a)') 'errexit        	on'
+    else
+      write(output_unit, '(a)') 'errexit        	off'
+    end if
+
+    if (shell%option_monitor) then
+      write(output_unit, '(a)') 'monitor        	on'
+    else
+      write(output_unit, '(a)') 'monitor        	off'
+    end if
+
+    if (shell%option_noclobber) then
+      write(output_unit, '(a)') 'noclobber      	on'
+    else
+      write(output_unit, '(a)') 'noclobber      	off'
+    end if
+
+    if (shell%option_noglob) then
+      write(output_unit, '(a)') 'noglob         	on'
+    else
+      write(output_unit, '(a)') 'noglob         	off'
+    end if
+
+    if (shell%option_nounset) then
+      write(output_unit, '(a)') 'nounset        	on'
+    else
+      write(output_unit, '(a)') 'nounset        	off'
+    end if
+
+    if (shell%option_pipefail) then
+      write(output_unit, '(a)') 'pipefail       	on'
+    else
+      write(output_unit, '(a)') 'pipefail       	off'
+    end if
+
+    if (shell%option_verbose) then
+      write(output_unit, '(a)') 'verbose        	on'
+    else
+      write(output_unit, '(a)') 'verbose        	off'
+    end if
+
+    if (shell%option_vi) then
+      write(output_unit, '(a)') 'vi             	on'
+    else
+      write(output_unit, '(a)') 'vi             	off'
+    end if
+
+    if (shell%option_xtrace) then
+      write(output_unit, '(a)') 'xtrace         	on'
+    else
+      write(output_unit, '(a)') 'xtrace         	off'
     end if
   end subroutine
 
