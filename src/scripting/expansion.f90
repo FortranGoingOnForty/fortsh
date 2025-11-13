@@ -2507,25 +2507,31 @@ contains
 
     character(len=256) :: ifs_to_use
     logical :: ifs_is_set
+    integer :: ifs_actual_len
 
     ! Check if IFS is explicitly set (even if empty)
     ifs_is_set = is_shell_variable_set(shell, 'IFS')
 
     if (ifs_is_set) then
       ifs_to_use = shell%ifs
-      ! If IFS is set to empty string, no field splitting occurs
-      if (len_trim(ifs_to_use) == 0) then
+      ! Get the actual length of IFS from shell%ifs_len (preserves whitespace-only values)
+      ifs_actual_len = shell%ifs_len
+
+      ! If IFS is set to empty string (length 0), no field splitting occurs
+      ! But if IFS=" " (length 1), we should still split on that space
+      if (ifs_actual_len == 0) then
         ! Empty IFS - return the entire input as a single field
         words(1) = input
         word_count = 1
         return
       end if
+      ! Use the actual IFS length, not trimmed length
+      call field_split(input, ifs_to_use(1:ifs_actual_len), words, word_count)
     else
       ! IFS not set - use default
       ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline
+      call field_split(input, trim(ifs_to_use), words, word_count)
     end if
-
-    call field_split(input, trim(ifs_to_use), words, word_count)
   end subroutine
 
   ! Quote removal - removes outer quotes from strings

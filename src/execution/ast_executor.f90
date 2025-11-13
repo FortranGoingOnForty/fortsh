@@ -196,6 +196,7 @@ contains
             allocate(temp_cmd%token_quoted(temp_cmd%num_tokens))
             allocate(temp_cmd%token_escaped(temp_cmd%num_tokens))
             allocate(temp_cmd%token_quote_type(temp_cmd%num_tokens))
+            allocate(temp_cmd%token_lengths(temp_cmd%num_tokens))
 
             ! Copy arguments (skip function name at index 1)
             do k = 1, temp_cmd%num_tokens
@@ -205,9 +206,11 @@ contains
                   allocated(node%simple_cmd%word_lengths) .and. k+1 <= size(node%simple_cmd%word_lengths)) then
                 ! Quoted word - use actual length to preserve trailing whitespace
                 temp_cmd%tokens(k) = node%simple_cmd%words(k + 1)(1:node%simple_cmd%word_lengths(k + 1))
+                temp_cmd%token_lengths(k) = node%simple_cmd%word_lengths(k + 1)
               else
                 ! Unquoted word - trim is safe
                 temp_cmd%tokens(k) = trim(node%simple_cmd%words(k + 1))
+                temp_cmd%token_lengths(k) = len_trim(node%simple_cmd%words(k + 1))
               end if
               if (allocated(node%simple_cmd%word_was_quoted) .and. k+1 <= size(node%simple_cmd%word_was_quoted)) then
                 temp_cmd%token_quoted(k) = node%simple_cmd%word_was_quoted(k + 1)
@@ -250,6 +253,7 @@ contains
             if (allocated(temp_cmd%token_quoted)) deallocate(temp_cmd%token_quoted)
             if (allocated(temp_cmd%token_escaped)) deallocate(temp_cmd%token_escaped)
             if (allocated(temp_cmd%token_quote_type)) deallocate(temp_cmd%token_quote_type)
+            if (allocated(temp_cmd%token_lengths)) deallocate(temp_cmd%token_lengths)
           end block
         else
           shell%num_positional = 0
@@ -297,11 +301,13 @@ contains
     allocate(temp_pipeline%commands(1)%token_quoted(node%simple_cmd%num_words))
     allocate(temp_pipeline%commands(1)%token_escaped(node%simple_cmd%num_words))
     allocate(temp_pipeline%commands(1)%token_quote_type(node%simple_cmd%num_words))
+    allocate(temp_pipeline%commands(1)%token_lengths(node%simple_cmd%num_words))
 
     ! Initialize metadata arrays
     temp_pipeline%commands(1)%token_quoted = .false.
     temp_pipeline%commands(1)%token_escaped = .false.
     temp_pipeline%commands(1)%token_quote_type = QUOTE_NONE
+    temp_pipeline%commands(1)%token_lengths = 0
 
     ! Copy words to tokens and metadata
     do i = 1, node%simple_cmd%num_words
@@ -314,9 +320,11 @@ contains
           i <= size(node%simple_cmd%word_lengths)) then
         ! Quoted word - use actual length to preserve trailing whitespace
         temp_pipeline%commands(1)%tokens(i) = node%simple_cmd%words(i)(1:node%simple_cmd%word_lengths(i))
+        temp_pipeline%commands(1)%token_lengths(i) = node%simple_cmd%word_lengths(i)
       else
         ! Unquoted word - trim is safe
         temp_pipeline%commands(1)%tokens(i) = trim(node%simple_cmd%words(i))
+        temp_pipeline%commands(1)%token_lengths(i) = len_trim(node%simple_cmd%words(i))
       end if
 
       ! Copy metadata if available
@@ -364,6 +372,7 @@ contains
             if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
             if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
             if (allocated(temp_pipeline%commands(1)%token_quote_type)) deallocate(temp_pipeline%commands(1)%token_quote_type)
+            if (allocated(temp_pipeline%commands(1)%token_lengths)) deallocate(temp_pipeline%commands(1)%token_lengths)
             deallocate(temp_pipeline%commands)
           end if
           call restore_fds()
@@ -394,6 +403,7 @@ contains
       if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
       if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
       if (allocated(temp_pipeline%commands(1)%token_quote_type)) deallocate(temp_pipeline%commands(1)%token_quote_type)
+      if (allocated(temp_pipeline%commands(1)%token_lengths)) deallocate(temp_pipeline%commands(1)%token_lengths)
       deallocate(temp_pipeline%commands)
     end if
 

@@ -883,11 +883,26 @@ contains
     character(len=100) :: index_str
     character(len=:), allocatable :: expanded_value
     integer :: eq_pos, paren_start, paren_end, num_elements, bracket_pos
-    integer :: bracket_end, array_index, read_status, actual_value_len, i
+    integer :: bracket_end, array_index, read_status, actual_value_len, i, token_len
     logical :: is_indexed_assignment
     character(len=1) :: quote_char_temp
 
-    token = trim(cmd%tokens(1))
+    ! For quoted tokens, preserve whitespace by not trimming
+    ! For unquoted tokens, trim is safe
+    if (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1)) then
+      ! Quoted token - preserve whitespace, track actual length
+      ! Use token_lengths array if available, otherwise fall back to len()
+      if (allocated(cmd%token_lengths) .and. size(cmd%token_lengths) >= 1) then
+        token_len = cmd%token_lengths(1)
+      else
+        token_len = len(cmd%tokens(1))
+      end if
+      token = cmd%tokens(1)
+    else
+      ! Unquoted token - trim is safe
+      token = trim(cmd%tokens(1))
+      token_len = len_trim(token)
+    end if
     eq_pos = index(token, '=')
     if (eq_pos == 0) return
 
@@ -898,11 +913,11 @@ contains
     if (is_indexed_assignment) then
       ! arr[index]=value
       var_name = token(:bracket_pos-1)
-      bracket_end = index(token(bracket_pos:), ']')
+      bracket_end = index(token(bracket_pos:token_len), ']')
       if (bracket_end > 0) then
         bracket_end = bracket_pos + bracket_end - 1
         index_str = token(bracket_pos+1:bracket_end-1)
-        var_value = token(eq_pos+1:)
+        var_value = token(eq_pos+1:token_len)
 
         ! Parse the index (bash uses 0-indexed, convert to 1-indexed)
         read(index_str, *, iostat=read_status) array_index
@@ -926,9 +941,9 @@ contains
 
     ! Check if it's an array literal: arr=(...)
     paren_start = eq_pos + 1
-    if (paren_start <= len_trim(token) .and. token(paren_start:paren_start) == '(') then
+    if (paren_start <= token_len .and. token(paren_start:paren_start) == '(') then
       ! Array literal
-      paren_end = index(token(paren_start+1:), ')')
+      paren_end = index(token(paren_start+1:token_len), ')')
       if (paren_end > 0) then
         paren_end = paren_start + paren_end
         ! Extract elements between parentheses
@@ -947,7 +962,8 @@ contains
       end if
     else
       ! Simple assignment: var=value
-      var_value = token(eq_pos+1:)
+      ! Use token_len to avoid including padding for quoted tokens
+      var_value = token(eq_pos+1:token_len)
 
       ! Expand variables in the value (including parameter expansions like ${var##pattern})
       ! IMPORTANT: Call expand_variables BEFORE stripping quotes, so it can apply
@@ -972,28 +988,39 @@ contains
       else
         ! No variable expansion needed
         ! Calculate actual content length BEFORE stripping quotes (to preserve trailing spaces)
-        actual_value_len = len_trim(var_value)
-        if (actual_value_len >= 2) then
-          if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
-            ! Find closing quote position by searching backwards
-            quote_char_temp = var_value(1:1)
-            do i = actual_value_len, 2, -1
-              if (var_value(i:i) == quote_char_temp) then
-                ! Content length is closing_quote_pos - 2
-                actual_value_len = i - 2
-                exit
-              end if
-            end do
+        ! If token was quoted, parser already stripped the quotes, so we need to use token metadata
+        if (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1)) then
+          ! Token was quoted - AST executor preserved whitespace
+          ! Calculate length directly from token_len and eq_pos (avoids Fortran padding issues)
+          actual_value_len = token_len - eq_pos
+        else
+          ! Token was not quoted - use original logic
+          actual_value_len = len_trim(var_value)
+          if (actual_value_len >= 2) then
+            if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
+              ! Find closing quote position by searching backwards
+              quote_char_temp = var_value(1:1)
+              do i = actual_value_len, 2, -1
+                if (var_value(i:i) == quote_char_temp) then
+                  ! Content length is closing_quote_pos - 2
+                  actual_value_len = i - 2
+                  exit
+                end if
+              end do
+            else
+              ! No quotes, use len_trim
+              actual_value_len = len_trim(var_value)
+            end if
           else
-            ! No quotes, use len_trim
             actual_value_len = len_trim(var_value)
           end if
-        else
-          actual_value_len = len_trim(var_value)
         end if
 
         ! Strip surrounding quotes from value (single or double quotes)
-        call strip_quotes_local(var_value)
+        ! For quoted tokens, lexer already stripped quotes, so skip this step
+        if (.not. (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1))) then
+          call strip_quotes_local(var_value)
+        end if
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
       end if
 
