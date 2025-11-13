@@ -702,7 +702,7 @@ contains
     body => parse_list(state)
     call skip_newlines(state)
     if (.not. expect(state, 'done')) return
-    node => create_for_loop(variable, words, num_words, body)
+    node => create_for_loop(variable, words, num_words, body, quote_types)
   end function
 
   function parse_case_stmt(state) result(node)
