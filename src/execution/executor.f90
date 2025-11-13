@@ -1117,14 +1117,15 @@ contains
   end function
 
   ! Interpret escape sequences in IFS string (\t -> tab, \n -> newline)
-  subroutine interpret_ifs_escapes(input, output)
+  subroutine interpret_ifs_escapes(input, output, output_len)
     character(len=*), intent(in) :: input
     character(len=*), intent(out) :: output
+    integer, intent(out) :: output_len
     integer :: i, j, input_len
     character(len=1) :: backslash
 
     backslash = char(92)  ! ASCII code for backslash
-    input_len = len_trim(input)
+    input_len = len(input)  ! Use len(), not len_trim() - input might be all spaces (IFS=" ")
     j = 1
     i = 1
     output = ''
@@ -1160,6 +1161,7 @@ contains
         i = i + 1
       end if
     end do
+    output_len = j - 1  ! Return actual length of output
   end subroutine
 
   subroutine expand_tokens(cmd, shell)
@@ -1174,7 +1176,7 @@ contains
     character(len=1024) :: split_words(30)
     character(len=MAX_TOKEN_LEN) :: word
     character(len=256) :: ifs_to_use
-    integer :: word_count, start_pos, pos, k, ifs_check_i
+    integer :: word_count, start_pos, pos, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
 
     ! Allocate temporary storage for expanded tokens
@@ -1195,10 +1197,17 @@ contains
 
     if (ifs_explicitly_set) then
       ! IFS is explicitly set - use its value (even if empty)
-      call interpret_ifs_escapes(trim(shell%ifs), ifs_to_use)
+      ! Use ifs_len to preserve trailing whitespace (e.g., IFS=" ")
+      if (shell%ifs_len > 0) then
+        call interpret_ifs_escapes(shell%ifs(1:shell%ifs_len), ifs_to_use, ifs_len_to_use)
+      else
+        ifs_to_use = ''  ! Empty IFS disables field splitting
+        ifs_len_to_use = 0
+      end if
     else
       ! IFS not set - use default
       ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline (default IFS)
+      ifs_len_to_use = 3
     end if
 
     do i = 1, cmd%num_tokens
@@ -1223,12 +1232,16 @@ contains
 
       ! Check if expanded string contains any IFS character
       has_ifs_char = .false.
-      do k = 1, len(expanded)
-        if (index(ifs_to_use, expanded(k:k)) > 0) then
-          has_ifs_char = .true.
-          exit
-        end if
-      end do
+      if (ifs_len_to_use > 0) then
+        do k = 1, len(expanded)
+          ! Only check against actual IFS chars (first ifs_len_to_use chars of ifs_to_use)
+          if (index(ifs_to_use(1:ifs_len_to_use), expanded(k:k)) > 0) then
+            has_ifs_char = .true.
+            exit
+          end if
+        end do
+      end if
+      ! If ifs_len_to_use == 0 (empty IFS), has_ifs_char stays false, disabling field splitting
 
       if (has_ifs_char) then
         ! Check if ORIGINAL token was quoted (using metadata, not looking for quotes in string)
@@ -1252,7 +1265,7 @@ contains
       if (should_split) then
         ! Split the expanded string using IFS characters
         word_count = 0
-        call field_split(expanded, trim(ifs_to_use), split_words, word_count)
+        call field_split(expanded, ifs_to_use(1:ifs_len_to_use), split_words, word_count)
 
         ! Add all split words as separate tokens
         do j = 1, word_count
