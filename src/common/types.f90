@@ -375,6 +375,7 @@ module shell_types
     integer :: function_return_value = 0      ! Return value from 'return' builtin
     integer :: function_depth = 0             ! Current function call depth (for local vars)
     integer :: source_depth = 0               ! Current sourced script depth (for return)
+    logical :: bypass_functions = .false.     ! Set by 'command' builtin to skip function lookup
     ! Process substitution
     type(proc_subst_fifo_t) :: proc_subst_fifos(10)
     integer :: num_proc_subst_fifos = 0
