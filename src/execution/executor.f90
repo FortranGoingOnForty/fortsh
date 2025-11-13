@@ -1906,9 +1906,10 @@ contains
   ! Preserves trailing spaces within quotes
   subroutine strip_quotes_local(str)
     character(len=*), intent(inout) :: str
-    integer :: i, len_str, closing_quote_pos
+    integer :: i, j, len_str, closing_quote_pos
     character(len=len(str)) :: temp
     character(len=1) :: quote_char
+    logical :: is_double_quote
 
     len_str = len_trim(str)
     if (len_str < 2) return
@@ -1917,6 +1918,7 @@ contains
     if (str(1:1) /= "'" .and. str(1:1) /= '"') return
 
     quote_char = str(1:1)
+    is_double_quote = (quote_char == '"')
 
     ! Search for matching closing quote (search backwards from end)
     closing_quote_pos = 0
@@ -1933,10 +1935,40 @@ contains
       temp = str
       ! Clear the output string
       str = repeat(' ', len(str))
-      ! Copy character by character from positions 2 to closing_quote_pos-1
-      do i = 2, closing_quote_pos - 1
-        str(i-1:i-1) = temp(i:i)
-      end do
+
+      ! If double quotes, process escape sequences while copying
+      if (is_double_quote) then
+        i = 2
+        j = 1
+        do while (i < closing_quote_pos)
+          if (temp(i:i) == '\' .and. i+1 < closing_quote_pos) then
+            ! Check if this backslash escapes a special character
+            if (temp(i+1:i+1) == '"' .or. temp(i+1:i+1) == '\' .or. &
+                temp(i+1:i+1) == '$' .or. temp(i+1:i+1) == '`') then
+              ! Skip backslash, keep the escaped character
+              i = i + 1
+              str(j:j) = temp(i:i)
+              i = i + 1
+              j = j + 1
+            else
+              ! Backslash doesn't escape anything special - keep both
+              str(j:j) = temp(i:i)
+              i = i + 1
+              j = j + 1
+            end if
+          else
+            ! Regular character
+            str(j:j) = temp(i:i)
+            i = i + 1
+            j = j + 1
+          end if
+        end do
+      else
+        ! Single quotes - copy literally without escape processing
+        do i = 2, closing_quote_pos - 1
+          str(i-1:i-1) = temp(i:i)
+        end do
+      end if
     end if
   end subroutine
 
