@@ -24,6 +24,7 @@ module builtins
   use iso_fortran_env, only: output_unit, error_unit
   use completion
   use iso_c_binding
+  use builtin_interface
 #ifdef USE_MEMORY_POOL
   use string_pool
   use memory_dashboard
@@ -46,7 +47,13 @@ module builtins
 
 contains
 
-  function is_builtin(cmd_name) result(is_built)
+  ! Initialize builtin interface by registering function pointers
+  subroutine init_builtins()
+    is_builtin_ptr => is_builtin_impl
+    execute_builtin_ptr => execute_builtin_impl
+  end subroutine init_builtins
+
+  function is_builtin_impl(cmd_name) result(is_built)
     character(len=*), intent(in) :: cmd_name
     logical :: is_built
 
@@ -110,10 +117,10 @@ contains
                 is_test_command(cmd_name))
   end function
 
-  subroutine execute_builtin(cmd, shell)
+  subroutine execute_builtin_impl(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     select case(trim(cmd%tokens(1)))
     case('exit')
       call builtin_exit(cmd, shell)
@@ -206,6 +213,8 @@ contains
       call builtin_return(cmd, shell)
     case('exec')
       call builtin_exec(cmd, shell)
+    case('eval')
+      call builtin_eval(cmd, shell)
     case('hash')
       call builtin_hash(cmd, shell)
     case('umask')
@@ -237,12 +246,20 @@ contains
   end subroutine
 
   subroutine builtin_exit(cmd, shell)
+    use signal_handling, only: execute_trap
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_code, iostat
+    logical :: trap_executed
 
-    ! Don't execute EXIT trap here - it's handled in main program (fortsh.f90)
-    ! This ensures the trap runs in the current shell context with access to variables
+    ! Execute EXIT trap before exiting (TRAP_EXIT = 0)
+    ! Don't execute if we're already in a trap or if EXIT trap was already executed
+    if (.not. shell%executing_trap .and. .not. shell%exit_trap_executed) then
+      trap_executed = execute_trap(shell, 0)
+      if (trap_executed) then
+        shell%exit_trap_executed = .true.
+      end if
+    end if
 
     shell%running = .false.
     if (cmd%num_tokens > 1) then
@@ -307,11 +324,72 @@ contains
 #endif
       print_dir = .true.
     else
+      ! Check if directory contains slash - if so, don't use CDPATH
+      if (index(cmd%tokens(2), '/') == 0) then
+        ! Try CDPATH directories
+        block
+          character(len=4096) :: cdpath, path_elem
+          character(len=MAX_PATH_LEN) :: test_path
+          integer :: start_pos, colon_pos
+          logical :: found
+
+          ! Check both shell variable and environment variable
+          cdpath = get_shell_variable(shell, 'CDPATH')
+          if (len_trim(cdpath) == 0) then
+            cdpath = get_environment_var('CDPATH')
+          end if
+          found = .false.
+
+          if (len_trim(cdpath) > 0) then
+            start_pos = 1
+            do while (start_pos <= len_trim(cdpath))
+              colon_pos = index(cdpath(start_pos:), ':')
+              if (colon_pos > 0) then
+                path_elem = cdpath(start_pos:start_pos+colon_pos-2)
+                start_pos = start_pos + colon_pos
+              else
+                path_elem = cdpath(start_pos:)
+                start_pos = len_trim(cdpath) + 1
+              end if
+
+              ! Construct test path
+              if (len_trim(path_elem) > 0) then
+                test_path = trim(path_elem) // '/' // trim(cmd%tokens(2))
+              else
+                test_path = trim(cmd%tokens(2))
+              end if
+
+              ! Test if this path exists and is a directory
+              if (test_is_directory(test_path)) then
 #ifdef USE_MEMORY_POOL
-      target_dir_ref%data = trim(cmd%tokens(2))
+                target_dir_ref%data = trim(test_path)
 #else
-      target_dir = trim(cmd%tokens(2))
+                target_dir = trim(test_path)
 #endif
+                found = .true.
+                print_dir = .true.  ! Print directory when using CDPATH
+                exit
+              end if
+            end do
+          end if
+
+          if (.not. found) then
+            ! CDPATH didn't find it, use original argument
+#ifdef USE_MEMORY_POOL
+            target_dir_ref%data = trim(cmd%tokens(2))
+#else
+            target_dir = trim(cmd%tokens(2))
+#endif
+          end if
+        end block
+      else
+        ! Contains slash - use as-is
+#ifdef USE_MEMORY_POOL
+        target_dir_ref%data = trim(cmd%tokens(2))
+#else
+        target_dir = trim(cmd%tokens(2))
+#endif
+      end if
     end if
 
 #ifdef USE_MEMORY_POOL
@@ -351,9 +429,10 @@ contains
       ! Add NEW directory to history so nextd can go forward to it
       call add_to_dir_history(shell, shell%cwd)
 
-      ! Print new directory if cd -
+      ! Print new directory if cd - or CDPATH was used
       if (print_dir) then
         write(output_unit, '(a)') trim(shell%cwd)
+        flush(output_unit)
       end if
 
       shell%last_exit_status = 0
@@ -378,8 +457,9 @@ contains
   subroutine builtin_pwd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    write(output_unit, '(a)') trim(shell%cwd)
+
+    ! Use FD-aware I/O to respect redirections
+    call write_stdout(trim(shell%cwd))
     shell%last_exit_status = 0
   end subroutine
 
@@ -623,6 +703,11 @@ contains
     ! Set $1, $2, ... from arguments
     shell%num_positional = 0
     if (cmd%num_tokens > 2) then
+      ! Allocate positional_params if not already allocated
+      if (.not. allocated(shell%positional_params)) then
+        allocate(shell%positional_params(50))  ! Default size
+      end if
+
       do i = 3, cmd%num_tokens
         shell%num_positional = shell%num_positional + 1
         if (shell%num_positional <= size(shell%positional_params)) then
@@ -863,6 +948,7 @@ contains
           end if
         end if
       end do
+      shell%last_exit_status = 0
     else
       ! Wait for specific job or PID
       do i = 2, cmd%num_tokens
@@ -894,15 +980,11 @@ contains
               shell%last_exit_status = 1
             end if
           else
-            write(error_unit, '(a,i15)') 'wait: pid ', target_pid, ' is not a child of this shell'
-            shell%last_exit_status = 1
+            ! PID is not a child of this shell (or doesn't exist)
+            shell%last_exit_status = 127
           end if
         end if
       end do
-    end if
-    
-    if (shell%last_exit_status /= 1) then
-      shell%last_exit_status = 0
     end if
   end subroutine
 
@@ -955,7 +1037,8 @@ contains
             return
           end if
           ! Print trap for this signal if it exists
-          do k = 1, size(shell%traps)
+          ! Use num_traps instead of size(traps) so that subshells can clear traps
+          do k = 1, shell%num_traps
             if (shell%traps(k)%signal == signum .and. shell%traps(k)%active) then
               write(output_unit, '(a)') 'trap -- ' // "'" // &
                                         trim(shell%traps(k)%command) // "' " // &
@@ -1053,46 +1136,55 @@ contains
   subroutine builtin_alias(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: eq_pos
+    integer :: eq_pos, i, full_len
     character(len=256) :: alias_name, alias_command
-    
+    character(len=1024) :: full_arg
+
     if (cmd%num_tokens == 1) then
       ! Show all aliases
       call show_aliases(shell)
-    else if (cmd%num_tokens == 2) then
+    else if (cmd%num_tokens >= 2) then
+      ! Reconstruct the full argument from all tokens
+      full_arg = trim(cmd%tokens(2))
+      do i = 3, cmd%num_tokens
+        full_arg = trim(full_arg) // ' ' // trim(cmd%tokens(i))
+      end do
+
       ! Check for alias=command format
-      eq_pos = index(cmd%tokens(2), '=')
+      eq_pos = index(full_arg, '=')
       if (eq_pos > 0) then
-        alias_name = cmd%tokens(2)(:eq_pos-1)
-        alias_command = cmd%tokens(2)(eq_pos+1:)
-        
+        alias_name = full_arg(:eq_pos-1)
+        alias_command = full_arg(eq_pos+1:)
+
         ! Remove quotes if present
-        if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
-          alias_command = alias_command(2:len_trim(alias_command)-1)
-        else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
-          alias_command = alias_command(2:len_trim(alias_command)-1)
+        if (len_trim(alias_command) >= 2) then
+          if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
+            alias_command = alias_command(2:len_trim(alias_command)-1)
+          else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
+            alias_command = alias_command(2:len_trim(alias_command)-1)
+          end if
         end if
-        
+
         call set_alias(shell, trim(alias_name), trim(alias_command))
-      else
-        ! Show specific alias
+      else if (cmd%num_tokens == 2) then
+        ! Show specific alias (only if single argument without =)
         alias_name = cmd%tokens(2)
         alias_command = get_alias(shell, trim(alias_name))
-        if (len(alias_command) > 0) then
+        if (len_trim(alias_command) > 0) then
           write(output_unit, '(a)') 'alias ' // trim(alias_name) // &
                                    '=' // "'" // trim(alias_command) // "'"
         else
-          write(error_unit, '(a)') 'alias: ' // trim(alias_name) // ': not found'
+          call write_stderr('alias: ' // trim(alias_name) // ': not found')
           shell%last_exit_status = 1
           return
         end if
+      else
+        call write_stderr('alias: usage: alias [name[=value]...]')
+        shell%last_exit_status = 1
+        return
       end if
-    else
-      write(error_unit, '(a)') 'alias: usage: alias [name[=value]...]'
-      shell%last_exit_status = 1
-      return
     end if
-    
+
     shell%last_exit_status = 0
   end subroutine
 
@@ -1102,7 +1194,7 @@ contains
     integer :: i
 
     if (cmd%num_tokens < 2) then
-      write(error_unit, '(a)') 'unalias: usage: unalias name...'
+      call write_stderr('unalias: usage: unalias name...')
       shell%last_exit_status = 1
       return
     end if
@@ -1580,9 +1672,10 @@ contains
   end subroutine
 
   subroutine builtin_unset(cmd, shell)
+    use ast_executor, only: unset_ast_function
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
     logical :: unset_functions = .false.
     character(len=256) :: var_name
     integer :: i, j, start_idx
@@ -1608,7 +1701,9 @@ contains
       var_name = trim(cmd%tokens(i))
       
       if (unset_functions) then
-        ! Unset function
+        ! Unset function from both old and new function storage
+
+        ! Clear from old executor's function storage
         do j = 1, shell%num_functions
           if (trim(shell%functions(j)%name) == var_name) then
             shell%functions(j)%name = ''
@@ -1617,6 +1712,9 @@ contains
             exit
           end if
         end do
+
+        ! Clear from AST executor's function cache
+        call unset_ast_function(var_name)
       else
         ! Unset variable
         do j = 1, shell%num_variables
@@ -1868,6 +1966,7 @@ contains
     do i = shell%control_depth, 1, -1
       if (shell%control_stack(i)%block_type == BLOCK_FOR .or. &
           shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
+          shell%control_stack(i)%block_type == BLOCK_UNTIL .or. &
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
         shell%control_stack(i)%break_requested = .true.
         shell%control_stack(i)%break_level = break_count
@@ -1908,6 +2007,7 @@ contains
     do i = shell%control_depth, 1, -1
       if (shell%control_stack(i)%block_type == BLOCK_FOR .or. &
           shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
+          shell%control_stack(i)%block_type == BLOCK_UNTIL .or. &
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
         shell%control_stack(i)%continue_requested = .true.
         shell%control_stack(i)%continue_level = continue_count
@@ -1947,6 +2047,7 @@ contains
 
   subroutine builtin_exec(cmd, shell)
     use command_builtin, only: find_command_full_path
+    use fd_redirection, only: apply_single_redirection
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -1955,12 +2056,26 @@ contains
     type(c_ptr), allocatable, target :: argv(:)
     integer :: i, ret
     character(len=MAX_PATH_LEN) :: prog_path
+    logical :: redir_success
 
-    ! exec without arguments is an error (could be used for redirections in future)
+    ! exec without arguments but with redirections applies them to the current shell
     if (cmd%num_tokens < 2) then
-      write(error_unit, '(a)') 'exec: usage: exec command [arguments ...]'
-      shell%last_exit_status = 2
-      return
+      if (cmd%num_redirections > 0) then
+        ! Apply redirections to the current shell process
+        do i = 1, cmd%num_redirections
+          call apply_single_redirection(cmd%redirections(i), redir_success, shell%option_noclobber)
+          if (.not. redir_success) then
+            shell%last_exit_status = 1
+            return
+          end if
+        end do
+        shell%last_exit_status = 0
+        return
+      else
+        ! No command and no redirections - just return success
+        shell%last_exit_status = 0
+        return
+      end if
     end if
 
     ! Get the command name
@@ -1995,6 +2110,17 @@ contains
     ! NULL-terminate the argv array
     argv(cmd%num_tokens) = c_null_ptr
 
+    ! Apply any redirections before exec
+    if (cmd%num_redirections > 0) then
+      do i = 1, cmd%num_redirections
+        call apply_single_redirection(cmd%redirections(i), redir_success, shell%option_noclobber)
+        if (.not. redir_success) then
+          shell%last_exit_status = 1
+          return
+        end if
+      end do
+    end if
+
     ! Replace the current process with the new command
     ! If execvp succeeds, this function never returns
     ret = c_execvp(c_loc(c_prog_name), c_loc(argv))
@@ -2007,6 +2133,15 @@ contains
     ! Report error
     write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': cannot execute'
     shell%last_exit_status = 126
+  end subroutine
+
+  subroutine builtin_eval(cmd, shell)
+    use eval_builtin, only: execute_eval
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+
+    ! Delegate to the eval_builtin module to avoid circular dependency
+    call execute_eval(cmd, shell)
   end subroutine
 
   subroutine builtin_hash(cmd, shell)

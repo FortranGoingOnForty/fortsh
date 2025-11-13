@@ -57,11 +57,60 @@ module shell_types
     character(len=:), allocatable :: filename
     character(len=:), allocatable :: target_fd_expr  ! for variable FD like >&${var}
     logical :: close_fd = .false. ! for n>&- syntax
+    logical :: force_clobber = .false. ! for >| operator (override noclobber)
   end type redirection_t
+
+  ! =====================================
+  ! Token types for new grammar-aware parser
+  ! =====================================
+  integer, parameter :: TOKEN_WORD = 1
+  integer, parameter :: TOKEN_KEYWORD = 2
+  integer, parameter :: TOKEN_OPERATOR = 3
+  integer, parameter :: TOKEN_REDIRECT = 4
+  integer, parameter :: TOKEN_ASSIGN = 5
+  integer, parameter :: TOKEN_EOF = 6
+  integer, parameter :: TOKEN_NEWLINE = 7
+
+  ! =====================================
+  ! Quote types for tracking quote style
+  ! =====================================
+  integer, parameter :: QUOTE_NONE = 0     ! No quotes
+  integer, parameter :: QUOTE_SINGLE = 1   ! Single quotes 'text' - no expansion
+  integer, parameter :: QUOTE_DOUBLE = 2   ! Double quotes "text" - allows expansion
+
+  type :: token_t
+    integer :: token_type           ! TOKEN_* constant
+    character(len=MAX_TOKEN_LEN) :: value
+    integer :: start_pos
+    integer :: end_pos
+    logical :: quoted               ! DEPRECATED - use quote_type instead
+    logical :: escaped              ! Token had backslash escape (don't glob expand)
+    integer :: quote_type = QUOTE_NONE  ! QUOTE_* constant - tracks quote style
+  end type token_t
+
+  ! =====================================
+  ! Command node types for grammar parser
+  ! =====================================
+  integer, parameter :: CMD_SIMPLE = 1
+  integer, parameter :: CMD_PIPELINE = 2
+  integer, parameter :: CMD_LIST = 3
+  integer, parameter :: CMD_FOR_LOOP = 4
+  integer, parameter :: CMD_WHILE_LOOP = 5
+  integer, parameter :: CMD_UNTIL_LOOP = 6
+  integer, parameter :: CMD_IF_STATEMENT = 7
+  integer, parameter :: CMD_CASE_STATEMENT = 8
+  integer, parameter :: CMD_SUBSHELL = 9
+  integer, parameter :: CMD_BRACE_GROUP = 10
+  integer, parameter :: CMD_FUNCTION_DEF = 11
 
   type :: command_t
     character(len=:), allocatable :: tokens(:)
     integer :: num_tokens = 0
+    ! Token metadata arrays - track per-token properties from lexer
+    integer, allocatable :: token_lengths(:)  ! Actual length of each token (for trailing space preservation)
+    logical, allocatable :: token_quoted(:)   ! Was token quoted? (prevents field splitting)
+    logical, allocatable :: token_escaped(:)  ! Was token escaped? (prevents glob expansion)
+    integer, allocatable :: token_quote_type(:)  ! Quote type for each token (QUOTE_* constant)
     character(len=:), allocatable :: input_file
     character(len=:), allocatable :: output_file
     character(len=:), allocatable :: error_file
@@ -94,6 +143,7 @@ module shell_types
   type :: pipeline_t
     type(command_t), allocatable :: commands(:)
     integer :: num_commands = 0
+    logical :: parse_error = .false.  ! Set when a syntax error occurs during parsing
   end type pipeline_t
 
   type :: job_t
@@ -209,6 +259,8 @@ module shell_types
     logical :: is_interactive = .false.
     logical :: running = .true.
     logical :: fatal_expansion_error = .false.  ! Set by ${VAR?error} to abort execution
+    logical :: arithmetic_error = .false.        ! Set when arithmetic expansion fails
+    character(len=256) :: arithmetic_error_msg = ''  ! Error message from arithmetic expansion
     type(job_t) :: jobs(MAX_JOBS)
     integer :: num_jobs = 0
     integer :: next_job_id = 1
@@ -228,6 +280,7 @@ module shell_types
     character(len=1024) :: pending_trap_command = ''
     integer :: pending_trap_signal = 0
     logical :: executing_trap = .false.  ! Prevent recursive trap execution
+    logical :: exit_trap_executed = .false.  ! Track if EXIT trap has been executed
     logical :: evaluating_condition = .false.  ! Suppress errexit during if/while/until condition evaluation
     ! Command hash table
     type(command_hash_entry_t) :: command_hash(50)
@@ -248,10 +301,14 @@ module shell_types
     logical :: option_pipefail = .false.       ! set -o pipefail
     logical :: option_verbose = .false.        ! set -v (verbose)
     logical :: option_xtrace = .false.         ! set -x (trace execution)
+    ! Parser selection (experimental feature)
+    logical :: use_new_parser = .false.        ! Use grammar-aware parser (FORTSH_USE_NEW_PARSER=1)
     logical :: option_noclobber = .false.      ! set -C (no clobber)
     logical :: option_monitor = .false.        ! set -m (job control)
     logical :: option_allexport = .false.      ! set -a (auto export)
+    logical :: option_noglob = .false.         ! set -f (disable glob expansion)
     logical :: option_vi = .false.             ! set -o vi (vi editing mode)
+    integer :: original_stderr_fd = 2          ! Saved copy of original stderr for shell messages
     ! Bash-style shell options (shopt)
     logical :: shopt_nullglob = .false.        ! nullglob (empty glob matches)
     logical :: shopt_failglob = .false.        ! failglob (error on no glob matches)
@@ -288,6 +345,7 @@ module shell_types
     integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting
     character(len=256) :: ifs = ' \t\n'       ! $IFS (internal field separator)
+    integer :: ifs_len = 0                    ! Actual length of IFS (preserves trailing spaces)
     ! History control
     character(len=MAX_PATH_LEN) :: histfile = ''  ! $HISTFILE (history file path)
     integer :: histsize = 1000                ! $HISTSIZE (max commands in memory)
@@ -304,6 +362,12 @@ module shell_types
     character(len=MAX_PATH_LEN) :: dir_history(50)  ! Circular buffer of directories
     integer :: dir_history_size = 0                  ! Number of directories in history
     integer :: dir_history_index = 0                 ! Current position in history
+
+    ! Pending heredoc for -c flag processing
+    character(len=4096) :: pending_heredoc = ''
+    character(len=256) :: pending_heredoc_delimiter = ''
+    logical :: pending_heredoc_quoted = .false.
+    logical :: has_pending_heredoc = .false.
   end type shell_state_t
 
 end module shell_types

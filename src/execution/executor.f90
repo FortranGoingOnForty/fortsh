@@ -4,13 +4,14 @@
 module executor
   use shell_types
   use system_interface
-  use builtins
+  use builtin_interface
   use parser
   use job_control
   use variables, only: var_set_shell_variable => set_shell_variable, set_array_variable, set_array_element
   use control_flow
   use error_handling
   use performance
+  use aliases, only: expand_alias, is_alias, get_alias
   use shell_options
   use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR
   use better_errors
@@ -24,10 +25,10 @@ contains
     type(pipeline_t), intent(inout) :: pipeline
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
-    
+
     integer :: i
     logical :: should_continue
-    
+
     should_continue = .true.
     i = 1
     
@@ -47,10 +48,8 @@ contains
 
       case(SEP_SEMICOLON, SEP_NONE)
         call execute_single(pipeline%commands(i), shell, original_input)
-        ! Process any sourced files immediately (for dot command in semicolon lists)
-        if (shell%should_source) then
-          call process_source_inline(shell)
-        end if
+        ! NOTE: Sourcing is now handled at the AST level (in execute_ast) or by the caller
+        ! We don't process sourced files inline here to avoid double-processing
         call check_errexit(shell, shell%last_exit_status)
         ! Check if shell should exit (e.g., due to ${VAR?error})
         if (.not. shell%running) exit
@@ -216,16 +215,14 @@ contains
         call expand_tokens(pipeline%commands(i), shell)
 
         ! Expand glob patterns
-        call expand_command_globs(pipeline%commands(i))
+        call expand_command_globs(pipeline%commands(i), shell)
 
         ! Process backslash escapes AFTER glob expansion
         call process_command_escapes(pipeline%commands(i))
 
         ! Handle eval builtin directly (to avoid circular dependency)
-        if (trim(pipeline%commands(i)%tokens(1)) == 'eval') then
-          call execute_eval_builtin(pipeline%commands(i), shell)
-          call c_exit(int(shell%last_exit_status, c_int))
-        else if (is_builtin(pipeline%commands(i)%tokens(1))) then
+        ! Removed special handling for eval - it's now a regular builtin
+        if (is_builtin(pipeline%commands(i)%tokens(1))) then
           ! Builtins in pipes need redirections applied
           call setup_redirections(pipeline%commands(i), shell)
           call execute_builtin(pipeline%commands(i), shell)
@@ -497,7 +494,7 @@ contains
     ! Handle here document input
     ! Only read from stdin if content wasn't already extracted from input string
     if (allocated(cmd%heredoc_delimiter) .and. .not. allocated(cmd%heredoc_content)) then
-      call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content)
+      call read_heredoc(cmd%heredoc_delimiter, cmd%heredoc_content, shell)
     end if
 
     ! Check if this is a function definition BEFORE expanding variables
@@ -528,6 +525,14 @@ contains
       return  ! Abort command execution
     end if
 
+    ! Check if arithmetic expansion error occurred
+    if (shell%arithmetic_error) then
+      shell%arithmetic_error = .false.  ! Reset flag
+      ! End performance timing
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      return  ! Abort command execution
+    end if
+
     ! Check for variable assignment (after expansion so ${...} is processed)
     ! DISABLED: Now that we skip expand_tokens for assignments (line 503-506),
     ! all assignments should go through execute_assignment which properly handles
@@ -539,7 +544,7 @@ contains
 
     ! Expand glob patterns (except for defun)
     if (trim(cmd%tokens(1)) /= 'defun') then
-      call expand_command_globs(cmd)
+      call expand_command_globs(cmd, shell)
     end if
 
     ! Process backslash escapes AFTER glob expansion
@@ -552,7 +557,9 @@ contains
     trap_executed = execute_trap(shell, TRAP_DEBUG)
 
     ! If a trap command was queued, execute it now
-    if (len_trim(shell%pending_trap_command) > 0) then
+    ! Check executing_trap to prevent recursion
+    ! Don't execute EXIT trap here - it should only execute when shell is exiting
+    if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap .and. shell%pending_trap_signal /= 0) then
       call execute_pending_trap(shell)
     end if
 
@@ -575,9 +582,7 @@ contains
     ! Check if it's a user-defined function
     else if (is_function(shell, cmd%tokens(1))) then
       call execute_function(cmd, shell)
-    ! Handle eval builtin directly (to avoid circular dependency with builtins)
-    else if (trim(cmd%tokens(1)) == 'eval') then
-      call execute_eval_builtin(cmd, shell)
+    ! Eval is now handled as a regular builtin (no special case needed)
     ! Check for cd-less navigation: if single token is a directory, treat as 'cd'
     else if (cmd%num_tokens == 1 .and. file_is_directory(trim(cmd%tokens(1)))) then
       ! Create synthetic cd command by properly reallocating tokens array
@@ -595,6 +600,85 @@ contains
         cmd%num_tokens = 2
       end block
       call execute_builtin_with_redirects(cmd, shell)
+    ! Check for alias expansion
+    else if (is_alias(shell, cmd%tokens(1))) then
+      block
+        character(len=:), allocatable :: alias_command, expanded_command
+        character(len=4096) :: rest_of_command
+        integer :: j
+        type(pipeline_t) :: alias_pipeline
+
+        ! Get the alias command
+        alias_command = get_alias(shell, cmd%tokens(1))
+
+        ! Build the rest of the command (arguments after the aliased command)
+        rest_of_command = ''
+        do j = 2, cmd%num_tokens
+          if (j > 2) rest_of_command = trim(rest_of_command) // ' '
+          rest_of_command = trim(rest_of_command) // trim(cmd%tokens(j))
+        end do
+
+        ! Combine alias expansion with rest of arguments
+        if (len_trim(rest_of_command) > 0) then
+          expanded_command = trim(alias_command) // ' ' // trim(rest_of_command)
+        else
+          expanded_command = trim(alias_command)
+        end if
+
+        ! Parse the expanded command
+        call parse_pipeline(expanded_command, alias_pipeline)
+
+        if (alias_pipeline%num_commands > 0) then
+          ! Execute the expanded command
+          if (alias_pipeline%num_commands == 1) then
+            ! Single command - execute it directly with current redirections
+            ! Copy over any redirections from the original command
+            if (allocated(cmd%input_file)) then
+              alias_pipeline%commands(1)%input_file = cmd%input_file
+            end if
+            if (allocated(cmd%output_file)) then
+              alias_pipeline%commands(1)%output_file = cmd%output_file
+              alias_pipeline%commands(1)%append_output = cmd%append_output
+              alias_pipeline%commands(1)%force_clobber = cmd%force_clobber
+            end if
+            if (allocated(cmd%error_file)) then
+              alias_pipeline%commands(1)%error_file = cmd%error_file
+              alias_pipeline%commands(1)%append_error = cmd%append_error
+            end if
+            ! Copy other redirection flags
+            alias_pipeline%commands(1)%redirect_stderr_to_stdout = cmd%redirect_stderr_to_stdout
+            alias_pipeline%commands(1)%redirect_stdout_to_stderr = cmd%redirect_stdout_to_stderr
+            alias_pipeline%commands(1)%redirect_both_to_file = cmd%redirect_both_to_file
+            if (allocated(cmd%here_string)) then
+              alias_pipeline%commands(1)%here_string = cmd%here_string
+            end if
+            if (allocated(cmd%heredoc_delimiter)) then
+              alias_pipeline%commands(1)%heredoc_delimiter = cmd%heredoc_delimiter
+              alias_pipeline%commands(1)%heredoc_content = cmd%heredoc_content
+              alias_pipeline%commands(1)%heredoc_quoted = cmd%heredoc_quoted
+            end if
+
+            ! Execute the single command recursively
+            call execute_single(alias_pipeline%commands(1), shell, expanded_command)
+          else
+            ! Multiple commands - execute as pipeline
+            call execute_pipeline(alias_pipeline, shell, expanded_command)
+          end if
+
+          ! Clean up
+          do j = 1, alias_pipeline%num_commands
+            if (allocated(alias_pipeline%commands(j)%tokens)) deallocate(alias_pipeline%commands(j)%tokens)
+            if (allocated(alias_pipeline%commands(j)%input_file)) deallocate(alias_pipeline%commands(j)%input_file)
+            if (allocated(alias_pipeline%commands(j)%output_file)) deallocate(alias_pipeline%commands(j)%output_file)
+            if (allocated(alias_pipeline%commands(j)%error_file)) deallocate(alias_pipeline%commands(j)%error_file)
+            if (allocated(alias_pipeline%commands(j)%heredoc_delimiter)) deallocate(alias_pipeline%commands(j)%heredoc_delimiter)
+            if (allocated(alias_pipeline%commands(j)%heredoc_content)) deallocate(alias_pipeline%commands(j)%heredoc_content)
+            if (allocated(alias_pipeline%commands(j)%here_string)) deallocate(alias_pipeline%commands(j)%here_string)
+            if (allocated(alias_pipeline%commands(j)%group_content)) deallocate(alias_pipeline%commands(j)%group_content)
+          end do
+          if (allocated(alias_pipeline%commands)) deallocate(alias_pipeline%commands)
+        end if
+      end block
     else if (is_builtin(cmd%tokens(1))) then
       call execute_builtin_with_redirects(cmd, shell)
     else
@@ -607,7 +691,9 @@ contains
       trap_executed = execute_trap(shell, TRAP_ERR, shell%last_exit_status)
 
       ! If a trap command was queued, execute it now
-      if (len_trim(shell%pending_trap_command) > 0) then
+      ! Check executing_trap to prevent recursion
+      ! Don't execute EXIT trap here - it should only execute when shell is exiting
+      if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap .and. shell%pending_trap_signal /= 0) then
         call execute_pending_trap(shell)
       end if
     end if
@@ -768,6 +854,13 @@ contains
     ! Evaluate arithmetic expression
     result_str = arithmetic_expansion_shell(trim(arith_expr), shell)
 
+    ! Check if there was an error (empty result indicates error)
+    if (len_trim(result_str) == 0) then
+      ! There was an arithmetic error, exit status already set by arithmetic_expansion_shell
+      ! Just return without changing it
+      return
+    end if
+
     ! Convert result to integer
     read(result_str, *, iostat=iostat) result_val
     if (iostat /= 0) result_val = 0
@@ -790,11 +883,26 @@ contains
     character(len=100) :: index_str
     character(len=:), allocatable :: expanded_value
     integer :: eq_pos, paren_start, paren_end, num_elements, bracket_pos
-    integer :: bracket_end, array_index, read_status, actual_value_len, i
+    integer :: bracket_end, array_index, read_status, actual_value_len, i, token_len
     logical :: is_indexed_assignment
     character(len=1) :: quote_char_temp
 
-    token = trim(cmd%tokens(1))
+    ! For quoted tokens, preserve whitespace by not trimming
+    ! For unquoted tokens, trim is safe
+    if (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1)) then
+      ! Quoted token - preserve whitespace, track actual length
+      ! Use token_lengths array if available, otherwise fall back to len()
+      if (allocated(cmd%token_lengths) .and. size(cmd%token_lengths) >= 1) then
+        token_len = cmd%token_lengths(1)
+      else
+        token_len = len(cmd%tokens(1))
+      end if
+      token = cmd%tokens(1)
+    else
+      ! Unquoted token - trim is safe
+      token = trim(cmd%tokens(1))
+      token_len = len_trim(token)
+    end if
     eq_pos = index(token, '=')
     if (eq_pos == 0) return
 
@@ -805,11 +913,11 @@ contains
     if (is_indexed_assignment) then
       ! arr[index]=value
       var_name = token(:bracket_pos-1)
-      bracket_end = index(token(bracket_pos:), ']')
+      bracket_end = index(token(bracket_pos:token_len), ']')
       if (bracket_end > 0) then
         bracket_end = bracket_pos + bracket_end - 1
         index_str = token(bracket_pos+1:bracket_end-1)
-        var_value = token(eq_pos+1:)
+        var_value = token(eq_pos+1:token_len)
 
         ! Parse the index (bash uses 0-indexed, convert to 1-indexed)
         read(index_str, *, iostat=read_status) array_index
@@ -833,9 +941,9 @@ contains
 
     ! Check if it's an array literal: arr=(...)
     paren_start = eq_pos + 1
-    if (paren_start <= len_trim(token) .and. token(paren_start:paren_start) == '(') then
+    if (paren_start <= token_len .and. token(paren_start:paren_start) == '(') then
       ! Array literal
-      paren_end = index(token(paren_start+1:), ')')
+      paren_end = index(token(paren_start+1:token_len), ')')
       if (paren_end > 0) then
         paren_end = paren_start + paren_end
         ! Extract elements between parentheses
@@ -854,7 +962,8 @@ contains
       end if
     else
       ! Simple assignment: var=value
-      var_value = token(eq_pos+1:)
+      ! Use token_len to avoid including padding for quoted tokens
+      var_value = token(eq_pos+1:token_len)
 
       ! Expand variables in the value (including parameter expansions like ${var##pattern})
       ! IMPORTANT: Call expand_variables BEFORE stripping quotes, so it can apply
@@ -862,6 +971,14 @@ contains
       ! expand_variables will strip outer quotes automatically
       if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
         call expand_variables(var_value, expanded_value, shell)
+
+        ! Check if arithmetic expansion error occurred
+        if (shell%arithmetic_error) then
+          shell%arithmetic_error = .false.  ! Reset flag
+          shell%last_exit_status = 127  ! POSIX sh returns 127 for arithmetic errors
+          return  ! Abort assignment
+        end if
+
         if (allocated(expanded_value)) then
           ! For expanded values, use the allocated length
           call var_set_shell_variable(shell, trim(var_name), expanded_value, len(expanded_value))
@@ -871,30 +988,56 @@ contains
       else
         ! No variable expansion needed
         ! Calculate actual content length BEFORE stripping quotes (to preserve trailing spaces)
-        actual_value_len = len_trim(var_value)
-        if (actual_value_len >= 2) then
-          if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
-            ! Find closing quote position by searching backwards
-            quote_char_temp = var_value(1:1)
-            do i = actual_value_len, 2, -1
-              if (var_value(i:i) == quote_char_temp) then
-                ! Content length is closing_quote_pos - 2
-                actual_value_len = i - 2
-                exit
-              end if
-            end do
+        ! If token was quoted, parser already stripped the quotes, so we need to use token metadata
+        if (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1)) then
+          ! Token was quoted - AST executor preserved whitespace
+          ! Calculate length directly from token_len and eq_pos (avoids Fortran padding issues)
+          actual_value_len = token_len - eq_pos
+        else
+          ! Token was not quoted - use original logic
+          actual_value_len = len_trim(var_value)
+          if (actual_value_len >= 2) then
+            if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
+              ! Find closing quote position by searching backwards
+              quote_char_temp = var_value(1:1)
+              do i = actual_value_len, 2, -1
+                if (var_value(i:i) == quote_char_temp) then
+                  ! Content length is closing_quote_pos - 2
+                  actual_value_len = i - 2
+                  exit
+                end if
+              end do
+            else
+              ! No quotes, use len_trim
+              actual_value_len = len_trim(var_value)
+            end if
           else
-            ! No quotes, use len_trim
             actual_value_len = len_trim(var_value)
           end if
-        else
-          actual_value_len = len_trim(var_value)
         end if
 
         ! Strip surrounding quotes from value (single or double quotes)
-        call strip_quotes_local(var_value)
+        ! For quoted tokens, lexer already stripped quotes, so skip this step
+        if (.not. (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1))) then
+          call strip_quotes_local(var_value)
+        end if
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
       end if
+
+      ! If allexport is enabled (set -a), automatically export the variable
+      if (shell%option_allexport) then
+        do i = 1, shell%num_variables
+          if (trim(shell%variables(i)%name) == trim(var_name)) then
+            shell%variables(i)%exported = .true.
+            ! Also set in environment
+            if (.not. set_environment_var(trim(var_name), trim(shell%variables(i)%value))) then
+              ! Silently ignore export errors (POSIX behavior)
+            end if
+            exit
+          end if
+        end do
+      end if
+
       ! Set exit status to 0 for successful assignments
       ! Don't overwrite error codes like 127 (readonly violation)
       if (shell%last_exit_status /= 127) then
@@ -974,14 +1117,15 @@ contains
   end function
 
   ! Interpret escape sequences in IFS string (\t -> tab, \n -> newline)
-  subroutine interpret_ifs_escapes(input, output)
+  subroutine interpret_ifs_escapes(input, output, output_len)
     character(len=*), intent(in) :: input
     character(len=*), intent(out) :: output
+    integer, intent(out) :: output_len
     integer :: i, j, input_len
     character(len=1) :: backslash
 
     backslash = char(92)  ! ASCII code for backslash
-    input_len = len_trim(input)
+    input_len = len(input)  ! Use len(), not len_trim() - input might be all spaces (IFS=" ")
     j = 1
     i = 1
     output = ''
@@ -1017,6 +1161,7 @@ contains
         i = i + 1
       end if
     end do
+    output_len = j - 1  ! Return actual length of output
   end subroutine
 
   subroutine expand_tokens(cmd, shell)
@@ -1026,12 +1171,13 @@ contains
     integer :: i, j, num_words, total_tokens
     character(len=:), allocatable :: expanded
     character(len=1024), allocatable :: temp_tokens(:)  ! Increased to match split_words length
+    logical :: is_format_string
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
     character(len=1024) :: split_words(30)
     character(len=MAX_TOKEN_LEN) :: word
     character(len=256) :: ifs_to_use
-    integer :: word_count, start_pos, pos, k
-    logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char
+    integer :: word_count, start_pos, pos, k, ifs_check_i, ifs_len_to_use
+    logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
@@ -1039,14 +1185,42 @@ contains
 
     ! Determine IFS characters to use
     ! Interpret escape sequences in IFS (\t -> tab, \n -> newline)
-    if (len_trim(shell%ifs) > 0) then
-      call interpret_ifs_escapes(trim(shell%ifs), ifs_to_use)
+    ! POSIX: When IFS is set to empty, field splitting is disabled
+    ! Check if IFS was explicitly set by the user (exists in variables array)
+    ifs_explicitly_set = .false.
+    do ifs_check_i = 1, shell%num_variables
+      if (trim(shell%variables(ifs_check_i)%name) == 'IFS') then
+        ifs_explicitly_set = .true.
+        exit
+      end if
+    end do
+
+    if (ifs_explicitly_set) then
+      ! IFS is explicitly set - use its value (even if empty)
+      ! Use ifs_len to preserve trailing whitespace (e.g., IFS=" ")
+      if (shell%ifs_len > 0) then
+        call interpret_ifs_escapes(shell%ifs(1:shell%ifs_len), ifs_to_use, ifs_len_to_use)
+      else
+        ifs_to_use = ''  ! Empty IFS disables field splitting
+        ifs_len_to_use = 0
+      end if
     else
+      ! IFS not set - use default
       ifs_to_use = ' '//char(9)//char(10)  ! space, tab, newline (default IFS)
+      ifs_len_to_use = 3
     end if
 
     do i = 1, cmd%num_tokens
-      call expand_variables(cmd%tokens(i), expanded, shell)
+      ! Check if this token was single-quoted (no expansion)
+      if (allocated(cmd%token_quote_type) .and. &
+          i <= size(cmd%token_quote_type) .and. &
+          cmd%token_quote_type(i) == QUOTE_SINGLE) then
+        ! Single quotes - no expansion, use literal value
+        expanded = cmd%tokens(i)
+      else
+        ! No quotes or double quotes - perform expansion
+        call expand_variables(cmd%tokens(i), expanded, shell)
+      end if
 
       ! Determine if we should split this token on IFS characters
       ! Only split if:
@@ -1058,29 +1232,47 @@ contains
 
       ! Check if expanded string contains any IFS character
       has_ifs_char = .false.
-      do k = 1, len(expanded)
-        if (index(ifs_to_use, expanded(k:k)) > 0) then
-          has_ifs_char = .true.
-          exit
-        end if
-      end do
+      if (ifs_len_to_use > 0) then
+        do k = 1, len(expanded)
+          ! Only check against actual IFS chars (first ifs_len_to_use chars of ifs_to_use)
+          if (index(ifs_to_use(1:ifs_len_to_use), expanded(k:k)) > 0) then
+            has_ifs_char = .true.
+            exit
+          end if
+        end do
+      end if
+      ! If ifs_len_to_use == 0 (empty IFS), has_ifs_char stays false, disabling field splitting
 
       if (has_ifs_char) then
-        ! Check if ORIGINAL token had quotes (not expanded, since expand_variables strips them)
-        has_quotes = (index(cmd%tokens(i), '"') > 0 .or. index(cmd%tokens(i), "'") > 0)
+        ! Check if ORIGINAL token was quoted (using metadata, not looking for quotes in string)
+        if (allocated(cmd%token_quoted) .and. i <= size(cmd%token_quoted)) then
+          has_quotes = cmd%token_quoted(i)
+        else
+          ! Fallback: Check if ORIGINAL token had quotes (not expanded, since expand_variables strips them)
+          has_quotes = (index(cmd%tokens(i), '"') > 0 .or. index(cmd%tokens(i), "'") > 0)
+        end if
         ! Check if it's an assignment (contains =)
         has_equals = (index(expanded, '=') > 0)
         ! Check if spaces are escaped with backslash in ORIGINAL token
         has_escaped = has_escaped_spaces(cmd%tokens(i))
+        ! PARSER FIX: Check if token starts with % (printf format string)
+        is_format_string = (len_trim(expanded) > 0 .and. expanded(1:1) == '%')
 
-        ! Only split if no quotes, no equals sign, and no escaped spaces
-        should_split = (.not. has_quotes .and. .not. has_equals .and. .not. has_escaped)
+        ! Only split if no quotes, no equals sign, no escaped spaces, and not a format string
+        should_split = (.not. has_quotes .and. .not. has_equals .and. .not. has_escaped .and. .not. is_format_string)
       end if
 
       if (should_split) then
         ! Split the expanded string using IFS characters
         word_count = 0
-        call field_split(expanded, trim(ifs_to_use), split_words, word_count)
+        ! Pass ifs_to_use with exact length - use substring to avoid trailing blanks
+        if (ifs_len_to_use > 0) then
+          call field_split(expanded, ifs_to_use(1:ifs_len_to_use), split_words, word_count)
+        else
+          ! Empty IFS - no splitting should happen (but we shouldn't reach here)
+          split_words(1) = expanded
+          word_count = 1
+        end if
 
         ! Add all split words as separate tokens
         do j = 1, word_count
@@ -1404,6 +1596,7 @@ contains
 
   subroutine exec_child(tokens, num_tokens)
     use system_interface, only: file_exists, file_is_executable
+    use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
 
@@ -1412,6 +1605,7 @@ contains
     integer :: i, j
     integer :: ret
     logical :: is_path_command
+
 
     ! Convert tokens to C strings
     do i = 1, num_tokens

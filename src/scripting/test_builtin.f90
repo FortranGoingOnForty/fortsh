@@ -28,12 +28,14 @@ contains
     logical :: test_result
     character(len=256) :: operator
     character(len=256) :: left_operand, right_operand
+    integer :: debug_i
     logical :: left_result, right_result
     character(len=256) :: log_op, op2, arg2
     type(command_t) :: sub_cmd, left_cmd, right_cmd
     integer :: i, j, test_exit_status, logical_op_pos
     integer :: paren_depth, check_pos
     logical :: outer_parens_wrap_all
+
 
     ! Check if this is [[ ]] (advanced test) - use advanced_test module
     if (trim(cmd%tokens(1)) == '[[') then

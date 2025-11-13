@@ -190,7 +190,8 @@ contains
     command_name = cmd%tokens(arg_index)
 
     if (verbose_flag) then
-      call identify_command_type(shell, command_name, .false., path_flag, .false., .false.)
+      ! command -v should not print error messages, just return exit code
+      call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true.)
       ! Don't overwrite exit status set by identify_command_type
     else
       ! Execute the command (simplified - would need full execution logic)
@@ -199,15 +200,18 @@ contains
     end if
   end subroutine
 
-  subroutine identify_command_type(shell, command_name, all_flag, path_flag, type_flag, function_flag)
+  subroutine identify_command_type(shell, command_name, all_flag, path_flag, type_flag, function_flag, silent_errors)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command_name
     logical, intent(in) :: all_flag, path_flag, type_flag, function_flag
-    
-    logical :: found_any
+    logical, intent(in), optional :: silent_errors
+
+    logical :: found_any, suppress_errors
     character(len=1024) :: full_path
-    
+
     found_any = .false.
+    suppress_errors = .false.
+    if (present(silent_errors)) suppress_errors = silent_errors
     
     ! Check if it's a shell keyword
     if (.not. path_flag .and. is_shell_keyword(command_name)) then
@@ -264,7 +268,9 @@ contains
     end if
     
     if (.not. found_any) then
-      write(error_unit, '(a,a,a)') trim(command_name), ': not found'
+      if (.not. suppress_errors) then
+        write(error_unit, '(a,a,a)') trim(command_name), ': not found'
+      end if
       shell%last_exit_status = 1
     end if
   end subroutine
@@ -412,12 +418,15 @@ contains
   end function
 
   function is_shell_function(shell, command_name) result(is_function)
+    use ast_executor, only: is_ast_function
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_name
     logical :: is_function
     integer :: i
 
     is_function = .false.
+
+    ! Check old executor's function storage
     do i = 1, shell%num_functions
       if (trim(shell%functions(i)%name) == trim(command_name) .and. &
           len_trim(shell%functions(i)%name) > 0) then
@@ -425,6 +434,9 @@ contains
         return
       end if
     end do
+
+    ! Also check AST executor's function cache
+    is_function = is_ast_function(command_name)
   end function
 
   function is_shell_alias(shell, command_name) result(is_alias)

@@ -6,7 +6,10 @@ program fortran_shell
   use system_interface
   use signal_handler
   use signal_handling
-  use parser
+  use parser, only: convert_backticks_to_dollar_paren
+  use grammar_parser  ! New grammar-aware parser
+  use ast_executor    ! AST execution for new parser
+  use command_tree    ! Command tree for new parser
   use executor
   use job_control
   use readline
@@ -15,6 +18,8 @@ program fortran_shell
   use shell_options
   use performance
   use prompt_formatting
+  use command_capture_callback, only: init_command_capture  ! For command substitution
+  use builtins, only: init_builtins  ! Initialize builtin function pointers
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
@@ -30,6 +35,10 @@ program fortran_shell
   ! Command duration tracking
   integer :: cmd_start_time, cmd_end_time, cmd_duration_ms, clock_rate
   real :: cmd_duration_sec
+  ! New parser infrastructure
+  type(command_node_t), pointer :: ast_root
+  integer :: exit_code
+  character(len=:), allocatable :: converted_line
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
@@ -39,6 +48,9 @@ program fortran_shell
 
   ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
+
+  ! Initialize builtin function pointers (breaks circular dependency)
+  call init_builtins()
 
   ! Initialize control flow callbacks (breaks circular dependency)
   call init_control_flow_callbacks()
@@ -76,6 +88,9 @@ program fortran_shell
   ! Initialize signal handling module
   call init_signal_handling(shell)
 
+  ! Initialize command capture callback (for command substitution)
+  call init_command_capture()
+
   ! Setup signal handlers if interactive
   if (shell%is_interactive) then
     call setup_signal_handlers()
@@ -99,31 +114,59 @@ program fortran_shell
 
   ! Execute command string if -c was specified
   if (execute_command_string) then
+    ! Check if string contains heredoc and pre-process it
+    if (index(command_string, '<<') > 0) then
+      ! Pre-process heredocs before parsing
+      command_string = preprocess_heredocs_for_c(command_string, shell)
+      ! write(error_unit, '(A,A)') 'DEBUG: After preprocess, command_string=', trim(command_string)
+    end if
+
     ! Handle line continuation (backslash-newline)
     command_string = remove_line_continuations(command_string)
     call process_substitutions(shell, trim(command_string), proc_subst_line)
-    call parse_pipeline(proc_subst_line, pipeline)
 
-    if (pipeline%num_commands > 0) then
-      call execute_pipeline(pipeline, shell, trim(command_string))
-
-      ! Check if we need to replay loop body (for loops, while, until)
-      if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-        call replay_loop_if_needed(shell)
+    ! Use new parser if feature flag is enabled
+    if (shell%use_new_parser) then
+      ! NEW PARSER PATH: Parse to AST and execute directly
+      ! Convert backticks to $() first
+      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+      ast_root => parse_command_line(converted_line)
+      if (associated(ast_root)) then
+        exit_code = execute_ast(ast_root, shell)
+        shell%last_exit_status = exit_code
+        call destroy_command_node(ast_root)
+      else if (last_parse_had_error) then
+        ! Parse error occurred (not just empty command)
+        shell%last_exit_status = 2
       end if
+    else
+      ! OLD PARSER PATH: Parse to pipeline and execute
+      call parse_pipeline(proc_subst_line, pipeline)
 
-      ! Clean up pipeline
-      if (allocated(pipeline%commands)) then
-        do i = 1, pipeline%num_commands
-          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-        end do
-        deallocate(pipeline%commands)
+      ! Check for syntax errors
+      if (pipeline%parse_error) then
+        shell%last_exit_status = 2  ! Syntax error
+      else if (pipeline%num_commands > 0) then
+        call execute_pipeline(pipeline, shell, trim(command_string))
+
+        ! Check if we need to replay loop body (for loops, while, until)
+        if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+          call replay_loop_if_needed(shell)
+        end if
+
+        ! Clean up pipeline
+        if (allocated(pipeline%commands)) then
+          do i = 1, pipeline%num_commands
+            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+          end do
+          deallocate(pipeline%commands)
+        end if
       end if
     end if
 
@@ -237,15 +280,48 @@ program fortran_shell
     ! Process substitutions <() and >() before parsing
     call process_substitutions(shell, expanded_line, proc_subst_line)
 
-    ! Parse pipeline
-    call parse_pipeline(proc_subst_line, pipeline)
-
-    ! Execute pipeline
-    if (pipeline%num_commands > 0) then
-      ! Track command duration (Fish-style)
+    ! Parse and execute (use new parser if feature flag is enabled)
+    if (shell%use_new_parser) then
+      ! NEW PARSER PATH: Parse to AST and execute directly
       call system_clock(cmd_start_time, clock_rate)
 
-      call execute_pipeline(pipeline, shell, expanded_line)
+      ! Convert backticks to $() first
+      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+      ast_root => parse_command_line(converted_line)
+      if (associated(ast_root)) then
+        exit_code = execute_ast(ast_root, shell)
+        shell%last_exit_status = exit_code
+        call destroy_command_node(ast_root)
+
+        ! Calculate and display duration if > 1 second
+        call system_clock(cmd_end_time)
+        cmd_duration_ms = (cmd_end_time - cmd_start_time) * 1000 / clock_rate
+        cmd_duration_sec = real(cmd_duration_ms) / 1000.0
+
+        if (shell%is_interactive .and. cmd_duration_sec >= 1.0) then
+          write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
+                                           cmd_duration_sec, 's' // char(27) // '[0m'
+        end if
+
+        ! Increment command number for next prompt
+        shell%command_number = shell%command_number + 1
+        call increment_prompt_history()
+      else if (last_parse_had_error) then
+        ! Parse error occurred (not just empty command)
+        shell%last_exit_status = 2
+      end if
+    else
+      ! OLD PARSER PATH: Parse to pipeline and execute
+      call parse_pipeline(proc_subst_line, pipeline)
+
+      ! Check for syntax errors
+      if (pipeline%parse_error) then
+        shell%last_exit_status = 2  ! Syntax error
+      else if (pipeline%num_commands > 0) then
+        ! Track command duration (Fish-style)
+        call system_clock(cmd_start_time, clock_rate)
+
+        call execute_pipeline(pipeline, shell, expanded_line)
 
       ! Exit immediately if exit command was executed
       if (.not. shell%running) then
@@ -286,20 +362,21 @@ program fortran_shell
       call increment_prompt_history()
     end if
 
-    ! Clean up pipeline
-    if (allocated(pipeline%commands)) then
-      do i = 1, pipeline%num_commands
-        if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-        if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-        if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-        if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-        if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-        if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-        if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-      end do
+      ! Clean up pipeline
+      if (allocated(pipeline%commands)) then
+        do i = 1, pipeline%num_commands
+          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+        end do
 
-      deallocate(pipeline%commands)
-    end if
+        deallocate(pipeline%commands)
+      end if
+    end if  ! End of old parser path
   end do
 
   ! Execute EXIT trap if one is set
@@ -360,6 +437,209 @@ contains
     end do
   end function
 
+  ! Convert escape sequences like \n to actual characters for -c flag
+  function convert_escape_sequences(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=len(input)*2) :: output  ! Worst case: all chars become newlines
+    integer :: i, j
+
+    output = ''
+    i = 1
+    j = 1
+
+    do while (i <= len_trim(input))
+      ! Check for backslash escape sequences
+      if (i < len_trim(input) .and. input(i:i) == '\') then
+        select case(input(i+1:i+1))
+        case('n')
+          ! Convert \n to actual newline
+          output(j:j) = char(10)
+          i = i + 2
+          j = j + 1
+        case('t')
+          ! Convert \t to tab
+          output(j:j) = char(9)
+          i = i + 2
+          j = j + 1
+        case('\')
+          ! Convert \\ to single backslash
+          output(j:j) = '\'
+          i = i + 2
+          j = j + 1
+        case default
+          ! Keep backslash and next char as-is
+          output(j:j) = input(i:i)
+          j = j + 1
+          i = i + 1
+        end select
+      else
+        ! Regular character, copy as-is
+        output(j:j) = input(i:i)
+        i = i + 1
+        j = j + 1
+      end if
+    end do
+  end function
+
+  ! Pre-process heredocs in -c commands
+  ! Extracts heredoc content and stores it for later use
+  function preprocess_heredocs_for_c(input, shell) result(output)
+    use shell_types
+    use iso_fortran_env, only: error_unit
+    character(len=*), intent(in) :: input
+    type(shell_state_t), intent(inout) :: shell
+    character(len=len(input)*2) :: output
+    integer :: i, j, heredoc_start, delim_start, delim_end
+    integer :: content_start, content_end, next_cmd_start
+    character(len=256) :: delimiter
+    character(len=4096) :: heredoc_content
+    logical :: quoted_delimiter
+
+    ! write(error_unit, '(A,A,A)') 'DEBUG: preprocess input=|', input(1:min(200,len_trim(input))), '|'
+
+    output = input  ! Start with original
+
+    ! Look for heredoc marker
+    i = index(input, '<<')
+    if (i == 0) then
+      return  ! No heredoc
+    end if
+
+    ! Skip spaces after <<
+    j = i + 2
+    do while (j <= len_trim(input) .and. input(j:j) == ' ')
+      j = j + 1
+    end do
+
+    ! Check for quoted delimiter
+    quoted_delimiter = .false.
+    if (input(j:j) == "'" .or. input(j:j) == '"') then
+      quoted_delimiter = .true.
+      block
+        character :: quote_char
+        quote_char = input(j:j)
+        j = j + 1
+        delim_start = j
+        ! Find closing quote
+        delim_end = j
+        do while (delim_end <= len_trim(input) .and. input(delim_end:delim_end) /= quote_char)
+          delim_end = delim_end + 1
+        end do
+        delim_end = delim_end - 1
+      end block
+    else
+      delim_start = j
+      ! Find end of delimiter (space or newline)
+      delim_end = j
+      do while (delim_end <= len_trim(input) .and. &
+               input(delim_end:delim_end) /= ' ' .and. &
+               input(delim_end:delim_end) /= char(10))
+        delim_end = delim_end + 1
+      end do
+      delim_end = delim_end - 1
+    end if
+
+    if (delim_end < delim_start) return  ! Invalid delimiter
+
+    delimiter = input(delim_start:delim_end)
+    ! write(error_unit, '(A,A,A)') 'DEBUG: delimiter=|', trim(delimiter), '|'
+
+    ! Find the newline after the heredoc command
+    heredoc_start = delim_end + 1
+    if (quoted_delimiter) heredoc_start = heredoc_start + 1  ! Skip closing quote
+
+    ! Skip to newline
+    do while (heredoc_start <= len_trim(input) .and. input(heredoc_start:heredoc_start) /= char(10))
+      heredoc_start = heredoc_start + 1
+    end do
+    if (heredoc_start > len_trim(input)) return  ! No content
+    heredoc_start = heredoc_start + 1  ! Skip the newline
+
+    ! Find the delimiter line
+    content_start = heredoc_start
+    content_end = 0
+    j = heredoc_start
+
+    do while (j <= len_trim(input))
+      ! Check if we're at start of a line
+      if (j == heredoc_start .or. input(j-1:j-1) == char(10)) then
+        ! Debug: show what we're checking
+        ! if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
+        !   write(error_unit, '(A,I0,A,A,A)') 'DEBUG: Checking at pos ', j, ': |', &
+        !     input(j:min(j+10, len_trim(input))), '|'
+        ! end if
+        ! Check if this line starts with the delimiter
+        if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
+          if (input(j:j+len_trim(delimiter)-1) == trim(delimiter)) then
+            ! write(error_unit, '(A)') 'DEBUG: Found delimiter match!'
+            ! Check if delimiter is alone on the line or followed by newline
+            if (j + len_trim(delimiter) > len_trim(input) .or. &
+                input(j+len_trim(delimiter):j+len_trim(delimiter)) == char(10)) then
+              content_end = j - 1
+              next_cmd_start = j + len_trim(delimiter)
+              if (next_cmd_start <= len_trim(input) .and. &
+                  input(next_cmd_start:next_cmd_start) == char(10)) then
+                next_cmd_start = next_cmd_start + 1
+              end if
+              exit
+            end if
+          end if
+        end if
+      end if
+      j = j + 1
+    end do
+
+    if (content_end == 0) then
+      return  ! Delimiter not found
+    end if
+
+    ! Extract heredoc content
+    if (content_end >= content_start) then
+      heredoc_content = input(content_start:content_end)
+    else
+      heredoc_content = ''
+    end if
+
+
+    ! Store heredoc content in shell state
+    shell%pending_heredoc = trim(heredoc_content)
+    shell%pending_heredoc_delimiter = trim(delimiter)
+    shell%pending_heredoc_quoted = quoted_delimiter
+    shell%has_pending_heredoc = .true.
+
+    ! Return the command without the heredoc content
+    ! The heredoc module will handle it when the command executes
+    ! Need to replace any newlines with semicolons to keep it a single command
+    block
+      integer :: k
+      character(len=len(input)) :: cmd_part
+
+      cmd_part = input(1:i-1)  ! Everything before <<
+
+      ! Replace newlines with semicolons in the command part
+      do k = 1, len_trim(cmd_part)
+        if (cmd_part(k:k) == char(10)) then
+          cmd_part(k:k) = ';'
+        end if
+      end do
+
+      output = trim(cmd_part)
+    end block
+
+    ! Re-add the heredoc marker with delimiter so heredoc module can process it
+    if (quoted_delimiter) then
+      output = trim(output) // " << '" // trim(delimiter) // "'"
+    else
+      output = trim(output) // ' << ' // trim(delimiter)
+    end if
+
+    ! Add any commands after the heredoc
+    if (next_cmd_start <= len_trim(input)) then
+      output = trim(output) // ' ' // input(next_cmd_start:len_trim(input))
+    end if
+
+  end function
+
   subroutine run_logout_scripts(shell)
     type(shell_state_t), intent(inout) :: shell
     character(len=:), allocatable :: home_dir, logout_file
@@ -383,10 +663,14 @@ contains
 
   subroutine process_source_file(shell)
     use variables, only: add_function
+    use grammar_parser, only: parse_command_line, last_parse_had_error
+    use command_tree, only: destroy_command_node, command_node_t
+    use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line, proc_subst_line, continuation_line
-    integer :: file_unit, iostat, i, brace_depth, func_line_count
+    character(len=1024) :: input_line, proc_subst_line, continuation_line, converted_line
+    integer :: file_unit, iostat, i, brace_depth, func_line_count, exit_code
     type(pipeline_t) :: pipeline
+    type(command_node_t), pointer :: ast_root
     character(len=:), allocatable :: expanded_line, history_expanded
     logical :: in_function
     character(len=256) :: func_name
@@ -489,29 +773,47 @@ contains
       ! Process substitutions <() and >() before parsing
       call process_substitutions(shell, expanded_line, proc_subst_line)
 
-      ! Parse and execute pipeline
-      call parse_pipeline(proc_subst_line, pipeline)
-
-      if (pipeline%num_commands > 0) then
-        call execute_pipeline(pipeline, shell, expanded_line)
-
-        ! Check if we need to replay loop body (only if NOT currently capturing)
-        if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-          call replay_loop_if_needed(shell)
+      ! Parse and execute (use new AST parser by default)
+      if (shell%use_new_parser) then
+        ! NEW PARSER PATH: Parse to AST and execute directly
+        converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+        ast_root => parse_command_line(converted_line)
+        if (associated(ast_root)) then
+          exit_code = execute_ast(ast_root, shell)
+          shell%last_exit_status = exit_code
+          call destroy_command_node(ast_root)
+        else if (last_parse_had_error) then
+          ! Parse error occurred (not just empty command)
+          shell%last_exit_status = 2
         end if
+      else
+        ! OLD PARSER PATH: Parse to pipeline and execute
+        call parse_pipeline(proc_subst_line, pipeline)
 
-        ! Clean up pipeline
-        if (allocated(pipeline%commands)) then
-          do i = 1, pipeline%num_commands
-            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-          end do
-          deallocate(pipeline%commands)
+        ! Check for syntax errors
+        if (pipeline%parse_error) then
+          shell%last_exit_status = 2  ! Syntax error
+        else if (pipeline%num_commands > 0) then
+          call execute_pipeline(pipeline, shell, expanded_line)
+
+          ! Check if we need to replay loop body (only if NOT currently capturing)
+          if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
+            call replay_loop_if_needed(shell)
+          end if
+
+          ! Clean up pipeline
+          if (allocated(pipeline%commands)) then
+            do i = 1, pipeline%num_commands
+              if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
+              if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
+              if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
+              if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
+              if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
+              if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
+              if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
+            end do
+            deallocate(pipeline%commands)
+          end if
         end if
       end if
 
@@ -716,6 +1018,13 @@ contains
     ! Initialize shell options and special variables
     call initialize_shell_options(shell)
 
+    ! Save original stderr for shell messages (xtrace, errors, etc.)
+    ! This ensures shell meta-output isn't affected by command redirections
+    shell%original_stderr_fd = c_dup(STDERR_FD)
+    if (shell%original_stderr_fd < 0) then
+      shell%original_stderr_fd = STDERR_FD  ! Fallback if dup fails
+    end if
+
     ! Initialize special shell variables
     shell%uid = get_uid()
     shell%euid = get_euid()
@@ -737,23 +1046,40 @@ contains
 
     ! Initialize prompt string lengths (to match default values in shell_state_t)
     shell%ps1_len = len_trim(shell%ps1)  ! '\u@\h :: \w > ' = 17 chars
-    shell%ps2_len = len_trim(shell%ps2)  ! '> ' = 2 chars
-    shell%ps3_len = len_trim(shell%ps3)  ! '#? ' = 3 chars
-    shell%ps4_len = len_trim(shell%ps4)  ! '+ ' = 2 chars
+    shell%ps2_len = 2                    ! '> ' = 2 chars (don't trim trailing space)
+    shell%ps3_len = 3                    ! '#? ' = 3 chars (don't trim trailing space)
+    shell%ps4_len = 2                    ! '+ ' = 2 chars (don't trim trailing space)
 
     ! Check for performance monitoring environment variable
     temp = get_environment_var('FORTSH_PERF')
     if (len(temp) > 0 .and. trim(temp) == '1') then
       call set_performance_monitoring(.true.)
     end if
+
+    ! New parser is now THE DEFAULT!
+    ! Use FORTSH_USE_OLD_PARSER=1 to revert to old parser
+    shell%use_new_parser = .true.
+
+    ! Allow opt-out to old parser
+    temp = get_environment_var('FORTSH_USE_OLD_PARSER')
+    if (len(temp) > 0 .and. (trim(temp) == '1' .or. trim(temp) == 'true')) then
+      shell%use_new_parser = .false.
+      if (shell%is_interactive) then
+        write(output_unit, '(a)') 'Using legacy parser (new parser is default)'
+      end if
+    end if
   end subroutine
 
   subroutine execute_trap_for_signal(shell, signum)
+    use grammar_parser, only: parse_command_line, last_parse_had_error
+    use ast_executor, only: execute_ast_node
+    use command_tree, only: command_node_t, destroy_command_node
     type(shell_state_t), intent(inout) :: shell
     integer, intent(in) :: signum
     character(len=4096) :: trap_command
     type(pipeline_t) :: trap_pipeline
-    integer :: saved_exit_status, i
+    type(command_node_t), pointer :: trap_ast
+    integer :: saved_exit_status, i, trap_exit_code
 
     ! Get the trap command for this signal
     trap_command = get_trap_command(shell, signum)
@@ -763,27 +1089,56 @@ contains
     ! Save current exit status (trap should not affect $?)
     saved_exit_status = shell%last_exit_status
 
-    ! Parse the trap command
-    call parse_pipeline(trim(trap_command), trap_pipeline)
+    ! Don't execute trap if we're already in one
+    if (shell%executing_trap) return
 
-    ! Execute the trap command if parsing succeeded
-    if (trap_pipeline%num_commands > 0) then
-      call execute_pipeline(trap_pipeline, shell, trim(trap_command))
+    ! Don't execute EXIT trap if it was already executed by builtin_exit
+    if (signum == 0 .and. shell%exit_trap_executed) return
+
+    ! Set flag to prevent recursive trap execution
+    shell%executing_trap = .true.
+
+    ! Mark EXIT trap as executed if this is an EXIT trap
+    if (signum == 0) shell%exit_trap_executed = .true.
+
+    ! Parse the trap command (use new parser if feature flag is enabled)
+    if (shell%use_new_parser) then
+      ! Use AST parser for new parser mode
+      trap_ast => parse_command_line(trim(trap_command))
+      if (associated(trap_ast)) then
+        trap_exit_code = execute_ast_node(trap_ast, shell)
+        call destroy_command_node(trap_ast)
+      else if (last_parse_had_error) then
+        ! Parse error occurred in trap command (not just empty)
+        shell%last_exit_status = 2
+      end if
+    else
+      call parse_pipeline(trim(trap_command), trap_pipeline)
+
+      ! Check for syntax errors
+      if (trap_pipeline%parse_error) then
+        shell%last_exit_status = 2  ! Syntax error
+      else if (trap_pipeline%num_commands > 0) then
+        call execute_pipeline(trap_pipeline, shell, trim(trap_command))
+      end if
+
+      ! Clean up pipeline
+      if (allocated(trap_pipeline%commands)) then
+        do i = 1, trap_pipeline%num_commands
+          if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
+          if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
+          if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
+          if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
+          if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
+          if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
+          if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
+        end do
+        deallocate(trap_pipeline%commands)
+      end if
     end if
 
-    ! Clean up pipeline
-    if (allocated(trap_pipeline%commands)) then
-      do i = 1, trap_pipeline%num_commands
-        if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
-        if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
-        if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
-        if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
-        if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
-        if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
-        if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
-      end do
-      deallocate(trap_pipeline%commands)
-    end if
+    ! Clear flag
+    shell%executing_trap = .false.
 
     ! Restore exit status
     shell%last_exit_status = saved_exit_status
