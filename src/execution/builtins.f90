@@ -1988,13 +1988,17 @@ contains
           shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
           shell%control_stack(i)%block_type == BLOCK_UNTIL .or. &
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
-        shell%control_stack(i)%break_requested = .true.
-        shell%control_stack(i)%break_level = break_count
-        ! POSIX: invalid count still breaks loop, but with exit status 1
-        if (invalid_count) then
-          shell%last_exit_status = 1
-        else
-          shell%last_exit_status = 0
+        ! POSIX: if break is already requested, don't change exit status
+        ! This preserves the status from the first break command (e.g., "break 0 || break")
+        if (.not. shell%control_stack(i)%break_requested) then
+          shell%control_stack(i)%break_requested = .true.
+          shell%control_stack(i)%break_level = break_count
+          ! POSIX: invalid count still breaks loop, but with exit status 1
+          if (invalid_count) then
+            shell%last_exit_status = 1
+          else
+            shell%last_exit_status = 0
+          end if
         end if
         return
       end if
@@ -2036,13 +2040,17 @@ contains
           shell%control_stack(i)%block_type == BLOCK_WHILE .or. &
           shell%control_stack(i)%block_type == BLOCK_UNTIL .or. &
           shell%control_stack(i)%block_type == BLOCK_FOR_ARITH) then
-        shell%control_stack(i)%continue_requested = .true.
-        shell%control_stack(i)%continue_level = continue_count
-        ! POSIX: invalid count still continues loop, but with exit status 1
-        if (invalid_count) then
-          shell%last_exit_status = 1
-        else
-          shell%last_exit_status = 0
+        ! POSIX: if continue is already requested, don't change exit status
+        ! This preserves the status from the first continue command (e.g., "continue 0 || continue")
+        if (.not. shell%control_stack(i)%continue_requested) then
+          shell%control_stack(i)%continue_requested = .true.
+          shell%control_stack(i)%continue_level = continue_count
+          ! POSIX: invalid count still continues loop, but with exit status 1
+          if (invalid_count) then
+            shell%last_exit_status = 1
+          else
+            shell%last_exit_status = 0
+          end if
         end if
         return
       end if
