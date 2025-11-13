@@ -2044,6 +2044,14 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: return_code, iostat
 
+    ! POSIX: return outside function/sourced script should fail
+    ! TODO: Also check for sourced script context
+    if (shell%function_depth == 0) then
+      write(error_unit, '(a)') 'return: can only return from a function or sourced script'
+      shell%last_exit_status = 1
+      return
+    end if
+
     ! Default to last command's exit status
     return_code = shell%last_exit_status
 
