@@ -1219,7 +1219,14 @@ contains
         expanded = cmd%tokens(i)
       else
         ! No quotes or double quotes - perform expansion
-        call expand_variables(cmd%tokens(i), expanded, shell)
+        ! Pass was_quoted flag if token was double-quoted
+        if (allocated(cmd%token_quote_type) .and. &
+            i <= size(cmd%token_quote_type) .and. &
+            cmd%token_quote_type(i) == QUOTE_DOUBLE) then
+          call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.true.)
+        else
+          call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.false.)
+        end if
       end if
 
       ! Determine if we should split this token on IFS characters

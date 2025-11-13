@@ -1219,31 +1219,40 @@ contains
     end do
   end function
 
-  subroutine expand_variables(token, expanded, shell)
+  subroutine expand_variables(token, expanded, shell, was_quoted_in)
     use expansion, only: expand_braces, arithmetic_expansion_shell
     character(len=*), intent(in) :: token
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
+    logical, intent(in), optional :: was_quoted_in
 
     character(len=MAX_TOKEN_LEN) :: result, working_token
-    integer :: i, j, var_start, brace_depth
+    integer :: i, j, var_start, brace_depth, end_pos
     character(len=MAX_TOKEN_LEN) :: var_name
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
     logical :: is_quoted, is_single_quoted
 
-    ! Check if token is quoted (starts and ends with matching quotes)
+    ! Check if token was originally quoted (from lexer metadata or token inspection)
     is_quoted = .false.
     is_single_quoted = .false.
-    if (len_trim(token) >= 2) then
-      if (token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"') then
-        is_quoted = .true.
-      else if (token(1:1) == "'" .and. token(len_trim(token):len_trim(token)) == "'") then
-        is_quoted = .true.
-        is_single_quoted = .true.
+
+    ! Use the passed parameter if provided, otherwise fall back to checking the token
+    if (present(was_quoted_in)) then
+      is_quoted = was_quoted_in
+      ! We don't track single vs double quotes in metadata, assume double if quoted
+      is_single_quoted = .false.
+    else
+      ! Legacy: check if token still has quotes (for backward compatibility)
+      if (len_trim(token) >= 2) then
+        if (token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"') then
+          is_quoted = .true.
+        else if (token(1:1) == "'" .and. token(len_trim(token):len_trim(token)) == "'") then
+          is_quoted = .true.
+          is_single_quoted = .true.
+        end if
       end if
     end if
-
     ! Single quotes preserve everything literally - no expansion at all
     if (is_single_quoted) then
       ! Return the token with outer quotes stripped
@@ -1262,11 +1271,12 @@ contains
     result = ''
     i = 1
     j = 1
+    end_pos = len_trim(working_token)
 
-    do while (i <= len_trim(working_token))
+    do while (i <= end_pos)
       ! Check for backslash escape
       ! Handle \$ even outside quotes since lexer may have already removed quotes
-      if (working_token(i:i) == '\' .and. i < len_trim(working_token)) then
+      if (working_token(i:i) == '\' .and. i < end_pos) then
         if (working_token(i+1:i+1) == '$') then
           ! \$ -> literal $
           i = i + 1  ! Skip backslash
