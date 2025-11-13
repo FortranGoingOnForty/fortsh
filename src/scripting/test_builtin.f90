@@ -160,6 +160,29 @@ contains
         test_result = .false.
       end select
 
+    else if (cmd%num_tokens >= 3 .and. trim(cmd%tokens(2)) == '!') then
+      ! Logical NOT: test ! OP ARG
+      ! Handle this BEFORE complex expressions to ensure correct precedence
+      ! Recursively evaluate the rest
+
+      ! Create sub-command without the '!'
+      sub_cmd%num_tokens = cmd%num_tokens - 1
+      sub_cmd%tokens(1) = cmd%tokens(1)  ! 'test'
+      do i = 2, sub_cmd%num_tokens
+        sub_cmd%tokens(i) = cmd%tokens(i+1)
+      end do
+
+      ! Recursively evaluate
+      call execute_test_command(sub_cmd, shell)
+
+      ! Negate the result
+      if (shell%last_exit_status == 0) then
+        shell%last_exit_status = 1
+      else
+        shell%last_exit_status = 0
+      end if
+      return
+
     else if (cmd%num_tokens >= 5) then
       ! First, check if the entire expression is wrapped in parentheses
       ! If so, strip them and re-evaluate
@@ -247,28 +270,6 @@ contains
         ! No logical operator found - unknown pattern
         test_result = .false.
       end if
-
-    else if (cmd%num_tokens >= 3 .and. trim(cmd%tokens(2)) == '!') then
-      ! Logical NOT: test ! OP ARG
-      ! Recursively evaluate the rest
-
-      ! Create sub-command without the '!'
-      sub_cmd%num_tokens = cmd%num_tokens - 1
-      sub_cmd%tokens(1) = cmd%tokens(1)  ! 'test'
-      do i = 2, sub_cmd%num_tokens
-        sub_cmd%tokens(i) = cmd%tokens(i+1)
-      end do
-
-      ! Recursively evaluate
-      call execute_test_command(sub_cmd, shell)
-
-      ! Negate the result
-      if (shell%last_exit_status == 0) then
-        shell%last_exit_status = 1
-      else
-        shell%last_exit_status = 0
-      end if
-      return
 
     else
       ! More complex expressions - simplified for now
