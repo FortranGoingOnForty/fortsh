@@ -3562,11 +3562,9 @@ contains
         ! Don't trigger redraw - character already on screen, cursor already positioned
       end if
 
-      ! Trigger syntax highlighting on word boundaries (space character)
-      ! Also trigger on line wrap if this was a space that wrapped
-      if (ch == ' ') then
-        input_state%dirty = .true.
-      end if
+      ! Always trigger syntax highlighting for immediate feedback (e.g., "exit" turning green)
+      ! Performance cost is acceptable for responsive UI
+      input_state%dirty = .true.
     else
       ! Insert in middle - use temp to avoid substring overlap issues
       ! Initialize temp with current buffer
