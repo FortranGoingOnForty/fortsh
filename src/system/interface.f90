@@ -769,6 +769,7 @@ contains
 
   ! Terminal control functions
   function enable_raw_mode(original_termios) result(success)
+    use iso_fortran_env, only: output_unit, error_unit
     type(termios_t), intent(out) :: original_termios
     logical :: success
     type(termios_t) :: raw_termios
@@ -881,12 +882,11 @@ contains
     if (success) then
       ! ESC[?2004h = Enable bracketed paste
       ! Terminal will wrap pasted text in ESC[200~ ... ESC[201~
-      write(STDOUT_FD, '(A)', advance='no') char(27) // '[?2004h'
-      call flush(STDOUT_FD)
+      write(output_unit, '(A)', advance='no') char(27) // '[?2004h'
+      call flush(output_unit)
 
       ! Debug: Check if FORTSH_DEBUG_PASTE is set
       block
-        use iso_fortran_env, only: error_unit
         character(len=16) :: debug_paste
         integer :: stat
         call get_environment_variable('FORTSH_DEBUG_PASTE', debug_paste, status=stat)
@@ -903,14 +903,15 @@ contains
   end function
   
   function restore_terminal(original_termios) result(success)
+    use iso_fortran_env, only: output_unit
     type(termios_t), intent(in) :: original_termios
     logical :: success
     integer :: ret
 
     ! Disable bracketed paste mode before restoring terminal
     ! ESC[?2004l = Disable bracketed paste
-    write(STDOUT_FD, '(A)', advance='no') char(27) // '[?2004l'
-    call flush(STDOUT_FD)
+    write(output_unit, '(A)', advance='no') char(27) // '[?2004l'
+    call flush(output_unit)
 
     ret = c_tcsetattr(STDIN_FD, TCSANOW, original_termios)
     success = (ret == 0)
@@ -1321,9 +1322,11 @@ contains
   ! Set terminal title using OSC sequences
   ! OSC 0 ; title BEL sets both icon and window title
   subroutine set_terminal_title(title)
+    use iso_fortran_env, only: output_unit
     character(len=*), intent(in) :: title
     ! ESC ] 0 ; title BEL
-    write(STDOUT_FD, '(A)', advance='no') char(27) // ']0;' // trim(title) // char(7)
+    write(output_unit, '(A)', advance='no') char(27) // ']0;' // trim(title) // char(7)
+    call flush(output_unit)
   end subroutine
 
   ! Check if terminal supports ANSI escape codes
