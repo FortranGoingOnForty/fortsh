@@ -423,6 +423,11 @@ contains
         ! Ignore error, not critical
       end if
 
+      ! Update terminal title after directory change
+      if (shell%is_interactive) then
+        call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
+      end if
+
       ! Add OLD directory to history so prevd can go back to it (Fish-style prevd/nextd)
       call add_to_dir_history(shell, old_cwd)
 

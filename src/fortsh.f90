@@ -338,6 +338,11 @@ program fortran_shell
 
         call execute_pipeline(pipeline, shell, expanded_line)
 
+        ! Update terminal title after command execution
+        if (shell%is_interactive) then
+          call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
+        end if
+
       ! Exit immediately if exit command was executed
       if (.not. shell%running) then
         ! Clean up pipeline before exiting
@@ -1075,6 +1080,11 @@ contains
     write(rows_str, '(I0)') shell%term_rows
     success = set_environment_var('COLUMNS', trim(cols_str))
     success = set_environment_var('LINES', trim(rows_str))
+
+    ! Set initial terminal title if interactive
+    if (shell%is_interactive) then
+      call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
+    end if
 
     ! Initialize other fields
     shell%last_exit_status = 0
