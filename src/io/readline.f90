@@ -4925,6 +4925,18 @@ contains
         if (ch3 == '~') then
           ! PASTE START MARKER DETECTED!
           ! Buffer all text until we see ESC[201~
+
+          ! Debug output if FORTSH_DEBUG_PASTE is set
+          block
+            use iso_fortran_env, only: error_unit
+            character(len=16) :: debug_paste
+            integer :: stat
+            call get_environment_variable('FORTSH_DEBUG_PASTE', debug_paste, status=stat)
+            if (stat == 0 .and. len_trim(debug_paste) > 0) then
+              write(error_unit, '(A)') '[DEBUG: PASTE START detected (ESC[200~)]'
+            end if
+          end block
+
           paste_len = 0
           paste_buffer = ''
 
@@ -4952,6 +4964,18 @@ contains
                       if (.not. success) exit
                       if (ch1 == '~') then
                         ! PASTE END MARKER FOUND!
+
+                        ! Debug output if FORTSH_DEBUG_PASTE is set
+                        block
+                          use iso_fortran_env, only: error_unit
+                          character(len=16) :: debug_paste
+                          integer :: stat
+                          call get_environment_variable('FORTSH_DEBUG_PASTE', debug_paste, status=stat)
+                          if (stat == 0 .and. len_trim(debug_paste) > 0) then
+                            write(error_unit, '(A,I0,A)') '[DEBUG: PASTE END detected (ESC[201~), buffered ', paste_len, ' chars]'
+                          end if
+                        end block
+
                         ! Insert buffered text at cursor position
                         do i = 1, paste_len
                           call insert_char_wrapper(input_state, paste_buffer(i:i))

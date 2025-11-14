@@ -882,6 +882,18 @@ contains
       ! ESC[?2004h = Enable bracketed paste
       ! Terminal will wrap pasted text in ESC[200~ ... ESC[201~
       write(STDOUT_FD, '(A)', advance='no') char(27) // '[?2004h'
+      call flush(STDOUT_FD)
+
+      ! Debug: Check if FORTSH_DEBUG_PASTE is set
+      block
+        use iso_fortran_env, only: error_unit
+        character(len=16) :: debug_paste
+        integer :: stat
+        call get_environment_variable('FORTSH_DEBUG_PASTE', debug_paste, status=stat)
+        if (stat == 0 .and. len_trim(debug_paste) > 0) then
+          write(error_unit, '(A)') '[DEBUG: Bracketed paste mode ENABLED]'
+        end if
+      end block
     end if
 
     ! DEBUG: Commented out - too noisy
@@ -898,6 +910,7 @@ contains
     ! Disable bracketed paste mode before restoring terminal
     ! ESC[?2004l = Disable bracketed paste
     write(STDOUT_FD, '(A)', advance='no') char(27) // '[?2004l'
+    call flush(STDOUT_FD)
 
     ret = c_tcsetattr(STDIN_FD, TCSANOW, original_termios)
     success = (ret == 0)
