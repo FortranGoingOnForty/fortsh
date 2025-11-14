@@ -257,6 +257,9 @@ module shell_types
     integer(c_pid_t) :: last_pid = 0
     integer(c_pid_t) :: shell_pgid = 0
     integer :: shell_terminal = 0
+    ! Terminal dimensions (updated on SIGWINCH)
+    integer :: term_rows = 24
+    integer :: term_cols = 80
     logical :: is_interactive = .false.
     logical :: running = .true.
     logical :: fatal_expansion_error = .false.  ! Set by ${VAR?error} to abort execution
