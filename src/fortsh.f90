@@ -209,11 +209,13 @@ program fortran_shell
       g_terminal_resized = .false.
       ! Re-query terminal dimensions
       success = get_terminal_size(shell%term_rows, shell%term_cols)
-      ! Update environment variables for child processes
+      ! Update both environment variables (for child processes) and shell variables (for $COLUMNS/$LINES)
       write(cols_str, '(I0)') shell%term_cols
       write(rows_str, '(I0)') shell%term_rows
       success = set_environment_var('COLUMNS', trim(cols_str))
       success = set_environment_var('LINES', trim(rows_str))
+      call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
+      call set_shell_variable(shell, 'LINES', trim(rows_str))
     end if
 
     ! Update job status
@@ -1079,11 +1081,13 @@ contains
 
     ! Query terminal size
     success = get_terminal_size(shell%term_rows, shell%term_cols)
-    ! Set COLUMNS and LINES environment variables for child processes
+    ! Set COLUMNS and LINES in both environment and shell variables
     write(cols_str, '(I0)') shell%term_cols
     write(rows_str, '(I0)') shell%term_rows
     success = set_environment_var('COLUMNS', trim(cols_str))
     success = set_environment_var('LINES', trim(rows_str))
+    call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
+    call set_shell_variable(shell, 'LINES', trim(rows_str))
 
     ! Check terminal capabilities (ANSI support)
     shell%term_supports_color = terminal_supports_ansi()
