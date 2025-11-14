@@ -224,6 +224,11 @@ module readline
   character(len=4096), save :: module_highlighted_buffer
   integer, save :: module_highlighted_len
 
+  ! Track actual cursor screen position (row, col) to fix redraw issues
+  ! Used to know where cursor is on screen vs where buffer says it should be
+  integer, save :: module_cursor_screen_row = 0
+  integer, save :: module_cursor_screen_col = 0
+
 contains
 
   !============================================================================
@@ -945,6 +950,13 @@ contains
 
     module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
+    ! Initialize cursor screen position tracking
+    ! Cursor starts at row 0, column = prompt_visual_length + 1 (for space)
+    module_cursor_screen_row = 0
+    prompt_visual_len = visual_length(prompt)
+    if (prompt_visual_len < 0) prompt_visual_len = 0
+    module_cursor_screen_col = prompt_visual_len + 1
+
 
     if (raw_enabled) then
       ! Enhanced input processing
@@ -1204,29 +1216,35 @@ contains
               prompt_visual_len = 0
             end if
 
-            ! Calculate current cursor position and line (add 1 for space after prompt)
+            ! Calculate current cursor position (add 1 for space after prompt)
             cursor_visual_pos = prompt_visual_len + 1 + module_input_state%cursor_pos
-            if (term_cols > 0) then
-              current_line = cursor_visual_pos / term_cols
-            else
-              current_line = 0
-            end if
-            if (current_line < 0) current_line = 0
-            if (current_line > 100) current_line = 0
 
-            ! Move cursor up to the first line if we're on a wrapped line
-            ! UNLESS we just exited menu mode (skip_cursor_up_on_redraw flag set)
-            if (current_line > 0 .and. .not. module_input_state%skip_cursor_up_on_redraw) then
-              do i_redraw = 1, current_line
-                write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
-              end do
+            ! Use actual screen cursor position instead of calculating from buffer
+            ! This fixes the "above-line deletion" bug where we miscalculate after character insertion
+            current_row = module_cursor_screen_row
+            current_col = module_cursor_screen_col
+
+            ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
+            ! Move cursor to start of prompt UNLESS we just exited menu mode
+            if (.not. module_input_state%skip_cursor_up_on_redraw) then
+              ! Move to start of first line of this command
+              if (current_row > 0) then
+                ! Move up to first line
+                do i_redraw = 1, current_row
+                  write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+                end do
+              end if
+              ! Move to column 0 of that line
+              write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+            else
+              ! Just move to start of current line
+              write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
             end if
 
             ! Clear the skip flag after using it
             module_input_state%skip_cursor_up_on_redraw = .false.
 
-            ! Move to beginning of line and clear from cursor to end of screen
-            write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+            ! Clear from cursor to end of screen
             write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
 
             ! Redraw prompt and buffer
@@ -1316,6 +1334,10 @@ contains
             end if
 
             flush(output_unit)
+
+            ! Update screen cursor position tracking to match where we actually positioned the cursor
+            call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, &
+                                    module_cursor_screen_row, module_cursor_screen_col)
 
           module_input_state%dirty = .false.
         end if
@@ -5096,6 +5118,10 @@ contains
 
       ! Move cursor on screen (handles line wrapping)
       call cursor_move(old_row, old_col, new_row, new_col)
+
+      ! Update module cursor tracking
+      module_cursor_screen_row = new_row
+      module_cursor_screen_col = new_col
     end if
   end subroutine
   
@@ -5118,6 +5144,10 @@ contains
 
       ! Move cursor on screen (handles line wrapping)
       call cursor_move(old_row, old_col, new_row, new_col)
+
+      ! Update module cursor tracking
+      module_cursor_screen_row = new_row
+      module_cursor_screen_col = new_col
     else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
       ! At end of line with suggestion - accept it
       call accept_autosuggestion(input_state)
@@ -5697,8 +5727,10 @@ contains
   end subroutine
   
   subroutine handle_kill_line(input_state)
+    use iso_fortran_env, only: output_unit
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: temp_buf
+    integer :: current_row, current_col, term_cols, i
 
     ! Save entire line in kill buffer
     if (input_state%length > 0) then
@@ -5707,7 +5739,23 @@ contains
       call state_kill_buffer_set(input_state, temp_buf(:input_state%length))
       input_state%kill_length = input_state%length
 
-      ! Clear the line
+      ! IMPORTANT: Move cursor to start of prompt BEFORE clearing buffer
+      ! Otherwise redraw won't know where we are
+      call get_terminal_size_from_env(term_cols)
+      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, current_row, current_col)
+
+      ! Move up to first line if needed
+      if (current_row > 0) then
+        do i = 1, current_row
+          write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+        end do
+      end if
+
+      ! Move to column 0
+      write(output_unit, '(a)', advance='no') char(13)  ! CR
+      flush(output_unit)
+
+      ! Now clear the line
       call state_buffer_clear(input_state)
       input_state%length = 0
       input_state%cursor_pos = 0
