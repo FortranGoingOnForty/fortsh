@@ -5142,8 +5142,33 @@ contains
     end if
   end subroutine
 
+  ! Calculate display width of UTF-8 character
+  ! Returns 1 for ASCII, 2 for wide chars (emoji, CJK), 0 for combining
+  function utf8_char_width(byte1) result(width)
+    character(len=1), intent(in) :: byte1
+    integer :: width
+    integer :: code
+
+    code = iachar(byte1)
+
+    ! ASCII characters (0-127) have width 1
+    if (code < 128) then
+      width = 1
+      return
+    end if
+
+    ! UTF-8 multi-byte character
+    ! Simple heuristic: assume wide (emoji, CJK)
+    ! Could be improved with full Unicode width tables
+    if (code >= 192) then  ! Start of 2, 3, or 4 byte sequence
+      width = 2  ! Assume wide
+    else
+      width = 1  ! Continuation byte or other
+    end if
+  end function utf8_char_width
+
   ! Calculate visual length of string (excluding ANSI escape codes)
-  ! Handles CSI (ESC[...m), OSC (ESC]...BEL), and multi-line prompts
+  ! Handles CSI (ESC[...m), OSC (ESC]...BEL), multi-line prompts, and UTF-8 wide chars
   function visual_length(str) result(vlen)
     character(len=*), intent(in) :: str
     integer :: vlen
@@ -5176,8 +5201,8 @@ contains
           vlen = 0
           i = i + 1
         else
-          ! Regular character - count it
-          vlen = vlen + 1
+          ! Regular character - count it (account for wide UTF-8 chars)
+          vlen = vlen + utf8_char_width(str(i:i))
           i = i + 1
         end if
 
