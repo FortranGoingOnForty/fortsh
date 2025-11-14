@@ -3510,7 +3510,7 @@ contains
   subroutine insert_char_impl(input_state, ch)
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
-    integer :: i
+    integer :: i, term_cols
     character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
 
     ! Allocate temp buffer on heap
@@ -3544,9 +3544,24 @@ contains
       call state_buffer_set_char(input_state, input_state%length, ch)
       input_state%cursor_pos = input_state%length
 
-      ! Mark dirty to trigger full redraw with proper syntax highlighting
-      ! This ensures commands are colored correctly based on validity
-      input_state%dirty = .true.
+      ! Output character directly to screen (avoid full redraw)
+      write(output_unit, '(a)', advance='no') ch
+      flush(output_unit)
+
+      ! Update screen cursor position tracking
+      call get_terminal_size_from_env(term_cols)
+      module_cursor_screen_col = module_cursor_screen_col + 1
+
+      ! Handle line wrapping - if we just filled the last column, wrap to next line
+      if (module_cursor_screen_col >= term_cols) then
+        module_cursor_screen_col = 0
+        module_cursor_screen_row = module_cursor_screen_row + 1
+        ! Terminal auto-wraps, but we track it explicitly
+      end if
+
+      ! Don't set dirty - we already output the character
+      ! Exception: if we have autosuggestions, need to redraw to show them
+      ! For now, keep it simple and avoid redraws
     else
       ! Insert in middle - use temp to avoid substring overlap issues
       ! Initialize temp with current buffer
@@ -5741,8 +5756,9 @@ contains
 
       ! IMPORTANT: Move cursor to start of prompt BEFORE clearing buffer
       ! Otherwise redraw won't know where we are
-      call get_terminal_size_from_env(term_cols)
-      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, current_row, current_col)
+      ! Use actual screen cursor position, not calculated from buffer
+      current_row = module_cursor_screen_row
+      current_col = module_cursor_screen_col
 
       ! Move up to first line if needed
       if (current_row > 0) then
@@ -5754,6 +5770,10 @@ contains
       ! Move to column 0
       write(output_unit, '(a)', advance='no') char(13)  ! CR
       flush(output_unit)
+
+      ! Update cursor tracking - we're now at start of first line
+      module_cursor_screen_row = 0
+      module_cursor_screen_col = 0
 
       ! Now clear the line
       call state_buffer_clear(input_state)
