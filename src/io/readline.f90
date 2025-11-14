@@ -3559,11 +3559,14 @@ contains
         flush(output_unit)
         module_cursor_screen_col = 0
         module_cursor_screen_row = module_cursor_screen_row + 1
+        ! Trigger syntax highlighting redraw after line wrap
+        input_state%dirty = .true.
       end if
 
-      ! Don't set dirty - we already output the character
-      ! Exception: if we have autosuggestions, need to redraw to show them
-      ! For now, keep it simple and avoid redraws
+      ! Trigger syntax highlighting on word boundaries (space character)
+      if (ch == ' ') then
+        input_state%dirty = .true.
+      end if
     else
       ! Insert in middle - use temp to avoid substring overlap issues
       ! Initialize temp with current buffer
