@@ -3559,12 +3559,13 @@ contains
         flush(output_unit)
         module_cursor_screen_col = 0
         module_cursor_screen_row = module_cursor_screen_row + 1
-        ! Don't trigger redraw - character already on screen, cursor already positioned
+        ! Don't trigger redraw - character already on screen, cursor already positioned correctly
+        ! Redraw would move cursor back up to row 0, causing snap-back
+      else
+        ! Only trigger syntax highlighting when NOT wrapping
+        ! This gives immediate feedback (e.g., "exit" turning green)
+        input_state%dirty = .true.
       end if
-
-      ! Always trigger syntax highlighting for immediate feedback (e.g., "exit" turning green)
-      ! Performance cost is acceptable for responsive UI
-      input_state%dirty = .true.
     else
       ! Insert in middle - use temp to avoid substring overlap issues
       ! Initialize temp with current buffer
