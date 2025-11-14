@@ -5143,34 +5143,82 @@ contains
   end subroutine
 
   ! Calculate visual length of string (excluding ANSI escape codes)
+  ! Handles CSI (ESC[...m), OSC (ESC]...BEL), and multi-line prompts
   function visual_length(str) result(vlen)
     character(len=*), intent(in) :: str
     integer :: vlen
     integer :: i, slen
-    logical :: in_escape
+    integer :: state
+    integer :: terminator_code
+
+    ! State machine for parsing escape sequences
+    integer, parameter :: STATE_NORMAL = 0
+    integer, parameter :: STATE_ESC = 1
+    integer, parameter :: STATE_CSI = 2
+    integer, parameter :: STATE_OSC = 3
 
     vlen = 0
     slen = len_trim(str)
-    in_escape = .false.
+    state = STATE_NORMAL
 
-    do i = 1, slen
-      if (in_escape) then
-        ! Inside escape sequence, skip until we find the terminator
-        if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
-          in_escape = .false.  ! Capital letter terminates escape sequence
-        else if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
-          in_escape = .false.  ! Lowercase letter terminates escape sequence
+    i = 1
+    do while (i <= slen)
+      select case (state)
+      case (STATE_NORMAL)
+        if (str(i:i) == char(27)) then  ! ESC
+          state = STATE_ESC
+          i = i + 1
+        else if (str(i:i) == char(13)) then  ! CR
+          ! Carriage return - doesn't add to visual length
+          i = i + 1
+        else if (str(i:i) == char(10)) then  ! LF
+          ! Newline resets visual position (for multi-line prompts)
+          vlen = 0
+          i = i + 1
+        else
+          ! Regular character - count it
+          vlen = vlen + 1
+          i = i + 1
         end if
-      else if (str(i:i) == char(27)) then
-        ! ESC character starts escape sequence
-        in_escape = .true.
-      else if (str(i:i) == char(13)) then
-        ! Carriage return - doesn't add to visual length
-        continue
-      else
-        ! Regular character
-        vlen = vlen + 1
-      end if
+
+      case (STATE_ESC)
+        if (str(i:i) == '[') then
+          ! CSI sequence: ESC[...[@-~]
+          state = STATE_CSI
+          i = i + 1
+        else if (str(i:i) == ']') then
+          ! OSC sequence: ESC]...BEL or ESC]...ESC\
+          state = STATE_OSC
+          i = i + 1
+        else
+          ! Other escape sequence (e.g., ESC c for reset)
+          ! Skip this character and return to normal
+          state = STATE_NORMAL
+          i = i + 1
+        end if
+
+      case (STATE_CSI)
+        ! CSI sequences end with character in range [@-~] (64-126)
+        terminator_code = iachar(str(i:i))
+        if (terminator_code >= 64 .and. terminator_code <= 126) then
+          ! Found terminator (includes letters, @, and punctuation)
+          state = STATE_NORMAL
+        end if
+        i = i + 1
+
+      case (STATE_OSC)
+        ! OSC sequences end with BEL (07) or ST (ESC\)
+        if (str(i:i) == char(7)) then  ! BEL
+          state = STATE_NORMAL
+          i = i + 1
+        else if (i < slen .and. str(i:i) == char(27) .and. str(i+1:i+1) == '\') then
+          ! ST = ESC\
+          state = STATE_NORMAL
+          i = i + 2
+        else
+          i = i + 1
+        end if
+      end select
     end do
   end function
 
