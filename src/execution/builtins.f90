@@ -647,80 +647,139 @@ contains
     shell%last_exit_status = 0
   end subroutine
 
+  ! Parse job specification and return job_id
+  ! Supports: %n, %%, %+, %-, %?string
+  ! Returns 0 if no match found
+  function parse_job_spec(shell, spec) result(job_id)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: spec
+    integer :: job_id
+    character(len=256) :: search_str
+    integer :: iostat, i
+
+    job_id = 0
+
+    if (len_trim(spec) == 0) then
+      ! Empty spec - use current job
+      job_id = shell%current_job_id
+      return
+    end if
+
+    ! Remove leading % if present
+    if (spec(1:1) == '%') then
+      if (len_trim(spec) == 1) then
+        ! Just "%" - current job
+        job_id = shell%current_job_id
+        return
+      end if
+
+      select case (spec(2:2))
+      case ('+')
+        ! %+ - current job
+        job_id = shell%current_job_id
+      case ('-')
+        ! %- - previous job
+        job_id = shell%previous_job_id
+      case ('%')
+        ! %% - current job
+        job_id = shell%current_job_id
+      case ('?')
+        ! %?string - search for string in command
+        search_str = trim(spec(3:))
+        do i = 1, MAX_JOBS
+          if (shell%jobs(i)%job_id > 0) then
+            if (index(shell%jobs(i)%command_line, trim(search_str)) > 0) then
+              job_id = shell%jobs(i)%job_id
+              return
+            end if
+          end if
+        end do
+      case default
+        ! %n - job number
+        read(spec(2:), *, iostat=iostat) job_id
+        if (iostat /= 0) then
+          job_id = 0
+        end if
+      end select
+    else
+      ! No % prefix - try to parse as number
+      read(spec, *, iostat=iostat) job_id
+      if (iostat /= 0) then
+        job_id = 0
+      end if
+    end if
+  end function parse_job_spec
+
   subroutine builtin_fg(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: job_id, iostat, i
-    
+    integer :: job_id, i
+
     if (cmd%num_tokens < 2) then
-      ! Bring most recent stopped job to foreground
-      job_id = 0
-      do i = MAX_JOBS, 1, -1
-        if (shell%jobs(i)%job_id > 0 .and. shell%jobs(i)%state == JOB_STOPPED) then
-          job_id = shell%jobs(i)%job_id
-          exit
-        end if
-      end do
-      
+      ! Use current job, or fall back to most recent stopped job
+      job_id = shell%current_job_id
       if (job_id == 0) then
-        write(error_unit, '(a)') 'fg: no stopped job'
+        do i = MAX_JOBS, 1, -1
+          if (shell%jobs(i)%job_id > 0 .and. shell%jobs(i)%state == JOB_STOPPED) then
+            job_id = shell%jobs(i)%job_id
+            exit
+          end if
+        end do
+      end if
+
+      if (job_id == 0) then
+        write(error_unit, '(a)') 'fg: no current job'
         shell%last_exit_status = 1
         return
       end if
     else
-      ! Parse job number (handle %n syntax)
-      if (cmd%tokens(2)(1:1) == '%') then
-        read(cmd%tokens(2)(2:), *, iostat=iostat) job_id
-      else
-        read(cmd%tokens(2), *, iostat=iostat) job_id
-      end if
-      
-      if (iostat /= 0) then
-        write(error_unit, '(a)') 'fg: invalid job id'
+      ! Parse job spec (%n, %%, %+, %-, %?string)
+      job_id = parse_job_spec(shell, cmd%tokens(2))
+
+      if (job_id == 0) then
+        write(error_unit, '(a)') 'fg: no such job'
         shell%last_exit_status = 1
         return
       end if
     end if
-    
+
     call resume_job_fg(shell, job_id)
   end subroutine
 
   subroutine builtin_bg(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: job_id, iostat, i
-    
+    integer :: job_id, i
+
     if (cmd%num_tokens < 2) then
-      ! Continue most recent stopped job in background
-      job_id = 0
-      do i = MAX_JOBS, 1, -1
-        if (shell%jobs(i)%job_id > 0 .and. &
-            shell%jobs(i)%state == JOB_STOPPED) then
-          job_id = shell%jobs(i)%job_id
-          exit
-        end if
-      end do
-      
+      ! Use current job, or fall back to most recent stopped job
+      job_id = shell%current_job_id
       if (job_id == 0) then
-        write(error_unit, '(a)') 'bg: no stopped job'
+        do i = MAX_JOBS, 1, -1
+          if (shell%jobs(i)%job_id > 0 .and. &
+              shell%jobs(i)%state == JOB_STOPPED) then
+            job_id = shell%jobs(i)%job_id
+            exit
+          end if
+        end do
+      end if
+
+      if (job_id == 0) then
+        write(error_unit, '(a)') 'bg: no current job'
         shell%last_exit_status = 1
         return
       end if
     else
-      ! Parse job number (handle %n syntax)
-      if (cmd%tokens(2)(1:1) == '%') then
-        read(cmd%tokens(2)(2:), *, iostat=iostat) job_id
-      else
-        read(cmd%tokens(2), *, iostat=iostat) job_id
-      end if
-      
-      if (iostat /= 0) then
-        write(error_unit, '(a)') 'bg: invalid job id'
+      ! Parse job spec (%n, %%, %+, %-, %?string)
+      job_id = parse_job_spec(shell, cmd%tokens(2))
+
+      if (job_id == 0) then
+        write(error_unit, '(a)') 'bg: no such job'
         shell%last_exit_status = 1
         return
       end if
     end if
-    
+
     call resume_job_bg(shell, job_id)
   end subroutine
 
