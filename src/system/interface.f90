@@ -1305,4 +1305,12 @@ contains
     end if
   end function
 
+  ! Set terminal title using OSC sequences
+  ! OSC 0 ; title BEL sets both icon and window title
+  subroutine set_terminal_title(title)
+    character(len=*), intent(in) :: title
+    ! ESC ] 0 ; title BEL
+    write(STDOUT_FD, '(A)', advance='no') char(27) // ']0;' // trim(title) // char(7)
+  end subroutine
+
 end module system_interface
