@@ -991,40 +991,10 @@ contains
         end if
       else
         ! No variable expansion needed
-        ! Calculate actual content length BEFORE stripping quotes (to preserve trailing spaces)
-        ! If token was quoted, parser already stripped the quotes, so we need to use token metadata
-        if (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1)) then
-          ! Token was quoted - AST executor preserved whitespace
-          ! Calculate length directly from token_len and eq_pos (avoids Fortran padding issues)
-          actual_value_len = token_len - eq_pos
-        else
-          ! Token was not quoted - use original logic
-          actual_value_len = len_trim(var_value)
-          if (actual_value_len >= 2) then
-            if (var_value(1:1) == "'" .or. var_value(1:1) == '"') then
-              ! Find closing quote position by searching backwards
-              quote_char_temp = var_value(1:1)
-              do i = actual_value_len, 2, -1
-                if (var_value(i:i) == quote_char_temp) then
-                  ! Content length is closing_quote_pos - 2
-                  actual_value_len = i - 2
-                  exit
-                end if
-              end do
-            else
-              ! No quotes, use len_trim
-              actual_value_len = len_trim(var_value)
-            end if
-          else
-            actual_value_len = len_trim(var_value)
-          end if
-        end if
-
-        ! Strip surrounding quotes from value (single or double quotes)
-        ! For quoted tokens, lexer already stripped quotes, so skip this step
-        if (.not. (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1))) then
-          call strip_quotes_local(var_value)
-        end if
+        ! For tokens from new parser/lexer, quotes are already properly processed
+        ! Just use the value as-is
+        ! Calculate actual length from token positions (NOT len_trim, to preserve whitespace)
+        actual_value_len = token_len - eq_pos
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
       end if
 

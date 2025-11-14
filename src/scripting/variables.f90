@@ -323,6 +323,72 @@ contains
     end if
   end function
 
+  ! Get the actual length of a shell variable (preserving whitespace)
+  function get_shell_variable_length(shell, name) result(var_len)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    integer :: var_len
+    integer :: i, depth
+    character(len=1024) :: temp_value
+
+    var_len = 0
+
+    ! First check local variables (innermost scope first)
+    if (shell%function_depth > 0) then
+      do depth = shell%function_depth, 1, -1
+        if (depth <= size(shell%local_var_counts)) then
+          do i = 1, shell%local_var_counts(depth)
+            if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+              var_len = len_trim(shell%local_vars(depth, i)%value)
+              return
+            end if
+          end do
+        end if
+      end do
+    end if
+
+    ! Handle special variables
+    select case (trim(name))
+      case ('IFS')
+        ! Use ifs_len to preserve whitespace (even if it's all spaces)
+        var_len = shell%ifs_len
+        return
+      case ('PS1')
+        var_len = shell%ps1_len
+        return
+      case ('PS2')
+        var_len = shell%ps2_len
+        return
+      case ('PS3')
+        var_len = shell%ps3_len
+        return
+      case ('PS4')
+        var_len = shell%ps4_len
+        return
+      case default
+        ! For other special variables, use len_trim
+        temp_value = get_shell_variable(shell, name)
+        var_len = len_trim(temp_value)
+        return
+    end select
+
+    ! Handle regular shell variables
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        ! Use value_len to preserve trailing whitespace
+        if (shell%variables(i)%value_len > 0) then
+          var_len = shell%variables(i)%value_len
+        else
+          var_len = len_trim(shell%variables(i)%value)
+        end if
+        return
+      end if
+    end do
+
+    ! Not found - return 0
+    var_len = 0
+  end function
+
   function is_assignment(input_line) result(is_assign)
     character(len=*), intent(in) :: input_line
     logical :: is_assign

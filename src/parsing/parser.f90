@@ -1475,10 +1475,16 @@ contains
             j = j + 1
           else
             ! Check shell variables first
-            var_value = get_shell_variable(shell, trim(var_name))
-            if (len_trim(var_value) > 0) then
-              result(j:j+len_trim(var_value)-1) = trim(var_value)
-              j = j + len_trim(var_value)
+            ! Check if variable is set before expanding
+            if (is_shell_variable_set(shell, trim(var_name))) then
+              var_value = get_shell_variable(shell, trim(var_name))
+              ! Use get_shell_variable_length to preserve ALL characters including whitespace
+              ! This is crucial for variables like IFS=' ' where the space must be preserved
+              brace_depth = get_shell_variable_length(shell, trim(var_name))
+              if (brace_depth > 0) then
+                result(j:j+brace_depth-1) = var_value(1:brace_depth)
+                j = j + brace_depth
+              end if
             else
               ! Fall back to environment variables
               var_value = get_environment_var(trim(var_name))
@@ -1487,14 +1493,12 @@ contains
                 j = j + len(var_value)
               else
                 ! Variable is not set - check if set -u is enabled
-                if (.not. is_shell_variable_set(shell, trim(var_name))) then
-                  if (check_nounset(shell, trim(var_name))) then
-                    shell%last_exit_status = 127  ! POSIX: expansion errors return 127
-                    shell%fatal_expansion_error = .true.
-                    shell%running = .false.  ! Stop shell execution
-                    expanded = ''
-                    return
-                  end if
+                if (check_nounset(shell, trim(var_name))) then
+                  shell%last_exit_status = 127  ! POSIX: expansion errors return 127
+                  shell%fatal_expansion_error = .true.
+                  shell%running = .false.  ! Stop shell execution
+                  expanded = ''
+                  return
                 end if
               end if
             end if
@@ -1532,8 +1536,10 @@ contains
       end if
     end do
 
-    ! Strip all quotes from result to handle adjacent quotes like "a"b"c"
-    expanded = strip_all_quotes(trim(result))
+    ! POSIX: Quote removal does NOT apply to the results of parameter expansion
+    ! Only apply quote removal to quotes that were literally in the command, not in variable values
+    ! So we do NOT call strip_outer_quotes here - that would incorrectly remove quotes from values like $VAR where VAR='"test"'
+    expanded = trim(result)
 
   contains
     
