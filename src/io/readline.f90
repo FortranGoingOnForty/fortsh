@@ -3630,9 +3630,10 @@ contains
 
     ! If cursor is at end, simple deletion
     if (input_state%cursor_pos >= input_state%length) then
-      ! Get current cursor position for multi-line support
+      ! Use actual screen cursor position (not calculated from buffer)
       call get_terminal_size_from_env(term_cols)
-      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, old_row, old_col)
+      old_row = module_cursor_screen_row
+      old_col = module_cursor_screen_col
 
       ! Delete character from buffer
       input_state%length = input_state%length - 1
