@@ -852,10 +852,25 @@ contains
       end if
 
       ! First expand variables (e.g., $*, $@, $var)
-      call expand_variables(trim(node%for_loop%words(i)), expanded_word, shell, was_quoted_in=.false.)
+      ! Pass the quoted status so expand_variables can handle it correctly
+      if (allocated(node%for_loop%words_was_quoted) .and. i <= size(node%for_loop%words_was_quoted)) then
+        call expand_variables(trim(node%for_loop%words(i)), expanded_word, shell, &
+                            was_quoted_in=node%for_loop%words_was_quoted(i))
+      else
+        call expand_variables(trim(node%for_loop%words(i)), expanded_word, shell, was_quoted_in=.false.)
+      end if
 
-      ! Split the expanded word on IFS characters
-      call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
+      ! Split the expanded word on IFS characters ONLY if it was NOT originally quoted
+      ! POSIX: Quoted words should not undergo field splitting
+      if (allocated(node%for_loop%words_was_quoted) .and. i <= size(node%for_loop%words_was_quoted) .and. &
+          node%for_loop%words_was_quoted(i)) then
+        ! Word was quoted - do not split, treat as single word
+        split_words(1) = trim(expanded_word)
+        split_count = 1
+      else
+        ! Word was not quoted - split on IFS
+        call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
+      end if
 
       ! Now process each split word for globs
       do k = 1, split_count
