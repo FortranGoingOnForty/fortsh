@@ -324,8 +324,12 @@ $(BUILDDIR)/c_interop/fortsh_strings.o: src/c_interop/fortsh_strings.c src/c_int
 $(BUILDDIR)/c_interop/fd_wrapper.o: src/c_interop/fd_wrapper.c | $(BUILDDIR)/c_interop
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Compile C terminal size wrapper
+$(BUILDDIR)/c_interop/terminal_size.o: src/c_interop/terminal_size.c | $(BUILDDIR)/c_interop
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # Create static library from C objects
-$(BUILDDIR)/c_interop/libfortsh_strings.a: $(BUILDDIR)/c_interop/fortsh_strings.o $(BUILDDIR)/c_interop/fd_wrapper.o
+$(BUILDDIR)/c_interop/libfortsh_strings.a: $(BUILDDIR)/c_interop/fortsh_strings.o $(BUILDDIR)/c_interop/fd_wrapper.o $(BUILDDIR)/c_interop/terminal_size.o
 	ar rcs $@ $^
 
 # Compile Fortran wrapper module (depends on C library for testing)

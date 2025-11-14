@@ -534,6 +534,13 @@ module system_interface
       type(c_ptr), value :: argp
       integer(c_int) :: c_ioctl
     end function
+
+    ! C wrapper for getting terminal size
+    function get_term_size_c(rows, cols) bind(C, name="get_term_size_c")
+      import :: c_int
+      integer(c_int) :: rows, cols
+      integer(c_int) :: get_term_size_c
+    end function
   end interface
 
   ! Signal handler types (initialized in module initialization)
@@ -1259,26 +1266,64 @@ contains
 
   ! Get terminal size (rows and columns)
   function get_terminal_size(rows, cols) result(success)
+    use iso_fortran_env, only: error_unit
     integer, intent(out) :: rows, cols
     logical :: success
     type(winsize_t), target :: ws
-    integer(c_int) :: ret
+    integer(c_int) :: ret, c_rows, c_cols
+    character(len=16) :: debug_env
+    integer :: stat
 
+    ! Try using C wrapper first (more reliable)
+    c_rows = 0
+    c_cols = 0
+    ret = get_term_size_c(c_rows, c_cols)
+
+    call get_environment_variable('FORTSH_DEBUG_WINSIZE', debug_env, status=stat)
+    if (stat == 0 .and. len_trim(debug_env) > 0) then
+      write(error_unit, '(A,I0,A,I0,A,I0)') '[DEBUG: C wrapper ret=', ret, ' rows=', c_rows, ' cols=', c_cols
+    end if
+
+    if (ret == 0 .and. c_rows > 0 .and. c_cols > 0) then
+      rows = int(c_rows)
+      cols = int(c_cols)
+      success = .true.
+      return
+    end if
+
+    ! Fallback to direct ioctl if C wrapper fails
     ! Initialize structure to zero
     ws%ws_row = 0
     ws%ws_col = 0
     ws%ws_xpixel = 0
     ws%ws_ypixel = 0
 
+    ! Debug: Check if FDs are actually TTYs
+    call get_environment_variable('FORTSH_DEBUG_WINSIZE', debug_env, status=stat)
+    if (stat == 0 .and. len_trim(debug_env) > 0) then
+      write(error_unit, '(A,I0,A,I0,A,I0)') '[DEBUG: isatty(0)=', c_isatty(STDIN_FD), ' isatty(1)=', c_isatty(STDOUT_FD), ' isatty(2)=', c_isatty(STDERR_FD)
+    end if
+
     ! Try to get window size using ioctl
     ! Try stdout first, then stderr if stdout gives 0 dimensions
     ret = c_ioctl(STDOUT_FD, TIOCGWINSZ, c_loc(ws))
+
+    ! Debug output
+    call get_environment_variable('FORTSH_DEBUG_WINSIZE', debug_env, status=stat)
+    if (stat == 0 .and. len_trim(debug_env) > 0) then
+      write(error_unit, '(A,I0,A,I0,A,I0)') '[DEBUG: ioctl(STDOUT) ret=', ret, ' rows=', ws%ws_row, ' cols=', ws%ws_col
+    end if
 
     ! If stdout doesn't give valid dimensions, try stderr
     if (ret /= 0 .or. ws%ws_row == 0 .or. ws%ws_col == 0) then
       ws%ws_row = 0
       ws%ws_col = 0
       ret = c_ioctl(STDERR_FD, TIOCGWINSZ, c_loc(ws))
+
+      call get_environment_variable('FORTSH_DEBUG_WINSIZE', debug_env, status=stat)
+      if (stat == 0 .and. len_trim(debug_env) > 0) then
+        write(error_unit, '(A,I0,A,I0,A,I0)') '[DEBUG: ioctl(STDERR) ret=', ret, ' rows=', ws%ws_row, ' cols=', ws%ws_col
+      end if
     end if
 
     ! If stderr also doesn't work, try stdin
@@ -1286,6 +1331,11 @@ contains
       ws%ws_row = 0
       ws%ws_col = 0
       ret = c_ioctl(STDIN_FD, TIOCGWINSZ, c_loc(ws))
+
+      call get_environment_variable('FORTSH_DEBUG_WINSIZE', debug_env, status=stat)
+      if (stat == 0 .and. len_trim(debug_env) > 0) then
+        write(error_unit, '(A,I0,A,I0,A,I0)') '[DEBUG: ioctl(STDIN) ret=', ret, ' rows=', ws%ws_row, ' cols=', ws%ws_col
+      end if
     end if
 
     if (ret == 0 .and. ws%ws_row > 0 .and. ws%ws_col > 0) then
