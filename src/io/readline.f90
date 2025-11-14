@@ -3631,27 +3631,14 @@ contains
 
     ! If cursor is at end, simple deletion
     if (input_state%cursor_pos >= input_state%length) then
-      ! Use actual screen cursor position (not calculated from buffer)
-      call get_terminal_size_from_env(term_cols)
-      old_row = module_cursor_screen_row
-      old_col = module_cursor_screen_col
-
       ! Delete character from buffer
       input_state%length = input_state%length - 1
       input_state%cursor_pos = input_state%cursor_pos - 1
       call state_buffer_set_char(input_state, input_state%length+1, ' ')
 
-      ! Calculate new cursor position after deletion
-      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, new_row, new_col)
-
-      ! Move cursor to new position (handles line wrapping)
-      call cursor_move(old_row, old_col, new_row, new_col)
-
-      ! Update cursor tracking
-      module_cursor_screen_row = new_row
-      module_cursor_screen_col = new_col
-
-      ! Mark as dirty to trigger redraw (clears deleted char and updates suggestions)
+      ! Don't manually move cursor - let redraw handle it
+      ! This avoids conflicts between cursor_move() escape sequences and redraw escape sequences
+      ! Just trigger redraw which will position everything correctly
       input_state%dirty = .true.
     else
       ! Delete in middle - shift characters left
