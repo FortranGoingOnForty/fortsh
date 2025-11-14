@@ -39,6 +39,9 @@ program fortran_shell
   type(command_node_t), pointer :: ast_root
   integer :: exit_code
   character(len=:), allocatable :: converted_line
+  ! Terminal resize support
+  character(len=16) :: cols_str, rows_str
+  logical :: success
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
@@ -201,6 +204,18 @@ program fortran_shell
 
   ! Main REPL loop
   do while (shell%running)
+    ! Check for terminal resize (SIGWINCH)
+    if (g_terminal_resized) then
+      g_terminal_resized = .false.
+      ! Re-query terminal dimensions
+      success = get_terminal_size(shell%term_rows, shell%term_cols)
+      ! Update environment variables for child processes
+      write(cols_str, '(I0)') shell%term_cols
+      write(rows_str, '(I0)') shell%term_rows
+      success = set_environment_var('COLUMNS', trim(cols_str))
+      success = set_environment_var('LINES', trim(rows_str))
+    end if
+
     ! Update job status
     if (shell%is_interactive) then
       call update_job_status(shell)
@@ -979,7 +994,9 @@ contains
     character(len=:), allocatable :: temp
     character(kind=c_char), target :: c_hostname(256)
     character(len=256) :: arg
+    character(len=16) :: cols_str, rows_str
     integer :: ret, i, num_args
+    logical :: success
 
     ! Initialize allocatable arrays to avoid large stack allocation on macOS
     if (.not. allocated(shell%positional_params)) then
@@ -1050,6 +1067,14 @@ contains
       shell%shell_terminal = STDIN_FD
       ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
     end if
+
+    ! Query terminal size
+    success = get_terminal_size(shell%term_rows, shell%term_cols)
+    ! Set COLUMNS and LINES environment variables for child processes
+    write(cols_str, '(I0)') shell%term_cols
+    write(rows_str, '(I0)') shell%term_rows
+    success = set_environment_var('COLUMNS', trim(cols_str))
+    success = set_environment_var('LINES', trim(rows_str))
 
     ! Initialize other fields
     shell%last_exit_status = 0

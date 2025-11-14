@@ -15,6 +15,14 @@ module signal_handler
   integer, parameter :: SIGTERM = 15
   integer, parameter :: SIGALRM = 14
 
+#ifdef __APPLE__
+  ! macOS/BSD: SIGWINCH = 28
+  integer, parameter :: SIGWINCH = 28
+#else
+  ! Linux: SIGWINCH = 28 (same on Linux)
+  integer, parameter :: SIGWINCH = 28
+#endif
+
   ! Timeout support
   type :: timeout_t
     integer :: seconds = 0
@@ -24,6 +32,10 @@ module signal_handler
   end type timeout_t
 
   type(timeout_t), save :: active_timeout
+
+  ! Global flag for terminal resize detection
+  ! volatile ensures compiler doesn't optimize away checks
+  logical, save, volatile :: g_terminal_resized = .false.
 
   interface
     function kill_c(pid, sig) bind(C, name="kill") result(ret)
@@ -70,6 +82,9 @@ contains
 
     ! Handle alarm for timeouts
     old_handler = c_signal(SIGALRM, c_funloc(sigalrm_handler))
+
+    ! Handle terminal window resize
+    old_handler = c_signal(SIGWINCH, c_funloc(sigwinch_handler))
   end subroutine
 
   subroutine sigchld_handler() bind(C)
@@ -83,6 +98,12 @@ contains
       call send_signal_to_process(active_timeout%target_pid, SIGTERM)
       active_timeout%active = .false.
     end if
+  end subroutine
+
+  subroutine sigwinch_handler() bind(C)
+    ! Terminal window size changed
+    ! Set flag to trigger re-query of terminal dimensions
+    g_terminal_resized = .true.
   end subroutine
 
   ! Enhanced process group management
