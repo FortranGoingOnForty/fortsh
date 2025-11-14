@@ -5966,6 +5966,11 @@ contains
     flush(output_unit)
     input_state%dirty = .false.
 
+    ! CRITICAL: Update cursor tracking after clearing screen and redrawing
+    ! Otherwise next operation has wrong cursor position causing heap corruption
+    call cursor_get_row_col(prompt, input_state%cursor_pos, term_cols, &
+                            module_cursor_screen_row, module_cursor_screen_col)
+
     ! Deallocate heap-allocated buffer
     if (allocated(highlighted)) deallocate(highlighted)
   end subroutine
