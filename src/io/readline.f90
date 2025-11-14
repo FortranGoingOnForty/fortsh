@@ -4840,7 +4840,10 @@ contains
         call handle_cursor_right(input_state)
       case('D')  ! Left arrow
         call handle_cursor_left(input_state)
-      case('1', '2', '3', '4', '5', '6')
+      case('2')
+        ! Could be bracketed paste (ESC[200~ or ESC[201~) or extended escape
+        call handle_paste_or_extended(input_state, done)
+      case('1', '3', '4', '5', '6')
         ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C)
         ! Parse it to check if it's a key we care about
         call handle_extended_escape_sequence(input_state, done)
@@ -4889,6 +4892,100 @@ contains
         continue
       end select
     end if
+  end subroutine
+
+  ! Handle bracketed paste or extended escape sequences starting with '2'
+  subroutine handle_paste_or_extended(input_state, done)
+    type(input_state_t), intent(inout) :: input_state
+    logical, intent(inout) :: done
+    character :: ch1, ch2, ch3
+    logical :: success
+    character(len=MAX_LINE_LEN) :: paste_buffer
+    integer :: paste_len, i
+    character :: ch_paste
+
+    ! After ESC[2, check next chars for:
+    ! - 00~ = paste start (ESC[200~)
+    ! - 01~ = paste end (ESC[201~)
+    ! - or it's an extended sequence like ESC[2;...
+
+    success = read_single_char(ch1)
+    if (.not. success) return
+
+    if (ch1 == '0') then
+      ! Could be 200~ or 201~
+      success = read_single_char(ch2)
+      if (.not. success) return
+
+      if (ch2 == '0') then
+        ! Check for ~ to confirm ESC[200~
+        success = read_single_char(ch3)
+        if (.not. success) return
+
+        if (ch3 == '~') then
+          ! PASTE START MARKER DETECTED!
+          ! Buffer all text until we see ESC[201~
+          paste_len = 0
+          paste_buffer = ''
+
+          ! Read characters until we find ESC[201~
+          do while (paste_len < MAX_LINE_LEN - 1)
+            success = read_single_char(ch_paste)
+            if (.not. success) exit
+
+            ! Check if this is the start of the end marker
+            if (ch_paste == char(27)) then  ! ESC
+              ! Peek ahead for [201~
+              success = read_single_char(ch1)
+              if (.not. success) exit
+              if (ch1 == '[') then
+                success = read_single_char(ch1)
+                if (.not. success) exit
+                if (ch1 == '2') then
+                  success = read_single_char(ch1)
+                  if (.not. success) exit
+                  if (ch1 == '0') then
+                    success = read_single_char(ch1)
+                    if (.not. success) exit
+                    if (ch1 == '1') then
+                      success = read_single_char(ch1)
+                      if (.not. success) exit
+                      if (ch1 == '~') then
+                        ! PASTE END MARKER FOUND!
+                        ! Insert buffered text at cursor position
+                        do i = 1, paste_len
+                          call insert_char_wrapper(input_state, paste_buffer(i:i))
+                        end do
+                        input_state%dirty = .true.
+                        return
+                      end if
+                    end if
+                  end if
+                end if
+              end if
+              ! Not end marker, add ESC and what we read to buffer
+              paste_len = paste_len + 1
+              paste_buffer(paste_len:paste_len) = char(27)
+              if (paste_len < MAX_LINE_LEN) then
+                paste_len = paste_len + 1
+                paste_buffer(paste_len:paste_len) = ch1
+              end if
+            else
+              ! Regular character, add to paste buffer
+              paste_len = paste_len + 1
+              paste_buffer(paste_len:paste_len) = ch_paste
+            end if
+          end do
+        end if
+      else if (ch2 == '1') then
+        ! ESC[201~ - paste end without start (shouldn't happen, ignore)
+        success = read_single_char(ch3)
+        return
+      end if
+    end if
+
+    ! Not a paste marker, could be extended escape (rare for '2')
+    ! Just ignore it for now
   end subroutine
 
   ! Handle extended escape sequences like ESC[1;5C (Ctrl+Right Arrow)
