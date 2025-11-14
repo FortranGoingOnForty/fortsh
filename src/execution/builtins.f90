@@ -424,7 +424,7 @@ contains
       end if
 
       ! Update terminal title after directory change
-      if (shell%is_interactive) then
+      if (shell%is_interactive .and. shell%term_supports_color) then
         call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
       end if
 
