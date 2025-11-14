@@ -1204,8 +1204,8 @@ contains
               prompt_visual_len = 0
             end if
 
-            ! Calculate current cursor position and line
-            cursor_visual_pos = prompt_visual_len + module_input_state%cursor_pos
+            ! Calculate current cursor position and line (add 1 for space after prompt)
+            cursor_visual_pos = prompt_visual_len + 1 + module_input_state%cursor_pos
             if (term_cols > 0) then
               current_line = cursor_visual_pos / term_cols
             else
@@ -1248,8 +1248,8 @@ contains
               ! Display autosuggestion if present (only when cursor is at end)
               if (module_input_state%suggestion_length > 0 .and. &
                   module_input_state%cursor_pos == module_input_state%length) then
-                ! Calculate column position after command (0-based)
-                cursor_visual_pos = prompt_visual_len + module_input_state%length
+                ! Calculate column position after command (add 1 for space after prompt)
+                cursor_visual_pos = prompt_visual_len + 1 + module_input_state%length
 
                 ! Safety check for term_cols
                 if (term_cols > 0 .and. term_cols <= 500) then
@@ -5079,21 +5079,45 @@ contains
 
   subroutine handle_cursor_left(input_state)
     type(input_state_t), intent(inout) :: input_state
-    
+    integer :: old_row, old_col, new_row, new_col, term_cols
+
     if (input_state%cursor_pos > 0) then
+      ! Get terminal size
+      call get_terminal_size_from_env(term_cols)
+
+      ! Calculate old cursor position
+      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, old_row, old_col)
+
+      ! Move cursor left in buffer
       input_state%cursor_pos = input_state%cursor_pos - 1
-      write(output_unit, '(a)', advance='no') ESC_CURSOR_LEFT
-      flush(output_unit)
+
+      ! Calculate new cursor position
+      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, new_row, new_col)
+
+      ! Move cursor on screen (handles line wrapping)
+      call cursor_move(old_row, old_col, new_row, new_col)
     end if
   end subroutine
   
   subroutine handle_cursor_right(input_state)
     type(input_state_t), intent(inout) :: input_state
+    integer :: old_row, old_col, new_row, new_col, term_cols
 
     if (input_state%cursor_pos < input_state%length) then
+      ! Get terminal size
+      call get_terminal_size_from_env(term_cols)
+
+      ! Calculate old cursor position
+      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, old_row, old_col)
+
+      ! Move cursor right in buffer
       input_state%cursor_pos = input_state%cursor_pos + 1
-      write(output_unit, '(a)', advance='no') ESC_CURSOR_RIGHT
-      flush(output_unit)
+
+      ! Calculate new cursor position
+      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, new_row, new_col)
+
+      ! Move cursor on screen (handles line wrapping)
+      call cursor_move(old_row, old_col, new_row, new_col)
     else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
       ! At end of line with suggestion - accept it
       call accept_autosuggestion(input_state)
@@ -7500,6 +7524,93 @@ contains
     flush(output_unit)
 
     input_state%dirty = .true.
+  end subroutine
+
+  ! ===========================================================================
+  ! Cursor Position Helpers for Multi-Line Support
+  ! ===========================================================================
+
+  ! Get terminal columns from environment variable
+  subroutine get_terminal_size_from_env(term_cols)
+    integer, intent(out) :: term_cols
+    character(len=16) :: cols_str
+    integer :: stat, iostat_val
+
+    call get_environment_variable('COLUMNS', cols_str, status=stat)
+    if (stat == 0 .and. len_trim(cols_str) > 0) then
+      read(cols_str, *, iostat=iostat_val) term_cols
+      if (iostat_val /= 0 .or. term_cols <= 0) then
+        term_cols = 80  ! Fallback
+      end if
+    else
+      term_cols = 80  ! Fallback
+    end if
+  end subroutine
+
+  ! Calculate cursor row and column given prompt and cursor position
+  ! Returns (row, col) where row 0 = first line, col 0 = first column
+  subroutine cursor_get_row_col(prompt, cursor_pos, term_cols, cursor_row, cursor_col)
+    use iso_fortran_env, only: output_unit
+    character(len=*), intent(in) :: prompt
+    integer, intent(in) :: cursor_pos, term_cols
+    integer, intent(out) :: cursor_row, cursor_col
+    integer :: prompt_visual_len, total_pos
+
+    if (term_cols <= 0) then
+      cursor_row = 0
+      cursor_col = 0
+      return
+    end if
+
+    ! Calculate visual length of prompt (excluding ANSI codes)
+    prompt_visual_len = visual_length(prompt)
+    if (prompt_visual_len < 0) prompt_visual_len = 0
+
+    ! Total position = prompt + space + cursor
+    total_pos = prompt_visual_len + 1 + cursor_pos
+
+    ! Calculate row and column (0-based)
+    cursor_row = total_pos / term_cols
+    cursor_col = mod(total_pos, term_cols)
+  end subroutine
+
+  ! Move cursor from old position to new position, handling line wrapping
+  subroutine cursor_move(old_row, old_col, new_row, new_col)
+    use iso_fortran_env, only: output_unit
+    integer, intent(in) :: old_row, old_col, new_row, new_col
+    integer :: row_diff, col_diff, i
+
+    row_diff = new_row - old_row
+
+    ! Move up/down first
+    if (row_diff > 0) then
+      ! Move down
+      do i = 1, row_diff
+        write(output_unit, '(a)', advance='no') char(27) // '[B'  ! ESC[B = down
+      end do
+    else if (row_diff < 0) then
+      ! Move up
+      do i = 1, abs(row_diff)
+        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! ESC[A = up
+      end do
+    end if
+
+    ! Then move left/right to correct column
+    col_diff = new_col - old_col
+
+    if (col_diff > 0) then
+      ! Move right
+      do i = 1, col_diff
+        write(output_unit, '(a)', advance='no') char(27) // '[C'  ! ESC[C = right
+      end do
+    else if (col_diff < 0) then
+      ! Move left
+      do i = 1, abs(col_diff)
+        write(output_unit, '(a)', advance='no') char(27) // '[D'  ! ESC[D = left
+      end do
+    end if
+
+    flush(output_unit)
   end subroutine
 
 end module readline
