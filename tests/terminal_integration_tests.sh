@@ -197,7 +197,9 @@ phase3_tests() {
     test_start "Prompt width: ANSI codes handled"
     # Test that colored prompts work (indirectly tested)
     output=$(run_fortsh 'echo "test"')
-    assert_equals "test" "$output"
+    if assert_equals "test" "$output"; then
+        test_pass
+    fi
 
     # Test 3.2: Multi-line prompts supported
     test_start "Prompt width: Multi-line prompts"
@@ -255,12 +257,16 @@ phase5_tests() {
     # Test 5.2: Normal TERM enables features
     test_start "Terminal type: Normal TERM enables features"
     output=$(run_fortsh_with_env "TERM=xterm-256color" 'echo "test"')
-    assert_equals "test" "$output"
+    if assert_equals "test" "$output"; then
+        test_pass
+    fi
 
     # Test 5.3: Empty TERM treated as dumb
     test_start "Terminal type: Empty TERM treated as dumb"
     output=$(run_fortsh_with_env "TERM=''" 'echo "test"')
-    assert_equals "test" "$output"
+    if assert_equals "test" "$output"; then
+        test_pass
+    fi
 }
 
 # ==============================================================================
@@ -273,12 +279,16 @@ phase6_tests() {
     # Test 6.1: UTF-8 emoji display
     test_start "UTF-8: Emoji display"
     output=$(run_fortsh 'echo "🚀"')
-    assert_equals "🚀" "$output"
+    if assert_equals "🚀" "$output"; then
+        test_pass
+    fi
 
     # Test 6.2: UTF-8 CJK characters
     test_start "UTF-8: CJK characters"
     output=$(run_fortsh 'echo "中文"')
-    assert_equals "中文" "$output"
+    if assert_equals "中文" "$output"; then
+        test_pass
+    fi
 
     # Test 6.3: True color pass-through
     test_start "True color: 24-bit RGB support"
@@ -313,7 +323,9 @@ integration_tests() {
     # Test I.2: UTF-8 with TERM=dumb (no colors, but UTF-8 works)
     test_start "Integration: UTF-8 in dumb terminal"
     output=$(run_fortsh_with_env "TERM=dumb" 'echo "🚀 中文"')
-    assert_equals "🚀 中文" "$output"
+    if assert_equals "🚀 中文" "$output"; then
+        test_pass
+    fi
 
     # Test I.3: Window size in different terminal types
     test_start "Integration: Window size works with TERM=dumb"
