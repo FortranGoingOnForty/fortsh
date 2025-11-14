@@ -1313,4 +1313,27 @@ contains
     write(STDOUT_FD, '(A)', advance='no') char(27) // ']0;' // trim(title) // char(7)
   end subroutine
 
+  ! Check if terminal supports ANSI escape codes
+  function terminal_supports_ansi() result(supports)
+    logical :: supports
+    character(len=256) :: term_type
+    integer :: status
+
+    call get_environment_variable('TERM', term_type, status=status)
+
+    if (status /= 0 .or. len_trim(term_type) == 0) then
+      ! No TERM set - assume dumb terminal
+      supports = .false.
+      return
+    end if
+
+    ! Known dumb/non-ANSI terminals
+    select case (trim(term_type))
+    case ('dumb', 'unknown', 'cons25')
+      supports = .false.
+    case default
+      supports = .true.
+    end select
+  end function terminal_supports_ansi
+
 end module system_interface

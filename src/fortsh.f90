@@ -314,8 +314,12 @@ program fortran_shell
         cmd_duration_sec = real(cmd_duration_ms) / 1000.0
 
         if (shell%is_interactive .and. cmd_duration_sec >= 1.0) then
-          write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
-                                           cmd_duration_sec, 's' // char(27) // '[0m'
+          if (shell%term_supports_color) then
+            write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
+                                             cmd_duration_sec, 's' // char(27) // '[0m'
+          else
+            write(output_unit, '(a,f0.1,a)') 'Executed in ', cmd_duration_sec, 's'
+          end if
         end if
 
         ! Increment command number for next prompt
@@ -339,7 +343,7 @@ program fortran_shell
         call execute_pipeline(pipeline, shell, expanded_line)
 
         ! Update terminal title after command execution
-        if (shell%is_interactive) then
+        if (shell%is_interactive .and. shell%term_supports_color) then
           call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
         end if
 
@@ -1081,8 +1085,11 @@ contains
     success = set_environment_var('COLUMNS', trim(cols_str))
     success = set_environment_var('LINES', trim(rows_str))
 
-    ! Set initial terminal title if interactive
-    if (shell%is_interactive) then
+    ! Check terminal capabilities (ANSI support)
+    shell%term_supports_color = terminal_supports_ansi()
+
+    ! Set initial terminal title if interactive (only for ANSI terminals)
+    if (shell%is_interactive .and. shell%term_supports_color) then
       call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
     end if
 

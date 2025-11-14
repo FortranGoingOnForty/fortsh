@@ -90,6 +90,9 @@ contains
 
   ! Initialize syntax highlighting system
   subroutine init_syntax_highlighting()
+    character(len=256) :: term_type
+    integer :: status
+
     ! Clear cache
     call clear_command_cache()
 
@@ -98,9 +101,22 @@ contains
     call pool_init()
 #endif
 
-    ! Check if terminal supports colors
-    ! For now, assume yes (can enhance with terminfo later)
-    highlighting_enabled = .true.
+    ! Check if terminal supports colors based on TERM environment variable
+    call get_environment_variable('TERM', term_type, status=status)
+
+    if (status /= 0 .or. len_trim(term_type) == 0) then
+      ! No TERM set - disable highlighting
+      highlighting_enabled = .false.
+      return
+    end if
+
+    ! Known dumb/non-ANSI terminals - disable highlighting
+    select case (trim(term_type))
+    case ('dumb', 'unknown', 'cons25')
+      highlighting_enabled = .false.
+    case default
+      highlighting_enabled = .true.
+    end select
   end subroutine
 
   ! Cleanup syntax highlighting system

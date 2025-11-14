@@ -260,6 +260,7 @@ module shell_types
     ! Terminal dimensions (updated on SIGWINCH)
     integer :: term_rows = 24
     integer :: term_cols = 80
+    logical :: term_supports_color = .true.  ! Terminal supports ANSI escape codes
     logical :: is_interactive = .false.
     logical :: running = .true.
     logical :: fatal_expansion_error = .false.  ! Set by ${VAR?error} to abort execution
@@ -268,6 +269,8 @@ module shell_types
     type(job_t) :: jobs(MAX_JOBS)
     integer :: num_jobs = 0
     integer :: next_job_id = 1
+    integer :: current_job_id = 0   ! %% or %+ (most recent job)
+    integer :: previous_job_id = 0  ! %- (previous job)
     ! Shell variables (local scope)
     type(shell_var_t) :: variables(50)
     integer :: num_variables = 0
