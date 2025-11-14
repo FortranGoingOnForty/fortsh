@@ -876,6 +876,14 @@ contains
 
     ! Assign to result variable at the very end
     success = mode_ok
+
+    ! Enable bracketed paste mode (if raw mode succeeded)
+    if (success) then
+      ! ESC[?2004h = Enable bracketed paste
+      ! Terminal will wrap pasted text in ESC[200~ ... ESC[201~
+      write(STDOUT_FD, '(A)', advance='no') char(27) // '[?2004h'
+    end if
+
     ! DEBUG: Commented out - too noisy
     ! if (success) then
     ! else
@@ -886,6 +894,10 @@ contains
     type(termios_t), intent(in) :: original_termios
     logical :: success
     integer :: ret
+
+    ! Disable bracketed paste mode before restoring terminal
+    ! ESC[?2004l = Disable bracketed paste
+    write(STDOUT_FD, '(A)', advance='no') char(27) // '[?2004l'
 
     ret = c_tcsetattr(STDIN_FD, TCSANOW, original_termios)
     success = (ret == 0)
