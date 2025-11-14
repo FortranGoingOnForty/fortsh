@@ -3554,9 +3554,11 @@ contains
 
       ! Handle line wrapping - if we just filled the last column, wrap to next line
       if (module_cursor_screen_col >= term_cols) then
+        ! Explicitly move cursor to next line (terminal won't auto-wrap cursor until next char)
+        write(output_unit, '(a)', advance='no') char(13) // char(10)  ! CR+LF
+        flush(output_unit)
         module_cursor_screen_col = 0
         module_cursor_screen_row = module_cursor_screen_row + 1
-        ! Terminal auto-wraps, but we track it explicitly
       end if
 
       ! Don't set dirty - we already output the character
