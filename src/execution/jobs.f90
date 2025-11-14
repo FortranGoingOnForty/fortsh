@@ -16,9 +16,9 @@ contains
     character(len=*), intent(in) :: command_line
     logical, intent(in) :: foreground
     integer :: job_id
-    
+
     integer :: i
-    
+
     ! Find empty slot or add new job
     job_id = 0
     do i = 1, MAX_JOBS
@@ -34,10 +34,17 @@ contains
         allocate(shell%jobs(i)%pids(1))
         shell%jobs(i)%pids(1) = pgid
         shell%jobs(i)%num_pids = 1
+
+        ! Update current/previous job tracking
+        if (shell%current_job_id /= 0) then
+          shell%previous_job_id = shell%current_job_id
+        end if
+        shell%current_job_id = job_id
+
         exit
       end if
     end do
-    
+
     if (job_id > 0) shell%num_jobs = shell%num_jobs + 1
   end function
 
@@ -212,23 +219,30 @@ contains
     integer, intent(in) :: job_id
     integer :: job_index
     integer :: ret
-    
+
     job_index = find_job_by_id(shell, job_id)
     if (job_index == 0) then
       write(error_unit, '(a,i15,a)') 'Job ', job_id, ' not found'
       shell%last_exit_status = 1
       return
     end if
-    
+
     if (shell%jobs(job_index)%state == JOB_STOPPED) then
       write(error_unit, '(a,i15,a)') 'Job ', job_id, ' already stopped'
       return
     end if
-    
+
     ! Send SIGTSTP to the process group
     ret = c_kill(-shell%jobs(job_index)%pgid, SIGTSTP)
     if (ret == 0) then
       shell%jobs(job_index)%state = JOB_STOPPED
+
+      ! Update current/previous job tracking
+      if (shell%current_job_id /= job_id) then
+        shell%previous_job_id = shell%current_job_id
+      end if
+      shell%current_job_id = job_id
+
       write(output_unit, '(a,i15,a)') '[', job_id, '] Suspended'
     else
       write(error_unit, '(a,i15)') 'Failed to suspend job ', job_id
@@ -241,25 +255,32 @@ contains
     integer, intent(in) :: job_id
     integer :: job_index
     integer :: ret
-    
+
     job_index = find_job_by_id(shell, job_id)
     if (job_index == 0) then
       write(error_unit, '(a,i15,a)') 'Job ', job_id, ' not found'
       shell%last_exit_status = 1
       return
     end if
-    
+
     if (shell%jobs(job_index)%state /= JOB_STOPPED) then
       write(error_unit, '(a,i15,a)') 'Job ', job_id, ' is not stopped'
       return
     end if
-    
+
     ! Send SIGCONT to the process group
     ret = c_kill(-shell%jobs(job_index)%pgid, SIGCONT)
     if (ret == 0) then
       shell%jobs(job_index)%state = JOB_RUNNING
       shell%jobs(job_index)%foreground = .false.
       shell%jobs(job_index)%notified = .false.
+
+      ! Update current/previous job tracking
+      if (shell%current_job_id /= job_id) then
+        shell%previous_job_id = shell%current_job_id
+      end if
+      shell%current_job_id = job_id
+
       write(output_unit, '(a,i15,a,a)') '[', job_id, '] ', trim(shell%jobs(job_index)%command_line), ' &'
     else
       write(error_unit, '(a,i15)') 'Failed to resume job in background ', job_id
@@ -273,24 +294,30 @@ contains
     integer :: job_index
     integer :: ret
     integer(c_int), target :: status
-    
+
     job_index = find_job_by_id(shell, job_id)
     if (job_index == 0) then
       write(error_unit, '(a,i15,a)') 'Job ', job_id, ' not found'
       shell%last_exit_status = 1
       return
     end if
-    
+
     if (shell%jobs(job_index)%state /= JOB_STOPPED) then
       write(error_unit, '(a,i15,a)') 'Job ', job_id, ' is not stopped'
       return
     end if
-    
+
+    ! Update current/previous job tracking before resuming
+    if (shell%current_job_id /= job_id) then
+      shell%previous_job_id = shell%current_job_id
+    end if
+    shell%current_job_id = job_id
+
     ! Give terminal control to job
     if (shell%is_interactive) then
       ret = c_tcsetpgrp(shell%shell_terminal, shell%jobs(job_index)%pgid)
     end if
-    
+
     ! Send SIGCONT to the process group
     ret = c_kill(-shell%jobs(job_index)%pgid, SIGCONT)
     if (ret == 0) then
@@ -298,15 +325,15 @@ contains
       shell%jobs(job_index)%foreground = .true.
       shell%jobs(job_index)%notified = .false.
       write(output_unit, '(a)') trim(shell%jobs(job_index)%command_line)
-      
+
       ! Wait for job to complete or stop
       ret = c_waitpid(-shell%jobs(job_index)%pgid, c_loc(status), WUNTRACED)
-      
+
       ! Take back terminal control
       if (shell%is_interactive) then
         ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
       end if
-      
+
       if (WIFEXITED(status)) then
         shell%jobs(job_index)%state = JOB_DONE
         shell%last_exit_status = WEXITSTATUS(status)
