@@ -3559,11 +3559,11 @@ contains
         flush(output_unit)
         module_cursor_screen_col = 0
         module_cursor_screen_row = module_cursor_screen_row + 1
-        ! Trigger syntax highlighting redraw after line wrap
-        input_state%dirty = .true.
+        ! Don't trigger redraw - character already on screen, cursor already positioned
       end if
 
       ! Trigger syntax highlighting on word boundaries (space character)
+      ! Also trigger on line wrap if this was a space that wrapped
       if (ch == ' ') then
         input_state%dirty = .true.
       end if
