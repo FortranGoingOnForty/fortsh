@@ -1219,10 +1219,9 @@ contains
             ! Calculate current cursor position (add 1 for space after prompt)
             cursor_visual_pos = prompt_visual_len + 1 + module_input_state%cursor_pos
 
-            ! Use actual screen cursor position instead of calculating from buffer
-            ! This fixes the "above-line deletion" bug where we miscalculate after character insertion
-            current_row = module_cursor_screen_row
-            current_col = module_cursor_screen_col
+            ! Calculate row/col from buffer state not stale screen tracking
+            current_row = cursor_visual_pos / term_cols
+            current_col = mod(cursor_visual_pos, term_cols)
 
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! Move cursor to start of prompt UNLESS we just exited menu mode
