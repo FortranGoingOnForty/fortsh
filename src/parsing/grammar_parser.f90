@@ -166,8 +166,10 @@ contains
             trim(tok%value) == 'esac') exit
       end if
       right_node => parse_and_or(state)
-      if (.not. associated(right_node)) exit
+      ! Create LIST node even if right side is null (for background jobs at end of input)
+      if (.not. associated(right_node) .and. sep_type /= LIST_SEP_BACKGROUND) exit
       node => create_list(node, right_node, sep_type)
+      if (.not. associated(right_node)) exit
     end do
   end function
 
