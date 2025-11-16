@@ -592,6 +592,8 @@ contains
       pid = c_fork()
       if (pid == 0) then
         ! Child process - execute left command and exit with its status
+        ! Background jobs should not do terminal control
+        shell%is_interactive = .false.
         if (associated(node%list%left)) then
           status = execute_ast_node(node%list%left, shell)
         else
