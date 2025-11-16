@@ -604,7 +604,7 @@ contains
         ! Parent - add to job list and continue with right
         shell%last_bg_pid = pid
         status = add_job(shell, pid, '<background job>', .false.)
-        write(output_unit, '(a,i15,a,i15)') '[', status, '] ', pid
+        write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
         if (associated(node%list%right)) then
           exit_status = execute_ast_node(node%list%right, shell)
         else

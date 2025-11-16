@@ -95,12 +95,12 @@ contains
     do i = 1, MAX_JOBS
       if (shell%jobs(i)%job_id > 0 .and. .not. shell%jobs(i)%notified) then
         if (shell%jobs(i)%state == JOB_DONE) then
-          write(output_unit, '(a,i15,a,a)') '[', shell%jobs(i)%job_id, ']  Done                    ', &
+          write(output_unit, '(a,i0,a,a)') '[', shell%jobs(i)%job_id, ']  Done                    ', &
                 trim(shell%jobs(i)%command_line)
           shell%jobs(i)%notified = .true.
           call remove_job(shell, shell%jobs(i)%job_id)
         else if (shell%jobs(i)%state == JOB_STOPPED) then
-          write(output_unit, '(a,i15,a,a)') '[', shell%jobs(i)%job_id, ']  Stopped                 ', &
+          write(output_unit, '(a,i0,a,a)') '[', shell%jobs(i)%job_id, ']  Stopped                 ', &
                 trim(shell%jobs(i)%command_line)
           shell%jobs(i)%notified = .true.
         end if
@@ -407,11 +407,11 @@ contains
         end select
         
         if (show_pid_info) then
-          write(output_unit, '(a,i15,a,i0,1x,a,1x,a)') &
+          write(output_unit, '(a,i0,a,i0,1x,a,1x,a)') &
             '[', shell%jobs(i)%job_id, ']  ', shell%jobs(i)%pgid, &
             trim(state_str), trim(shell%jobs(i)%command_line)
         else
-          write(output_unit, '(a,i15,a,a,1x,a)') &
+          write(output_unit, '(a,i0,a,a,1x,a)') &
             '[', shell%jobs(i)%job_id, ']  ', &
             trim(state_str), trim(shell%jobs(i)%command_line)
         end if
