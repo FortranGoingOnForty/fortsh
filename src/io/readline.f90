@@ -5880,13 +5880,11 @@ contains
   subroutine handle_clear_screen(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
-    character(len=:), allocatable :: highlighted  ! Heap allocation to avoid stack overflow
+    character(len=4096) :: highlighted  ! Fixed-length to avoid flang-new allocatable bugs
     integer :: i, term_rows, term_cols, available_space, suggestion_display_len, highlighted_len
     logical :: success
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
 
-    ! Allocate and initialize buffers
-    allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted)
     highlighted = ' '
     highlighted_len = 0
 
@@ -5904,7 +5902,7 @@ contains
     if (input_state%length > 0) then
       call state_buffer_get(input_state, temp_buf)
       call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len, input_state%length)
-      if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
+      if (highlighted_len > 0 .and. highlighted_len <= len(highlighted)) then
         write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
       end if
     end if
@@ -5957,9 +5955,6 @@ contains
     call get_terminal_size_from_env(term_cols)
     call cursor_get_row_col(prompt, input_state%cursor_pos, term_cols, &
                             module_cursor_screen_row, module_cursor_screen_col)
-
-    ! Deallocate heap-allocated buffer
-    if (allocated(highlighted)) deallocate(highlighted)
   end subroutine
 
   ! Transpose characters (Ctrl+t) - swap char at cursor with previous char
