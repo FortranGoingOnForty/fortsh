@@ -66,19 +66,27 @@ module signal_handler
 contains
 
   subroutine setup_signal_handlers()
+    use iso_fortran_env, only: error_unit
     type(c_funptr) :: old_handler
 
     ! Initialize signal constants first
     call init_signal_constants()
 
+    ! CRITICAL: Set SIGCHLD to default handler
+    ! If inherited as SIG_IGN from parent shell, children are auto-reaped on macOS/BSD
+    ! This prevents waitpid from working correctly
+    old_handler = c_signal(17, SIG_DFL)  ! SIGCHLD
+
     ! Ignore interactive signals for shell itself
     old_handler = c_signal(2, SIG_IGN)  ! SIGINT
+#ifndef __APPLE__
+    ! On Linux/other platforms, ignore SIGTSTP like other shells
     old_handler = c_signal(20, SIG_IGN) ! SIGTSTP
+#endif
+    ! On macOS, setting SIGTSTP to SIG_IGN breaks waitpid by causing
+    ! children to be auto-reaped, so we leave it at default
     old_handler = c_signal(21, SIG_IGN) ! SIGTTIN
     old_handler = c_signal(22, SIG_IGN) ! SIGTTOU
-
-    ! Handle child termination
-    old_handler = c_signal(17, c_funloc(sigchld_handler))  ! SIGCHLD
 
     ! Handle alarm for timeouts
     old_handler = c_signal(SIGALRM, c_funloc(sigalrm_handler))

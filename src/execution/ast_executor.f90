@@ -14,6 +14,7 @@ module ast_executor
   use shell_types
   use command_tree
   use system_interface
+  use job_control
   use glob, only: pattern_matches_no_dotfile_check
   implicit none
   private
@@ -118,6 +119,7 @@ contains
   function execute_simple_command(node, shell) result(exit_status)
     use executor, only: execute_pipeline
     use fd_redirection, only: apply_single_redirection, restore_fds
+    use iso_fortran_env, only: error_unit
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
@@ -571,6 +573,7 @@ contains
   ! =====================================
 
   recursive function execute_list_node(node, shell) result(exit_status)
+    use iso_fortran_env, only: error_unit
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, left_status
@@ -583,7 +586,37 @@ contains
       return
     end if
 
-    ! Execute left side
+    ! For background jobs (&), handle specially - don't execute left side yet
+    if (node%list%separator == LIST_SEP_BACKGROUND) then
+      ! Fork first, then execute left side in child
+      pid = c_fork()
+      if (pid == 0) then
+        ! Child process - execute left command and exit with its status
+        if (associated(node%list%left)) then
+          status = execute_ast_node(node%list%left, shell)
+        else
+          status = 0
+        end if
+        call c_exit(status)
+      else if (pid > 0) then
+        ! Parent - add to job list and continue with right
+        shell%last_bg_pid = pid
+        status = add_job(shell, pid, '<background job>', .false.)
+        write(output_unit, '(a,i15,a,i15)') '[', status, '] ', pid
+        if (associated(node%list%right)) then
+          exit_status = execute_ast_node(node%list%right, shell)
+        else
+          exit_status = 0
+        end if
+        return
+      else
+        ! Fork failed
+        exit_status = 1
+        return
+      end if
+    end if
+
+    ! Execute left side (for all non-background separators)
     if (associated(node%list%left)) then
       left_status = execute_ast_node(node%list%left, shell)
     else
@@ -626,6 +659,8 @@ contains
       if (left_status == 0) then
         if (associated(node%list%right)) then
           exit_status = execute_ast_node(node%list%right, shell)
+        else
+          exit_status = left_status
         end if
       else
         exit_status = left_status
@@ -649,21 +684,8 @@ contains
       end if
 
     case(LIST_SEP_BACKGROUND)
-      ! & - Execute right side in background
-      pid = c_fork()
-      if (pid == 0) then
-        ! Child process - execute left command
-        status = left_status
-        call c_exit(status)
-      else if (pid > 0) then
-        ! Parent - save background pid and continue with right
-        shell%last_bg_pid = pid
-        if (associated(node%list%right)) then
-          exit_status = execute_ast_node(node%list%right, shell)
-        else
-          exit_status = 0
-        end if
-      end if
+      ! & - Background jobs handled early in function (before left execution)
+      exit_status = 0
 
     case default
       exit_status = left_status

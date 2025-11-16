@@ -1287,13 +1287,17 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: original_input
 
-    integer(c_pid_t) :: pid, pgid
+    integer(c_pid_t) :: pid, pgid, ret
     integer(c_int), target :: wait_status
-    integer :: ret, job_id
+    integer(c_int) :: pgid_ret
+    integer :: job_id, retry_count
     logical :: foreground
     type(c_funptr) :: old_handler
 
     foreground = .not. cmd%background
+
+    ! CRITICAL: Re-ensure SIGCHLD is SIG_DFL before forking
+    ! Something in interactive mode might be resetting it
     pid = c_fork()
 
     if (pid < 0) then
@@ -1301,7 +1305,6 @@ contains
       shell%last_exit_status = 1
     else if (pid == 0) then
       ! Child process
-      
       ! Set process group
       pgid = c_getpid()
       ret = c_setpgid(0, pgid)
@@ -1311,7 +1314,7 @@ contains
       old_handler = c_signal(SIGTSTP, c_null_funptr)
       old_handler = c_signal(SIGTTIN, c_null_funptr)
       old_handler = c_signal(SIGTTOU, c_null_funptr)
-      
+
       ! Handle here document
       call handle_heredoc(cmd, shell)
 
@@ -1330,26 +1333,28 @@ contains
       shell%last_pid = pid
       pgid = pid
       ret = c_setpgid(pid, pgid)
-      
+
       if (foreground) then
         ! Give terminal to child
         if (shell%is_interactive) then
-          ret = c_tcsetpgrp(shell%shell_terminal, pgid)
+          pgid_ret = c_tcsetpgrp(shell%shell_terminal, pgid)
         end if
-        
+
         ! Wait for child
         ret = c_waitpid(pid, c_loc(wait_status), WUNTRACED)
-        
+
         ! Take back terminal
         if (shell%is_interactive) then
-          ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
+          pgid_ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
         end if
-        
-        if (WIFEXITED(wait_status)) then
-          shell%last_exit_status = WEXITSTATUS(wait_status)
-        else if (WIFSTOPPED(wait_status)) then
-          job_id = add_job(shell, pgid, original_input, .true.)
-          write(output_unit, '(a)') 'Stopped'
+
+        if (ret == pid) then
+          if (WIFEXITED(wait_status)) then
+            shell%last_exit_status = WEXITSTATUS(wait_status)
+          else if (WIFSTOPPED(wait_status)) then
+            job_id = add_job(shell, pgid, original_input, .true.)
+            write(output_unit, '(a)') 'Stopped'
+          end if
         end if
       else
         ! Background job
