@@ -1301,7 +1301,8 @@ contains
     ! Debug: Check if FDs are actually TTYs
     call get_environment_variable('FORTSH_DEBUG_WINSIZE', debug_env, status=stat)
     if (stat == 0 .and. len_trim(debug_env) > 0) then
-      write(error_unit, '(A,I0,A,I0,A,I0)') '[DEBUG: isatty(0)=', c_isatty(STDIN_FD), ' isatty(1)=', c_isatty(STDOUT_FD), ' isatty(2)=', c_isatty(STDERR_FD)
+      write(error_unit, '(A,I0,A,I0,A,I0)') '[DEBUG: isatty(0)=', c_isatty(STDIN_FD), &
+            ' isatty(1)=', c_isatty(STDOUT_FD), ' isatty(2)=', c_isatty(STDERR_FD)
     end if
 
     ! Try to get window size using ioctl
@@ -1365,7 +1366,7 @@ contains
     if (stat_result == 0) then
       ! Check if S_IFDIR bit is set in st_mode
       ! S_IFDIR = 0040000 (octal) = 16384 (decimal)
-      is_dir = iand(file_stat%st_mode, 16384) /= 0
+      is_dir = iand(int(file_stat%st_mode, c_int), S_IFDIR) /= 0
     end if
   end function
 

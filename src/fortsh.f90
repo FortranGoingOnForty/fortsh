@@ -28,7 +28,7 @@ program fortran_shell
   character(len=1024) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, history_expanded
   character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
-  integer :: iostat, i, num_args
+  integer :: iostat, i, num_args, ret
   character(len=1024) :: arg1, command_string
   logical :: execute_command_string, execute_script_file
   character(len=:), allocatable :: script_file

@@ -64,20 +64,21 @@ contains
   end subroutine
 
   subroutine update_job_status(shell)
+    use iso_fortran_env, only: error_unit
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j
     integer(c_int), target :: status
     integer(c_pid_t) :: pid
-    
+
     do i = 1, MAX_JOBS
       if (shell%jobs(i)%job_id > 0) then
         do j = 1, shell%jobs(i)%num_pids
           pid = c_waitpid(shell%jobs(i)%pids(j), c_loc(status), WNOHANG + WUNTRACED)
-          
+
           if (pid > 0) then
             if (WIFEXITED(status)) then
               shell%jobs(i)%state = JOB_DONE
-              shell%last_exit_status = WEXITSTATUS(status)
+              ! DON'T set last_exit_status for background jobs!
             else if (WIFSTOPPED(status)) then
               shell%jobs(i)%state = JOB_STOPPED
             end if
