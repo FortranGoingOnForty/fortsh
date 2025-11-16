@@ -5903,7 +5903,7 @@ contains
     ! Draw the current buffer with syntax highlighting
     if (input_state%length > 0) then
       call state_buffer_get(input_state, temp_buf)
-      call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len)
+      call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len, input_state%length)
       if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
         write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
       end if
@@ -5925,8 +5925,8 @@ contains
         term_cols = 80
       end if
 
-      ! Calculate available space
-      available_space = term_cols - mod(visual_length(prompt) + input_state%length, term_cols)
+      ! Calculate available space (add 1 for space after prompt)
+      available_space = term_cols - mod(visual_length(prompt) + 1 + input_state%length, term_cols)
 
       if (available_space > 2) then
         suggestion_display_len = min(input_state%suggestion_length, available_space - 1)
