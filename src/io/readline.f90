@@ -3615,9 +3615,55 @@ contains
     end if
   end subroutine
 
+  ! Determine how many bytes to delete for a UTF-8 character
+  ! Returns the number of bytes to delete (1-4)
+  function utf8_char_bytes_before_cursor(input_state) result(num_bytes)
+    type(input_state_t), intent(in) :: input_state
+    integer :: num_bytes
+    integer :: pos, byte_val
+    character :: ch
+
+    if (input_state%cursor_pos <= 0) then
+      num_bytes = 0
+      return
+    end if
+
+    ! Get the byte immediately before cursor
+    pos = input_state%cursor_pos
+    ch = state_buffer_get_char(input_state, pos)
+    byte_val = iand(iachar(ch), 255)
+
+    ! Check if this is a UTF-8 continuation byte (0x80-0xBF)
+    if (iand(byte_val, 192) == 128) then
+      ! This is a continuation byte - walk backwards to find the lead byte
+      num_bytes = 1
+      pos = pos - 1
+
+      ! Keep going back while we see continuation bytes (max 3 more bytes)
+      do while (pos > 0 .and. num_bytes < 4)
+        ch = state_buffer_get_char(input_state, pos)
+        byte_val = iand(iachar(ch), 255)
+
+        if (iand(byte_val, 192) == 128) then
+          ! Still a continuation byte
+          num_bytes = num_bytes + 1
+          pos = pos - 1
+        else
+          ! Found the lead byte
+          num_bytes = num_bytes + 1
+          exit
+        end if
+      end do
+    else
+      ! ASCII or lead byte - just delete 1 byte
+      num_bytes = 1
+    end if
+  end function utf8_char_bytes_before_cursor
+
   subroutine handle_backspace(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, term_cols, old_row, old_col, new_row, new_col
+    integer :: bytes_to_delete, delete_count
 
     ! Defensive checks for buffer corruption
     if (input_state%cursor_pos <= 0) return
@@ -3643,25 +3689,38 @@ contains
     ! Reset completion state when buffer changes
     input_state%completions_shown = .false.
 
+    ! Determine how many bytes to delete (1 for ASCII, 2-4 for UTF-8)
+    bytes_to_delete = utf8_char_bytes_before_cursor(input_state)
+    if (bytes_to_delete <= 0) return
+
     ! If cursor is at end, simple deletion
     if (input_state%cursor_pos >= input_state%length) then
-      ! Delete character from buffer
-      input_state%length = input_state%length - 1
-      input_state%cursor_pos = input_state%cursor_pos - 1
-      call state_buffer_set_char(input_state, input_state%length+1, ' ')
+      ! Delete UTF-8 character (1-4 bytes) from buffer
+      input_state%length = input_state%length - bytes_to_delete
+      input_state%cursor_pos = input_state%cursor_pos - bytes_to_delete
+
+      ! Clear the deleted bytes
+      do delete_count = 1, bytes_to_delete
+        call state_buffer_set_char(input_state, input_state%length + delete_count, ' ')
+      end do
 
       ! Don't manually move cursor - let redraw handle it
       ! This avoids conflicts between cursor_move() escape sequences and redraw escape sequences
       ! Just trigger redraw which will position everything correctly
       input_state%dirty = .true.
     else
-      ! Delete in middle - shift characters left
-      do i = input_state%cursor_pos, input_state%length - 1
-        call state_buffer_set_char(input_state, i, state_buffer_get_char(input_state, i+1))
+      ! Delete in middle - shift characters left by bytes_to_delete positions
+      do i = input_state%cursor_pos - bytes_to_delete + 1, input_state%length - bytes_to_delete
+        call state_buffer_set_char(input_state, i, state_buffer_get_char(input_state, i + bytes_to_delete))
       end do
-      input_state%cursor_pos = input_state%cursor_pos - 1
-      input_state%length = input_state%length - 1
-      call state_buffer_set_char(input_state, input_state%length+1, ' ')
+      input_state%cursor_pos = input_state%cursor_pos - bytes_to_delete
+      input_state%length = input_state%length - bytes_to_delete
+
+      ! Clear the bytes at the end
+      do delete_count = 1, bytes_to_delete
+        call state_buffer_set_char(input_state, input_state%length + delete_count, ' ')
+      end do
+
       ! Middle deletion requires full redraw
       input_state%dirty = .true.
     end if
