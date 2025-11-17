@@ -3620,7 +3620,7 @@ contains
   function utf8_char_bytes_before_cursor(input_state) result(num_bytes)
     type(input_state_t), intent(in) :: input_state
     integer :: num_bytes
-    integer :: pos, byte_val
+    integer :: pos, byte_val, lead_byte_val
     character :: ch
 
     if (input_state%cursor_pos <= 0) then
@@ -3649,13 +3649,39 @@ contains
           num_bytes = num_bytes + 1
           pos = pos - 1
         else
-          ! Found the lead byte
+          ! Found a non-continuation byte - this should be the lead byte
+          ! Verify it's actually a valid UTF-8 lead byte and count matches
+          lead_byte_val = byte_val
           num_bytes = num_bytes + 1
+
+          ! Sanity check: verify the lead byte indicates the right number of bytes
+          ! 2-byte: 110x xxxx (0xC0-0xDF)
+          ! 3-byte: 1110 xxxx (0xE0-0xEF)
+          ! 4-byte: 1111 0xxx (0xF0-0xF7)
+          if (num_bytes == 2 .and. iand(lead_byte_val, 224) /= 192) num_bytes = 1
+          if (num_bytes == 3 .and. iand(lead_byte_val, 240) /= 224) num_bytes = 1
+          if (num_bytes == 4 .and. iand(lead_byte_val, 248) /= 240) num_bytes = 1
+
           exit
         end if
       end do
+    else if (byte_val >= 128) then
+      ! This might be a UTF-8 lead byte - check and return appropriate count
+      if (iand(byte_val, 224) == 192) then
+        ! 2-byte UTF-8 (0xC0-0xDF) - but we're at the lead byte, so check if we have continuation
+        num_bytes = 2
+      else if (iand(byte_val, 240) == 224) then
+        ! 3-byte UTF-8 (0xE0-0xEF)
+        num_bytes = 3
+      else if (iand(byte_val, 248) == 240) then
+        ! 4-byte UTF-8 (0xF0-0xF7)
+        num_bytes = 4
+      else
+        ! Invalid UTF-8 lead byte
+        num_bytes = 1
+      end if
     else
-      ! ASCII or lead byte - just delete 1 byte
+      ! ASCII character
       num_bytes = 1
     end if
   end function utf8_char_bytes_before_cursor
