@@ -896,7 +896,13 @@ contains
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
     integer :: utf8_num_bytes, utf8_i
+    logical :: debug_utf8
+    integer :: debug_stat
 
+
+    ! Check if UTF-8 debug mode is enabled
+    call get_environment_variable('FORTSH_DEBUG_UTF8', status=debug_stat)
+    debug_utf8 = (debug_stat == 0)
 
     ! Initialize module-level input_state on first use (avoids flang-new pointer corruption bug)
     if (.not. module_input_state_initialized) then
@@ -971,12 +977,16 @@ contains
           exit
         end if
 
-        ! If multi-byte UTF-8 character, insert all bytes and continue
+        ! If multi-byte UTF-8 character, insert all bytes with correct visual width
         if (utf8_num_bytes > 1) then
           ! Multi-byte UTF-8 character (emoji, CJK, etc.)
-          do utf8_i = 1, utf8_num_bytes
-            call insert_char_wrapper(module_input_state, utf8_char(utf8_i:utf8_i))
-          end do
+          ! Determine visual width: 3-4 byte UTF-8 is always 2-wide, 2-byte varies
+          if (utf8_num_bytes >= 3) then
+            utf8_i = 2  ! Visual width for 3-4 byte UTF-8 (emoji, CJK)
+          else
+            utf8_i = utf8_char_width(utf8_char(1:1))  ! 2-byte can be 1 or 2
+          end if
+          call insert_utf8_char(module_input_state, utf8_char(1:utf8_num_bytes), utf8_num_bytes, utf8_i)
           cycle  ! Skip the control character processing below
         end if
 
@@ -1341,17 +1351,41 @@ contains
 
             ! Position cursor correctly (if not at end of input)
             if (module_input_state%cursor_pos < module_input_state%length) then
-              ! Cursor not at end - move back to correct position
-              do i_redraw = 1, module_input_state%length - module_input_state%cursor_pos
-                write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
-              end do
+              ! Cursor not at end - calculate visual width difference
+              ! IMPORTANT: Must use visual width, not byte count, for UTF-8 support
+
+              ! Current cursor position (at end of drawn input)
+              call cursor_get_row_col(prompt, module_input_state%length, term_cols, current_row, current_col)
+
+              ! Desired cursor position
+              call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, cursor_visual_pos, i_redraw)
+
+              ! Move cursor left by VISUAL column difference
+              ! (Not byte difference - emoji is 4 bytes but 2 visual columns!)
+              if (current_col > i_redraw) then
+                do current_line = 1, current_col - i_redraw
+                  write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+                end do
+              end if
             end if
 
             flush(output_unit)
 
+            ! Debug: show state before recalculating cursor position
+            if (debug_utf8) then
+              write(error_unit, '(a,i0,a,i0,a,i0)') '[REDRAW] BEFORE cursor_get_row_col: cursor_pos=', &
+                module_input_state%cursor_pos, ' screen_row=', module_cursor_screen_row, ' screen_col=', module_cursor_screen_col
+            end if
+
             ! Update screen cursor position tracking to match where we actually positioned the cursor
             call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, &
                                     module_cursor_screen_row, module_cursor_screen_col)
+
+            ! Debug: show state after recalculating cursor position
+            if (debug_utf8) then
+              write(error_unit, '(a,i0,a,i0)') '[REDRAW] AFTER cursor_get_row_col: screen_row=', &
+                module_cursor_screen_row, ' screen_col=', module_cursor_screen_col
+            end if
 
           module_input_state%dirty = .false.
         end if
@@ -3520,6 +3554,93 @@ contains
     call insert_char_impl(input_state, ch)
   end subroutine
 
+  ! Insert a complete multi-byte UTF-8 character
+  ! Handles cursor tracking correctly for wide characters
+  subroutine insert_utf8_char(input_state, utf8_bytes, num_bytes, visual_width)
+    use iso_fortran_env, only: output_unit, error_unit
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: utf8_bytes
+    integer, intent(in) :: num_bytes, visual_width
+    integer :: i, j, term_cols
+    logical :: debug_utf8
+    integer :: debug_stat
+
+    ! Check if UTF-8 debug mode is enabled
+    call get_environment_variable('FORTSH_DEBUG_UTF8', status=debug_stat)
+    debug_utf8 = (debug_stat == 0)
+
+    ! Check if we have room
+    if (input_state%length + num_bytes > MAX_LINE_LEN - 1) return
+
+    ! Exit history mode if needed
+    if (input_state%in_history) then
+      input_state%in_history = .false.
+      input_state%history_pos = 0
+    end if
+
+    ! Reset completion state
+    input_state%completions_shown = .false.
+
+    ! Insert all bytes at cursor position
+    if (input_state%cursor_pos >= input_state%length) then
+      ! Append at end
+
+      ! Debug: show state before insertion
+      if (debug_utf8) then
+        write(error_unit, '(a,i0,a,i0,a,i0)') '[INSERT_UTF8] BEFORE: cursor_pos=', &
+          input_state%cursor_pos, ' length=', input_state%length, ' screen_col=', module_cursor_screen_col
+      end if
+
+      do i = 1, num_bytes
+        call state_buffer_set_char(input_state, input_state%length + i, utf8_bytes(i:i))
+        ! Output byte to terminal
+        write(output_unit, '(a)', advance='no') utf8_bytes(i:i)
+      end do
+      flush(output_unit)
+
+      input_state%length = input_state%length + num_bytes
+      input_state%cursor_pos = input_state%cursor_pos + num_bytes
+
+      ! Update screen cursor position by VISUAL width, not byte count!
+      call get_terminal_size_from_env(term_cols)
+      module_cursor_screen_col = module_cursor_screen_col + visual_width
+
+      ! Debug: show state after insertion
+      if (debug_utf8) then
+        write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[INSERT_UTF8] AFTER: cursor_pos=', &
+          input_state%cursor_pos, ' length=', input_state%length, ' screen_col=', module_cursor_screen_col, &
+          ' visual_width=', visual_width
+      end if
+
+      ! Handle line wrapping
+      if (module_cursor_screen_col >= term_cols) then
+        write(output_unit, '(a)', advance='no') char(13) // char(10)
+        flush(output_unit)
+        module_cursor_screen_col = 0
+        module_cursor_screen_row = module_cursor_screen_row + 1
+      else
+        input_state%dirty = .true.
+      end if
+    else
+      ! Insert in middle - shift characters right
+      do j = input_state%length, input_state%cursor_pos + 1, -1
+        call state_buffer_set_char(input_state, j + num_bytes, state_buffer_get_char(input_state, j))
+      end do
+
+      ! Insert new bytes
+      do i = 1, num_bytes
+        call state_buffer_set_char(input_state, input_state%cursor_pos + i, utf8_bytes(i:i))
+      end do
+
+      input_state%length = input_state%length + num_bytes
+      input_state%cursor_pos = input_state%cursor_pos + num_bytes
+      input_state%dirty = .true.
+    end if
+
+    ! Update autosuggestion
+    call update_autosuggestion(input_state)
+  end subroutine insert_utf8_char
+
   ! Helper functions for enhanced readline
   subroutine insert_char_impl(input_state, ch)
     type(input_state_t), intent(inout) :: input_state
@@ -3617,72 +3738,72 @@ contains
 
   ! Determine how many bytes to delete for a UTF-8 character
   ! Returns the number of bytes to delete (1-4)
+  ! Looks at the byte immediately before cursor and walks backward to find the start
   function utf8_char_bytes_before_cursor(input_state) result(num_bytes)
+    use iso_fortran_env, only: error_unit
     type(input_state_t), intent(in) :: input_state
     integer :: num_bytes
-    integer :: pos, byte_val, lead_byte_val
+    integer :: pos, byte_val, start_pos
     character :: ch
+    logical :: debug_utf8
+
+    ! Check if debug mode is enabled
+    call get_environment_variable('FORTSH_DEBUG_UTF8', status=byte_val)
+    debug_utf8 = (byte_val == 0)
 
     if (input_state%cursor_pos <= 0) then
       num_bytes = 0
       return
     end if
 
-    ! Get the byte immediately before cursor
+    start_pos = input_state%cursor_pos
+
+    ! Start at the byte immediately before cursor
     pos = input_state%cursor_pos
     ch = state_buffer_get_char(input_state, pos)
     byte_val = iand(iachar(ch), 255)
 
-    ! Check if this is a UTF-8 continuation byte (0x80-0xBF)
+    if (debug_utf8) then
+      write(error_unit, '(a,i0,a,z2.2)') '[UTF8 DEBUG] cursor_pos=', input_state%cursor_pos, ' byte=0x', byte_val
+    end if
+
+    ! If it's a continuation byte (10xx xxxx), walk backward to find lead byte
     if (iand(byte_val, 192) == 128) then
-      ! This is a continuation byte - walk backwards to find the lead byte
+      ! Continuation byte - count how many bytes back to the lead byte
       num_bytes = 1
       pos = pos - 1
 
-      ! Keep going back while we see continuation bytes (max 3 more bytes)
+      ! Walk backward through continuation bytes (max 3 more)
       do while (pos > 0 .and. num_bytes < 4)
         ch = state_buffer_get_char(input_state, pos)
         byte_val = iand(iachar(ch), 255)
 
         if (iand(byte_val, 192) == 128) then
           ! Still a continuation byte
+          if (debug_utf8) then
+            write(error_unit, '(a,i0,a,z2.2)') '[UTF8 DEBUG]   pos=', pos, ' continuation byte=0x', byte_val
+          end if
           num_bytes = num_bytes + 1
           pos = pos - 1
         else
-          ! Found a non-continuation byte - this should be the lead byte
-          ! Verify it's actually a valid UTF-8 lead byte and count matches
-          lead_byte_val = byte_val
+          ! Found the lead byte (not a continuation byte)
+          if (debug_utf8) then
+            write(error_unit, '(a,i0,a,z2.2)') '[UTF8 DEBUG]   pos=', pos, ' lead byte=0x', byte_val
+          end if
           num_bytes = num_bytes + 1
-
-          ! Sanity check: verify the lead byte indicates the right number of bytes
-          ! 2-byte: 110x xxxx (0xC0-0xDF)
-          ! 3-byte: 1110 xxxx (0xE0-0xEF)
-          ! 4-byte: 1111 0xxx (0xF0-0xF7)
-          if (num_bytes == 2 .and. iand(lead_byte_val, 224) /= 192) num_bytes = 1
-          if (num_bytes == 3 .and. iand(lead_byte_val, 240) /= 224) num_bytes = 1
-          if (num_bytes == 4 .and. iand(lead_byte_val, 248) /= 240) num_bytes = 1
-
           exit
         end if
       end do
-    else if (byte_val >= 128) then
-      ! This might be a UTF-8 lead byte - check and return appropriate count
-      if (iand(byte_val, 224) == 192) then
-        ! 2-byte UTF-8 (0xC0-0xDF) - but we're at the lead byte, so check if we have continuation
-        num_bytes = 2
-      else if (iand(byte_val, 240) == 224) then
-        ! 3-byte UTF-8 (0xE0-0xEF)
-        num_bytes = 3
-      else if (iand(byte_val, 248) == 240) then
-        ! 4-byte UTF-8 (0xF0-0xF7)
-        num_bytes = 4
-      else
-        ! Invalid UTF-8 lead byte
-        num_bytes = 1
+
+      if (debug_utf8) then
+        write(error_unit, '(a,i0,a,i0,a,i0)') '[UTF8 DEBUG] Moving back ', num_bytes, ' bytes from ', start_pos, ' to ', start_pos - num_bytes
       end if
     else
-      ! ASCII character
+      ! Not a continuation byte - single byte character (ASCII or orphaned byte)
       num_bytes = 1
+      if (debug_utf8) then
+        write(error_unit, '(a)') '[UTF8 DEBUG] Single byte character'
+      end if
     end if
   end function utf8_char_bytes_before_cursor
 
@@ -5252,26 +5373,49 @@ contains
   end subroutine
 
   subroutine handle_cursor_left(input_state)
+    use iso_fortran_env, only: error_unit
     type(input_state_t), intent(inout) :: input_state
     integer :: old_row, old_col, new_row, new_col, term_cols
     integer :: bytes_to_move
+    logical :: debug_utf8
+    integer :: debug_stat
+
+    ! Check if UTF-8 debug mode is enabled
+    call get_environment_variable('FORTSH_DEBUG_UTF8', status=debug_stat)
+    debug_utf8 = (debug_stat == 0)
 
     if (input_state%cursor_pos > 0) then
       ! Get terminal size
       call get_terminal_size_from_env(term_cols)
 
-      ! Calculate old cursor position
-      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, old_row, old_col)
+      ! Use the tracked cursor position as the starting point
+      ! This is more accurate than recalculating, especially after direct character output
+      old_row = module_cursor_screen_row
+      old_col = module_cursor_screen_col
+
+      if (debug_utf8) then
+        write(error_unit, '(a,i0,a,i0,a,i0)') '[CURSOR_LEFT] BEFORE: cursor_pos=', &
+          input_state%cursor_pos, ' old_row=', old_row, ' old_col=', old_col
+      end if
 
       ! Determine how many bytes to move left (1-4 for complete UTF-8 character)
       bytes_to_move = utf8_char_bytes_before_cursor(input_state)
       if (bytes_to_move <= 0) bytes_to_move = 1
+
+      if (debug_utf8) then
+        write(error_unit, '(a,i0)') '[CURSOR_LEFT] bytes_to_move=', bytes_to_move
+      end if
 
       ! Move cursor left in buffer by complete UTF-8 character
       input_state%cursor_pos = input_state%cursor_pos - bytes_to_move
 
       ! Calculate new cursor position
       call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, new_row, new_col)
+
+      if (debug_utf8) then
+        write(error_unit, '(a,i0,a,i0,a,i0)') '[CURSOR_LEFT] AFTER: cursor_pos=', &
+          input_state%cursor_pos, ' new_row=', new_row, ' new_col=', new_col
+      end if
 
       ! Move cursor on screen (handles line wrapping)
       call cursor_move(old_row, old_col, new_row, new_col)
@@ -5291,8 +5435,10 @@ contains
       ! Get terminal size
       call get_terminal_size_from_env(term_cols)
 
-      ! Calculate old cursor position
-      call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, old_row, old_col)
+      ! Use the tracked cursor position as the starting point
+      ! This is more accurate than recalculating, especially after direct character output
+      old_row = module_cursor_screen_row
+      old_col = module_cursor_screen_col
 
       ! Determine how many bytes to move right (1-4 for complete UTF-8 character)
       bytes_to_move = utf8_char_bytes_at_cursor(input_state)
@@ -7770,11 +7916,18 @@ contains
   ! Calculate cursor row and column given prompt and cursor position
   ! Returns (row, col) where row 0 = first line, col 0 = first column
   subroutine cursor_get_row_col(prompt, cursor_pos, term_cols, cursor_row, cursor_col)
-    use iso_fortran_env, only: output_unit
+    use iso_fortran_env, only: output_unit, error_unit
     character(len=*), intent(in) :: prompt
     integer, intent(in) :: cursor_pos, term_cols
     integer, intent(out) :: cursor_row, cursor_col
-    integer :: prompt_visual_len, total_pos
+    integer :: prompt_visual_len, total_pos, visual_width
+    integer :: i, byte_val
+    character :: ch
+    logical :: debug_utf8
+
+    ! Check if debug mode is enabled
+    call get_environment_variable('FORTSH_DEBUG_UTF8', status=byte_val)
+    debug_utf8 = (byte_val == 0)
 
     if (term_cols <= 0) then
       cursor_row = 0
@@ -7786,8 +7939,47 @@ contains
     prompt_visual_len = visual_length(prompt)
     if (prompt_visual_len < 0) prompt_visual_len = 0
 
-    ! Total position = prompt + space + cursor
-    total_pos = prompt_visual_len + 1 + cursor_pos
+    ! Calculate visual width of buffer from position 1 to cursor_pos
+    ! This accounts for multi-byte UTF-8 characters and their display width
+    visual_width = 0
+    i = 1
+    do while (i <= cursor_pos)
+      ch = state_buffer_get_char(module_input_state, i)
+      byte_val = iand(iachar(ch), 255)
+
+      if (debug_utf8) then
+        write(error_unit, '(a,i0,a,z2.2,a,i0)') '[VISUAL] pos=', i, ' byte=0x', byte_val, ' visual_width=', visual_width
+      end if
+
+      ! Check if this is a UTF-8 lead byte
+      if (byte_val < 128) then
+        ! ASCII - 1 byte, 1 column
+        visual_width = visual_width + 1
+        i = i + 1
+      else if (iand(byte_val, 224) == 192) then
+        ! 2-byte UTF-8 - usually 1 column, but could be 2
+        visual_width = visual_width + utf8_char_width(ch)
+        i = i + 2
+      else if (iand(byte_val, 240) == 224) then
+        ! 3-byte UTF-8 (CJK) - 2 columns
+        visual_width = visual_width + 2
+        i = i + 3
+      else if (iand(byte_val, 248) == 240) then
+        ! 4-byte UTF-8 (emoji) - 2 columns
+        visual_width = visual_width + 2
+        i = i + 4
+      else
+        ! Continuation byte or invalid - skip
+        i = i + 1
+      end if
+    end do
+
+    if (debug_utf8) then
+      write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[VISUAL] cursor_pos=', cursor_pos, ' prompt_len=', prompt_visual_len, ' visual_width=', visual_width, ' total=', prompt_visual_len + 1 + visual_width
+    end if
+
+    ! Total position = prompt + space + visual width of buffer content
+    total_pos = prompt_visual_len + 1 + visual_width
 
     ! Calculate row and column (0-based)
     cursor_row = total_pos / term_cols
@@ -7796,9 +7988,19 @@ contains
 
   ! Move cursor from old position to new position, handling line wrapping
   subroutine cursor_move(old_row, old_col, new_row, new_col)
-    use iso_fortran_env, only: output_unit
+    use iso_fortran_env, only: output_unit, error_unit
     integer, intent(in) :: old_row, old_col, new_row, new_col
     integer :: row_diff, col_diff, i
+    logical :: debug_utf8
+    integer :: stat
+
+    ! Check if debug mode is enabled
+    call get_environment_variable('FORTSH_DEBUG_UTF8', status=stat)
+    debug_utf8 = (stat == 0)
+
+    if (debug_utf8) then
+      write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[CURSOR_MOVE] from (', old_row, ',', old_col, ') to (', new_row, ',', new_col, ')'
+    end if
 
     row_diff = new_row - old_row
 
@@ -7818,6 +8020,10 @@ contains
     ! Then move left/right to correct column
     col_diff = new_col - old_col
 
+    if (debug_utf8) then
+      write(error_unit, '(a,i0)') '[CURSOR_MOVE] col_diff=', col_diff
+    end if
+
     if (col_diff > 0) then
       ! Move right
       do i = 1, col_diff
@@ -7825,6 +8031,9 @@ contains
       end do
     else if (col_diff < 0) then
       ! Move left
+      if (debug_utf8) then
+        write(error_unit, '(a,i0,a)') '[CURSOR_MOVE] Moving left ', abs(col_diff), ' columns'
+      end if
       do i = 1, abs(col_diff)
         write(output_unit, '(a)', advance='no') char(27) // '[D'  ! ESC[D = left
       end do
