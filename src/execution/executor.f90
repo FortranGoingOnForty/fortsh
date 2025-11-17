@@ -252,7 +252,10 @@ contains
     ! Add job to job list
     if (.not. foreground) then
       job_id = add_job(shell, pgid, original_input, .false.)
-      write(output_unit, '(a,i15,a,i0)') '[', job_id, '] ', pgid
+      ! Only print job notification in interactive mode
+      if (shell%is_interactive) then
+        write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pgid
+      end if
       shell%last_pid = pgid
       ! Set $! to last process in background pipeline
       shell%last_bg_pid = pids(pipe_count + 1)
@@ -1359,7 +1362,10 @@ contains
       else
         ! Background job
         job_id = add_job(shell, pgid, original_input, .false.)
-        write(output_unit, '(a,i15,a,i15)') '[', job_id, '] ', pid
+        ! Only print job notification in interactive mode
+        if (shell%is_interactive) then
+          write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pid
+        end if
         ! Set $! to the background job PID
         shell%last_bg_pid = pid
       end if
