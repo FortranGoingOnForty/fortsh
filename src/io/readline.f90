@@ -3660,6 +3660,42 @@ contains
     end if
   end function utf8_char_bytes_before_cursor
 
+  ! Determine how many bytes make up the UTF-8 character at the cursor
+  ! Returns the number of bytes (1-4) for moving right
+  function utf8_char_bytes_at_cursor(input_state) result(num_bytes)
+    type(input_state_t), intent(in) :: input_state
+    integer :: num_bytes
+    integer :: byte_val
+    character :: ch
+
+    if (input_state%cursor_pos >= input_state%length) then
+      num_bytes = 0
+      return
+    end if
+
+    ! Get the byte at cursor position
+    ch = state_buffer_get_char(input_state, input_state%cursor_pos + 1)
+    byte_val = iand(iachar(ch), 255)
+
+    ! Determine character length based on lead byte
+    if (byte_val < 128) then
+      ! ASCII character (0x00-0x7F): 1 byte
+      num_bytes = 1
+    else if (iand(byte_val, 224) == 192) then
+      ! 2-byte UTF-8 (0xC0-0xDF)
+      num_bytes = 2
+    else if (iand(byte_val, 240) == 224) then
+      ! 3-byte UTF-8 (0xE0-0xEF)
+      num_bytes = 3
+    else if (iand(byte_val, 248) == 240) then
+      ! 4-byte UTF-8 (0xF0-0xF7)
+      num_bytes = 4
+    else
+      ! Invalid or continuation byte - treat as single byte
+      num_bytes = 1
+    end if
+  end function utf8_char_bytes_at_cursor
+
   subroutine handle_backspace(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, term_cols, old_row, old_col, new_row, new_col
@@ -5192,6 +5228,7 @@ contains
   subroutine handle_cursor_left(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: old_row, old_col, new_row, new_col, term_cols
+    integer :: bytes_to_move
 
     if (input_state%cursor_pos > 0) then
       ! Get terminal size
@@ -5200,8 +5237,12 @@ contains
       ! Calculate old cursor position
       call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, old_row, old_col)
 
-      ! Move cursor left in buffer
-      input_state%cursor_pos = input_state%cursor_pos - 1
+      ! Determine how many bytes to move left (1-4 for complete UTF-8 character)
+      bytes_to_move = utf8_char_bytes_before_cursor(input_state)
+      if (bytes_to_move <= 0) bytes_to_move = 1
+
+      ! Move cursor left in buffer by complete UTF-8 character
+      input_state%cursor_pos = input_state%cursor_pos - bytes_to_move
 
       ! Calculate new cursor position
       call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, new_row, new_col)
@@ -5218,6 +5259,7 @@ contains
   subroutine handle_cursor_right(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: old_row, old_col, new_row, new_col, term_cols
+    integer :: bytes_to_move
 
     if (input_state%cursor_pos < input_state%length) then
       ! Get terminal size
@@ -5226,8 +5268,17 @@ contains
       ! Calculate old cursor position
       call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, old_row, old_col)
 
-      ! Move cursor right in buffer
-      input_state%cursor_pos = input_state%cursor_pos + 1
+      ! Determine how many bytes to move right (1-4 for complete UTF-8 character)
+      bytes_to_move = utf8_char_bytes_at_cursor(input_state)
+      if (bytes_to_move <= 0) bytes_to_move = 1
+
+      ! Move cursor right in buffer by complete UTF-8 character
+      input_state%cursor_pos = input_state%cursor_pos + bytes_to_move
+
+      ! Don't go past end of buffer
+      if (input_state%cursor_pos > input_state%length) then
+        input_state%cursor_pos = input_state%length
+      end if
 
       ! Calculate new cursor position
       call cursor_get_row_col(input_state%menu_prompt, input_state%cursor_pos, term_cols, new_row, new_col)
