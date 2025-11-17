@@ -397,6 +397,9 @@ module shell_types
     logical :: pending_heredoc_quoted = .false.
     logical :: pending_heredoc_strip_tabs = .false.
     logical :: has_pending_heredoc = .false.
+
+    ! Current command being executed (for job descriptions)
+    character(len=1024) :: current_command = ''
   end type shell_state_t
 
 end module shell_types

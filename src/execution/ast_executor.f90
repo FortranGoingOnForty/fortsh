@@ -603,7 +603,12 @@ contains
       else if (pid > 0) then
         ! Parent - add to job list and continue with right
         shell%last_bg_pid = pid
-        status = add_job(shell, pid, '<background job>', .false.)
+        ! Use current command or fallback to placeholder
+        if (len_trim(shell%current_command) > 0) then
+          status = add_job(shell, pid, trim(shell%current_command), .false.)
+        else
+          status = add_job(shell, pid, '<background job>', .false.)
+        end if
         ! Only print job notification in interactive mode
         if (shell%is_interactive) then
           write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
