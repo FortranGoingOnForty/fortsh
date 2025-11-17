@@ -326,6 +326,11 @@ program fortran_shell
           end if
         end if
 
+        ! Update terminal title after command execution
+        if (shell%is_interactive .and. shell%term_supports_color) then
+          call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
+        end if
+
         ! Increment command number for next prompt
         shell%command_number = shell%command_number + 1
         call increment_prompt_history()
