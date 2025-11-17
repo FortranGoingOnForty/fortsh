@@ -306,6 +306,8 @@ program fortran_shell
       converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
       ast_root => parse_command_line(converted_line)
       if (associated(ast_root)) then
+        ! Store current command for job descriptions
+        shell%current_command = converted_line
         exit_code = execute_ast(ast_root, shell)
         shell%last_exit_status = exit_code
         call destroy_command_node(ast_root)
