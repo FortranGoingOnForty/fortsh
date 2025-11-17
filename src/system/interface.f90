@@ -942,6 +942,69 @@ contains
     end if
   end function
 
+  ! Read a complete UTF-8 character (1-4 bytes)
+  ! Returns the character in utf8_char and the number of bytes read
+  function read_utf8_char(utf8_char, num_bytes) result(success)
+    character(len=4), intent(out) :: utf8_char
+    integer, intent(out) :: num_bytes
+    logical :: success
+    character(c_char), target :: bytes(4)
+    integer(c_size_t) :: bytes_read
+    integer :: lead_byte_val, i, expected_bytes
+
+    ! Initialize output
+    utf8_char = ''
+    num_bytes = 0
+
+    ! Read first byte
+    bytes_read = c_read(STDIN_FD, c_loc(bytes(1)), 1_c_size_t)
+    if (bytes_read /= 1) then
+      success = .false.
+      return
+    end if
+
+    ! Get value of first byte (0-255)
+    lead_byte_val = iand(iachar(bytes(1)), 255)
+
+    ! Determine how many bytes this UTF-8 character should have
+    if (lead_byte_val < 128) then
+      ! ASCII character (0x00-0x7F): 1 byte
+      expected_bytes = 1
+    else if (iand(lead_byte_val, 224) == 192) then
+      ! 2-byte UTF-8 (0xC0-0xDF)
+      expected_bytes = 2
+    else if (iand(lead_byte_val, 240) == 224) then
+      ! 3-byte UTF-8 (0xE0-0xEF)
+      expected_bytes = 3
+    else if (iand(lead_byte_val, 248) == 240) then
+      ! 4-byte UTF-8 (0xF0-0xF7)
+      expected_bytes = 4
+    else
+      ! Invalid UTF-8 lead byte - treat as single byte
+      expected_bytes = 1
+    end if
+
+    ! Read continuation bytes if needed
+    if (expected_bytes > 1) then
+      do i = 2, expected_bytes
+        bytes_read = c_read(STDIN_FD, c_loc(bytes(i)), 1_c_size_t)
+        if (bytes_read /= 1) then
+          ! Failed to read continuation byte - return what we have
+          success = .false.
+          return
+        end if
+      end do
+    end if
+
+    ! Copy bytes to output string
+    do i = 1, expected_bytes
+      utf8_char(i:i) = bytes(i)
+    end do
+
+    num_bytes = expected_bytes
+    success = .true.
+  end function read_utf8_char
+
   ! Get current process ID
   function get_pid() result(pid)
     integer(c_pid_t) :: pid

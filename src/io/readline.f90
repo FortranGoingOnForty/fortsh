@@ -893,6 +893,9 @@ contains
     character(len=32) :: buffer_fmt  ! Dynamic format string for buffer write
     character(len=MAX_LINE_LEN) :: display_buffer  ! Temporary buffer for display
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
+    ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
+    character(len=4) :: utf8_char
+    integer :: utf8_num_bytes, utf8_i
 
 
     ! Initialize module-level input_state on first use (avoids flang-new pointer corruption bug)
@@ -961,12 +964,24 @@ contains
     if (raw_enabled) then
       ! Enhanced input processing
       do while (.not. done)
-        success = read_single_char(ch)
+        ! Read a complete UTF-8 character (1-4 bytes)
+        success = read_utf8_char(utf8_char, utf8_num_bytes)
         if (.not. success) then
           iostat = -1
           exit
         end if
 
+        ! If multi-byte UTF-8 character, insert all bytes and continue
+        if (utf8_num_bytes > 1) then
+          ! Multi-byte UTF-8 character (emoji, CJK, etc.)
+          do utf8_i = 1, utf8_num_bytes
+            call insert_char_wrapper(module_input_state, utf8_char(utf8_i:utf8_i))
+          end do
+          cycle  ! Skip the control character processing below
+        end if
+
+        ! Single-byte character - process normally
+        ch = utf8_char(1:1)
         char_code = iachar(ch)
 
         if (char_code == 27) then
