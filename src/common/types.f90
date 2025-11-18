@@ -295,6 +295,8 @@ module shell_types
     logical :: evaluating_condition = .false.  ! Suppress errexit during if/while/until condition evaluation
     logical :: in_and_or_list = .false.       ! Suppress errexit in && and || lists
     logical :: in_negation = .false.          ! Suppress errexit for negated pipelines (!)
+    logical :: in_command_substitution = .false.  ! Suppress errexit in command substitution
+    logical :: in_capture_child = .false.     ! In forked child for output capture (suppress messages)
     ! Command hash table
     type(command_hash_entry_t) :: command_hash(50)
     integer :: num_hashed_commands = 0

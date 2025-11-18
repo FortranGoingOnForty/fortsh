@@ -993,6 +993,9 @@ contains
           return  ! Abort assignment
         end if
 
+        ! POSIX: Exit status of assignment with command substitution is from last substitution
+        ! Don't overwrite the exit status that was set by execute_command_and_capture
+
         if (allocated(expanded_value)) then
           ! For expanded values, use the allocated length
           call var_set_shell_variable(shell, trim(var_name), expanded_value, len(expanded_value))
@@ -1006,6 +1009,8 @@ contains
         ! Calculate actual length from token positions (NOT len_trim, to preserve whitespace)
         actual_value_len = token_len - eq_pos
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
+        ! Set exit status to 0 for simple assignments without expansions
+        shell%last_exit_status = 0
       end if
 
       ! If allexport is enabled (set -a), automatically export the variable
@@ -1022,11 +1027,10 @@ contains
         end do
       end if
 
-      ! Set exit status to 0 for successful assignments
-      ! Don't overwrite error codes like 127 (readonly violation)
-      if (shell%last_exit_status /= 127) then
-        shell%last_exit_status = 0
-      end if
+      ! POSIX: Exit status of assignment is from last command substitution
+      ! Only set to 0 if no expansion was performed (i.e., no command substitution)
+      ! Don't overwrite exit status when there was a command substitution
+      ! The exit status was already set by execute_command_and_capture
     end if
   end subroutine
 

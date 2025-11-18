@@ -126,6 +126,9 @@ contains
       ! Close the original pipe write end
       ret = close(pipe_fds(2))
 
+      ! Mark that we're in a capture child (suppress errexit messages)
+      shell%in_capture_child = .true.
+
       ! Execute the command
       call execute_command_ptr(shell, command, exit_status)
 

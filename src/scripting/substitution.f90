@@ -67,7 +67,10 @@ contains
     call process_nested_substitutions(shell, processed_input)
 
     ! Execute the final command in the current shell context
+    ! POSIX: errexit should not trigger in command substitution
+    shell%in_command_substitution = .true.
     call execute_command_and_capture(shell, processed_input, output)
+    shell%in_command_substitution = .false.
 
     ! Remove trailing newlines
     do while (len_trim(output) > 0 .and. output(len_trim(output):len_trim(output)) == char(10))
@@ -139,7 +142,10 @@ contains
             ! Check if this inner command has nested substitutions
             if (index(inner_cmd, '$(') == 0) then
               ! No more nesting - execute this command in current shell context
+              ! POSIX: errexit should not trigger in command substitution
+              shell%in_command_substitution = .true.
               call execute_command_and_capture(shell, inner_cmd, inner_result)
+              shell%in_command_substitution = .false.
               result = trim(result) // trim(inner_result)
               found_nested = .true.
             else

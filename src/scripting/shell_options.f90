@@ -355,12 +355,14 @@ contains
     ! - During if/while/until condition evaluation (evaluating_condition flag)
     ! - In AND-OR lists (&&, ||)
     ! - In negated pipelines (!)
+    ! - In command substitution
     if (shell%evaluating_condition) return
     if (shell%in_and_or_list) return
     if (shell%in_negation) return
+    if (shell%in_command_substitution) return
 
     if (shell%option_errexit .and. exit_status /= 0) then
-      write(error_unit, '(a,i15,a)') 'fortsh: errexit: exiting due to command failure (status: ', exit_status, ')'
+      ! POSIX: errexit exits silently (no message)
       shell%running = .false.
       shell%last_exit_status = exit_status
     end if
