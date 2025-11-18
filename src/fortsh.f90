@@ -49,6 +49,10 @@ program fortran_shell
   ! Allocate shell to avoid large stack allocation on macOS
   allocate(shell)
 
+  ! Initialize these BEFORE initialize_shell since it uses them to check interactivity
+  execute_command_string = .false.
+  execute_script_file = .false.
+
   ! Initialize shell state (detects login shell from arguments)
   call initialize_shell(shell)
 
@@ -63,8 +67,6 @@ program fortran_shell
 
   ! Check for command-line arguments
   num_args = command_argument_count()
-  execute_command_string = .false.
-  execute_script_file = .false.
 
   ! Handle command-line arguments for script execution
   if (num_args > 0) then
