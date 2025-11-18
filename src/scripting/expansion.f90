@@ -261,6 +261,14 @@ contains
         pattern = var_name(percent_pos+1:)
       end if
       var_value = get_shell_variable(shell, trim(operation))
+      ! Expand simple $var in pattern
+      if (len_trim(pattern) >= 1 .and. pattern(1:1) == '$') then
+        if (len_trim(pattern) >= 2) then
+          if (pattern(2:2) /= '{' .and. pattern(2:2) /= '(') then
+            pattern = get_shell_variable(shell, trim(pattern(2:)))
+          end if
+        end if
+      end if
       call remove_suffix(trim(var_value), trim(pattern), greedy, expanded)
       return
     end if
@@ -315,6 +323,14 @@ contains
         pattern = var_name(hash_pos+1:)
       end if
       var_value = get_shell_variable(shell, trim(operation))
+      ! Expand simple $var in pattern
+      if (len_trim(pattern) >= 1 .and. pattern(1:1) == '$') then
+        if (len_trim(pattern) >= 2) then
+          if (pattern(2:2) /= '{' .and. pattern(2:2) /= '(') then
+            pattern = get_shell_variable(shell, trim(pattern(2:)))
+          end if
+        end if
+      end if
       call remove_prefix(trim(var_value), trim(pattern), greedy, expanded)
       return
     end if

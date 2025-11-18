@@ -1063,6 +1063,8 @@ contains
     
     character(len=256) :: param_name, default_value
     character(len=1024) :: var_value  ! Must match get_shell_variable return type
+    character(len=1024) :: expanded_pattern_buf
+    character(len=:), allocatable :: expanded_pattern
     integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
     integer :: percent_pos, hash_pos, percent2_pos, hash2_pos
     logical :: has_colon
@@ -1227,37 +1229,68 @@ contains
       param_name = param_expr(:percent_pos-1)
       default_value = param_expr(percent_pos+1:)
       var_value = get_shell_variable(shell, trim(param_name))
-      call remove_suffix_pattern(trim(var_value), trim(default_value), result, .false.)
+      ! Expand simple $var in pattern
+      expanded_pattern_buf = default_value
+      if (index(default_value, '$') == 1) then
+        ! Simple $var expansion (not ${} or $())
+        if (len_trim(default_value) >= 2) then
+          if (default_value(2:2) /= '{' .and. default_value(2:2) /= '(') then
+            expanded_pattern_buf = get_shell_variable(shell, trim(default_value(2:)))
+          end if
+        end if
+      end if
+      call remove_suffix_pattern(trim(var_value), trim(expanded_pattern_buf), result, .false.)
       return
     end if
-    
+
     ! ${parameter%%word} - remove largest suffix pattern
     percent2_pos = index(param_expr, '%%')
     if (percent2_pos > 0) then
       param_name = param_expr(:percent2_pos-1)
       default_value = param_expr(percent2_pos+2:)
       var_value = get_shell_variable(shell, trim(param_name))
-      call remove_suffix_pattern(trim(var_value), trim(default_value), result, .true.)
+      ! Expand simple $var in pattern
+      if (len_trim(default_value) > 1 .and. default_value(1:1) == '$' .and. &
+          default_value(2:2) /= '{' .and. default_value(2:2) /= '(') then
+        expanded_pattern_buf = get_shell_variable(shell, trim(default_value(2:)))
+      else
+        expanded_pattern_buf = default_value
+      end if
+      call remove_suffix_pattern(trim(var_value), trim(expanded_pattern_buf), result, .true.)
       return
     end if
-    
+
     ! ${parameter#word} - remove smallest prefix pattern
     hash_pos = index(param_expr, '#')
     if (hash_pos > 0 .and. param_expr(hash_pos:hash_pos+1) /= '##') then
       param_name = param_expr(:hash_pos-1)
       default_value = param_expr(hash_pos+1:)
       var_value = get_shell_variable(shell, trim(param_name))
-      call remove_prefix_pattern(trim(var_value), trim(default_value), result, .false.)
+      ! Expand simple $var in pattern
+      if (len_trim(default_value) > 1 .and. default_value(1:1) == '$' .and. &
+          default_value(2:2) /= '{' .and. default_value(2:2) /= '(') then
+        expanded_pattern_buf = get_shell_variable(shell, trim(default_value(2:)))
+      else
+        expanded_pattern_buf = default_value
+      end if
+      call remove_prefix_pattern(trim(var_value), trim(expanded_pattern_buf), result, .false.)
       return
     end if
-    
+
     ! ${parameter##word} - remove largest prefix pattern
     hash2_pos = index(param_expr, '##')
     if (hash2_pos > 0) then
       param_name = param_expr(:hash2_pos-1)
       default_value = param_expr(hash2_pos+2:)
       var_value = get_shell_variable(shell, trim(param_name))
-      call remove_prefix_pattern(trim(var_value), trim(default_value), result, .true.)
+      ! Expand simple $var in pattern
+      if (len_trim(default_value) > 1 .and. default_value(1:1) == '$' .and. &
+          default_value(2:2) /= '{' .and. default_value(2:2) /= '(') then
+        expanded_pattern_buf = get_shell_variable(shell, trim(default_value(2:)))
+      else
+        expanded_pattern_buf = default_value
+      end if
+      call remove_prefix_pattern(trim(var_value), trim(expanded_pattern_buf), result, .true.)
       return
     end if
     

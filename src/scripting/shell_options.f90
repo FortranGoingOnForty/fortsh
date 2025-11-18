@@ -353,8 +353,11 @@ contains
 
     ! POSIX: Don't trigger errexit in these contexts:
     ! - During if/while/until condition evaluation (evaluating_condition flag)
-    ! - In AND-OR lists (&&, ||) - handled by not calling this in those cases
+    ! - In AND-OR lists (&&, ||)
+    ! - In negated pipelines (!)
     if (shell%evaluating_condition) return
+    if (shell%in_and_or_list) return
+    if (shell%in_negation) return
 
     if (shell%option_errexit .and. exit_status /= 0) then
       write(error_unit, '(a,i15,a)') 'fortsh: errexit: exiting due to command failure (status: ', exit_status, ')'
