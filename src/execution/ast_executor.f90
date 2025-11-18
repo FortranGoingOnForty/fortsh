@@ -590,7 +590,45 @@ contains
 
     ! For background jobs (&), handle specially - don't execute left side yet
     if (node%list%separator == LIST_SEP_BACKGROUND) then
-      ! Fork first, then execute left side in child
+      ! Special handling for left-associative parsing with semicolons
+      ! For "a; b & c" which parses as "(a; b) & c", we need to:
+      ! 1. Execute "a" in parent (synchronously)
+      ! 2. Fork for "b" (background)
+      ! 3. Execute "c" in parent
+      if (associated(node%list%left)) then
+        if (node%list%left%node_type == CMD_LIST) then
+          if (associated(node%list%left%list)) then
+            if (node%list%left%list%separator == LIST_SEP_SEQUENTIAL) then
+              ! Execute the sequential commands before &, keeping the rightmost one for background
+              ! Execute left part synchronously in parent
+              if (associated(node%list%left%list%left)) then
+                left_status = execute_ast_node(node%list%left%list%left, shell)
+              end if
+              ! Now fork only for the right part (the command immediately before &)
+              if (associated(node%list%left%list%right)) then
+                pid = c_fork()
+                if (pid == 0) then
+                  shell%is_interactive = .false.
+                  shell%in_background = .true.
+                  status = execute_ast_node(node%list%left%list%right, shell)
+                  call c_exit(status)
+                else if (pid > 0) then
+                  shell%last_bg_pid = pid
+                  ! Track job (code continues below)
+                  goto 100  ! Jump to job tracking code
+                end if
+              end if
+              ! If we get here, just continue with right side
+              if (associated(node%list%right)) then
+                exit_status = execute_ast_node(node%list%right, shell)
+              end if
+              return
+            end if
+          end if
+        end if
+      end if
+
+      ! Standard background handling (for non-sequential left sides)
       pid = c_fork()
       if (pid == 0) then
         ! Child process - execute left command and exit with its status
@@ -623,7 +661,7 @@ contains
         call c_exit(status)
       else if (pid > 0) then
         ! Parent - add to job list and continue with right
-        shell%last_bg_pid = pid
+100     shell%last_bg_pid = pid
         ! Only track jobs if we're not already in a background job child
         if (.not. shell%in_background) then
           ! Reconstruct command string from AST node for job display
