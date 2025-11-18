@@ -140,6 +140,8 @@ module shell_types
     ! Prefix assignments (VAR=value command)
     character(len=256) :: prefix_assignments(10) = ''  ! VAR=value pairs
     integer :: num_prefix_assignments = 0
+    ! Skip expansion flag (words already expanded in pipeline)
+    logical :: skip_expansion = .false.
   end type command_t
 
   type :: pipeline_t

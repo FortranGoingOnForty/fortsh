@@ -86,6 +86,8 @@ module command_tree
     character(len=MAX_TOKEN_LEN) :: heredoc_delimiter = ''    ! Delimiter word (EOF)
     logical :: heredoc_quoted = .false.                       ! Was delimiter quoted? (suppress expansion)
     logical :: heredoc_strip_tabs = .false.                   ! True for <<- (strip leading tabs)
+    ! Pre-expansion flag for pipeline stages
+    logical :: pre_expanded = .false.                         ! True if words already expanded
   end type simple_command_data_t
 
   ! =====================================
