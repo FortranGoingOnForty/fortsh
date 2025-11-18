@@ -386,11 +386,11 @@ module system_interface
     end function
     
     function c_write(fd, buf, count) bind(C, name="write")
-      import :: c_int, c_ptr, c_size_t
+      import :: c_int, c_ptr, c_size_t, c_intptr_t
       integer(c_int), value :: fd
       type(c_ptr), value :: buf
       integer(c_size_t), value :: count
-      integer(c_size_t) :: c_write
+      integer(c_intptr_t) :: c_write  ! ssize_t is signed, returns -1 on error
     end function
     
     function c_popen(command, type) bind(C, name="popen")
