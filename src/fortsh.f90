@@ -70,8 +70,18 @@ program fortran_shell
   if (num_args > 0) then
     call get_command_argument(1, arg1)
 
+    ! Check for -n flag (syntax check only, no execution)
+    if (trim(arg1) == '-n') then
+      shell%option_noexec = .true.
+      shell%is_interactive = .false.
+      ! If there's a script file after -n, use it
+      if (num_args >= 2) then
+        if (.not. allocated(script_file)) allocate(character(len=1024) :: script_file)
+        call get_command_argument(2, script_file)
+        execute_script_file = .true.
+      end if
     ! Check for -c flag (execute command string)
-    if (trim(arg1) == '-c') then
+    else if (trim(arg1) == '-c') then
       if (num_args >= 2) then
         call get_command_argument(2, command_string)
         execute_command_string = .true.
@@ -308,8 +318,20 @@ program fortran_shell
       if (associated(ast_root)) then
         ! Store current command for job descriptions
         shell%current_command = converted_line
-        exit_code = execute_ast(ast_root, shell)
-        shell%last_exit_status = exit_code
+
+        ! Check if noexec mode is enabled (set -n)
+        ! POSIX: In noexec mode, we parse but don't execute (syntax check only)
+        ! POSIX: noexec is ignored in interactive shells
+        if (shell%option_noexec .and. .not. shell%is_interactive) then
+          ! Parse was successful, just return success status
+          shell%last_exit_status = 0
+          exit_code = 0
+        else
+          ! Normal execution
+          exit_code = execute_ast(ast_root, shell)
+          shell%last_exit_status = exit_code
+        end if
+
         call destroy_command_node(ast_root)
 
         ! Calculate and display duration if > 1 second
@@ -349,7 +371,15 @@ program fortran_shell
         ! Track command duration (Fish-style)
         call system_clock(cmd_start_time, clock_rate)
 
-        call execute_pipeline(pipeline, shell, expanded_line)
+        ! Check if noexec mode is enabled (set -n)
+        ! POSIX: In noexec mode, we parse but don't execute (syntax check only)
+        ! POSIX: noexec is ignored in interactive shells
+        if (.not. (shell%option_noexec .and. .not. shell%is_interactive)) then
+          call execute_pipeline(pipeline, shell, expanded_line)
+        else
+          ! Syntax check only - parse was successful, so set success status
+          shell%last_exit_status = 0
+        end if
 
         ! Update terminal title after command execution
         if (shell%is_interactive .and. shell%term_supports_color) then
@@ -855,8 +885,14 @@ contains
         converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
         ast_root => parse_command_line(converted_line)
         if (associated(ast_root)) then
-          exit_code = execute_ast(ast_root, shell)
-          shell%last_exit_status = exit_code
+          ! Check noexec mode (syntax check only)
+          if (shell%option_noexec) then
+            exit_code = 0
+            shell%last_exit_status = 0
+          else
+            exit_code = execute_ast(ast_root, shell)
+            shell%last_exit_status = exit_code
+          end if
           call destroy_command_node(ast_root)
         else if (last_parse_had_error) then
           ! Parse error occurred (not just empty command)
@@ -870,7 +906,12 @@ contains
         if (pipeline%parse_error) then
           shell%last_exit_status = 2  ! Syntax error
         else if (pipeline%num_commands > 0) then
-          call execute_pipeline(pipeline, shell, expanded_line)
+          ! Check noexec mode (syntax check only)
+          if (.not. shell%option_noexec) then
+            call execute_pipeline(pipeline, shell, expanded_line)
+          else
+            shell%last_exit_status = 0
+          end if
 
           ! Check if we need to replay loop body (only if NOT currently capturing)
           if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
@@ -1075,8 +1116,11 @@ contains
     ! Get current directory
     shell%cwd = get_current_directory()
 
-    ! Check if shell is interactive
-    shell%is_interactive = (c_isatty(STDIN_FD) /= 0)
+    ! Check if shell is interactive (only if not already set by -c or script file)
+    ! If execute_command_string or execute_script_file is true, we already set is_interactive = false
+    if (.not. execute_command_string .and. .not. execute_script_file) then
+      shell%is_interactive = (c_isatty(STDIN_FD) /= 0)
+    end if
 
     ! Setup job control if interactive
     if (shell%is_interactive) then

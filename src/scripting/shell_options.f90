@@ -135,6 +135,11 @@ contains
             if (enable_option .and. shell%option_verbose) then
               write(output_unit, '(a)') 'set: nounset enabled'
             end if
+          case ('n')
+            shell%option_noexec = enable_option
+            if (enable_option .and. shell%option_verbose) then
+              write(output_unit, '(a)') 'set: noexec enabled (syntax check mode)'
+            end if
           case ('v')
             shell%option_verbose = enable_option
           case ('x')

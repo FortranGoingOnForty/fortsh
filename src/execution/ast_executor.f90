@@ -650,6 +650,11 @@ contains
           return
         end if
       end if
+      ! Check if noexec was set - if so, skip right side (set -n behavior)
+      if (shell%option_noexec .and. .not. shell%is_interactive) then
+        exit_status = left_status
+        return
+      end if
       if (.not. shell%running) then
         ! Shell is exiting (e.g., exit builtin was called)
         exit_status = left_status
@@ -666,7 +671,10 @@ contains
         call process_source_inline_ast(shell)
         left_status = shell%last_exit_status
       end if
-      if (left_status == 0) then
+      ! Check if noexec was set - if so, skip right side
+      if (shell%option_noexec .and. .not. shell%is_interactive) then
+        exit_status = left_status
+      else if (left_status == 0) then
         if (associated(node%list%right)) then
           exit_status = execute_ast_node(node%list%right, shell)
         else
@@ -683,7 +691,10 @@ contains
         call process_source_inline_ast(shell)
         left_status = shell%last_exit_status
       end if
-      if (left_status /= 0) then
+      ! Check if noexec was set - if so, skip right side
+      if (shell%option_noexec .and. .not. shell%is_interactive) then
+        exit_status = left_status
+      else if (left_status /= 0) then
         if (associated(node%list%right)) then
           exit_status = execute_ast_node(node%list%right, shell)
         else
