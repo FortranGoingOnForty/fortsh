@@ -614,13 +614,37 @@ contains
                   call c_exit(status)
                 else if (pid > 0) then
                   shell%last_bg_pid = pid
-                  ! Track job (code continues below)
-                  goto 100  ! Jump to job tracking code
+                  ! Track job inline (duplicated code to avoid goto)
+                  if (.not. shell%in_background) then
+                    job_command = '<background job>'
+                    if (associated(node%list%left%list%right)) then
+                      if (node%list%left%list%right%node_type == CMD_SIMPLE) then
+                        if (associated(node%list%left%list%right%simple_cmd)) then
+                          if (node%list%left%list%right%simple_cmd%num_words > 0) then
+                            job_command = ''
+                            do i = 1, node%list%left%list%right%simple_cmd%num_words
+                              if (i > 1) then
+                                job_command = trim(job_command) // ' ' // trim(node%list%left%list%right%simple_cmd%words(i))
+                              else
+                                job_command = trim(node%list%left%list%right%simple_cmd%words(i))
+                              end if
+                            end do
+                          end if
+                        end if
+                      end if
+                    end if
+                    status = add_job(shell, pid, trim(job_command), .false.)
+                    if (shell%is_interactive) then
+                      write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
+                    end if
+                  end if
                 end if
               end if
-              ! If we get here, just continue with right side
+              ! Continue with right side
               if (associated(node%list%right)) then
                 exit_status = execute_ast_node(node%list%right, shell)
+              else
+                exit_status = 0
               end if
               return
             end if
@@ -661,7 +685,7 @@ contains
         call c_exit(status)
       else if (pid > 0) then
         ! Parent - add to job list and continue with right
-100     shell%last_bg_pid = pid
+        shell%last_bg_pid = pid
         ! Only track jobs if we're not already in a background job child
         if (.not. shell%in_background) then
           ! Reconstruct command string from AST node for job display
