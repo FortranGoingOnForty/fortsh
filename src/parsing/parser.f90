@@ -2491,8 +2491,8 @@ contains
       operation = param_expr(op_pos:op_pos+1)
       default_value = param_expr(op_pos+2:)
 
-      ! Expand nested parameter expansions in pattern (e.g., ${VAR%/*} in ${VAR#${VAR%/*}})
-      if (index(default_value, '${') > 0) then
+      ! Expand variable references in pattern (both ${VAR} and $VAR style)
+      if (index(default_value, '$') > 0) then
         block
           character(len=:), allocatable :: expanded_pattern
           call expand_variables(trim(default_value), expanded_pattern, shell)
@@ -2520,8 +2520,8 @@ contains
         operation = param_expr(op_pos:op_pos)
         default_value = param_expr(op_pos+1:)
 
-        ! Expand nested parameter expansions in pattern
-        if (index(default_value, '${') > 0) then
+        ! Expand variable references in pattern (both ${VAR} and $VAR style)
+        if (index(default_value, '$') > 0) then
           block
             character(len=:), allocatable :: expanded_pattern
             call expand_variables(trim(default_value), expanded_pattern, shell)
@@ -2551,8 +2551,8 @@ contains
       operation = param_expr(op_pos:op_pos+1)
       default_value = param_expr(op_pos+2:)
 
-      ! Expand nested parameter expansions in pattern
-      if (index(default_value, '${') > 0) then
+      ! Expand variable references in pattern (both ${VAR} and $VAR style)
+      if (index(default_value, '$') > 0) then
         block
           character(len=:), allocatable :: expanded_pattern
           call expand_variables(trim(default_value), expanded_pattern, shell)
@@ -2578,8 +2578,8 @@ contains
       operation = param_expr(op_pos:op_pos)
       default_value = param_expr(op_pos+1:)
 
-      ! Expand nested parameter expansions in pattern
-      if (index(default_value, '${') > 0) then
+      ! Expand variable references in pattern (both ${VAR} and $VAR style)
+      if (index(default_value, '$') > 0) then
         block
           character(len=:), allocatable :: expanded_pattern
           call expand_variables(trim(default_value), expanded_pattern, shell)
