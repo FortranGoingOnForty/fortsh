@@ -184,51 +184,52 @@ contains
     integer, intent(in) :: signum
     character(len=16) :: name
 
+    ! POSIX: trap output uses short signal names without SIG prefix
     select case(signum)
     case(SIGHUP)
-      name = 'SIGHUP'
+      name = 'HUP'
     case(SIGINT)
-      name = 'SIGINT'
+      name = 'INT'
     case(SIGQUIT)
-      name = 'SIGQUIT'
+      name = 'QUIT'
     case(SIGILL)
-      name = 'SIGILL'
+      name = 'ILL'
     case(SIGTRAP)
-      name = 'SIGTRAP'
+      name = 'TRAP'
     case(SIGABRT)
-      name = 'SIGABRT'
+      name = 'ABRT'
     case(SIGBUS)
-      name = 'SIGBUS'
+      name = 'BUS'
     case(SIGFPE)
-      name = 'SIGFPE'
+      name = 'FPE'
     case(SIGKILL)
-      name = 'SIGKILL'
+      name = 'KILL'
     case(SIGUSR1)
-      name = 'SIGUSR1'
+      name = 'USR1'
     case(SIGSEGV)
-      name = 'SIGSEGV'
+      name = 'SEGV'
     case(SIGUSR2)
-      name = 'SIGUSR2'
+      name = 'USR2'
     case(SIGPIPE)
-      name = 'SIGPIPE'
+      name = 'PIPE'
     case(SIGALRM)
-      name = 'SIGALRM'
+      name = 'ALRM'
     case(SIGTERM)
-      name = 'SIGTERM'
+      name = 'TERM'
     case(SIGSTKFLT)
-      name = 'SIGSTKFLT'
+      name = 'STKFLT'
     case(SIGCHLD)
-      name = 'SIGCHLD'
+      name = 'CHLD'
     case(SIGCONT)
-      name = 'SIGCONT'
+      name = 'CONT'
     case(SIGSTOP)
-      name = 'SIGSTOP'
+      name = 'STOP'
     case(SIGTSTP)
-      name = 'SIGTSTP'
+      name = 'TSTP'
     case(SIGTTIN)
-      name = 'SIGTTIN'
+      name = 'TTIN'
     case(SIGTTOU)
-      name = 'SIGTTOU'
+      name = 'TTOU'
     case(TRAP_EXIT)
       name = 'EXIT'
     case(TRAP_DEBUG)
