@@ -1260,6 +1260,17 @@ contains
       return
     end if
 
+    ! For double-quoted tokens that are all whitespace (no special chars),
+    ! return a single space to preserve the whitespace argument
+    ! This handles cases like " " where len_trim would be 0
+    ! We can't determine exact whitespace count, so return at least one space
+    if (is_quoted .and. len_trim(token) == 0 .and. len(token) > 0) then
+      ! Token is all whitespace - return a single space
+      ! (This preserves the argument while avoiding the len_trim=0 issue in exec_child)
+      expanded = ' '
+      return
+    end if
+
     ! Apply brace expansion ONLY if token is not quoted
     if (.not. is_quoted) then
       brace_expanded = expand_braces(token)
