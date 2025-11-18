@@ -1342,6 +1342,9 @@ contains
     if (cmd%num_tokens == 1) then
       ! Show all aliases
       call show_aliases(shell)
+    else if (cmd%num_tokens == 2 .and. trim(cmd%tokens(2)) == '-p') then
+      ! POSIX: -p prints all aliases in reusable format (same as no args)
+      call show_aliases(shell)
     else if (cmd%num_tokens >= 2) then
       ! Reconstruct the full argument from all tokens
       full_arg = trim(cmd%tokens(2))
