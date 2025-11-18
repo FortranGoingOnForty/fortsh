@@ -499,6 +499,7 @@ contains
               redirects(num_redirects)%type = REDIR_APPEND
             case('>&')
               redirects(num_redirects)%type = REDIR_DUP_OUT
+              redirects(num_redirects)%fd = 1  ! default stdout
             case('<<')
               ! Heredoc - just store the delimiter, executor will handle content
               call advance(state)
@@ -916,6 +917,7 @@ contains
         redirects(num_redirects)%type = REDIR_APPEND
       case('>&')
         redirects(num_redirects)%type = REDIR_DUP_OUT
+        redirects(num_redirects)%fd = 1  ! default stdout
       case default
         num_redirects = num_redirects - 1
         exit

@@ -579,7 +579,10 @@ contains
     ! === END DEBUGGING & TRACING HOOKS ===
 
     ! Check for variable assignment: var=value or arr=(...)
-    if (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1) then
+    ! Only recognize as assignment if name before = is valid (no $, `, etc.)
+    ! POSIX: Words containing $ before = are not assignments, they're commands
+    if (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1 .and. &
+        index(cmd%tokens(1)(1:index(cmd%tokens(1), '=')-1), '$') == 0) then
       call execute_assignment(cmd, shell)
     ! Check for ((expression)) arithmetic evaluation command
     else if (len_trim(cmd%tokens(1)) >= 4 .and. &
