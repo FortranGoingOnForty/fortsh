@@ -597,7 +597,10 @@ contains
         shell%in_background = .true.
         ! Special case: if left side is itself a background list, execute only its left child
         ! This handles left-associative parsing: (a & b) & c should run a, not (a & b)
-        if (associated(node%list%left%list) .and. node%list%left%list%separator == LIST_SEP_BACKGROUND) then
+        if (associated(node%list%left) .and. &
+            node%list%left%node_type == CMD_LIST .and. &
+            associated(node%list%left%list) .and. &
+            node%list%left%list%separator == LIST_SEP_BACKGROUND) then
           if (associated(node%list%left%list%left)) then
             status = execute_ast_node(node%list%left%list%left, shell)
           else
@@ -628,7 +631,10 @@ contains
 
         ! Special case: if left side was a nested background list, fork for its right side too
         ! This handles left-associative parsing: (a & b) & c should fork for both a and b
-        if (associated(node%list%left%list) .and. node%list%left%list%separator == LIST_SEP_BACKGROUND) then
+        if (associated(node%list%left) .and. &
+            node%list%left%node_type == CMD_LIST .and. &
+            associated(node%list%left%list) .and. &
+            node%list%left%list%separator == LIST_SEP_BACKGROUND) then
           if (associated(node%list%left%list%right)) then
             pid = c_fork()
             if (pid == 0) then
