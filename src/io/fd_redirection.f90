@@ -166,12 +166,18 @@ contains
           return
         end if
         call save_fd(redir%fd)
-        if (c_dup2(file_fd, redir%fd) < 0) then
-          success = .false.
+        ! Only dup2 if the file_fd is different from target fd
+        ! If they're the same, we're already done (the file is open on the desired FD)
+        if (file_fd /= redir%fd) then
+          if (c_dup2(file_fd, redir%fd) < 0) then
+            success = .false.
+          end if
+          ! Close the original file_fd since we dup'd it
+          if (c_close(file_fd) < 0) then
+            ! Error closing file descriptor
+          end if
         end if
-        if (c_close(file_fd) < 0) then
-          ! Error closing file descriptor
-        end if
+        ! If file_fd == redir%fd, don't close it - it's already on the right FD!
         
       case (REDIR_FD_OUT)
         ! n> file (redirect fd n to file)
@@ -192,13 +198,16 @@ contains
           return
         end if
         call save_fd(redir%fd)
-        if (c_dup2(file_fd, redir%fd) < 0) then
-          success = .false.
+        ! Only dup2 if the file_fd is different from target fd
+        if (file_fd /= redir%fd) then
+          if (c_dup2(file_fd, redir%fd) < 0) then
+            success = .false.
+          end if
+          if (c_close(file_fd) < 0) then
+            ! Error closing file descriptor
+          end if
         end if
-        if (c_close(file_fd) < 0) then
-          ! Error closing file descriptor
-        end if
-        
+
       case (REDIR_FD_APPEND)
         ! n>> file (append fd n to file)
         filename_c = trim(redir%filename) // c_null_char
@@ -211,13 +220,16 @@ contains
           return
         end if
         call save_fd(redir%fd)
-        if (c_dup2(file_fd, redir%fd) < 0) then
-          success = .false.
+        ! Only dup2 if the file_fd is different from target fd
+        if (file_fd /= redir%fd) then
+          if (c_dup2(file_fd, redir%fd) < 0) then
+            success = .false.
+          end if
+          if (c_close(file_fd) < 0) then
+            ! Error closing file descriptor
+          end if
         end if
-        if (c_close(file_fd) < 0) then
-          ! Error closing file descriptor
-        end if
-        
+
       case (REDIR_DUP_IN)
         ! n<&m (duplicate fd m to fd n, default n=0)
         if (redir%fd < 0) then

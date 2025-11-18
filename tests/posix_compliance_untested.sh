@@ -121,7 +121,8 @@ compare_posix_output "fd 3 and 4 together" 'exec 3>/tmp/posix_3.txt 4>/tmp/posix
 section "133. EXEC WITH SHELL REDIRECTIONS"
 
 # Note: These redirect the shell itself, not just one command
-compare_posix_output "exec redirect stdout" 'exec >/tmp/posix_exec_out.txt; echo redirected; cat /tmp/posix_exec_out.txt; rm /tmp/posix_exec_out.txt'
+# Save stdout to FD 3, redirect, write, restore, then cat (otherwise cat hangs on file still open for writing)
+compare_posix_output "exec redirect stdout" 'exec 3>&1; exec >/tmp/posix_exec_out.txt; echo redirected; exec >&3; cat /tmp/posix_exec_out.txt; rm /tmp/posix_exec_out.txt'
 compare_posix_output "exec redirect stdin" 'echo testdata > /tmp/posix_exec_in.txt; exec </tmp/posix_exec_in.txt; read data; echo $data; rm /tmp/posix_exec_in.txt'
 
 section "134. SET OPTION INTERACTIONS"
