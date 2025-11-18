@@ -579,6 +579,8 @@ contains
     integer :: exit_status, left_status
     integer(c_pid_t) :: pid
     integer :: status
+    character(len=1024) :: job_command, job_command2
+    integer :: i, j
 
     exit_status = 0
 
@@ -624,12 +626,26 @@ contains
         shell%last_bg_pid = pid
         ! Only track jobs if we're not already in a background job child
         if (.not. shell%in_background) then
-          ! Use current command or fallback to placeholder
-          if (len_trim(shell%current_command) > 0) then
-            status = add_job(shell, pid, trim(shell%current_command), .false.)
-          else
-            status = add_job(shell, pid, '<background job>', .false.)
+          ! Reconstruct command string from AST node for job display
+          job_command = '<background job>'  ! Default fallback
+          if (associated(node%list%left)) then
+            if (node%list%left%node_type == CMD_SIMPLE) then
+              if (associated(node%list%left%simple_cmd)) then
+                if (node%list%left%simple_cmd%num_words > 0) then
+                  job_command = ''
+                  do i = 1, node%list%left%simple_cmd%num_words
+                    if (i > 1) then
+                      job_command = trim(job_command) // ' ' // trim(node%list%left%simple_cmd%words(i))
+                    else
+                      job_command = trim(node%list%left%simple_cmd%words(i))
+                    end if
+                  end do
+                end if
+              end if
+            end if
           end if
+
+          status = add_job(shell, pid, trim(job_command), .false.)
           ! Only print job notification in interactive mode
           if (shell%is_interactive) then
             write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
@@ -654,7 +670,26 @@ contains
                     ! Parent adds this job too
                     shell%last_bg_pid = pid
                     if (.not. shell%in_background) then
-                      status = add_job(shell, pid, '<background job>', .false.)
+                      ! Reconstruct command string for the nested right side
+                      job_command2 = '<background job>'
+                      if (associated(node%list%left%list%right)) then
+                        if (node%list%left%list%right%node_type == CMD_SIMPLE) then
+                          if (associated(node%list%left%list%right%simple_cmd)) then
+                            if (node%list%left%list%right%simple_cmd%num_words > 0) then
+                              job_command2 = ''
+                              do j = 1, node%list%left%list%right%simple_cmd%num_words
+                                if (j > 1) then
+                                  job_command2 = trim(job_command2) // ' ' // trim(node%list%left%list%right%simple_cmd%words(j))
+                                else
+                                  job_command2 = trim(node%list%left%list%right%simple_cmd%words(j))
+                                end if
+                              end do
+                            end if
+                          end if
+                        end if
+                      end if
+
+                      status = add_job(shell, pid, trim(job_command2), .false.)
                       if (shell%is_interactive) then
                         write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
                       end if
