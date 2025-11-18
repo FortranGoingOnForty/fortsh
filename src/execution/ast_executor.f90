@@ -318,6 +318,8 @@ contains
     temp_pipeline%commands(1)%background = .false.
     temp_pipeline%commands(1)%num_redirections = 0
     temp_pipeline%commands(1)%num_prefix_assignments = 0
+    ! Check if words were pre-expanded in pipeline
+    temp_pipeline%commands(1)%skip_expansion = node%simple_cmd%pre_expanded
 
 
     ! Allocate tokens array directly in pipeline command
@@ -539,6 +541,19 @@ contains
 
     ! Multiple commands - set up pipes
     num_pipes = node%pipeline%num_commands - 1
+
+    ! POSIX: Pre-expand all command words before forking
+    ! This ensures expansion errors go to the parent shell's stderr
+    block
+      logical :: was_running
+      was_running = shell%running
+      call pre_expand_pipeline(node, shell)
+      ! Restore shell state - pipeline should still run even if expansion failed
+      ! The error message already went to stderr; pipeline continues with expanded values
+      shell%fatal_expansion_error = .false.
+      shell%arithmetic_error = .false.
+      shell%running = was_running
+    end block
 
     ! Create all pipes
     do i = 1, num_pipes
@@ -1654,6 +1669,98 @@ contains
       end if
     end if
   end subroutine split_on_ifs
+
+  ! Pre-expand all simple command words in a pipeline before forking
+  ! POSIX: Expansion errors should go to parent shell's stderr
+  subroutine pre_expand_pipeline(node, shell)
+    use executor, only: expand_tokens
+    type(command_node_t), pointer, intent(in) :: node
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, j
+    type(command_t) :: temp_cmd
+
+    if (.not. associated(node%pipeline)) return
+    if (.not. associated(node%pipeline%commands)) return
+
+    do i = 1, node%pipeline%num_commands
+      if (node%pipeline%commands(i)%node_type /= CMD_SIMPLE) cycle
+      if (.not. associated(node%pipeline%commands(i)%simple_cmd)) cycle
+
+      ! Build temporary command structure for expansion
+      temp_cmd%num_tokens = node%pipeline%commands(i)%simple_cmd%num_words
+      if (temp_cmd%num_tokens == 0) cycle
+
+      allocate(character(len=MAX_TOKEN_LEN) :: temp_cmd%tokens(temp_cmd%num_tokens))
+      allocate(temp_cmd%token_quoted(temp_cmd%num_tokens))
+      allocate(temp_cmd%token_escaped(temp_cmd%num_tokens))
+      allocate(temp_cmd%token_quote_type(temp_cmd%num_tokens))
+      allocate(temp_cmd%token_lengths(temp_cmd%num_tokens))
+
+      ! Copy words to temp command
+      do j = 1, temp_cmd%num_tokens
+        temp_cmd%tokens(j) = trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        temp_cmd%token_lengths(j) = len_trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted)) then
+          temp_cmd%token_quoted(j) = node%pipeline%commands(i)%simple_cmd%word_was_quoted(j)
+        else
+          temp_cmd%token_quoted(j) = .false.
+        end if
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_escaped)) then
+          temp_cmd%token_escaped(j) = node%pipeline%commands(i)%simple_cmd%word_was_escaped(j)
+        else
+          temp_cmd%token_escaped(j) = .false.
+        end if
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_quote_type)) then
+          temp_cmd%token_quote_type(j) = node%pipeline%commands(i)%simple_cmd%word_quote_type(j)
+        else
+          temp_cmd%token_quote_type(j) = QUOTE_NONE
+        end if
+      end do
+
+      ! Expand tokens (errors go to parent stderr)
+      call expand_tokens(temp_cmd, shell)
+
+      ! Copy expanded tokens back to AST node
+      ! Reallocate if number of tokens changed
+      if (temp_cmd%num_tokens /= node%pipeline%commands(i)%simple_cmd%num_words) then
+        if (allocated(node%pipeline%commands(i)%simple_cmd%words)) &
+            deallocate(node%pipeline%commands(i)%simple_cmd%words)
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_lengths)) &
+            deallocate(node%pipeline%commands(i)%simple_cmd%word_lengths)
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted)) &
+            deallocate(node%pipeline%commands(i)%simple_cmd%word_was_quoted)
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_escaped)) &
+            deallocate(node%pipeline%commands(i)%simple_cmd%word_was_escaped)
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_quote_type)) &
+            deallocate(node%pipeline%commands(i)%simple_cmd%word_quote_type)
+
+        allocate(node%pipeline%commands(i)%simple_cmd%words(temp_cmd%num_tokens))
+        allocate(node%pipeline%commands(i)%simple_cmd%word_lengths(temp_cmd%num_tokens))
+        allocate(node%pipeline%commands(i)%simple_cmd%word_was_quoted(temp_cmd%num_tokens))
+        allocate(node%pipeline%commands(i)%simple_cmd%word_was_escaped(temp_cmd%num_tokens))
+        allocate(node%pipeline%commands(i)%simple_cmd%word_quote_type(temp_cmd%num_tokens))
+        node%pipeline%commands(i)%simple_cmd%num_words = temp_cmd%num_tokens
+      end if
+
+      do j = 1, temp_cmd%num_tokens
+        node%pipeline%commands(i)%simple_cmd%words(j) = temp_cmd%tokens(j)
+        node%pipeline%commands(i)%simple_cmd%word_lengths(j) = temp_cmd%token_lengths(j)
+        node%pipeline%commands(i)%simple_cmd%word_was_quoted(j) = temp_cmd%token_quoted(j)
+        node%pipeline%commands(i)%simple_cmd%word_was_escaped(j) = temp_cmd%token_escaped(j)
+        node%pipeline%commands(i)%simple_cmd%word_quote_type(j) = temp_cmd%token_quote_type(j)
+      end do
+
+      ! Mark as pre-expanded so executor skips expansion
+      node%pipeline%commands(i)%simple_cmd%pre_expanded = .true.
+
+      ! Clean up
+      if (allocated(temp_cmd%tokens)) deallocate(temp_cmd%tokens)
+      if (allocated(temp_cmd%token_quoted)) deallocate(temp_cmd%token_quoted)
+      if (allocated(temp_cmd%token_escaped)) deallocate(temp_cmd%token_escaped)
+      if (allocated(temp_cmd%token_quote_type)) deallocate(temp_cmd%token_quote_type)
+      if (allocated(temp_cmd%token_lengths)) deallocate(temp_cmd%token_lengths)
+    end do
+  end subroutine pre_expand_pipeline
 
   ! Check if a string is a valid shell variable name for assignment
   ! POSIX: name must start with letter or underscore, followed by letters, digits, or underscores

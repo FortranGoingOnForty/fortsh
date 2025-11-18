@@ -890,7 +890,8 @@ contains
     type(command_node_t), pointer, intent(inout) :: node
     type(redirection_t) :: redirects(10)
     integer :: num_redirects, fd_num, io_stat
-    type(token_t) :: tok
+    type(token_t) :: tok, next_tok
+    logical :: has_fd_prefix
 
     if (.not. associated(node)) return
 
@@ -898,30 +899,89 @@ contains
     tok = current_token(state)
 
     ! Parse any trailing redirect operators
-    do while (tok%token_type == TOKEN_REDIRECT .and. num_redirects < 10)
+    ! Handle both "2>/dev/null" (fd-numbered) and ">/dev/null" (default fd)
+    do while (num_redirects < 10)
+      has_fd_prefix = .false.
+      fd_num = -1
+
+      ! Check if current token is a single digit followed by redirect operator
+      if (tok%token_type == TOKEN_WORD) then
+        if (len_trim(tok%value) == 1 .and. &
+            index('0123456789', trim(tok%value)) > 0) then
+          ! Peek at next token
+          next_tok = peek_token(state%tokens, state%pos + 1)
+          if (next_tok%token_type == TOKEN_REDIRECT) then
+            ! This is fd-numbered redirection like "2>"
+            read(tok%value, *, iostat=io_stat) fd_num
+            if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
+              has_fd_prefix = .true.
+              call advance(state)  ! consume the digit
+              tok = current_token(state)  ! now tok is the redirect operator
+            end if
+          else
+            exit  ! Not a redirect, done parsing
+          end if
+        else
+          exit  ! Not a single digit, done parsing
+        end if
+      end if
+
+      if (tok%token_type /= TOKEN_REDIRECT) exit
+
       num_redirects = num_redirects + 1
 
-      select case(trim(tok%value))
-      case('<')
-        redirects(num_redirects)%type = REDIR_IN
-      case('<>')
-        redirects(num_redirects)%type = REDIR_READWRITE
-      case('<&')
-        redirects(num_redirects)%type = REDIR_DUP_IN
-      case('>')
-        redirects(num_redirects)%type = REDIR_OUT
-      case('>|')
-        redirects(num_redirects)%type = REDIR_OUT
-        redirects(num_redirects)%force_clobber = .true.
-      case('>>')
-        redirects(num_redirects)%type = REDIR_APPEND
-      case('>&')
-        redirects(num_redirects)%type = REDIR_DUP_OUT
-        redirects(num_redirects)%fd = 1  ! default stdout
-      case default
-        num_redirects = num_redirects - 1
-        exit
-      end select
+      ! Set redirect type based on operator
+      if (has_fd_prefix) then
+        ! fd-numbered redirection
+        select case(trim(tok%value))
+        case('>&')
+          redirects(num_redirects)%type = REDIR_DUP_OUT
+          redirects(num_redirects)%fd = fd_num
+        case('<&')
+          redirects(num_redirects)%type = REDIR_DUP_IN
+          redirects(num_redirects)%fd = fd_num
+        case('>>')
+          redirects(num_redirects)%type = REDIR_FD_APPEND
+          redirects(num_redirects)%fd = fd_num
+        case('<')
+          redirects(num_redirects)%type = REDIR_FD_IN
+          redirects(num_redirects)%fd = fd_num
+        case('<>')
+          redirects(num_redirects)%type = REDIR_READWRITE
+          redirects(num_redirects)%fd = fd_num
+        case('>|')
+          redirects(num_redirects)%type = REDIR_FD_OUT
+          redirects(num_redirects)%fd = fd_num
+          redirects(num_redirects)%force_clobber = .true.
+        case default  ! '>'
+          redirects(num_redirects)%type = REDIR_FD_OUT
+          redirects(num_redirects)%fd = fd_num
+        end select
+      else
+        ! Default fd redirection
+        select case(trim(tok%value))
+        case('<')
+          redirects(num_redirects)%type = REDIR_IN
+        case('<>')
+          redirects(num_redirects)%type = REDIR_READWRITE
+        case('<&')
+          redirects(num_redirects)%type = REDIR_DUP_IN
+          redirects(num_redirects)%fd = 0  ! default stdin
+        case('>')
+          redirects(num_redirects)%type = REDIR_OUT
+        case('>|')
+          redirects(num_redirects)%type = REDIR_OUT
+          redirects(num_redirects)%force_clobber = .true.
+        case('>>')
+          redirects(num_redirects)%type = REDIR_APPEND
+        case('>&')
+          redirects(num_redirects)%type = REDIR_DUP_OUT
+          redirects(num_redirects)%fd = 1  ! default stdout
+        case default
+          num_redirects = num_redirects - 1
+          exit
+        end select
+      end if
 
       call advance(state)
       tok = current_token(state)

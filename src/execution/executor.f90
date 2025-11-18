@@ -215,8 +215,10 @@ contains
           call c_exit(1)
         end if
 
-        ! Expand variables and execute
-        call expand_tokens(pipeline%commands(i), shell)
+        ! Expand variables and execute (unless pre-expanded in pipeline)
+        if (.not. pipeline%commands(i)%skip_expansion) then
+          call expand_tokens(pipeline%commands(i), shell)
+        end if
 
         ! Expand glob patterns
         call expand_command_globs(pipeline%commands(i), shell)
@@ -515,7 +517,9 @@ contains
     ! Expand variables in all tokens (except for defun and assignments)
     ! Skip expansion for assignments because execute_assignment needs to handle
     ! quote-aware expansion properly (e.g., CMD="echo \$X" should store "echo $X")
-    if (trim(cmd%tokens(1)) /= 'defun' .and. &
+    ! Also skip if already pre-expanded in pipeline
+    if (.not. cmd%skip_expansion .and. &
+        trim(cmd%tokens(1)) /= 'defun' .and. &
         .not. (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1)) then
       call expand_tokens(cmd, shell)
     end if

@@ -2952,7 +2952,46 @@ contains
       return
     end if
   end subroutine
-  
+
+  ! Check if input is a quoted literal with no expansions inside
+  ! Returns true for "literal", 'literal', but false for "$var", "$(cmd)", etc.
+  function is_quoted_literal(input) result(is_literal)
+    character(len=*), intent(in) :: input
+    logical :: is_literal
+    integer :: len_input, i
+    character(1) :: quote_char
+
+    is_literal = .false.
+    len_input = len_trim(input)
+
+    ! Must be at least 2 chars for quotes
+    if (len_input < 2) return
+
+    ! Check for matching outer quotes
+    if (input(1:1) == '"' .and. input(len_input:len_input) == '"') then
+      quote_char = '"'
+    else if (input(1:1) == "'" .and. input(len_input:len_input) == "'") then
+      quote_char = "'"
+      ! Single quotes never have expansions, so it's always literal
+      is_literal = .true.
+      return
+    else
+      ! Not fully quoted
+      return
+    end if
+
+    ! For double quotes, check if there are expansion operators inside
+    do i = 2, len_input - 1
+      if (input(i:i) == '$' .or. input(i:i) == '`') then
+        ! Has expansion - not a pure literal
+        return
+      end if
+    end do
+
+    ! No expansion operators found
+    is_literal = .true.
+  end function
+
   ! Complete word expansion including all POSIX expansions
   ! Order follows POSIX standard:
   !   1. Brace expansion
@@ -2985,8 +3024,16 @@ contains
     quote_removed = remove_quotes(temp_result)
 
     ! Step 4: Field splitting (if not quoted)
-    ! TODO: Track whether original input was quoted to skip field splitting
-    call word_split(shell, quote_removed, expanded_words, word_count)
+    ! POSIX: Field splitting only applies to results of parameter expansion,
+    ! command substitution, and arithmetic expansion - NOT to literal quoted strings.
+    ! Check if the original input was entirely quoted with no expansions inside.
+    if (is_quoted_literal(input)) then
+      ! Skip field splitting for quoted literals
+      expanded_words(1) = quote_removed
+      word_count = 1
+    else
+      call word_split(shell, quote_removed, expanded_words, word_count)
+    end if
 
     ! POSIX: If field splitting results in zero words (empty unquoted expansion),
     ! keep it as zero words - don't add back an empty field
