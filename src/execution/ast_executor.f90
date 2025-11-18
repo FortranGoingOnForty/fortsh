@@ -592,9 +592,18 @@ contains
       pid = c_fork()
       if (pid == 0) then
         ! Child process - execute left command and exit with its status
-        ! Background jobs should not do terminal control
+        ! Background jobs should not do terminal control or track sub-jobs
         shell%is_interactive = .false.
-        if (associated(node%list%left)) then
+        shell%in_background = .true.
+        ! Special case: if left side is itself a background list, execute only its left child
+        ! This handles left-associative parsing: (a & b) & c should run a, not (a & b)
+        if (associated(node%list%left%list) .and. node%list%left%list%separator == LIST_SEP_BACKGROUND) then
+          if (associated(node%list%left%list%left)) then
+            status = execute_ast_node(node%list%left%list%left, shell)
+          else
+            status = 0
+          end if
+        else if (associated(node%list%left)) then
           status = execute_ast_node(node%list%left, shell)
         else
           status = 0
@@ -603,16 +612,44 @@ contains
       else if (pid > 0) then
         ! Parent - add to job list and continue with right
         shell%last_bg_pid = pid
-        ! Use current command or fallback to placeholder
-        if (len_trim(shell%current_command) > 0) then
-          status = add_job(shell, pid, trim(shell%current_command), .false.)
-        else
-          status = add_job(shell, pid, '<background job>', .false.)
+        ! Only track jobs if we're not already in a background job child
+        if (.not. shell%in_background) then
+          ! Use current command or fallback to placeholder
+          if (len_trim(shell%current_command) > 0) then
+            status = add_job(shell, pid, trim(shell%current_command), .false.)
+          else
+            status = add_job(shell, pid, '<background job>', .false.)
+          end if
+          ! Only print job notification in interactive mode
+          if (shell%is_interactive) then
+            write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
+          end if
         end if
-        ! Only print job notification in interactive mode
-        if (shell%is_interactive) then
-          write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
+
+        ! Special case: if left side was a nested background list, fork for its right side too
+        ! This handles left-associative parsing: (a & b) & c should fork for both a and b
+        if (associated(node%list%left%list) .and. node%list%left%list%separator == LIST_SEP_BACKGROUND) then
+          if (associated(node%list%left%list%right)) then
+            pid = c_fork()
+            if (pid == 0) then
+              ! Child for the nested right side
+              shell%is_interactive = .false.
+              shell%in_background = .true.
+              left_status = execute_ast_node(node%list%left%list%right, shell)
+              call c_exit(left_status)
+            else if (pid > 0) then
+              ! Parent adds this job too
+              shell%last_bg_pid = pid
+              if (.not. shell%in_background) then
+                status = add_job(shell, pid, '<background job>', .false.)
+                if (shell%is_interactive) then
+                  write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
+                end if
+              end if
+            end if
+          end if
         end if
+
         if (associated(node%list%right)) then
           exit_status = execute_ast_node(node%list%right, shell)
         else
