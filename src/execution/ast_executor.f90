@@ -123,13 +123,13 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
-    integer :: i, func_idx, old_num_positional, j
+    integer :: i, func_idx, old_num_positional, j, eq_pos
     type(pipeline_t) :: temp_pipeline
     type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
     character(len=1024), allocatable :: old_params(:)
     logical :: needs_quotes, redir_success
-    logical :: has_redirects
+    logical :: has_redirects, is_pure_assignment
 
     exit_status = 0
 
@@ -375,6 +375,42 @@ contains
       temp_pipeline%commands(1)%heredoc_delimiter = trim(node%simple_cmd%heredoc_delimiter)
       temp_pipeline%commands(1)%heredoc_quoted = node%simple_cmd%heredoc_quoted
       temp_pipeline%commands(1)%heredoc_strip_tabs = node%simple_cmd%heredoc_strip_tabs
+    end if
+
+    ! POSIX: For pure assignments (no command), process assignments BEFORE redirections
+    ! This ensures assignment errors go to the shell's original stderr, not the redirected one
+    if (node%simple_cmd%num_words > 0) then
+      ! Check if all words are assignments (VAR=value pattern)
+      is_pure_assignment = .true.
+      do i = 1, node%simple_cmd%num_words
+        eq_pos = index(trim(node%simple_cmd%words(i)), '=')
+        if (eq_pos <= 1) then
+          is_pure_assignment = .false.
+          exit
+        end if
+        ! Check that everything before = is a valid var name
+        if (.not. is_valid_assignment_name(node%simple_cmd%words(i)(1:eq_pos-1))) then
+          is_pure_assignment = .false.
+          exit
+        end if
+      end do
+
+      if (is_pure_assignment) then
+        ! Execute assignments before redirections
+        call execute_pipeline(temp_pipeline, shell, '')
+        exit_status = shell%last_exit_status
+
+        ! Clean up and return - skip redirections for pure assignments
+        if (allocated(temp_pipeline%commands)) then
+          if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
+          if (allocated(temp_pipeline%commands(1)%token_quoted)) deallocate(temp_pipeline%commands(1)%token_quoted)
+          if (allocated(temp_pipeline%commands(1)%token_escaped)) deallocate(temp_pipeline%commands(1)%token_escaped)
+          if (allocated(temp_pipeline%commands(1)%token_quote_type)) deallocate(temp_pipeline%commands(1)%token_quote_type)
+          if (allocated(temp_pipeline%commands(1)%token_lengths)) deallocate(temp_pipeline%commands(1)%token_lengths)
+          deallocate(temp_pipeline%commands)
+        end if
+        return
+      end if
     end if
 
     ! Apply redirections directly (in order, left-to-right) before executing
@@ -1618,6 +1654,41 @@ contains
       end if
     end if
   end subroutine split_on_ifs
+
+  ! Check if a string is a valid shell variable name for assignment
+  ! POSIX: name must start with letter or underscore, followed by letters, digits, or underscores
+  function is_valid_assignment_name(name) result(valid)
+    character(len=*), intent(in) :: name
+    logical :: valid
+    integer :: i, name_len
+    character :: ch
+
+    valid = .false.
+    name_len = len_trim(name)
+
+    if (name_len == 0) return
+
+    ! First character must be letter or underscore
+    ch = name(1:1)
+    if (.not. ((ch >= 'a' .and. ch <= 'z') .or. &
+               (ch >= 'A' .and. ch <= 'Z') .or. &
+               ch == '_')) then
+      return
+    end if
+
+    ! Remaining characters must be letter, digit, or underscore
+    do i = 2, name_len
+      ch = name(i:i)
+      if (.not. ((ch >= 'a' .and. ch <= 'z') .or. &
+                 (ch >= 'A' .and. ch <= 'Z') .or. &
+                 (ch >= '0' .and. ch <= '9') .or. &
+                 ch == '_')) then
+        return
+      end if
+    end do
+
+    valid = .true.
+  end function is_valid_assignment_name
 
   ! Filter traps for subshell: keep only ignored traps (empty action)
   ! POSIX: Ignored signals remain ignored in subshells, but trap actions are not inherited

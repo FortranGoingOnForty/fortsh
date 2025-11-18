@@ -235,11 +235,13 @@ contains
         if (redir%fd < 0) then
           call save_fd(FD_STDIN)
           if (c_dup2(redir%target_fd, FD_STDIN) < 0) then
+            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
           end if
         else
           call save_fd(redir%fd)
           if (c_dup2(redir%target_fd, redir%fd) < 0) then
+            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
           end if
         end if
@@ -249,11 +251,13 @@ contains
         if (redir%fd < 0) then
           call save_fd(FD_STDOUT)
           if (c_dup2(redir%target_fd, FD_STDOUT) < 0) then
+            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
           end if
         else
           call save_fd(redir%fd)
           if (c_dup2(redir%target_fd, redir%fd) < 0) then
+            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
           end if
         end if
@@ -301,19 +305,28 @@ contains
   ! Save a file descriptor for later restoration
   subroutine save_fd(fd)
     integer, intent(in) :: fd
-    integer :: i
-    
+    integer :: i, target_fd
+
     ! Check if already saved
     do i = 1, num_saved_fds
       if (saved_fds(i)%fd == fd) return
     end do
-    
-    ! Save new fd
+
+    ! Save new fd using dup2 to a high fd number (100+)
+    ! This prevents saved fds from conflicting with redirections
     if (num_saved_fds < size(saved_fds)) then
       num_saved_fds = num_saved_fds + 1
       saved_fds(num_saved_fds)%fd = fd
-      saved_fds(num_saved_fds)%saved_fd = c_dup(fd)
-      saved_fds(num_saved_fds)%is_saved = .true.
+      ! Use dup2 to target fd >= 100 to avoid conflicts
+      target_fd = 100 + num_saved_fds - 1
+      if (c_dup2(fd, target_fd) >= 0) then
+        saved_fds(num_saved_fds)%saved_fd = target_fd
+        saved_fds(num_saved_fds)%is_saved = .true.
+      else
+        ! dup2 failed, fall back to dup
+        saved_fds(num_saved_fds)%saved_fd = c_dup(fd)
+        saved_fds(num_saved_fds)%is_saved = .true.
+      end if
     end if
   end subroutine
 
