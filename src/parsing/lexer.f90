@@ -330,6 +330,96 @@ contains
             end if
             pos = pos + 1
           end if
+        else if (ch == '$' .and. pos < input_len .and. input(pos+1:pos+1) == '(') then
+          ! Command substitution inside double quotes - need to find matching )
+          ! while ignoring quotes inside $()
+          if (token_len < MAX_TOKEN_LEN - 1) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = '$'
+            token_len = token_len + 1
+            current_token(token_len:token_len) = '('
+          end if
+          pos = pos + 2
+          paren_depth = 1
+          ! Scan to find matching ), respecting nested parens and quotes
+          do while (pos <= input_len .and. paren_depth > 0)
+            ch = input(pos:pos)
+            if (ch == '"') then
+              ! Skip double-quoted string inside command substitution
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = ch
+              end if
+              pos = pos + 1
+              do while (pos <= input_len)
+                ch = input(pos:pos)
+                if (ch == '\' .and. pos < input_len) then
+                  ! Skip escaped char
+                  if (token_len < MAX_TOKEN_LEN - 1) then
+                    token_len = token_len + 1
+                    current_token(token_len:token_len) = ch
+                    token_len = token_len + 1
+                    current_token(token_len:token_len) = input(pos+1:pos+1)
+                  end if
+                  pos = pos + 2
+                else if (ch == '"') then
+                  if (token_len < MAX_TOKEN_LEN) then
+                    token_len = token_len + 1
+                    current_token(token_len:token_len) = ch
+                  end if
+                  pos = pos + 1
+                  exit
+                else
+                  if (token_len < MAX_TOKEN_LEN) then
+                    token_len = token_len + 1
+                    current_token(token_len:token_len) = ch
+                  end if
+                  pos = pos + 1
+                end if
+              end do
+            else if (ch == "'") then
+              ! Skip single-quoted string
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = ch
+              end if
+              pos = pos + 1
+              do while (pos <= input_len .and. input(pos:pos) /= "'")
+                if (token_len < MAX_TOKEN_LEN) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = input(pos:pos)
+                end if
+                pos = pos + 1
+              end do
+              if (pos <= input_len) then
+                if (token_len < MAX_TOKEN_LEN) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = "'"
+                end if
+                pos = pos + 1
+              end if
+            else if (ch == '(') then
+              paren_depth = paren_depth + 1
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = ch
+              end if
+              pos = pos + 1
+            else if (ch == ')') then
+              paren_depth = paren_depth - 1
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = ch
+              end if
+              pos = pos + 1
+            else
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = ch
+              end if
+              pos = pos + 1
+            end if
+          end do
         else if (ch == '"') then
           ! End of double-quoted string
           pos = pos + 1  ! Move past closing quote

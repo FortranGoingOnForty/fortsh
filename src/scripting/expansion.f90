@@ -2382,10 +2382,37 @@ contains
         bracket_count = 1
         i = i + 2
 
+        ! Find matching ) with quote awareness
         do while (i <= len_trim(input) .and. bracket_count > 0)
-          if (input(i:i) == '(') bracket_count = bracket_count + 1
-          if (input(i:i) == ')') bracket_count = bracket_count - 1
-          i = i + 1
+          if (input(i:i) == '"') then
+            ! Skip double-quoted string inside command substitution
+            i = i + 1
+            do while (i <= len_trim(input))
+              if (input(i:i) == '\' .and. i < len_trim(input)) then
+                i = i + 2
+              else if (input(i:i) == '"') then
+                i = i + 1
+                exit
+              else
+                i = i + 1
+              end if
+            end do
+          else if (input(i:i) == "'") then
+            ! Skip single-quoted string
+            i = i + 1
+            do while (i <= len_trim(input) .and. input(i:i) /= "'")
+              i = i + 1
+            end do
+            if (i <= len_trim(input)) i = i + 1
+          else if (input(i:i) == '(') then
+            bracket_count = bracket_count + 1
+            i = i + 1
+          else if (input(i:i) == ')') then
+            bracket_count = bracket_count - 1
+            i = i + 1
+          else
+            i = i + 1
+          end if
         end do
 
         if (bracket_count == 0) then
