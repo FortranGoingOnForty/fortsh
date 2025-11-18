@@ -1441,7 +1441,37 @@ contains
     character(len=*), intent(in) :: expr
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value
-    ! Assignment operators have lowest precedence
+    ! Comma operator has lowest precedence
+    value = eval_comma_shell(trim(adjustl(expr)), shell)
+  end function
+
+  ! Comma operator (evaluates left-to-right, returns rightmost value)
+  recursive function eval_comma_shell(expr, shell) result(value)
+    character(len=*), intent(in) :: expr
+    type(shell_state_t), intent(inout) :: shell
+    integer(kind=8) :: value
+    integer :: comma_pos, paren_depth, i
+    character(len=1) :: ch
+
+    ! Find comma at top level (not inside parentheses)
+    paren_depth = 0
+    comma_pos = 0
+    do i = 1, len_trim(expr)
+      ch = expr(i:i)
+      if (ch == '(') then
+        paren_depth = paren_depth + 1
+      else if (ch == ')') then
+        paren_depth = paren_depth - 1
+      else if (ch == ',' .and. paren_depth == 0) then
+        ! Evaluate left side (for side effects), then continue with right
+        value = eval_assignment_shell(trim(adjustl(expr(:i-1))), shell)
+        ! Continue evaluating right side (may have more commas)
+        value = eval_comma_shell(trim(adjustl(expr(i+1:))), shell)
+        return
+      end if
+    end do
+
+    ! No comma found, evaluate as assignment
     value = eval_assignment_shell(trim(adjustl(expr)), shell)
   end function
 
@@ -1945,42 +1975,60 @@ contains
 
     if (len_trim(expr) == 0) then; value = 0; return; end if
 
-    ! Pre-increment: ++x
+    ! Pre-increment: ++x (only if followed by a variable name, not a number)
     if (len_trim(expr) > 2 .and. expr(1:2) == '++') then
       var_name = trim(adjustl(expr(3:)))
-      ! Get current value
-      temp_value = get_shell_variable(shell, trim(var_name))
-      if (len_trim(temp_value) > 0) then
-        read(temp_value, *, iostat=iostat) current_val
-        if (iostat /= 0) current_val = 0
-      else
-        current_val = 0
+      ! Check if it starts with a letter or underscore (variable name)
+      ! If it starts with a digit, it's double unary plus, not increment
+      if (len_trim(var_name) > 0) then
+        if ((var_name(1:1) >= 'a' .and. var_name(1:1) <= 'z') .or. &
+            (var_name(1:1) >= 'A' .and. var_name(1:1) <= 'Z') .or. &
+            var_name(1:1) == '_') then
+          ! Get current value
+          temp_value = get_shell_variable(shell, trim(var_name))
+          if (len_trim(temp_value) > 0) then
+            read(temp_value, *, iostat=iostat) current_val
+            if (iostat /= 0) current_val = 0
+          else
+            current_val = 0
+          end if
+          ! Increment
+          value = current_val + 1
+          ! Set variable
+          write(var_value_str, '(I0)') value
+          call set_shell_variable(shell, trim(var_name), trim(var_value_str))
+          return
+        end if
+        ! Otherwise fall through to unary plus handling
       end if
-      ! Increment
-      value = current_val + 1
-      ! Set variable
-      write(var_value_str, '(I0)') value
-      call set_shell_variable(shell, trim(var_name), trim(var_value_str))
-      return
     end if
 
-    ! Pre-decrement: --x
+    ! Pre-decrement: --x (only if followed by a variable name, not a number)
     if (len_trim(expr) > 2 .and. expr(1:2) == '--') then
       var_name = trim(adjustl(expr(3:)))
-      ! Get current value
-      temp_value = get_shell_variable(shell, trim(var_name))
-      if (len_trim(temp_value) > 0) then
-        read(temp_value, *, iostat=iostat) current_val
-        if (iostat /= 0) current_val = 0
-      else
-        current_val = 0
+      ! Check if it starts with a letter or underscore (variable name)
+      ! If it starts with a digit, it's double unary minus, not decrement
+      if (len_trim(var_name) > 0) then
+        if ((var_name(1:1) >= 'a' .and. var_name(1:1) <= 'z') .or. &
+            (var_name(1:1) >= 'A' .and. var_name(1:1) <= 'Z') .or. &
+            var_name(1:1) == '_') then
+          ! Get current value
+          temp_value = get_shell_variable(shell, trim(var_name))
+          if (len_trim(temp_value) > 0) then
+            read(temp_value, *, iostat=iostat) current_val
+            if (iostat /= 0) current_val = 0
+          else
+            current_val = 0
+          end if
+          ! Decrement
+          value = current_val - 1
+          ! Set variable
+          write(var_value_str, '(I0)') value
+          call set_shell_variable(shell, trim(var_name), trim(var_value_str))
+          return
+        end if
+        ! Otherwise fall through to unary minus handling
       end if
-      ! Decrement
-      value = current_val - 1
-      ! Set variable
-      write(var_value_str, '(I0)') value
-      call set_shell_variable(shell, trim(var_name), trim(var_value_str))
-      return
     end if
 
     if (expr(1:1) == '!') then
@@ -2170,7 +2218,9 @@ contains
   ! Helper: Find rightmost +/- at depth 0
   function find_rightmost_additive(expr) result(pos)
     character(len=*), intent(in) :: expr
-    integer :: pos, i, depth
+    integer :: pos, i, depth, j
+    character(len=1) :: prev_ch
+    logical :: is_unary
 
     pos = 0
     depth = 0
@@ -2180,21 +2230,30 @@ contains
       else if (expr(i:i) == '(') then
         depth = depth - 1
       else if (depth == 0 .and. (expr(i:i) == '+' .or. expr(i:i) == '-')) then
-        ! Skip if it's part of ++ or -- (increment/decrement)
-        if (i > 1 .and. expr(i-1:i) == '++') cycle
-        if (i > 1 .and. expr(i-1:i) == '--') cycle
-        if (i < len_trim(expr) .and. expr(i:i+1) == '++') cycle
-        if (i < len_trim(expr) .and. expr(i:i+1) == '--') cycle
         ! Skip if it's part of unary operator at start
         if (i == 1) cycle
-        ! Skip if previous char makes this unary
-        if (expr(i-1:i-1) == '(' .or. expr(i-1:i-1) == '+' .or. &
-            expr(i-1:i-1) == '-' .or. expr(i-1:i-1) == '*' .or. &
-            expr(i-1:i-1) == '/' .or. expr(i-1:i-1) == '%' .or. &
-            expr(i-1:i-1) == '=' .or. expr(i-1:i-1) == '!' .or. &
-            expr(i-1:i-1) == '<' .or. expr(i-1:i-1) == '>' .or. &
-            expr(i-1:i-1) == '&' .or. expr(i-1:i-1) == '|' .or. &
-            expr(i-1:i-1) == '^') cycle
+        ! Skip if previous non-space char makes this unary
+        ! Find previous non-space character
+        prev_ch = ' '
+        do j = i-1, 1, -1
+          if (expr(j:j) /= ' ') then
+            prev_ch = expr(j:j)
+            exit
+          end if
+        end do
+        ! If no non-space char found (i.e., at start), it's unary
+        is_unary = (prev_ch == ' ')
+        ! Check if previous char makes this unary
+        if (.not. is_unary) then
+          is_unary = (prev_ch == '(' .or. prev_ch == '+' .or. &
+              prev_ch == '-' .or. prev_ch == '*' .or. &
+              prev_ch == '/' .or. prev_ch == '%' .or. &
+              prev_ch == '=' .or. prev_ch == '!' .or. &
+              prev_ch == '<' .or. prev_ch == '>' .or. &
+              prev_ch == '&' .or. prev_ch == '|' .or. &
+              prev_ch == '^' .or. prev_ch == ',')
+        end if
+        if (is_unary) cycle
         pos = i
         return
       end if
