@@ -467,12 +467,16 @@ contains
               select case(trim(tok%value))
               case('>&')
                 redirects(num_redirects)%type = REDIR_DUP_OUT
+                redirects(num_redirects)%fd = 1  ! default stdout
               case('<&')
                 redirects(num_redirects)%type = REDIR_DUP_IN
+                redirects(num_redirects)%fd = 0  ! default stdin
               case('>>')
                 redirects(num_redirects)%type = REDIR_APPEND
               case('<')
                 redirects(num_redirects)%type = REDIR_IN
+              case('<>')
+                redirects(num_redirects)%type = REDIR_READWRITE
               case default  ! '>'
                 redirects(num_redirects)%type = REDIR_OUT
               end select
@@ -481,8 +485,11 @@ contains
             select case(trim(tok%value))
             case('<')
               redirects(num_redirects)%type = REDIR_IN
+            case('<>')
+              redirects(num_redirects)%type = REDIR_READWRITE
             case('<&')
               redirects(num_redirects)%type = REDIR_DUP_IN
+              redirects(num_redirects)%fd = 0  ! default stdin
             case('>')
               redirects(num_redirects)%type = REDIR_OUT
             case('>|')
@@ -896,6 +903,8 @@ contains
       select case(trim(tok%value))
       case('<')
         redirects(num_redirects)%type = REDIR_IN
+      case('<>')
+        redirects(num_redirects)%type = REDIR_READWRITE
       case('<&')
         redirects(num_redirects)%type = REDIR_DUP_IN
       case('>')

@@ -49,6 +49,7 @@ module shell_types
   integer, parameter :: REDIR_DUP_IN = 7  ! <&n
   integer, parameter :: REDIR_DUP_OUT = 8 ! >&n
   integer, parameter :: REDIR_CLOSE = 9   ! n>&-
+  integer, parameter :: REDIR_READWRITE = 10  ! <> file (open for read/write)
 
   type :: redirection_t
     integer :: type = 0           ! REDIR_* constant

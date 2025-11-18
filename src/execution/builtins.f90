@@ -561,17 +561,25 @@ contains
   end subroutine
 
   subroutine builtin_echo(cmd, shell)
+    use io_helpers, only: write_stdout_checked, write_stdout_nonl_checked
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, len_token
-    logical :: first, suppress_newline
+    logical :: first, suppress_newline, write_ok, had_error
     character(len=:), allocatable :: processed
     character(len=MAX_TOKEN_LEN) :: token
 
+    had_error = .false.
+
     ! POSIX echo implementation - interprets backslash escape sequences
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens < 1) then
-      call write_stdout('')
-      shell%last_exit_status = 0
+      call write_stdout_checked('', write_ok)
+      if (.not. write_ok) then
+        call write_stderr('fortsh: echo: write error: Bad file descriptor')
+        shell%last_exit_status = 1
+      else
+        shell%last_exit_status = 0
+      end if
       return
     end if
 
@@ -582,7 +590,10 @@ contains
       ! POSIX: Skip empty tokens (unquoted empty variables disappear)
       if (len_trim(cmd%tokens(i)) == 0) cycle
 
-      if (.not. first) call write_stdout_nonl(' ')
+      if (.not. first) then
+        call write_stdout_nonl_checked(' ', write_ok)
+        if (.not. write_ok) had_error = .true.
+      end if
 
       ! Process escape sequences in token
       token = cmd%tokens(i)
@@ -626,15 +637,24 @@ contains
         end if
       end do
 
-      call write_stdout_nonl(processed)
+      call write_stdout_nonl_checked(processed, write_ok)
+      if (.not. write_ok) had_error = .true.
       first = .false.
 
       if (suppress_newline) exit
     end do
 
-    if (.not. suppress_newline) call write_stdout('')
+    if (.not. suppress_newline) then
+      call write_stdout_checked('', write_ok)
+      if (.not. write_ok) had_error = .true.
+    end if
 
-    shell%last_exit_status = 0
+    if (had_error) then
+      call write_stderr('fortsh: echo: write error: Bad file descriptor')
+      shell%last_exit_status = 1
+    else
+      shell%last_exit_status = 0
+    end if
   end subroutine
 
   subroutine builtin_jobs(cmd, shell)

@@ -8,6 +8,7 @@ module command_builtin
   use system_interface, only: F_OK, X_OK
   use iso_fortran_env, only: output_unit, error_unit
   use iso_c_binding, only: c_int, c_char, c_null_char
+  use io_helpers, only: write_stdout
   implicit none
 
   interface
@@ -193,7 +194,8 @@ contains
 
     if (verbose_flag) then
       ! command -v should not print error messages, just return exit code
-      call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true.)
+      ! Pass v_flag=.true. so it outputs just the path (POSIX format)
+      call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true., .true.)
       ! Don't overwrite exit status set by identify_command_type
     else
       ! Execute the command bypassing functions
@@ -254,69 +256,81 @@ contains
     end if
   end subroutine
 
-  subroutine identify_command_type(shell, command_name, all_flag, path_flag, type_flag, function_flag, silent_errors)
+  subroutine identify_command_type(shell, command_name, all_flag, path_flag, type_flag, function_flag, silent_errors, v_flag)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command_name
     logical, intent(in) :: all_flag, path_flag, type_flag, function_flag
-    logical, intent(in), optional :: silent_errors
+    logical, intent(in), optional :: silent_errors, v_flag
 
-    logical :: found_any, suppress_errors
+    logical :: found_any, suppress_errors, is_v_flag
     character(len=1024) :: full_path
 
     found_any = .false.
     suppress_errors = .false.
+    is_v_flag = .false.
     if (present(silent_errors)) suppress_errors = silent_errors
+    if (present(v_flag)) is_v_flag = v_flag
     
     ! Check if it's a shell keyword
     if (.not. path_flag .and. is_shell_keyword(command_name)) then
       if (type_flag) then
-        write(output_unit, '(a)') 'keyword'
+        call write_stdout('keyword')
+      else if (is_v_flag) then
+        call write_stdout(trim(command_name))
       else
-        write(output_unit, '(a,a,a)') trim(command_name), ' is a shell keyword'
+        call write_stdout(trim(command_name) // ' is a shell keyword')
       end if
       found_any = .true.
       if (.not. all_flag) return
     end if
-    
+
     ! Check if it's a function
     if (.not. path_flag .and. is_shell_function(shell, command_name)) then
       if (type_flag) then
-        write(output_unit, '(a)') 'function'
+        call write_stdout('function')
+      else if (is_v_flag) then
+        call write_stdout(trim(command_name))
       else
-        write(output_unit, '(a,a,a)') trim(command_name), ' is a function'
+        call write_stdout(trim(command_name) // ' is a function')
       end if
       found_any = .true.
       if (.not. all_flag) return
     end if
-    
+
     ! Check if it's a built-in
     if (.not. path_flag .and. is_builtin_command(command_name)) then
       if (type_flag) then
-        write(output_unit, '(a)') 'builtin'
+        call write_stdout('builtin')
+      else if (is_v_flag) then
+        call write_stdout(trim(command_name))
       else
-        write(output_unit, '(a,a,a)') trim(command_name), ' is a shell builtin'
+        call write_stdout(trim(command_name) // ' is a shell builtin')
       end if
       found_any = .true.
       if (.not. all_flag) return
     end if
-    
+
     ! Check if it's an alias
     if (.not. path_flag .and. is_shell_alias(shell, command_name)) then
       if (type_flag) then
-        write(output_unit, '(a)') 'alias'
+        call write_stdout('alias')
+      else if (is_v_flag) then
+        call write_stdout(trim(command_name))
       else
-        write(output_unit, '(a,a,a)') trim(command_name), ' is aliased'
+        call write_stdout(trim(command_name) // ' is aliased')
       end if
       found_any = .true.
       if (.not. all_flag) return
     end if
-    
+
     ! Search in PATH
     if (find_executable_in_path(shell, command_name, full_path)) then
       if (type_flag) then
-        write(output_unit, '(a)') 'file'
+        call write_stdout('file')
+      else if (is_v_flag) then
+        call write_stdout(trim(full_path))
       else
-        write(output_unit, '(a,a,a,a)') trim(command_name), ' is ', trim(full_path), ''
+        call write_stdout(trim(command_name) // ' is ' // trim(full_path))
       end if
       found_any = .true.
     end if
@@ -338,7 +352,7 @@ contains
     
     if (find_executable_in_path(shell, command_name, full_path)) then
       if (.not. silent_flag) then
-        write(output_unit, '(a)') trim(full_path)
+        call write_stdout(trim(full_path))
       end if
     else
       if (.not. silent_flag) then
