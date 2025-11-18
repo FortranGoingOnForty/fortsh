@@ -99,14 +99,37 @@ contains
           paren_count = 1
           i = i + 2
 
-          ! Find the matching closing parenthesis
+          ! Find the matching closing parenthesis (quote-aware)
           do while (i <= len_trim(cmd_str) .and. paren_count > 0)
-            if (cmd_str(i:i) == '(') then
+            if (cmd_str(i:i) == '"') then
+              ! Skip double-quoted string
+              i = i + 1
+              do while (i <= len_trim(cmd_str))
+                if (cmd_str(i:i) == '\' .and. i < len_trim(cmd_str)) then
+                  i = i + 2  ! Skip escaped character
+                else if (cmd_str(i:i) == '"') then
+                  i = i + 1
+                  exit
+                else
+                  i = i + 1
+                end if
+              end do
+            else if (cmd_str(i:i) == "'") then
+              ! Skip single-quoted string
+              i = i + 1
+              do while (i <= len_trim(cmd_str) .and. cmd_str(i:i) /= "'")
+                i = i + 1
+              end do
+              if (i <= len_trim(cmd_str)) i = i + 1
+            else if (cmd_str(i:i) == '(') then
               paren_count = paren_count + 1
+              i = i + 1
             else if (cmd_str(i:i) == ')') then
               paren_count = paren_count - 1
+              i = i + 1
+            else
+              i = i + 1
             end if
-            i = i + 1
           end do
 
           if (paren_count == 0) then
