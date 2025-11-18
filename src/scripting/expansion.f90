@@ -2418,7 +2418,10 @@ contains
         if (bracket_count == 0) then
           ! Extract command from $( ... )
           var_expr = input(start_pos+2:i-2)  ! Skip $( and )
+          ! POSIX: errexit should not trigger in command substitution
+          shell%in_command_substitution = .true.
           call execute_command_and_capture(shell, trim(var_expr), var_value)
+          shell%in_command_substitution = .false.
           result = trim(result) // trim(var_value)
         end if
 
