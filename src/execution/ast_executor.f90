@@ -597,17 +597,24 @@ contains
         shell%in_background = .true.
         ! Special case: if left side is itself a background list, execute only its left child
         ! This handles left-associative parsing: (a & b) & c should run a, not (a & b)
-        if (associated(node%list%left) .and. &
-            node%list%left%node_type == CMD_LIST .and. &
-            associated(node%list%left%list) .and. &
-            node%list%left%list%separator == LIST_SEP_BACKGROUND) then
-          if (associated(node%list%left%list%left)) then
-            status = execute_ast_node(node%list%left%list%left, shell)
+        if (associated(node%list%left)) then
+          if (node%list%left%node_type == CMD_LIST) then
+            if (associated(node%list%left%list)) then
+              if (node%list%left%list%separator == LIST_SEP_BACKGROUND) then
+                if (associated(node%list%left%list%left)) then
+                  status = execute_ast_node(node%list%left%list%left, shell)
+                else
+                  status = 0
+                end if
+              else
+                status = execute_ast_node(node%list%left, shell)
+              end if
+            else
+              status = 0
+            end if
           else
-            status = 0
+            status = execute_ast_node(node%list%left, shell)
           end if
-        else if (associated(node%list%left)) then
-          status = execute_ast_node(node%list%left, shell)
         else
           status = 0
         end if
@@ -631,25 +638,28 @@ contains
 
         ! Special case: if left side was a nested background list, fork for its right side too
         ! This handles left-associative parsing: (a & b) & c should fork for both a and b
-        if (associated(node%list%left) .and. &
-            node%list%left%node_type == CMD_LIST .and. &
-            associated(node%list%left%list) .and. &
-            node%list%left%list%separator == LIST_SEP_BACKGROUND) then
-          if (associated(node%list%left%list%right)) then
-            pid = c_fork()
-            if (pid == 0) then
-              ! Child for the nested right side
-              shell%is_interactive = .false.
-              shell%in_background = .true.
-              left_status = execute_ast_node(node%list%left%list%right, shell)
-              call c_exit(left_status)
-            else if (pid > 0) then
-              ! Parent adds this job too
-              shell%last_bg_pid = pid
-              if (.not. shell%in_background) then
-                status = add_job(shell, pid, '<background job>', .false.)
-                if (shell%is_interactive) then
-                  write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
+        if (associated(node%list%left)) then
+          if (node%list%left%node_type == CMD_LIST) then
+            if (associated(node%list%left%list)) then
+              if (node%list%left%list%separator == LIST_SEP_BACKGROUND) then
+                if (associated(node%list%left%list%right)) then
+                  pid = c_fork()
+                  if (pid == 0) then
+                    ! Child for the nested right side
+                    shell%is_interactive = .false.
+                    shell%in_background = .true.
+                    left_status = execute_ast_node(node%list%left%list%right, shell)
+                    call c_exit(left_status)
+                  else if (pid > 0) then
+                    ! Parent adds this job too
+                    shell%last_bg_pid = pid
+                    if (.not. shell%in_background) then
+                      status = add_job(shell, pid, '<background job>', .false.)
+                      if (shell%is_interactive) then
+                        write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
+                      end if
+                    end if
+                  end if
                 end if
               end if
             end if
