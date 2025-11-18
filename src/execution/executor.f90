@@ -1594,17 +1594,25 @@ contains
 
     type(c_ptr), target :: argv(num_tokens + 1)
     character(kind=c_char), target :: c_tokens(MAX_TOKEN_LEN+1, num_tokens)
-    integer :: i, j
+    integer :: i, j, k
     integer :: ret
     logical :: is_path_command
 
 
     ! Convert tokens to C strings
     do i = 1, num_tokens
-      do j = 1, len_trim(tokens(i))
-        c_tokens(j, i) = tokens(i)(j:j)
+      ! Use len_trim, but if it's 0 and token starts with whitespace, use 1
+      ! This preserves whitespace-only arguments like " "
+      j = len_trim(tokens(i))
+      if (j == 0 .and. len(tokens(i)) > 0) then
+        if (tokens(i)(1:1) == ' ' .or. tokens(i)(1:1) == char(9)) then
+          j = 1  ! Keep at least one whitespace character
+        end if
+      end if
+      do k = 1, j
+        c_tokens(k, i) = tokens(i)(k:k)
       end do
-      c_tokens(len_trim(tokens(i)) + 1, i) = c_null_char
+      c_tokens(j + 1, i) = c_null_char
       argv(i) = c_loc(c_tokens(1, i))
     end do
     argv(num_tokens + 1) = c_null_ptr
