@@ -1158,6 +1158,7 @@ contains
             end if
           else
             ! PID is not a child of this shell (or doesn't exist)
+            write(error_unit, '(a,i0,a)') 'wait: pid ', target_pid, ' not found'
             shell%last_exit_status = 127
           end if
         end if
