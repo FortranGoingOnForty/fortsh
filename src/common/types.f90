@@ -293,6 +293,8 @@ module shell_types
     logical :: executing_trap = .false.  ! Prevent recursive trap execution
     logical :: exit_trap_executed = .false.  ! Track if EXIT trap has been executed
     logical :: evaluating_condition = .false.  ! Suppress errexit during if/while/until condition evaluation
+    logical :: in_and_or_list = .false.       ! Suppress errexit in && and || lists
+    logical :: in_negation = .false.          ! Suppress errexit for negated pipelines (!)
     ! Command hash table
     type(command_hash_entry_t) :: command_hash(50)
     integer :: num_hashed_commands = 0

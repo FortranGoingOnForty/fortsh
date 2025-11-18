@@ -525,7 +525,10 @@ contains
     if (node%pipeline%num_commands == 1) then
       ! Single command - no piping needed
       if (associated(node%pipeline%commands)) then
+        ! POSIX: Suppress errexit for negated pipelines
+        if (node%pipeline%negate) shell%in_negation = .true.
         exit_status = execute_ast_node(node%pipeline%commands(1), shell)
+        shell%in_negation = .false.
       end if
 
       ! Handle negation
@@ -829,7 +832,12 @@ contains
 
     ! Execute left side (for all non-background separators)
     if (associated(node%list%left)) then
+      ! POSIX: Suppress errexit during left side of AND-OR lists
+      if (node%list%separator == LIST_SEP_AND .or. node%list%separator == LIST_SEP_OR) then
+        shell%in_and_or_list = .true.
+      end if
       left_status = execute_ast_node(node%list%left, shell)
+      shell%in_and_or_list = .false.
     else
       left_status = 0
     end if
@@ -932,7 +940,10 @@ contains
 
     ! Evaluate condition
     if (associated(node%if_stmt%condition)) then
+      ! POSIX: Suppress errexit during condition evaluation
+      shell%evaluating_condition = .true.
       cond_status = execute_ast_node(node%if_stmt%condition, shell)
+      shell%evaluating_condition = .false.
     else
       cond_status = 1
     end if
