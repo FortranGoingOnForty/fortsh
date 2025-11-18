@@ -1278,6 +1278,21 @@ contains
         end do
       else
         ! No IFS chars or shouldn't split, just add as single token
+        ! POSIX: Skip empty tokens from unquoted variable expansion
+        ! Only keep empty strings if the original token was quoted
+        if (len_trim(expanded) == 0) then
+          ! Check if original token was quoted
+          if (allocated(cmd%token_quoted) .and. i <= size(cmd%token_quoted)) then
+            if (.not. cmd%token_quoted(i)) then
+              cycle  ! Skip empty unquoted token
+            end if
+          else
+            ! No metadata - check token for quotes (fallback)
+            if (index(cmd%tokens(i), '"') == 0 .and. index(cmd%tokens(i), "'") == 0) then
+              cycle  ! Skip empty unquoted token
+            end if
+          end if
+        end if
         total_tokens = total_tokens + 1
         if (total_tokens <= size(temp_tokens)) then
           temp_tokens(total_tokens) = expanded
