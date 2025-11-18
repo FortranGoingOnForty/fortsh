@@ -2510,6 +2510,7 @@ contains
 
     integer :: i, field_idx, input_len
     logical :: prev_was_ifs, is_ifs_char, is_whitespace_ifs
+    logical :: prev_was_nonws_ifs  ! Previous was non-whitespace IFS
     character(len=1024) :: current_field
     logical :: has_whitespace_ifs
 
@@ -2517,6 +2518,7 @@ contains
     field_idx = 1
     current_field = ''
     prev_was_ifs = .false.
+    prev_was_nonws_ifs = .false.
 
     ! Handle empty input
     input_len = len_trim(input)
@@ -2543,13 +2545,16 @@ contains
         field_count = field_count + 1
       end if
       prev_was_ifs = .true.
+      prev_was_nonws_ifs = .true.
     else if (.not. is_ifs_char) then
       ! Start with non-IFS character
       current_field = input(1:1)
       prev_was_ifs = .false.
+      prev_was_nonws_ifs = .false.
     else
       ! Leading whitespace IFS - skip
       prev_was_ifs = .true.
+      prev_was_nonws_ifs = .false.
     end if
 
     ! Process remaining characters
@@ -2571,26 +2576,38 @@ contains
         end if
         current_field = trim(current_field) // input(i:i)
         prev_was_ifs = .false.
+        prev_was_nonws_ifs = .false.
       else
         ! IFS character
-        if (len_trim(current_field) > 0 .or. (.not. prev_was_ifs .and. .not. is_whitespace_ifs)) then
-          ! Save current field
+        if (len_trim(current_field) > 0) then
+          ! Save current field when we have content
           if (field_idx <= size(fields)) then
             fields(field_idx) = current_field
             field_idx = field_idx + 1
             field_count = field_count + 1
           end if
           current_field = ''
-        end if
-        ! Non-whitespace IFS after non-whitespace IFS creates empty field
-        if (prev_was_ifs .and. .not. is_whitespace_ifs) then
-          if (field_idx <= size(fields)) then
-            fields(field_idx) = ''
-            field_idx = field_idx + 1
-            field_count = field_count + 1
+        else if (.not. is_whitespace_ifs) then
+          ! Non-whitespace IFS
+          ! POSIX: Only create empty field for consecutive non-whitespace IFS
+          ! without any whitespace between them. So "::" creates empty, but ": :" doesn't
+          if (prev_was_nonws_ifs) then
+            if (field_idx <= size(fields)) then
+              fields(field_idx) = ''
+              field_idx = field_idx + 1
+              field_count = field_count + 1
+            end if
           end if
         end if
+
+        ! Track state for next iteration
         prev_was_ifs = .true.
+        if (.not. is_whitespace_ifs) then
+          prev_was_nonws_ifs = .true.
+        else
+          ! Whitespace IFS resets the consecutive non-whitespace tracking
+          prev_was_nonws_ifs = .false.
+        end if
       end if
     end do
 
