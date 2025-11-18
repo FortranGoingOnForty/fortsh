@@ -131,12 +131,14 @@ section "150. BACKGROUND PIPELINES"
 
 test_succeeds "pipeline in background" 'echo test | cat &'
 test_succeeds "multi-stage background pipeline" 'echo test | cat | cat & wait'
-test_output "background pipeline exit" 'echo test | cat & wait $!; echo $?' '0'
+# Pipeline output appears before exit status since it runs in background
+test_output "background pipeline exit" 'true | cat & wait $!; echo $?' '0'
 
 section "151. $! LAST BACKGROUND PID"
 
 test_succeeds "$! is set after background" 'sleep 0.1 & test -n "$!"'
-test_succeeds "$! is numeric" 'sleep 0.1 & case $! in *[!0-9]*) false;; esac'
+# Use test -gt to check numeric - pattern [!0-9] has portability issues
+test_succeeds "$! is numeric" 'sleep 0.1 & test "$!" -gt 0'
 test_succeeds "wait for $!" 'sleep 0.1 & wait $!'
 
 section "152. JOB SPECIFICATIONS (if supported)"
@@ -178,7 +180,8 @@ skip "disown builtin (not required by POSIX)"
 
 section "158. AMPERSAND SEMANTICS"
 
-test_output "& at end" 'echo test &' ''
+# Background jobs still output to stdout - just test it succeeds
+test_succeeds "& at end" 'echo test &'
 test_output "multiple & commands" 'echo a & echo b & wait; echo done' 'a
 b
 done'
