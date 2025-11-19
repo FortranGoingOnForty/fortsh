@@ -1586,7 +1586,41 @@ contains
     do_strip_tabs = .false.
     if (present(strip_tabs)) do_strip_tabs = strip_tabs
 
-    ! Check if we have pending heredoc content from -c flag
+    ! Check if we have pending heredocs from -c flag (new array-based approach)
+    if (shell%num_pending_heredocs > 0 .and. &
+        shell%next_pending_heredoc <= shell%num_pending_heredocs) then
+      ! Get the next pending heredoc
+      buffer = trim(shell%pending_heredocs(shell%next_pending_heredoc)%content)
+
+      ! Check if we should expand variables
+      should_expand = .not. shell%pending_heredocs(shell%next_pending_heredoc)%quoted
+
+      ! Expand variables if needed
+      if (should_expand) then
+        buffer = expand_heredoc_variables(buffer, shell)
+      end if
+
+      allocate(character(len=len_trim(buffer)) :: content)
+      content = trim(buffer)
+
+      ! Advance to next pending heredoc
+      shell%next_pending_heredoc = shell%next_pending_heredoc + 1
+
+      ! Clear pending heredocs when all consumed
+      if (shell%next_pending_heredoc > shell%num_pending_heredocs) then
+        shell%num_pending_heredocs = 0
+        shell%next_pending_heredoc = 1
+        ! Also clear legacy single heredoc
+        shell%has_pending_heredoc = .false.
+        shell%pending_heredoc = ''
+        shell%pending_heredoc_delimiter = ''
+        shell%pending_heredoc_quoted = .false.
+        shell%pending_heredoc_strip_tabs = .false.
+      end if
+      return
+    end if
+
+    ! Legacy: Check single pending heredoc (backward compatibility)
     if (shell%has_pending_heredoc .and. &
         trim(shell%pending_heredoc_delimiter) == trim(delimiter)) then
       ! Use the pre-stored content (tabs already stripped by preprocess_heredocs_for_c if needed)
