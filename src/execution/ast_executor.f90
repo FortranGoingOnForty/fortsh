@@ -150,7 +150,13 @@ contains
           character(len=:), allocatable :: expanded_value
 
           do assign_idx = 1, node%simple_cmd%num_assignments
-            token_len = len_trim(node%simple_cmd%assignments(assign_idx))
+            ! Use tracked length to preserve trailing whitespace
+            if (allocated(node%simple_cmd%assignment_lengths) .and. &
+                assign_idx <= size(node%simple_cmd%assignment_lengths)) then
+              token_len = node%simple_cmd%assignment_lengths(assign_idx)
+            else
+              token_len = len_trim(node%simple_cmd%assignments(assign_idx))
+            end if
             assign_eq_pos = index(node%simple_cmd%assignments(assign_idx), '=')
             if (assign_eq_pos > 1) then
               assign_name = node%simple_cmd%assignments(assign_idx)(1:assign_eq_pos-1)

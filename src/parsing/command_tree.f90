@@ -81,6 +81,7 @@ module command_tree
     type(redirection_t), allocatable :: redirects(:)          ! Redirections
     integer :: num_redirects = 0
     character(len=MAX_TOKEN_LEN), allocatable :: assignments(:) ! VAR=value
+    integer, allocatable :: assignment_lengths(:)               ! Actual length of each assignment
     integer :: num_assignments = 0
     ! Heredoc support (delimiter only, content handled at execution)
     character(len=MAX_TOKEN_LEN) :: heredoc_delimiter = ''    ! Delimiter word (EOF)
