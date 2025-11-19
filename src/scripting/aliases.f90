@@ -43,11 +43,15 @@ contains
     character(len=*), intent(in) :: alias_name
     character(len=:), allocatable :: command
     integer :: i
-    
+    character(len=256) :: name_check
+
     command = ''
-    
+
     do i = 1, size(shell%aliases)
-      if (trim(shell%aliases(i)%name) == trim(alias_name)) then
+      name_check = shell%aliases(i)%name
+      ! Skip empty/unset aliases
+      if (len_trim(name_check) == 0) cycle
+      if (trim(name_check) == trim(alias_name)) then
         command = trim(shell%aliases(i)%command)
         return
       end if
@@ -231,10 +235,14 @@ contains
     character(len=*), intent(in) :: name
     logical :: found
     integer :: i
-    
+    character(len=256) :: alias_name
+
     found = .false.
     do i = 1, size(shell%aliases)
-      if (trim(shell%aliases(i)%name) == trim(name)) then
+      alias_name = shell%aliases(i)%name
+      ! Skip empty/unset aliases
+      if (len_trim(alias_name) == 0) cycle
+      if (trim(alias_name) == trim(name)) then
         found = .true.
         return
       end if
@@ -246,13 +254,16 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: input_line
     character(len=:), allocatable, intent(out) :: expanded_line
-    
+
     character(len=256) :: first_word, rest_of_line
     character(len=:), allocatable :: alias_command
     integer :: space_pos
-    
+
     expanded_line = input_line
-    
+
+    ! POSIX: Aliases are only expanded in interactive shells
+    if (.not. shell%is_interactive) return
+
     ! Extract first word
     space_pos = index(trim(input_line), ' ')
     if (space_pos > 0) then
@@ -262,7 +273,7 @@ contains
       first_word = trim(input_line)
       rest_of_line = ''
     end if
-    
+
     ! Check if first word is an alias
     if (is_alias(shell, first_word)) then
       alias_command = get_alias(shell, first_word)
