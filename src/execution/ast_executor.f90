@@ -317,7 +317,13 @@ contains
     temp_pipeline%commands(1)%separator = SEP_NONE
     temp_pipeline%commands(1)%background = .false.
     temp_pipeline%commands(1)%num_redirections = 0
-    temp_pipeline%commands(1)%num_prefix_assignments = 0
+    ! Copy prefix assignments from AST
+    temp_pipeline%commands(1)%num_prefix_assignments = node%simple_cmd%num_assignments
+    if (node%simple_cmd%num_assignments > 0 .and. allocated(node%simple_cmd%assignments)) then
+      do i = 1, node%simple_cmd%num_assignments
+        temp_pipeline%commands(1)%prefix_assignments(i) = node%simple_cmd%assignments(i)
+      end do
+    end if
     ! Check if words were pre-expanded in pipeline
     temp_pipeline%commands(1)%skip_expansion = node%simple_cmd%pre_expanded
 
