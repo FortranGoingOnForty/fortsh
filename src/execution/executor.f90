@@ -31,7 +31,7 @@ contains
 
     should_continue = .true.
     i = 1
-    
+
     do while (i <= pipeline%num_commands .and. should_continue)
       select case(pipeline%commands(i)%separator)
       case(SEP_PIPE)
@@ -615,7 +615,8 @@ contains
       end block
       call execute_builtin_with_redirects(cmd, shell)
     ! Check for alias expansion (unless bypass_aliases is set by 'command' builtin)
-    else if (.not. shell%bypass_aliases .and. is_alias(shell, cmd%tokens(1))) then
+    ! POSIX: Aliases are only expanded in interactive shells
+    else if (shell%is_interactive .and. .not. shell%bypass_aliases .and. is_alias(shell, cmd%tokens(1))) then
       block
         character(len=:), allocatable :: alias_command, expanded_command
         character(len=4096) :: rest_of_command
