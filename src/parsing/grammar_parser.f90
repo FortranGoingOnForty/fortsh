@@ -311,8 +311,14 @@ contains
     type(redirection_t) :: redirects(10)
     integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos
     type(token_t) :: tok, next_tok, peek_tok, delim_tok
+    ! Prefix assignments (VAR=value before command)
+    character(len=MAX_TOKEN_LEN) :: assignments(10)
+    integer :: num_assignments, eq_pos
+    logical :: seen_command
     num_words = 0
     num_redirects = 0
+    num_assignments = 0
+    seen_command = .false.
     nullify(node)
     was_quoted = .false.
     was_escaped = .false.
@@ -357,9 +363,8 @@ contains
       if (tok%token_type == TOKEN_WORD .or. &
           (tok%token_type == TOKEN_KEYWORD .and. num_words > 0)) then
         ! Check if this is an assignment (VAR= followed by value)
-        ! Only merge if first token (assignments come before commands)
         ! Use actual token length (end_pos - start_pos + 1) instead of len_trim to preserve whitespace
-        if (num_words == 0 .and. index(tok%value, '=') > 0 .and. &
+        if (index(tok%value, '=') > 0 .and. &
             index(tok%value, '=') == (tok%end_pos - tok%start_pos + 1)) then
           ! This ends with = , check if next token is the value
           call advance(state)
@@ -368,66 +373,78 @@ contains
             ! Merge: VAR= + value → VAR=value
             ! For quoted tokens, preserve whitespace by using actual token length
             if (next_tok%quoted) then
-              ! Quoted value - preserve full content including trailing whitespace
-              ! Calculate actual length: len(VAR=) + actual_value_length
-              ! Subtract 2 for quotes since lexer already stripped them from value
               merged_word = trim(tok%value) // next_tok%value(1:next_tok%end_pos - next_tok%start_pos + 1 - 2)
             else
-              ! Unquoted value - use trim as before
               merged_word = trim(tok%value) // trim(next_tok%value)
             end if
-            if (num_words < MAX_TOKENS) then
-              num_words = num_words + 1
-              words(num_words) = merged_word
-              was_quoted(num_words) = next_tok%quoted
-              was_escaped(num_words) = next_tok%escaped
-              quote_types(num_words) = next_tok%quote_type
-              ! Calculate actual word length
-              if (next_tok%quoted) then
-                ! Quoted value: length = len(VAR=) + actual_value_length
-                ! Subtract 2 from position calculation because end_pos/start_pos include the quotes
-                ! but the token value has quotes stripped
-                word_lens(num_words) = len_trim(tok%value) + (next_tok%end_pos - next_tok%start_pos + 1 - 2)
-              else
-                ! Unquoted value: use len_trim of merged result
-                word_lens(num_words) = len_trim(merged_word)
+            ! Check if this is a prefix assignment (before command) or regular word
+            if (.not. seen_command .and. num_assignments < 10) then
+              ! This is a prefix assignment
+              num_assignments = num_assignments + 1
+              assignments(num_assignments) = merged_word
+            else
+              ! This is a regular word (assignment after command name)
+              if (num_words < MAX_TOKENS) then
+                num_words = num_words + 1
+                words(num_words) = merged_word
+                was_quoted(num_words) = next_tok%quoted
+                was_escaped(num_words) = next_tok%escaped
+                quote_types(num_words) = next_tok%quote_type
+                if (next_tok%quoted) then
+                  word_lens(num_words) = len_trim(tok%value) + (next_tok%end_pos - next_tok%start_pos + 1 - 2)
+                else
+                  word_lens(num_words) = len_trim(merged_word)
+                end if
               end if
             end if
             call advance(state)
           else
-            ! Just VAR= without value, keep as-is
+            ! Just VAR= without value
+            if (.not. seen_command .and. num_assignments < 10) then
+              num_assignments = num_assignments + 1
+              assignments(num_assignments) = tok%value
+            else
+              if (num_words < MAX_TOKENS) then
+                num_words = num_words + 1
+                words(num_words) = tok%value
+                was_quoted(num_words) = tok%quoted
+                was_escaped(num_words) = tok%escaped
+                quote_types(num_words) = tok%quote_type
+                if (tok%quoted) then
+                  word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
+                else
+                  word_lens(num_words) = tok%end_pos - tok%start_pos + 1
+                end if
+              end if
+            end if
+          end if
+        else
+          ! Check if this is a complete assignment (VAR=value) before the command
+          eq_pos = index(tok%value, '=')
+          if (.not. seen_command .and. eq_pos > 1 .and. &
+              is_valid_assignment_name(tok%value(1:eq_pos-1)) .and. &
+              num_assignments < 10) then
+            ! This is a prefix assignment
+            num_assignments = num_assignments + 1
+            assignments(num_assignments) = tok%value
+            call advance(state)
+          else
+            ! Regular word - this is the command or an argument
+            seen_command = .true.
             if (num_words < MAX_TOKENS) then
               num_words = num_words + 1
               words(num_words) = tok%value
               was_quoted(num_words) = tok%quoted
               was_escaped(num_words) = tok%escaped
               quote_types(num_words) = tok%quote_type
-              ! For quoted tokens, subtract 2 for quotes; for unquoted, use full length
               if (tok%quoted) then
                 word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
               else
                 word_lens(num_words) = tok%end_pos - tok%start_pos + 1
               end if
             end if
+            call advance(state)
           end if
-        else
-          ! Regular word
-          if (num_words < MAX_TOKENS) then
-            num_words = num_words + 1
-            ! For quoted tokens, preserve whitespace - just use full token value
-            ! The lexer already stripped quotes and preserved content
-            words(num_words) = tok%value
-            was_quoted(num_words) = tok%quoted
-            was_escaped(num_words) = tok%escaped
-            quote_types(num_words) = tok%quote_type
-            ! For quoted tokens, subtract 2 for quotes; for unquoted, use full length
-            if (tok%quoted) then
-              word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
-            else
-              word_lens(num_words) = tok%end_pos - tok%start_pos + 1
-            end if
-          end if
-          call advance(state)
         end if
       else if (tok%token_type == TOKEN_REDIRECT) then
         if (num_redirects < 10) then
@@ -592,6 +609,28 @@ contains
           node%simple_cmd%num_redirects = num_redirects
           node%simple_cmd%redirects(1:num_redirects) = redirects(1:num_redirects)
         end if
+
+        ! Store prefix assignments
+        if (num_assignments > 0) then
+          allocate(node%simple_cmd%assignments(num_assignments))
+          node%simple_cmd%num_assignments = num_assignments
+          do i = 1, num_assignments
+            node%simple_cmd%assignments(i) = assignments(i)
+          end do
+        end if
+      end if
+    else if (num_assignments > 0) then
+      ! Pure assignment(s) with no command - create a node with just assignments
+      node => create_simple_command(assignments, num_assignments)
+      if (associated(node%simple_cmd)) then
+        ! Mark these as assignments, not command words
+        node%simple_cmd%num_words = 0
+        if (allocated(node%simple_cmd%words)) deallocate(node%simple_cmd%words)
+        allocate(node%simple_cmd%assignments(num_assignments))
+        node%simple_cmd%num_assignments = num_assignments
+        do i = 1, num_assignments
+          node%simple_cmd%assignments(i) = assignments(i)
+        end do
       end if
     end if
   end function
@@ -1021,5 +1060,39 @@ contains
       node%redirects(1:num_redirects) = redirects(1:num_redirects)
     end if
   end subroutine
+
+  ! Check if a string is a valid shell variable name for assignments
+  function is_valid_assignment_name(name) result(valid)
+    character(len=*), intent(in) :: name
+    logical :: valid
+    integer :: i, name_len
+    character :: ch
+
+    valid = .false.
+    name_len = len_trim(name)
+
+    if (name_len == 0) return
+
+    ! First character must be letter or underscore
+    ch = name(1:1)
+    if (.not. ((ch >= 'a' .and. ch <= 'z') .or. &
+               (ch >= 'A' .and. ch <= 'Z') .or. &
+               ch == '_')) then
+      return
+    end if
+
+    ! Remaining characters must be letter, digit, or underscore
+    do i = 2, name_len
+      ch = name(i:i)
+      if (.not. ((ch >= 'a' .and. ch <= 'z') .or. &
+                 (ch >= 'A' .and. ch <= 'Z') .or. &
+                 (ch >= '0' .and. ch <= '9') .or. &
+                 ch == '_')) then
+        return
+      end if
+    end do
+
+    valid = .true.
+  end function is_valid_assignment_name
 
 end module grammar_parser
