@@ -313,11 +313,13 @@ contains
     type(token_t) :: tok, next_tok, peek_tok, delim_tok
     ! Prefix assignments (VAR=value before command)
     character(len=MAX_TOKEN_LEN) :: assignments(10)
+    integer :: assignment_lens(10)
     integer :: num_assignments, eq_pos
     logical :: seen_command
     num_words = 0
     num_redirects = 0
     num_assignments = 0
+    assignment_lens = 0
     seen_command = .false.
     nullify(node)
     was_quoted = .false.
@@ -382,6 +384,12 @@ contains
               ! This is a prefix assignment
               num_assignments = num_assignments + 1
               assignments(num_assignments) = merged_word
+              ! Calculate actual length
+              if (next_tok%quoted) then
+                assignment_lens(num_assignments) = len_trim(tok%value) + (next_tok%end_pos - next_tok%start_pos + 1 - 2)
+              else
+                assignment_lens(num_assignments) = len_trim(tok%value) + len_trim(next_tok%value)
+              end if
             else
               ! This is a regular word (assignment after command name)
               if (num_words < MAX_TOKENS) then
@@ -403,6 +411,7 @@ contains
             if (.not. seen_command .and. num_assignments < 10) then
               num_assignments = num_assignments + 1
               assignments(num_assignments) = tok%value
+              assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1
             else
               if (num_words < MAX_TOKENS) then
                 num_words = num_words + 1
@@ -427,6 +436,12 @@ contains
             ! This is a prefix assignment
             num_assignments = num_assignments + 1
             assignments(num_assignments) = tok%value
+            ! Calculate length accounting for quotes
+            if (tok%quoted) then
+              assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1 - 2
+            else
+              assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1
+            end if
             call advance(state)
           else
             ! Regular word - this is the command or an argument
@@ -613,9 +628,11 @@ contains
         ! Store prefix assignments
         if (num_assignments > 0) then
           allocate(node%simple_cmd%assignments(num_assignments))
+          allocate(node%simple_cmd%assignment_lengths(num_assignments))
           node%simple_cmd%num_assignments = num_assignments
           do i = 1, num_assignments
             node%simple_cmd%assignments(i) = assignments(i)
+            node%simple_cmd%assignment_lengths(i) = assignment_lens(i)
           end do
         end if
       end if
@@ -627,9 +644,11 @@ contains
         node%simple_cmd%num_words = 0
         if (allocated(node%simple_cmd%words)) deallocate(node%simple_cmd%words)
         allocate(node%simple_cmd%assignments(num_assignments))
+        allocate(node%simple_cmd%assignment_lengths(num_assignments))
         node%simple_cmd%num_assignments = num_assignments
         do i = 1, num_assignments
           node%simple_cmd%assignments(i) = assignments(i)
+          node%simple_cmd%assignment_lengths(i) = assignment_lens(i)
         end do
       end if
     end if
