@@ -129,6 +129,10 @@ contains
       ! Mark that we're in a capture child (suppress errexit messages)
       shell%in_capture_child = .true.
 
+      ! POSIX: Disable errexit (set -e) in command substitution subshells
+      ! The exit status of the subshell is passed back, but failures don't exit
+      shell%option_errexit = .false.
+
       ! Execute the command
       call execute_command_ptr(shell, command, exit_status)
 

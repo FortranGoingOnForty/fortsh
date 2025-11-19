@@ -145,26 +145,29 @@ contains
         block
           use variables, only: set_shell_variable
           use parser, only: expand_variables
-          integer :: assign_idx, assign_eq_pos
+          integer :: assign_idx, assign_eq_pos, value_len, token_len
           character(len=256) :: assign_name, assign_value
           character(len=:), allocatable :: expanded_value
 
           do assign_idx = 1, node%simple_cmd%num_assignments
+            token_len = len_trim(node%simple_cmd%assignments(assign_idx))
             assign_eq_pos = index(node%simple_cmd%assignments(assign_idx), '=')
             if (assign_eq_pos > 1) then
               assign_name = node%simple_cmd%assignments(assign_idx)(1:assign_eq_pos-1)
               assign_value = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:)
+              value_len = token_len - assign_eq_pos
 
               ! Expand variables and command substitutions in the value
               if (index(assign_value, '$') > 0 .or. index(assign_value, '~') > 0) then
                 call expand_variables(assign_value, expanded_value, shell)
                 if (allocated(expanded_value)) then
-                  call set_shell_variable(shell, trim(assign_name), expanded_value)
+                  call set_shell_variable(shell, trim(assign_name), expanded_value, len(expanded_value))
                 else
-                  call set_shell_variable(shell, trim(assign_name), '')
+                  call set_shell_variable(shell, trim(assign_name), '', 0)
                 end if
               else
-                call set_shell_variable(shell, trim(assign_name), trim(assign_value))
+                ! Preserve whitespace in value by passing explicit length
+                call set_shell_variable(shell, trim(assign_name), assign_value, value_len)
               end if
             end if
           end do
