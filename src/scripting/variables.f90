@@ -365,11 +365,7 @@ contains
       case ('PS4')
         var_len = shell%ps4_len
         return
-      case default
-        ! For other special variables, use len_trim
-        temp_value = get_shell_variable(shell, name)
-        var_len = len_trim(temp_value)
-        return
+      ! Note: No case default here - fall through to regular variable handling
     end select
 
     ! Handle regular shell variables
@@ -650,19 +646,28 @@ contains
           ! Check shell variables first
           if (len_trim(var_name) > 0) then
             var_value = get_shell_variable(shell, trim(var_name))
-            if (len_trim(var_value) > 0) then
-              result(j:j+len_trim(var_value)-1) = trim(var_value)
-              j = j + len_trim(var_value)
-            else
-              ! Fall back to environment variables (not for special vars)
-              if (.not. any(var_name == ['!', '?', '$', '#', '*', '@', '-', '_', '0'])) then
-                env_value = get_environment_var(trim(var_name))
-                if (allocated(env_value) .and. len(env_value) > 0) then
-                  result(j:j+len(env_value)-1) = env_value
-                  j = j + len(env_value)
+            block
+              integer :: var_len
+              var_len = get_shell_variable_length(shell, trim(var_name))
+              if (var_len > 0) then
+                ! Use actual length to preserve trailing whitespace
+                result(j:j+var_len-1) = var_value(1:var_len)
+                j = j + var_len
+              else if (len_trim(var_value) > 0) then
+                ! Fallback for compatibility
+                result(j:j+len_trim(var_value)-1) = trim(var_value)
+                j = j + len_trim(var_value)
+              else
+                ! Fall back to environment variables (not for special vars)
+                if (.not. any(var_name == ['!', '?', '$', '#', '*', '@', '-', '_', '0'])) then
+                  env_value = get_environment_var(trim(var_name))
+                  if (allocated(env_value) .and. len(env_value) > 0) then
+                    result(j:j+len(env_value)-1) = env_value
+                    j = j + len(env_value)
+                  end if
                 end if
               end if
-            end if
+            end block
           end if
         end if
       else
@@ -671,9 +676,14 @@ contains
         j = j + 1
       end if
     end do
-    
-    expanded = trim(result)
-    
+
+    ! Don't use trim() - preserve trailing whitespace
+    if (j > 1) then
+      expanded = result(1:j-1)
+    else
+      expanded = ''
+    end if
+
   contains
     function is_alnum(ch) result(res)
       character, intent(in) :: ch

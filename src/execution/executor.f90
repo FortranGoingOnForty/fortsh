@@ -914,9 +914,34 @@ contains
       end if
       token = cmd%tokens(1)
     else
-      ! Unquoted token - trim is safe
-      token = trim(cmd%tokens(1))
-      token_len = len_trim(token)
+      ! Old parser: token may contain quotes with whitespace inside
+      ! We need to find the actual token end, not use len_trim which strips whitespace
+      token = cmd%tokens(1)
+
+      ! Find the = sign to check if value is quoted
+      eq_pos = index(token, '=')
+      if (eq_pos > 0 .and. eq_pos < len(token)) then
+        ! Check if value starts with a quote
+        if (token(eq_pos+1:eq_pos+1) == '"' .or. token(eq_pos+1:eq_pos+1) == "'") then
+          quote_char_temp = token(eq_pos+1:eq_pos+1)
+          ! Find the closing quote to determine actual length
+          do i = eq_pos + 2, len(token)
+            if (token(i:i) == quote_char_temp) then
+              token_len = i
+              exit
+            end if
+          end do
+          ! If no closing quote found, fall back to len_trim
+          if (i > len(token)) then
+            token_len = len_trim(token)
+          end if
+        else
+          ! Unquoted value - trim is safe
+          token_len = len_trim(token)
+        end if
+      else
+        token_len = len_trim(token)
+      end if
     end if
     eq_pos = index(token, '=')
     if (eq_pos == 0) return
@@ -1005,10 +1030,19 @@ contains
         end if
       else
         ! No variable expansion needed
-        ! For tokens from new parser/lexer, quotes are already properly processed
-        ! Just use the value as-is
         ! Calculate actual length from token positions (NOT len_trim, to preserve whitespace)
         actual_value_len = token_len - eq_pos
+
+        ! Strip outer quotes if present (old parser keeps quotes in tokens)
+        if (actual_value_len >= 2) then
+          if ((var_value(1:1) == '"' .and. var_value(actual_value_len:actual_value_len) == '"') .or. &
+              (var_value(1:1) == "'" .and. var_value(actual_value_len:actual_value_len) == "'")) then
+            ! Remove quotes and adjust length
+            var_value = var_value(2:actual_value_len-1)
+            actual_value_len = actual_value_len - 2
+          end if
+        end if
+
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
         ! Set exit status to 0 for simple assignments without expansions
         shell%last_exit_status = 0

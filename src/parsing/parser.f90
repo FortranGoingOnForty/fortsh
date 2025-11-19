@@ -1550,7 +1550,12 @@ contains
     ! POSIX: Quote removal does NOT apply to the results of parameter expansion
     ! Only apply quote removal to quotes that were literally in the command, not in variable values
     ! So we do NOT call strip_outer_quotes here - that would incorrectly remove quotes from values like $VAR where VAR='"test"'
-    expanded = trim(result)
+    ! Don't use trim() - preserve trailing whitespace from variable values
+    if (j > 1) then
+      expanded = result(1:j-1)
+    else
+      expanded = ''
+    end if
 
   contains
     
