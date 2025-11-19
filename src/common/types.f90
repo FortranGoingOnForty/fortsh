@@ -62,6 +62,18 @@ module shell_types
   end type redirection_t
 
   ! =====================================
+  ! Pending heredoc entry for -c flag processing
+  ! =====================================
+  integer, parameter :: MAX_PENDING_HEREDOCS = 10
+
+  type :: pending_heredoc_entry_t
+    character(len=4096) :: content = ''
+    character(len=256) :: delimiter = ''
+    logical :: quoted = .false.
+    logical :: strip_tabs = .false.
+  end type pending_heredoc_entry_t
+
+  ! =====================================
   ! Token types for new grammar-aware parser
   ! =====================================
   integer, parameter :: TOKEN_WORD = 1
@@ -399,7 +411,12 @@ module shell_types
     integer :: dir_history_size = 0                  ! Number of directories in history
     integer :: dir_history_index = 0                 ! Current position in history
 
-    ! Pending heredoc for -c flag processing
+    ! Pending heredocs for -c flag processing (array for multiple heredocs on same line)
+    type(pending_heredoc_entry_t) :: pending_heredocs(MAX_PENDING_HEREDOCS)
+    integer :: num_pending_heredocs = 0
+    integer :: next_pending_heredoc = 1  ! Index of next heredoc to consume
+
+    ! Legacy single heredoc support (for backward compatibility during transition)
     character(len=4096) :: pending_heredoc = ''
     character(len=256) :: pending_heredoc_delimiter = ''
     logical :: pending_heredoc_quoted = .false.

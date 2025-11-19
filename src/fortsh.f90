@@ -554,194 +554,186 @@ contains
     character(len=*), intent(in) :: input
     type(shell_state_t), intent(inout) :: shell
     character(len=len(input)*2) :: output
-    integer :: i, j, heredoc_start, delim_start, delim_end
-    integer :: content_start, content_end, next_cmd_start
-    character(len=256) :: delimiter
+    integer :: i, j, k, cmd_line_end, content_pos
+    integer :: delim_start, delim_end, content_start, content_end
+    character(len=256) :: delimiter, delimiters(MAX_PENDING_HEREDOCS)
+    logical :: quoted_delimiters(MAX_PENDING_HEREDOCS), strip_tabs_arr(MAX_PENDING_HEREDOCS)
+    integer :: num_heredocs, heredoc_idx
     character(len=4096) :: heredoc_content
     logical :: quoted_delimiter, strip_tabs
-
-    ! write(error_unit, '(A,A,A)') 'DEBUG: preprocess input=|', input(1:min(200,len_trim(input))), '|'
+    character(len=len(input)) :: cmd_line
 
     output = input  ! Start with original
 
-    ! Look for heredoc marker
-    i = index(input, '<<')
-    if (i == 0) then
-      return  ! No heredoc
+    ! Find the first newline - everything before is the command line
+    cmd_line_end = index(input, char(10))
+    if (cmd_line_end == 0) then
+      ! No newline means no heredoc content
+      return
     end if
 
-    ! Check for <<- (strip tabs)
-    strip_tabs = .false.
-    if (i + 2 <= len_trim(input) .and. input(i+2:i+2) == '-') then
-      strip_tabs = .true.
-      j = i + 3
-    else
-      j = i + 2
-    end if
+    cmd_line = input(1:cmd_line_end-1)
 
-    ! Skip spaces after << or <<-
-    do while (j <= len_trim(input) .and. input(j:j) == ' ')
-      j = j + 1
-    end do
+    ! Count and collect all heredoc delimiters from the command line
+    num_heredocs = 0
+    i = 1
+    do while (i <= len_trim(cmd_line))
+      j = index(cmd_line(i:), '<<')
+      if (j == 0) exit
+      j = i + j - 1  ! Adjust to absolute position
 
-    ! Check for quoted delimiter
-    quoted_delimiter = .false.
-    if (input(j:j) == "'" .or. input(j:j) == '"') then
-      quoted_delimiter = .true.
-      block
-        character :: quote_char
-        quote_char = input(j:j)
-        j = j + 1
-        delim_start = j
-        ! Find closing quote
-        delim_end = j
-        do while (delim_end <= len_trim(input) .and. input(delim_end:delim_end) /= quote_char)
+      ! Check for <<- (strip tabs)
+      strip_tabs = .false.
+      if (j + 2 <= len_trim(cmd_line) .and. cmd_line(j+2:j+2) == '-') then
+        strip_tabs = .true.
+        k = j + 3
+      else
+        k = j + 2
+      end if
+
+      ! Skip spaces after << or <<-
+      do while (k <= len_trim(cmd_line) .and. cmd_line(k:k) == ' ')
+        k = k + 1
+      end do
+
+      if (k > len_trim(cmd_line)) exit
+
+      ! Check for quoted delimiter
+      quoted_delimiter = .false.
+      if (cmd_line(k:k) == "'" .or. cmd_line(k:k) == '"') then
+        quoted_delimiter = .true.
+        block
+          character :: quote_char
+          quote_char = cmd_line(k:k)
+          k = k + 1
+          delim_start = k
+          ! Find closing quote
+          delim_end = k
+          do while (delim_end <= len_trim(cmd_line) .and. cmd_line(delim_end:delim_end) /= quote_char)
+            delim_end = delim_end + 1
+          end do
+          delim_end = delim_end - 1
+        end block
+      else
+        delim_start = k
+        ! Find end of delimiter (space, semicolon, or end of line)
+        delim_end = k
+        do while (delim_end <= len_trim(cmd_line) .and. &
+                 cmd_line(delim_end:delim_end) /= ' ' .and. &
+                 cmd_line(delim_end:delim_end) /= ';')
           delim_end = delim_end + 1
         end do
         delim_end = delim_end - 1
-      end block
-    else
-      delim_start = j
-      ! Find end of delimiter (space or newline)
-      delim_end = j
-      do while (delim_end <= len_trim(input) .and. &
-               input(delim_end:delim_end) /= ' ' .and. &
-               input(delim_end:delim_end) /= char(10))
-        delim_end = delim_end + 1
-      end do
-      delim_end = delim_end - 1
-    end if
-
-    if (delim_end < delim_start) return  ! Invalid delimiter
-
-    delimiter = input(delim_start:delim_end)
-    ! write(error_unit, '(A,A,A)') 'DEBUG: delimiter=|', trim(delimiter), '|'
-
-    ! Find the newline after the heredoc command
-    heredoc_start = delim_end + 1
-    if (quoted_delimiter) heredoc_start = heredoc_start + 1  ! Skip closing quote
-
-    ! Skip to newline
-    do while (heredoc_start <= len_trim(input) .and. input(heredoc_start:heredoc_start) /= char(10))
-      heredoc_start = heredoc_start + 1
-    end do
-    if (heredoc_start > len_trim(input)) return  ! No content
-    heredoc_start = heredoc_start + 1  ! Skip the newline
-
-    ! Find the delimiter line
-    content_start = heredoc_start
-    content_end = 0
-    j = heredoc_start
-
-    do while (j <= len_trim(input))
-      ! Check if we're at start of a line
-      if (j == heredoc_start .or. input(j-1:j-1) == char(10)) then
-        ! Debug: show what we're checking
-        ! if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
-        !   write(error_unit, '(A,I0,A,A,A)') 'DEBUG: Checking at pos ', j, ': |', &
-        !     input(j:min(j+10, len_trim(input))), '|'
-        ! end if
-        ! Check if this line starts with the delimiter
-        if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
-          if (input(j:j+len_trim(delimiter)-1) == trim(delimiter)) then
-            ! write(error_unit, '(A)') 'DEBUG: Found delimiter match!'
-            ! Check if delimiter is alone on the line or followed by newline
-            if (j + len_trim(delimiter) > len_trim(input) .or. &
-                input(j+len_trim(delimiter):j+len_trim(delimiter)) == char(10)) then
-              content_end = j - 1
-              next_cmd_start = j + len_trim(delimiter)
-              if (next_cmd_start <= len_trim(input) .and. &
-                  input(next_cmd_start:next_cmd_start) == char(10)) then
-                next_cmd_start = next_cmd_start + 1
-              end if
-              exit
-            end if
-          end if
-        end if
       end if
-      j = j + 1
+
+      if (delim_end >= delim_start .and. num_heredocs < MAX_PENDING_HEREDOCS) then
+        num_heredocs = num_heredocs + 1
+        delimiters(num_heredocs) = cmd_line(delim_start:delim_end)
+        quoted_delimiters(num_heredocs) = quoted_delimiter
+        strip_tabs_arr(num_heredocs) = strip_tabs
+      end if
+
+      i = delim_end + 1
+      if (quoted_delimiter) i = i + 1  ! Skip closing quote
     end do
 
-    if (content_end == 0) then
-      return  ! Delimiter not found
-    end if
+    if (num_heredocs == 0) return
 
-    ! Extract heredoc content
-    if (content_end >= content_start) then
-      heredoc_content = input(content_start:content_end)
-    else
-      heredoc_content = ''
-    end if
+    ! Now extract content for each heredoc in order
+    content_pos = cmd_line_end + 1  ! Start after the command line newline
 
-    ! Strip leading tabs if requested
-    if (strip_tabs) then
-      block
-        integer :: k, m, line_pos
-        character(len=4096) :: stripped_content
-        logical :: at_line_start
+    do heredoc_idx = 1, num_heredocs
+      delimiter = trim(delimiters(heredoc_idx))
+      strip_tabs = strip_tabs_arr(heredoc_idx)
 
-        stripped_content = ''
-        k = 1
-        m = 1
-        at_line_start = .true.
+      ! Find content until the delimiter
+      content_start = content_pos
+      content_end = 0
 
-        do while (k <= len_trim(heredoc_content))
-          if (at_line_start .and. heredoc_content(k:k) == char(9)) then
-            ! Skip leading tab
-            k = k + 1
-          else
-            ! Copy character
-            at_line_start = .false.
-            stripped_content(m:m) = heredoc_content(k:k)
-            if (heredoc_content(k:k) == char(10)) then
-              at_line_start = .true.
+      j = content_pos
+      do while (j <= len_trim(input))
+        ! Check if we're at start of a line
+        if (j == content_pos .or. input(j-1:j-1) == char(10)) then
+          ! Check if this line starts with the delimiter
+          if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
+            if (input(j:j+len_trim(delimiter)-1) == trim(delimiter)) then
+              ! Check if delimiter is alone on the line or followed by newline
+              if (j + len_trim(delimiter) > len_trim(input) .or. &
+                  input(j+len_trim(delimiter):j+len_trim(delimiter)) == char(10)) then
+                content_end = j - 1
+                content_pos = j + len_trim(delimiter)
+                if (content_pos <= len_trim(input) .and. &
+                    input(content_pos:content_pos) == char(10)) then
+                  content_pos = content_pos + 1
+                end if
+                exit
+              end if
             end if
-            m = m + 1
-            k = k + 1
           end if
-        end do
-
-        heredoc_content = stripped_content
-      end block
-    end if
-
-    ! Store heredoc content in shell state
-    shell%pending_heredoc = trim(heredoc_content)
-    shell%pending_heredoc_delimiter = trim(delimiter)
-    shell%pending_heredoc_quoted = quoted_delimiter
-    shell%pending_heredoc_strip_tabs = strip_tabs
-    shell%has_pending_heredoc = .true.
-
-    ! Return the command without the heredoc content
-    ! The heredoc module will handle it when the command executes
-    ! Need to replace any newlines with semicolons to keep it a single command
-    block
-      integer :: k
-      character(len=len(input)) :: cmd_part
-
-      cmd_part = input(1:i-1)  ! Everything before <<
-
-      ! Replace newlines with semicolons in the command part
-      do k = 1, len_trim(cmd_part)
-        if (cmd_part(k:k) == char(10)) then
-          cmd_part(k:k) = ';'
         end if
+        j = j + 1
       end do
 
-      output = trim(cmd_part)
-    end block
+      ! Extract heredoc content
+      if (content_end >= content_start) then
+        heredoc_content = input(content_start:content_end)
+      else
+        heredoc_content = ''
+      end if
 
-    ! Re-add the heredoc marker with delimiter so heredoc module can process it
-    if (quoted_delimiter) then
-      output = trim(output) // " << '" // trim(delimiter) // "'"
-    else
-      output = trim(output) // ' << ' // trim(delimiter)
+      ! Strip leading tabs if requested
+      if (strip_tabs) then
+        block
+          integer :: m, n
+          character(len=4096) :: stripped_content
+          logical :: at_line_start
+
+          stripped_content = ''
+          m = 1
+          n = 1
+          at_line_start = .true.
+
+          do while (m <= len_trim(heredoc_content))
+            if (at_line_start .and. heredoc_content(m:m) == char(9)) then
+              ! Skip leading tab
+              m = m + 1
+            else
+              ! Copy character
+              at_line_start = .false.
+              stripped_content(n:n) = heredoc_content(m:m)
+              if (heredoc_content(m:m) == char(10)) then
+                at_line_start = .true.
+              end if
+              n = n + 1
+              m = m + 1
+            end if
+          end do
+
+          heredoc_content = stripped_content
+        end block
+      end if
+
+      ! Store in pending heredocs array
+      shell%pending_heredocs(heredoc_idx)%content = trim(heredoc_content)
+      shell%pending_heredocs(heredoc_idx)%delimiter = trim(delimiter)
+      shell%pending_heredocs(heredoc_idx)%quoted = quoted_delimiters(heredoc_idx)
+      shell%pending_heredocs(heredoc_idx)%strip_tabs = strip_tabs
+    end do
+
+    shell%num_pending_heredocs = num_heredocs
+    shell%next_pending_heredoc = 1
+
+    ! Also set legacy single heredoc for backward compatibility
+    if (num_heredocs >= 1) then
+      shell%pending_heredoc = shell%pending_heredocs(1)%content
+      shell%pending_heredoc_delimiter = shell%pending_heredocs(1)%delimiter
+      shell%pending_heredoc_quoted = shell%pending_heredocs(1)%quoted
+      shell%pending_heredoc_strip_tabs = shell%pending_heredocs(1)%strip_tabs
+      shell%has_pending_heredoc = .true.
     end if
 
-    ! Add any commands after the heredoc
-    if (next_cmd_start <= len_trim(input)) then
-      output = trim(output) // ' ' // input(next_cmd_start:len_trim(input))
-    end if
+    ! Return just the command line
+    output = cmd_line
 
   end function
 

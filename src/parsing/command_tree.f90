@@ -26,6 +26,7 @@ module command_tree
   public :: case_data_t
   public :: case_item_t
   public :: function_def_data_t
+  public :: heredoc_info_t
 
   ! Public functions
   public :: create_simple_command
@@ -67,6 +68,17 @@ module command_tree
   type :: command_node_ptr_t
     type(command_node_t), pointer :: ptr => null()
   end type command_node_ptr_t
+
+  ! =====================================
+  ! Heredoc Info - for collecting multiple heredocs during parsing
+  ! =====================================
+  type :: heredoc_info_t
+    character(len=MAX_TOKEN_LEN) :: delimiter = ''     ! Delimiter word (EOF, END, etc.)
+    logical :: quoted = .false.                        ! Was delimiter quoted? (suppress expansion)
+    logical :: strip_tabs = .false.                    ! True for <<- (strip leading tabs)
+    type(command_node_t), pointer :: target_cmd => null()  ! Command this heredoc belongs to
+    character(len=:), allocatable :: content           ! Heredoc content (filled after parsing)
+  end type heredoc_info_t
 
   ! =====================================
   ! Simple Command Data
