@@ -1072,6 +1072,7 @@ contains
     use control_flow, only: push_control_block, pop_control_block, BLOCK_FOR
     use glob, only: glob_match, has_unescaped_glob_chars
     use parser, only: expand_variables
+    use fd_redirection, only: apply_single_redirection, restore_fds
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i, j, glob_count, word_idx, k, split_count
@@ -1080,11 +1081,35 @@ contains
     character(len=:), allocatable :: expanded_word, ifs_chars
     character(len=MAX_TOKEN_LEN) :: split_words(MAX_TOKEN_LEN)
     integer :: total_words
+    type(redirection_t) :: temp_redirect
+    logical :: redir_success, has_redirects
 
     exit_status = 0
 
     if (.not. associated(node%for_loop)) then
       return
+    end if
+
+    ! Apply redirections for the entire for loop
+    has_redirects = (node%num_redirects > 0)
+    if (has_redirects) then
+      do i = 1, node%num_redirects
+        temp_redirect%type = node%redirects(i)%type
+        temp_redirect%fd = node%redirects(i)%fd
+        temp_redirect%target_fd = node%redirects(i)%target_fd
+        if (allocated(node%redirects(i)%filename)) then
+          allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+        end if
+        temp_redirect%force_clobber = node%redirects(i)%force_clobber
+
+        call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+        if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+        if (.not. redir_success) then
+          call restore_fds()
+          exit_status = 1
+          return
+        end if
+      end do
     end if
 
     ! Get IFS for word splitting
@@ -1223,6 +1248,11 @@ contains
 
     ! Clean up
     if (allocated(expanded_words)) deallocate(expanded_words)
+
+    ! Restore file descriptors if we applied redirections
+    if (has_redirects) then
+      call restore_fds()
+    end if
 
   end function execute_for_node
 
