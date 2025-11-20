@@ -115,10 +115,16 @@ class YAMLTestRunner:
             return
 
         try:
-            # Clear any pending input
+            # Clear any pending input/interrupt running command
             self._current_session.send_key("C-c")
+            time.sleep(0.1)
+            self._current_session.send_key("C-c")
+            time.sleep(0.1)
             self._current_session.send_key("C-u")
             time.sleep(0.05)
+
+            # Clear buffer before reset command
+            self._current_session.clear_buffer()
 
             # Reset PS1 to default and use echo marker to sync
             marker = f"RESET_{self._test_count}"
@@ -126,12 +132,12 @@ class YAMLTestRunner:
 
             # Wait for the marker to ensure we're at a clean state
             try:
-                self._current_session.expect(marker, timeout=2)
+                self._current_session.expect(marker, timeout=3)
             except:
                 pass
 
-            # Small delay then clear buffer
-            time.sleep(0.1)
+            # Wait for prompt after marker
+            time.sleep(0.2)
             self._current_session.clear_buffer()
         except:
             pass

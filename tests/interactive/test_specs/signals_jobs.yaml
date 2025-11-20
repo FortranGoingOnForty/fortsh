@@ -95,7 +95,7 @@ tests:
   # =============================================================
   - name: "Ctrl+Z suspends foreground job"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
       - send: "echo suspended"
@@ -105,7 +105,7 @@ tests:
 
   - name: "Ctrl+Z shows stopped message"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
     expect_output: "Stopped"
@@ -113,7 +113,7 @@ tests:
 
   - name: "Suspended job appears in jobs list"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
       - send_line: "jobs"
@@ -165,7 +165,7 @@ tests:
 
   - name: "jobs shows stopped jobs"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
       - send_line: "jobs"
@@ -192,7 +192,7 @@ tests:
   # =============================================================
   - name: "fg resumes stopped job"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
       - send_line: "fg"
@@ -205,7 +205,7 @@ tests:
 
   - name: "fg brings background job to foreground"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "fg"
       - wait: 0.3
       - send_key: "C-c"
@@ -216,8 +216,8 @@ tests:
 
   - name: "fg with job number"
     steps:
-      - send_line: "sleep 100 &"
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
+      - send_line: "sleep 10 &"
       - send_line: "fg %1"
       - wait: 0.3
       - send_key: "C-c"
@@ -237,7 +237,7 @@ tests:
   # =============================================================
   - name: "bg resumes stopped job in background"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
       - send_line: "bg"
@@ -247,7 +247,7 @@ tests:
 
   - name: "bg with job number"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
       - send_line: "bg %1"
@@ -266,7 +266,7 @@ tests:
   # =============================================================
   - name: "%n refers to job number"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "fg %1"
       - wait: 0.3
       - send_key: "C-c"
@@ -277,7 +277,7 @@ tests:
 
   - name: "%% refers to current job"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "fg %%"
       - wait: 0.3
       - send_key: "C-c"
@@ -288,7 +288,7 @@ tests:
 
   - name: "%+ refers to current job"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "fg %+"
       - wait: 0.3
       - send_key: "C-c"
@@ -299,7 +299,7 @@ tests:
 
   - name: "kill %n kills job"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "kill %1"
       - wait: 0.5
       - send_line: "jobs"
@@ -313,7 +313,7 @@ tests:
   # =============================================================
   - name: "SIGTERM terminates process"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "kill %1"
       - wait: 0.5
       - send_line: "jobs"
@@ -322,7 +322,7 @@ tests:
 
   - name: "SIGKILL force kills process"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "kill -9 %1"
       - wait: 0.5
       - send_line: "jobs"
@@ -331,7 +331,7 @@ tests:
 
   - name: "SIGCONT continues stopped process"
     steps:
-      - send_line: "sleep 100"
+      - send_line: "sleep 10"
       - wait: 0.3
       - send_key: "C-z"
       - send_line: "kill -CONT %1"
@@ -364,7 +364,7 @@ tests:
   # =============================================================
   - name: "Disown removes job from table"
     steps:
-      - send_line: "sleep 100 &"
+      - send_line: "sleep 10 &"
       - send_line: "disown"
       - send_line: "jobs"
       - send: "echo disowned"
