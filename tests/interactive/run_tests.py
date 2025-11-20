@@ -62,7 +62,7 @@ class YAMLTestRunner:
     fortsh session across multiple tests, resetting state between them.
     """
 
-    def __init__(self, fortsh_path: str, verbose: bool = False, tests_per_session: int = 15):
+    def __init__(self, fortsh_path: str, verbose: bool = False, tests_per_session: int = 10):
         self.fortsh_path = fortsh_path
         self.verbose = verbose
         self.results: List[TestResult] = []
@@ -118,9 +118,20 @@ class YAMLTestRunner:
             # Clear any pending input
             self._current_session.send_key("C-c")
             self._current_session.send_key("C-u")
-            # Small delay to let shell settle
+            time.sleep(0.05)
+
+            # Reset PS1 to default and use echo marker to sync
+            marker = f"RESET_{self._test_count}"
+            self._current_session.send_line(f"PS1='$ '; echo {marker}")
+
+            # Wait for the marker to ensure we're at a clean state
+            try:
+                self._current_session.expect(marker, timeout=2)
+            except:
+                pass
+
+            # Small delay then clear buffer
             time.sleep(0.1)
-            # Clear the buffer
             self._current_session.clear_buffer()
         except:
             pass
@@ -166,6 +177,9 @@ class YAMLTestRunner:
                 error_msg = strip_control_sequences(result.error)
                 print(f"  {Fore.RED}✗{Style.RESET_ALL} {result.name}: {error_msg}", flush=True)
 
+        # Clean up session at end of spec file
+        self._cleanup_session()
+
         return results
 
     def run_test(self, test: Dict[str, Any]) -> TestResult:
@@ -187,12 +201,8 @@ class YAMLTestRunner:
         fresh_session = test.get('fresh_session', False)
 
         try:
-            # Create fresh session for each test (session reuse TODO)
-            fortsh = FortshPTY(
-                fortsh_path=self.fortsh_path,
-                env=env
-            )
-            fortsh.start(rc_file=rc_file)
+            # Get session (may be reused or fresh)
+            fortsh = self._get_session(env=env, rc_file=rc_file, fresh=fresh_session)
 
             try:
                 # Execute test steps
@@ -248,8 +258,8 @@ class YAMLTestRunner:
                     return TestResult(name, True, "", duration)
 
             finally:
-                fortsh.stop()
-                gc.collect()
+                # Don't stop session - it will be reused or cleaned up later
+                pass
 
         except pexpect.TIMEOUT as e:
             duration = time.time() - start_time
