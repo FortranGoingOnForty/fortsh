@@ -126,9 +126,9 @@ class YAMLTestRunner:
             # Clear buffer before reset command
             self._current_session.clear_buffer()
 
-            # Reset PS1 to default and use echo marker to sync
+            # Reset PS1 to default (matching DEFAULT_PROMPT_PATTERN) and use echo marker
             marker = f"RESET_{self._test_count}"
-            self._current_session.send_line(f"PS1='$ '; echo {marker}")
+            self._current_session.send_line(f"PS1='> '; echo {marker}")
 
             # Wait for the marker to ensure we're at a clean state
             try:
