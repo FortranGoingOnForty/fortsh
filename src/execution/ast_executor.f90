@@ -16,6 +16,7 @@ module ast_executor
   use system_interface
   use job_control
   use glob, only: pattern_matches_no_dotfile_check
+  use shell_options, only: check_errexit
   implicit none
   private
 
@@ -196,12 +197,10 @@ contains
           end do
         end block
       end if
-      ! Preserve exit status from readonly violation (set by set_shell_variable)
-      if (shell%last_exit_status == 127) then
-        exit_status = 127
-      else
-        exit_status = 0
-      end if
+      ! POSIX: Exit status of assignment is exit status of last command substitution
+      ! This covers readonly violations (127) and failed command substitutions
+      exit_status = shell%last_exit_status
+      call check_errexit(shell, exit_status)
       return
     end if
 
@@ -519,6 +518,12 @@ contains
     call execute_pipeline(temp_pipeline, shell, '')
 
     exit_status = shell%last_exit_status
+    ! POSIX: Check errexit after command execution (including assignments with command substitutions)
+    call check_errexit(shell, exit_status)
+    ! If errexit triggered, return immediately
+    if (.not. shell%running) then
+      return
+    end if
 
     ! Check if fatal expansion error occurred (e.g., set -u with undefined variable)
     if (shell%fatal_expansion_error) then
@@ -910,6 +915,8 @@ contains
       left_status = 0
     end if
 
+    ! Errexit is checked at the simple command level instead
+
     ! Handle based on separator type
     select case(node%list%separator)
     case(LIST_SEP_SEQUENTIAL)
@@ -960,6 +967,8 @@ contains
       else
         exit_status = left_status
       end if
+      ! Mark that this result came from an AND-OR list (suppress errexit check)
+      shell%last_from_and_or = .true.
 
     case(LIST_SEP_OR)
       ! || - Execute right only if left failed
@@ -980,6 +989,8 @@ contains
       else
         exit_status = left_status
       end if
+      ! Mark that this result came from an AND-OR list (suppress errexit check)
+      shell%last_from_and_or = .true.
 
     case(LIST_SEP_BACKGROUND)
       ! & - Background jobs handled early in function (before left execution)
