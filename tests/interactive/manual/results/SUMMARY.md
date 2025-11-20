@@ -1,23 +1,24 @@
 # fortsh Interactive Test Suite - Complete Summary
 
-**Date:** 2025-11-18
+**Date:** 2025-11-19
 **Total Tests Created:** 321
-**Framework Status:** Fully operational
+**Framework Status:** Fully operational with session reuse
 
 ## Phase Results Overview
 
 | Phase | Category | Tests | Passed | Rate |
 |-------|----------|-------|--------|------|
-| 1 | POSIX Shell Features | 119 | 111 | 93.3% |
+| 1 | POSIX Shell Features | 119 | 110 | 92.4% |
 | 2 | Line Editing | 49 | 27 | 55.1% |
 | 3 | History | 37 | 28 | 75.7% |
 | 4 | Completion | 37 | 23 | 62.2% |
-| 5 | Signals & Jobs | 40 | 16 | 40.0% |
-| 6 | Prompt & Display | 39 | 21 | 53.8% |
-| **Total** | | **321** | **226** | **70.4%** |
+| 5 | Signals & Jobs | 40 | ~16 | ~40.0% |
+| 6 | Prompt & Display | 39 | 24 | 61.5% |
+| **Total** | | **321** | **~228** | **~71%** |
 
-*Note: Some POSIX failures are test regex issues (special chars $, +, *)
-*Note: Last few prompt tests hit resource exhaustion
+*Note: Session reuse implemented - 10 tests per session with PS1 reset
+*Note: Signals & Jobs tests may timeout due to job control issues
+*Note: Some buffer pollution between tests causes false failures
 
 ## Test Framework
 
@@ -39,9 +40,13 @@
 
 ### Resource Management
 Successfully resolved PTY resource exhaustion with:
+- **Session reuse**: Reuse PTY sessions for 10 tests, then rotate
+- **PS1 reset**: Reset prompt between tests to avoid pollution
+- **Echo marker sync**: Use unique markers to sync buffer state
 - Aggressive cleanup (SIGTERM/SIGKILL, FD closing, waitpid)
 - Garbage collection between tests
 - 0.3s delay between tests
+- Fresh sessions at category boundaries
 
 ## Top Priority Issues Identified
 
