@@ -1,0 +1,10 @@
+# Interactive test framework dependencies
+pexpect>=4.8
+PyYAML>=6.0
+
+# Testing framework for better organization and reporting
+pytest>=7.0
+pytest-html>=4.0
+
+# Optional: colored output
+colorama>=0.4
