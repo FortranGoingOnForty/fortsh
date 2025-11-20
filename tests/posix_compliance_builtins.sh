@@ -401,7 +401,7 @@ test_p2_background_pid() {
     if echo "$output" | grep -q "DIFFERENT"; then
         pass "P2-1.2: \$! updates for each background job"
     else
-        fail "P2-1.2: \$! updates for each background job"
+        fail "P2-1.2: \$! updates for each background job" "Got: [$output]"
     fi
 
     # Test 3: $! is empty/zero before any background jobs

@@ -367,8 +367,11 @@ contains
         ! Check if this is an assignment (VAR= followed by value)
         ! Use actual token length (end_pos - start_pos + 1) instead of len_trim to preserve whitespace
         ! Require at least one char before '=' to avoid treating standalone '=' as assignment
-        if (index(tok%value, '=') > 1 .and. &
-            index(tok%value, '=') == (tok%end_pos - tok%start_pos + 1)) then
+        ! Also check that it's not a != operator (where = is preceded by !)
+        eq_pos = index(tok%value, '=')
+        if (eq_pos > 1 .and. &
+            eq_pos == (tok%end_pos - tok%start_pos + 1) .and. &
+            tok%value(eq_pos-1:eq_pos-1) /= '!') then
           ! This ends with = , check if next token is the value
           call advance(state)
           next_tok = current_token(state)
