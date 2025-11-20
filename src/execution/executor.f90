@@ -1045,7 +1045,10 @@ contains
 
         call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
         ! Set exit status to 0 for simple assignments without expansions
-        shell%last_exit_status = 0
+        ! But don't overwrite error status from readonly violation
+        if (shell%last_exit_status /= 127) then
+          shell%last_exit_status = 0
+        end if
       end if
 
       ! If allexport is enabled (set -a), automatically export the variable

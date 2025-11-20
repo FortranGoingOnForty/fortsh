@@ -642,8 +642,18 @@ contains
       end if
     end do
 
-    ! Check shell variables
+    ! Handle special variables that are stored directly in shell state
     if (associated(self%shell)) then
+      select case(trim(name))
+      case ('OLDPWD')
+        value = trim(self%shell%oldpwd)
+        return
+      case ('PWD')
+        value = trim(self%shell%cwd)
+        return
+      end select
+
+      ! Check shell variables
       do i = 1, self%shell%num_variables
         if (trim(self%shell%variables(i)%name) == trim(name)) then
           value = trim(self%shell%variables(i)%value)
@@ -1056,28 +1066,65 @@ contains
 
     case('cd')
       ! Change directory
-      if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
-        expanded_word = self%eval_word(node%words(2)%ptr)
-        c_cmd = trim(expanded_word) // c_null_char
-        status = c_chdir(c_cmd)
-        exit_code = abs(status)
-        ! Update shell cwd if successful
-        if (exit_code == 0 .and. associated(self%context%shell)) then
-          ptr = c_getcwd(c_cmd, 256_c_size_t)
-          if (c_associated(ptr)) then
-            do i = 1, 256
-              if (c_cmd(i:i) == c_null_char) exit
-              self%context%shell%cwd(i:i) = c_cmd(i:i)
-            end do
+      block
+        character(len=4096) :: old_cwd
+
+        ! Save current directory for OLDPWD
+        if (associated(self%context%shell)) then
+          old_cwd = self%context%shell%cwd
+        else
+          old_cwd = ''
+        end if
+
+        if (node%num_words >= 2 .and. associated(node%words(2)%ptr)) then
+          expanded_word = self%eval_word(node%words(2)%ptr)
+          c_cmd = trim(expanded_word) // c_null_char
+          status = c_chdir(c_cmd)
+          exit_code = abs(status)
+          ! Update shell cwd if successful
+          if (exit_code == 0 .and. associated(self%context%shell)) then
+            ! Set OLDPWD before updating cwd
+            self%context%shell%oldpwd = trim(old_cwd)
+            call setenv('OLDPWD', trim(old_cwd), 1)
+
+            ptr = c_getcwd(c_cmd, 256_c_size_t)
+            if (c_associated(ptr)) then
+              do i = 1, 256
+                if (c_cmd(i:i) == c_null_char) exit
+                self%context%shell%cwd(i:i) = c_cmd(i:i)
+              end do
+              ! Clear any remaining characters
+              do i = i, len(self%context%shell%cwd)
+                self%context%shell%cwd(i:i) = ' '
+              end do
+            end if
+          end if
+        else
+          ! cd with no args goes home
+          call get_environment_variable('HOME', word_value)
+          c_cmd = trim(word_value) // c_null_char
+          status = c_chdir(c_cmd)
+          exit_code = abs(status)
+          ! Update shell state if successful
+          if (exit_code == 0 .and. associated(self%context%shell)) then
+            ! Set OLDPWD before updating cwd
+            self%context%shell%oldpwd = trim(old_cwd)
+            call setenv('OLDPWD', trim(old_cwd), 1)
+
+            ptr = c_getcwd(c_cmd, 256_c_size_t)
+            if (c_associated(ptr)) then
+              do i = 1, 256
+                if (c_cmd(i:i) == c_null_char) exit
+                self%context%shell%cwd(i:i) = c_cmd(i:i)
+              end do
+              ! Clear any remaining characters
+              do i = i, len(self%context%shell%cwd)
+                self%context%shell%cwd(i:i) = ' '
+              end do
+            end if
           end if
         end if
-      else
-        ! cd with no args goes home
-        call get_environment_variable('HOME', word_value)
-        c_cmd = trim(word_value) // c_null_char
-        status = c_chdir(c_cmd)
-        exit_code = abs(status)
-      end if
+      end block
 
     case('exit')
       ! Exit shell - TODO: integrate with main shell running state
@@ -3870,6 +3917,9 @@ contains
 
     exit_code = 0
 
+    ! DEBUG
+    write(*,'(A,I0)') 'DEBUG call_test_builtin: num_words=', node%num_words
+
     ! Handle empty test (test with no args returns false)
     if (node%num_words == 1) then
       exit_code = 1
@@ -3971,6 +4021,12 @@ contains
       if (associated(node%words(2)%ptr)) arg1 = self%eval_word(node%words(2)%ptr)
       if (associated(node%words(3)%ptr)) arg2 = self%eval_word(node%words(3)%ptr)
       if (associated(node%words(4)%ptr)) arg3 = self%eval_word(node%words(4)%ptr)
+
+      ! DEBUG
+      write(*,'(A,I0)') 'DEBUG test: num_words=', node%num_words
+      write(*,'(A,A,A)') 'DEBUG test: arg1=[', trim(arg1), ']'
+      write(*,'(A,A,A)') 'DEBUG test: arg2=[', trim(arg2), ']'
+      write(*,'(A,A,A)') 'DEBUG test: arg3=[', trim(arg3), ']'
 
       select case(trim(arg2))
       ! String comparisons

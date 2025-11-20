@@ -175,11 +175,33 @@ contains
                 ! Preserve whitespace in value by passing explicit length
                 call set_shell_variable(shell, trim(assign_name), assign_value, value_len)
               end if
+
+              ! If allexport is enabled (set -a), automatically export the variable
+              if (shell%option_allexport) then
+                block
+                  integer :: var_idx
+                  do var_idx = 1, shell%num_variables
+                    if (trim(shell%variables(var_idx)%name) == trim(assign_name)) then
+                      shell%variables(var_idx)%exported = .true.
+                      ! Also set in environment
+                      if (.not. set_environment_var(trim(assign_name), trim(shell%variables(var_idx)%value))) then
+                        ! Silently ignore export errors (POSIX behavior)
+                      end if
+                      exit
+                    end if
+                  end do
+                end block
+              end if
             end if
           end do
         end block
       end if
-      exit_status = 0
+      ! Preserve exit status from readonly violation (set by set_shell_variable)
+      if (shell%last_exit_status == 127) then
+        exit_status = 127
+      else
+        exit_status = 0
+      end if
       return
     end if
 
