@@ -1985,15 +1985,18 @@ contains
     character(len=*), intent(in) :: expr
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, current_val
-    character(len=512) :: rest, var_name, var_value_str
+    character(len=512) :: rest, var_name, var_value_str, trimmed_expr
     character(len=1024) :: temp_value
     integer :: iostat
 
     if (len_trim(expr) == 0) then; value = 0; return; end if
 
+    ! Trim leading/trailing whitespace for all checks
+    trimmed_expr = trim(adjustl(expr))
+
     ! Pre-increment: ++x (only if followed by a variable name, not a number)
-    if (len_trim(expr) > 2 .and. expr(1:2) == '++') then
-      var_name = trim(adjustl(expr(3:)))
+    if (len_trim(trimmed_expr) > 2 .and. trimmed_expr(1:2) == '++') then
+      var_name = trim(adjustl(trimmed_expr(3:)))
       ! Check if it starts with a letter or underscore (variable name)
       ! If it starts with a digit, it's double unary plus, not increment
       if (len_trim(var_name) > 0) then
@@ -2020,8 +2023,8 @@ contains
     end if
 
     ! Pre-decrement: --x (only if followed by a variable name, not a number)
-    if (len_trim(expr) > 2 .and. expr(1:2) == '--') then
-      var_name = trim(adjustl(expr(3:)))
+    if (len_trim(trimmed_expr) > 2 .and. trimmed_expr(1:2) == '--') then
+      var_name = trim(adjustl(trimmed_expr(3:)))
       ! Check if it starts with a letter or underscore (variable name)
       ! If it starts with a digit, it's double unary minus, not decrement
       if (len_trim(var_name) > 0) then
@@ -2047,30 +2050,30 @@ contains
       end if
     end if
 
-    if (expr(1:1) == '!') then
-      rest = adjustl(expr(2:))
+    if (trimmed_expr(1:1) == '!') then
+      rest = adjustl(trimmed_expr(2:))
       value = eval_unary_shell(rest, shell)
       if (value == 0) then; value = 1; else; value = 0; end if
       return
     end if
 
     ! Bitwise NOT (~)
-    if (expr(1:1) == '~') then
-      rest = adjustl(expr(2:))
+    if (trimmed_expr(1:1) == '~') then
+      rest = adjustl(trimmed_expr(2:))
       value = eval_unary_shell(rest, shell)
       ! Bitwise NOT in two's complement: ~n = -(n + 1)
       value = -(value + 1)
       return
     end if
 
-    if (expr(1:1) == '-' .and. len_trim(expr) > 1) then
-      rest = adjustl(expr(2:))
+    if (trimmed_expr(1:1) == '-' .and. len_trim(trimmed_expr) > 1) then
+      rest = adjustl(trimmed_expr(2:))
       value = -eval_unary_shell(rest, shell)
       return
     end if
 
-    if (expr(1:1) == '+' .and. len_trim(expr) > 1) then
-      rest = adjustl(expr(2:))
+    if (trimmed_expr(1:1) == '+' .and. len_trim(trimmed_expr) > 1) then
+      rest = adjustl(trimmed_expr(2:))
       value = eval_unary_shell(rest, shell)
       return
     end if
@@ -2249,10 +2252,21 @@ contains
         ! Skip if it's part of unary operator at start
         if (i == 1) cycle
         ! Skip if this is part of ++ or -- (increment/decrement operators)
-        ! Check next character (we're scanning right to left)
-        if (i < len_trim(expr)) then
-          if (expr(i:i) == '+' .and. expr(i+1:i+1) == '+') cycle
-          if (expr(i:i) == '-' .and. expr(i+1:i+1) == '-') cycle
+        ! Only skip if followed by identifier (letter/underscore), not a digit
+        ! e.g., ++x or --y, but not 5--3 (which is 5 - (-3))
+        if (i < len_trim(expr) - 1) then
+          if (expr(i:i) == '+' .and. expr(i+1:i+1) == '+') then
+            ! Check if followed by letter/underscore (pre-increment)
+            if ((expr(i+2:i+2) >= 'a' .and. expr(i+2:i+2) <= 'z') .or. &
+                (expr(i+2:i+2) >= 'A' .and. expr(i+2:i+2) <= 'Z') .or. &
+                expr(i+2:i+2) == '_') cycle
+          end if
+          if (expr(i:i) == '-' .and. expr(i+1:i+1) == '-') then
+            ! Check if followed by letter/underscore (pre-decrement)
+            if ((expr(i+2:i+2) >= 'a' .and. expr(i+2:i+2) <= 'z') .or. &
+                (expr(i+2:i+2) >= 'A' .and. expr(i+2:i+2) <= 'Z') .or. &
+                expr(i+2:i+2) == '_') cycle
+          end if
         end if
         ! Skip if previous non-space char makes this unary
         ! Find previous non-space character
