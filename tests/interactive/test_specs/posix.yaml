@@ -1,0 +1,772 @@
+# POSIX Shell Feature Tests for fortsh
+# Comprehensive tests for core POSIX shell functionality
+
+metadata:
+  category: "POSIX Shell Features"
+  description: "Tests for POSIX-compliant shell operations"
+  phase: 1
+
+tests:
+  # =============================================================
+  # BASIC OPERATIONS
+  # =============================================================
+  - name: "Simple echo"
+    steps:
+      - send_line: "echo hello"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Exit status 0 for success"
+    steps:
+      - send_line: "true; echo $?"
+    expect_output: "0"
+    match_type: "contains"
+
+  - name: "Exit status 1 for failure"
+    steps:
+      - send_line: "false; echo $?"
+    expect_output: "1"
+    match_type: "contains"
+
+  - name: "Multiple commands with semicolon"
+    steps:
+      - send_line: "echo one; echo two; echo three"
+    expect_output: "three"
+    match_type: "contains"
+
+  - name: "Comment ignored"
+    steps:
+      - send_line: "echo visible # invisible"
+    expect_output: "visible"
+    match_type: "contains"
+
+  - name: "Command not found error"
+    steps:
+      - send_line: "nonexistentcmd123"
+    expect_output: "not found"
+    match_type: "contains"
+
+  # =============================================================
+  # QUOTING AND ESCAPING
+  # =============================================================
+  - name: "Single quotes preserve literal"
+    steps:
+      - send_line: "echo '$HOME'"
+    expect_output: "$HOME"
+    match_type: "contains"
+
+  - name: "Double quotes allow expansion"
+    steps:
+      - send_line: "echo \"$HOME\""
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "Backslash escapes special char"
+    steps:
+      - send_line: "echo \\$HOME"
+    expect_output: "$HOME"
+    match_type: "contains"
+
+  - name: "Backslash in double quotes"
+    steps:
+      - send_line: "echo \"\\$HOME\""
+    expect_output: "$HOME"
+    match_type: "contains"
+
+  - name: "Single quotes in double quotes"
+    steps:
+      - send_line: "echo \"it's\""
+    expect_output: "it's"
+    match_type: "contains"
+
+  - name: "Double quotes in single quotes"
+    steps:
+      - send_line: "echo '\"quoted\"'"
+    expect_output: "\"quoted\""
+    match_type: "contains"
+
+  - name: "Empty string"
+    steps:
+      - send_line: "echo ''"
+    expect_output: ""
+    match_type: "contains"
+
+  - name: "Concatenated quotes"
+    steps:
+      - send_line: "echo 'hello'\"world\""
+    expect_output: "helloworld"
+    match_type: "contains"
+
+  - name: "Escaped newline continues line"
+    steps:
+      - send: "echo hello \\"
+      - send_key: "Enter"
+      - send_line: "world"
+    expect_output: "hello world"
+    match_type: "contains"
+
+  - name: "Tab character with $''"
+    steps:
+      - send_line: "echo $'a\\tb'"
+    expect_output: "a"
+    match_type: "contains"
+
+  # =============================================================
+  # VARIABLES
+  # =============================================================
+  - name: "Variable assignment and use"
+    steps:
+      - send_line: "VAR=hello; echo $VAR"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Variable with spaces in value"
+    steps:
+      - send_line: "VAR='hello world'; echo \"$VAR\""
+    expect_output: "hello world"
+    match_type: "contains"
+
+  - name: "Unset variable is empty"
+    steps:
+      - send_line: "echo \"x${UNSET_VAR}x\""
+    expect_output: "xx"
+    match_type: "contains"
+
+  - name: "Export variable"
+    steps:
+      - send_line: "export MYVAR=exported; echo $MYVAR"
+    expect_output: "exported"
+    match_type: "contains"
+
+  - name: "Variable in command"
+    steps:
+      - send_line: "CMD=echo; $CMD test"
+    expect_output: "test"
+    match_type: "contains"
+
+  - name: "Curly brace expansion"
+    steps:
+      - send_line: "VAR=test; echo ${VAR}ing"
+    expect_output: "testing"
+    match_type: "contains"
+
+  - name: "Default value ${var:-default}"
+    steps:
+      - send_line: "echo ${UNSET:-default}"
+    expect_output: "default"
+    match_type: "contains"
+
+  - name: "Assign default ${var:=default}"
+    steps:
+      - send_line: "echo ${NEWVAR:=assigned}; echo $NEWVAR"
+    expect_output: "assigned"
+    match_type: "contains"
+
+  - name: "Error if unset ${var:?msg}"
+    steps:
+      - send_line: "echo ${UNSET:?error message}"
+    expect_output: "error"
+    match_type: "contains"
+
+  - name: "Use alternate ${var:+alt}"
+    steps:
+      - send_line: "SET=yes; echo ${SET:+alternate}"
+    expect_output: "alternate"
+    match_type: "contains"
+
+  - name: "String length ${#var}"
+    steps:
+      - send_line: "VAR=hello; echo ${#VAR}"
+    expect_output: "5"
+    match_type: "contains"
+
+  - name: "Remove prefix ${var#pattern}"
+    steps:
+      - send_line: "VAR=hello; echo ${VAR#hel}"
+    expect_output: "lo"
+    match_type: "contains"
+
+  - name: "Remove suffix ${var%pattern}"
+    steps:
+      - send_line: "VAR=hello; echo ${VAR%lo}"
+    expect_output: "hel"
+    match_type: "contains"
+
+  # =============================================================
+  # SPECIAL VARIABLES
+  # =============================================================
+  - name: "$? exit status"
+    steps:
+      - send_line: "true; echo $?"
+    expect_output: "0"
+    match_type: "contains"
+
+  - name: "$$ process ID"
+    steps:
+      - send_line: "echo $$"
+    expect_output: ""
+    match_type: "contains"
+
+  - name: "$0 shell name"
+    steps:
+      - send_line: "echo $0"
+    expect_output: "fortsh"
+    match_type: "contains"
+
+  - name: "$HOME environment"
+    steps:
+      - send_line: "echo $HOME"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "$PWD current directory"
+    steps:
+      - send_line: "cd /tmp; echo $PWD"
+    expect_output: "/tmp"
+    match_type: "contains"
+
+  - name: "$OLDPWD previous directory"
+    steps:
+      - send_line: "cd /tmp; cd /; echo $OLDPWD"
+    expect_output: "/tmp"
+    match_type: "contains"
+
+  # =============================================================
+  # PIPELINES
+  # =============================================================
+  - name: "Simple pipe"
+    steps:
+      - send_line: "echo hello | cat"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Multiple pipes"
+    steps:
+      - send_line: "echo hello | cat | cat"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Pipe with grep"
+    steps:
+      - send_line: "echo -e 'one\\ntwo\\nthree' | grep two"
+    expect_output: "two"
+    match_type: "contains"
+
+  - name: "Pipe with wc"
+    steps:
+      - send_line: "echo hello | wc -c"
+    expect_output: "6"
+    match_type: "contains"
+
+  - name: "Pipe exit status is last command"
+    steps:
+      - send_line: "true | false; echo $?"
+    expect_output: "1"
+    match_type: "contains"
+
+  - name: "Negated pipeline"
+    steps:
+      - send_line: "! false; echo $?"
+    expect_output: "0"
+    match_type: "contains"
+
+  # =============================================================
+  # REDIRECTIONS
+  # =============================================================
+  - name: "Redirect stdout to file"
+    steps:
+      - send_line: "echo hello > /tmp/test_out.txt; cat /tmp/test_out.txt"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Append to file"
+    steps:
+      - send_line: "echo one > /tmp/append.txt; echo two >> /tmp/append.txt; cat /tmp/append.txt"
+    expect_output: "two"
+    match_type: "contains"
+
+  - name: "Redirect stdin from file"
+    steps:
+      - send_line: "echo hello > /tmp/in.txt; cat < /tmp/in.txt"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Redirect stderr"
+    steps:
+      - send_line: "ls /nonexistent 2> /tmp/err.txt; cat /tmp/err.txt"
+    expect_output: "No such file"
+    match_type: "contains"
+
+  - name: "Redirect stdout and stderr"
+    steps:
+      - send_line: "ls /nonexistent > /tmp/both.txt 2>&1; cat /tmp/both.txt"
+    expect_output: "No such file"
+    match_type: "contains"
+
+  - name: "Here document"
+    steps:
+      - send: "cat <<EOF"
+      - send_key: "Enter"
+      - send: "hello"
+      - send_key: "Enter"
+      - send: "EOF"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Here string"
+    steps:
+      - send_line: "cat <<< 'hello'"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Redirect to /dev/null"
+    steps:
+      - send_line: "echo hidden > /dev/null; echo visible"
+    expect_output: "visible"
+    match_type: "contains"
+
+  # =============================================================
+  # COMMAND LISTS
+  # =============================================================
+  - name: "AND list - both succeed"
+    steps:
+      - send_line: "true && echo success"
+    expect_output: "success"
+    match_type: "contains"
+
+  - name: "AND list - first fails"
+    steps:
+      - send_line: "false && echo fail; echo done"
+    expect_output: "done"
+    match_type: "contains"
+
+  - name: "OR list - first succeeds"
+    steps:
+      - send_line: "true || echo fail; echo done"
+    expect_output: "done"
+    match_type: "contains"
+
+  - name: "OR list - first fails"
+    steps:
+      - send_line: "false || echo success"
+    expect_output: "success"
+    match_type: "contains"
+
+  - name: "Mixed AND/OR"
+    steps:
+      - send_line: "false || true && echo success"
+    expect_output: "success"
+    match_type: "contains"
+
+  # =============================================================
+  # CONTROL STRUCTURES
+  # =============================================================
+  - name: "If statement - true branch"
+    steps:
+      - send_line: "if true; then echo yes; fi"
+    expect_output: "yes"
+    match_type: "contains"
+
+  - name: "If statement - false branch"
+    steps:
+      - send_line: "if false; then echo no; else echo yes; fi"
+    expect_output: "yes"
+    match_type: "contains"
+
+  - name: "If with test command"
+    steps:
+      - send_line: "if [ 1 -eq 1 ]; then echo equal; fi"
+    expect_output: "equal"
+    match_type: "contains"
+
+  - name: "If with string test"
+    steps:
+      - send_line: "if [ 'a' = 'a' ]; then echo match; fi"
+    expect_output: "match"
+    match_type: "contains"
+
+  - name: "Elif chain"
+    steps:
+      - send_line: "if false; then echo 1; elif true; then echo 2; else echo 3; fi"
+    expect_output: "2"
+    match_type: "contains"
+
+  - name: "For loop with list"
+    steps:
+      - send_line: "for i in 1 2 3; do echo $i; done"
+    expect_output: "3"
+    match_type: "contains"
+
+  - name: "For loop with variable"
+    steps:
+      - send_line: "for i in a b c; do echo -n $i; done; echo"
+    expect_output: "abc"
+    match_type: "contains"
+
+  - name: "While loop"
+    steps:
+      - send_line: "i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done"
+    expect_output: "2"
+    match_type: "contains"
+
+  - name: "Until loop"
+    steps:
+      - send_line: "i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done"
+    expect_output: "2"
+    match_type: "contains"
+
+  - name: "Case statement"
+    steps:
+      - send_line: "case abc in a*) echo match;; esac"
+    expect_output: "match"
+    match_type: "contains"
+
+  - name: "Case with multiple patterns"
+    steps:
+      - send_line: "case foo in bar|foo) echo found;; esac"
+    expect_output: "found"
+    match_type: "contains"
+
+  - name: "Case default"
+    steps:
+      - send_line: "case xyz in *) echo default;; esac"
+    expect_output: "default"
+    match_type: "contains"
+
+  - name: "Break in loop"
+    steps:
+      - send_line: "for i in 1 2 3 4 5; do if [ $i -eq 3 ]; then break; fi; echo $i; done"
+    expect_output: "2"
+    match_type: "contains"
+
+  - name: "Continue in loop"
+    steps:
+      - send_line: "for i in 1 2 3; do if [ $i -eq 2 ]; then continue; fi; echo $i; done"
+    expect_output: "3"
+    match_type: "contains"
+
+  # =============================================================
+  # FUNCTIONS
+  # =============================================================
+  - name: "Function definition and call"
+    steps:
+      - send_line: "myfunc() { echo hello; }; myfunc"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Function with arguments"
+    steps:
+      - send_line: "greet() { echo \"Hello $1\"; }; greet World"
+    expect_output: "Hello World"
+    match_type: "contains"
+
+  - name: "Function return value"
+    steps:
+      - send_line: "ret5() { return 5; }; ret5; echo $?"
+    expect_output: "5"
+    match_type: "contains"
+
+  - name: "Function local variable"
+    steps:
+      - send_line: "f() { local x=inside; echo $x; }; x=outside; f; echo $x"
+    expect_output: "outside"
+    match_type: "contains"
+
+  - name: "Function with $# argc"
+    steps:
+      - send_line: "argc() { echo $#; }; argc a b c"
+    expect_output: "3"
+    match_type: "contains"
+
+  - name: "Function with $@"
+    steps:
+      - send_line: "all() { echo \"$@\"; }; all one two three"
+    expect_output: "one two three"
+    match_type: "contains"
+
+  # =============================================================
+  # ARITHMETIC
+  # =============================================================
+  - name: "Arithmetic expansion"
+    steps:
+      - send_line: "echo $((2 + 3))"
+    expect_output: "5"
+    match_type: "contains"
+
+  - name: "Arithmetic subtraction"
+    steps:
+      - send_line: "echo $((10 - 4))"
+    expect_output: "6"
+    match_type: "contains"
+
+  - name: "Arithmetic multiplication"
+    steps:
+      - send_line: "echo $((3 * 4))"
+    expect_output: "12"
+    match_type: "contains"
+
+  - name: "Arithmetic division"
+    steps:
+      - send_line: "echo $((15 / 3))"
+    expect_output: "5"
+    match_type: "contains"
+
+  - name: "Arithmetic modulo"
+    steps:
+      - send_line: "echo $((17 % 5))"
+    expect_output: "2"
+    match_type: "contains"
+
+  - name: "Arithmetic with variable"
+    steps:
+      - send_line: "x=10; echo $((x * 2))"
+    expect_output: "20"
+    match_type: "contains"
+
+  - name: "Arithmetic comparison"
+    steps:
+      - send_line: "echo $((5 > 3))"
+    expect_output: "1"
+    match_type: "contains"
+
+  - name: "Nested arithmetic"
+    steps:
+      - send_line: "echo $(((2 + 3) * 4))"
+    expect_output: "20"
+    match_type: "contains"
+
+  # =============================================================
+  # COMMAND SUBSTITUTION
+  # =============================================================
+  - name: "Command substitution $()"
+    steps:
+      - send_line: "echo $(echo hello)"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Command substitution backticks"
+    steps:
+      - send_line: "echo `echo hello`"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Nested command substitution"
+    steps:
+      - send_line: "echo $(echo $(echo deep))"
+    expect_output: "deep"
+    match_type: "contains"
+
+  - name: "Command substitution in variable"
+    steps:
+      - send_line: "VAR=$(echo value); echo $VAR"
+    expect_output: "value"
+    match_type: "contains"
+
+  - name: "Command substitution in string"
+    steps:
+      - send_line: "echo \"Today is $(date +%A)\""
+    expect_output: "Today is"
+    match_type: "contains"
+
+  # =============================================================
+  # SUBSHELLS
+  # =============================================================
+  - name: "Subshell execution"
+    steps:
+      - send_line: "(echo subshell)"
+    expect_output: "subshell"
+    match_type: "contains"
+
+  - name: "Subshell variable isolation"
+    steps:
+      - send_line: "X=outer; (X=inner; echo $X); echo $X"
+    expect_output: "outer"
+    match_type: "contains"
+
+  - name: "Subshell cd isolation"
+    steps:
+      - send_line: "cd /tmp; (cd /); pwd"
+    expect_output: "/tmp"
+    match_type: "contains"
+
+  # =============================================================
+  # GLOBBING
+  # =============================================================
+  - name: "Star glob"
+    steps:
+      - send_line: "cd /tmp; touch glob1.txt glob2.txt; ls glob*.txt"
+    expect_output: "glob"
+    match_type: "contains"
+
+  - name: "Question mark glob"
+    steps:
+      - send_line: "cd /tmp; touch a1 a2 a3; ls a?"
+    expect_output: "a1"
+    match_type: "contains"
+
+  - name: "Bracket glob"
+    steps:
+      - send_line: "cd /tmp; touch b1 b2 b3; ls b[12]"
+    expect_output: "b1"
+    match_type: "contains"
+
+  - name: "No match returns literal"
+    steps:
+      - send_line: "echo /nonexistent/*.xyz"
+    expect_output: "/nonexistent/*.xyz"
+    match_type: "contains"
+
+  # =============================================================
+  # BUILTINS
+  # =============================================================
+  - name: "cd to directory"
+    steps:
+      - send_line: "cd /tmp; pwd"
+    expect_output: "/tmp"
+    match_type: "contains"
+
+  - name: "cd to home"
+    steps:
+      - send_line: "cd; pwd"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "cd to previous"
+    steps:
+      - send_line: "cd /tmp; cd /; cd -; pwd"
+    expect_output: "/tmp"
+    match_type: "contains"
+
+  - name: "pwd builtin"
+    steps:
+      - send_line: "pwd"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "echo with -n"
+    steps:
+      - send_line: "echo -n hello; echo world"
+    expect_output: "helloworld"
+    match_type: "contains"
+
+  - name: "echo with -e"
+    steps:
+      - send_line: "echo -e 'a\\tb'"
+    expect_output: "a"
+    match_type: "contains"
+
+  - name: "printf basic"
+    steps:
+      - send_line: "printf '%s\\n' hello"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "printf with format"
+    steps:
+      - send_line: "printf '%d + %d = %d\\n' 2 3 5"
+    expect_output: "2 + 3 = 5"
+    match_type: "contains"
+
+  - name: "test numeric equality"
+    steps:
+      - send_line: "test 5 -eq 5 && echo equal"
+    expect_output: "equal"
+    match_type: "contains"
+
+  - name: "test string equality"
+    steps:
+      - send_line: "test 'a' = 'a' && echo equal"
+    expect_output: "equal"
+    match_type: "contains"
+
+  - name: "test file exists"
+    steps:
+      - send_line: "touch /tmp/exists.txt; test -e /tmp/exists.txt && echo exists"
+    expect_output: "exists"
+    match_type: "contains"
+
+  - name: "test file is regular"
+    steps:
+      - send_line: "touch /tmp/regular.txt; test -f /tmp/regular.txt && echo regular"
+    expect_output: "regular"
+    match_type: "contains"
+
+  - name: "test directory"
+    steps:
+      - send_line: "test -d /tmp && echo isdir"
+    expect_output: "isdir"
+    match_type: "contains"
+
+  - name: "read builtin"
+    steps:
+      - send_line: "echo hello | { read x; echo $x; }"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "type builtin"
+    steps:
+      - send_line: "type echo"
+    expect_output: "builtin"
+    match_type: "contains"
+
+  - name: "unset variable"
+    steps:
+      - send_line: "VAR=set; unset VAR; echo \"x${VAR}x\""
+    expect_output: "xx"
+    match_type: "contains"
+
+  - name: "readonly variable"
+    steps:
+      - send_line: "readonly RO=value; echo $RO"
+    expect_output: "value"
+    match_type: "contains"
+
+  - name: "eval command"
+    steps:
+      - send_line: "CMD='echo hello'; eval $CMD"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "exec replaces shell (test with subshell)"
+    steps:
+      - send_line: "(exec echo replaced)"
+    expect_output: "replaced"
+    match_type: "contains"
+
+  - name: "source/dot command"
+    steps:
+      - send_line: "echo 'VAR=sourced' > /tmp/src.sh; . /tmp/src.sh; echo $VAR"
+    expect_output: "sourced"
+    match_type: "contains"
+
+  - name: "shift arguments"
+    steps:
+      - send_line: "set -- a b c; shift; echo $1"
+    expect_output: "b"
+    match_type: "contains"
+
+  - name: "set positional parameters"
+    steps:
+      - send_line: "set -- x y z; echo $2"
+    expect_output: "y"
+    match_type: "contains"
+
+  - name: "trap command"
+    steps:
+      - send_line: "trap 'echo trapped' EXIT; exit"
+    expect_output: "trapped"
+    match_type: "contains"
+
+  - name: "alias creation and use"
+    steps:
+      - send_line: "alias ll='ls -l'; type ll"
+    expect_output: "alias"
+    match_type: "contains"
+
+  - name: "unalias removes alias"
+    steps:
+      - send_line: "alias foo=bar; unalias foo; type foo"
+    expect_output: "not found"
+    match_type: "contains"
+

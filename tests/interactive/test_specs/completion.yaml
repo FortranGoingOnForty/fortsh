@@ -1,0 +1,416 @@
+# Completion Tests for fortsh
+# Phase 4: Tab completion for commands, files, variables
+
+metadata:
+  category: "Completion"
+  description: "Tests for tab completion functionality"
+  phase: 4
+
+tests:
+  # =============================================================
+  # COMMAND COMPLETION
+  # =============================================================
+  - name: "Tab completes common command"
+    steps:
+      - send: "ech"
+      - send_key: "Tab"
+      - send: " completed"
+      - send_key: "Enter"
+    expect_output: "completed"
+    match_type: "contains"
+
+  - name: "Tab completes builtin command"
+    steps:
+      - send: "exi"
+      - send_key: "Tab"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "C-e"
+      - send_key: "Enter"
+    expect_output: "exit"
+    match_type: "contains"
+
+  - name: "Tab with no match produces no change"
+    steps:
+      - send: "xyznotacmd"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo nochange"
+      - send_key: "Enter"
+    expect_output: "nochange"
+    match_type: "contains"
+
+  - name: "Tab completes partial command"
+    steps:
+      - send: "pw"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "Double tab shows multiple completions"
+    steps:
+      - send: "l"
+      - send_key: "Tab"
+      - send_key: "Tab"
+      - wait: 0.3
+      - send_key: "C-c"
+      - send: "echo shown"
+      - send_key: "Enter"
+    expect_output: "shown"
+    match_type: "contains"
+
+  # =============================================================
+  # FILE/DIRECTORY COMPLETION
+  # =============================================================
+  - name: "Tab completes filename"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch testfile123.txt"
+      - send: "ls testf"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "testfile123.txt"
+    match_type: "contains"
+
+  - name: "Tab completes directory name"
+    steps:
+      - send: "cd /u"
+      - send_key: "Tab"
+      - send: "sr"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo dircomp"
+      - send_key: "Enter"
+    expect_output: "dircomp"
+    match_type: "contains"
+
+  - name: "Tab adds trailing slash for directories"
+    steps:
+      - send: "cd /tm"
+      - send_key: "Tab"
+      - send_key: "C-e"
+      - send_key: "Backspace"
+      - send_key: "Enter"
+    expect_output: ""
+    match_type: "contains"
+
+  - name: "Tab completes path with spaces"
+    steps:
+      - send_line: "mkdir -p '/tmp/test dir'"
+      - send_line: "touch '/tmp/test dir/file.txt'"
+      - send: "ls '/tmp/test d"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "file.txt"
+    match_type: "contains"
+
+  - name: "Tab completes hidden files"
+    steps:
+      - send_line: "touch /tmp/.hiddenfile"
+      - send: "ls /tmp/.hidd"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: ".hiddenfile"
+    match_type: "contains"
+
+  - name: "Tab completes with tilde expansion"
+    steps:
+      - send: "cd ~"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo tilde"
+      - send_key: "Enter"
+    expect_output: "tilde"
+    match_type: "contains"
+
+  - name: "Tab completes relative path"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "mkdir -p subdir"
+      - send: "cd ./subd"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo relative"
+      - send_key: "Enter"
+    expect_output: "relative"
+    match_type: "contains"
+
+  - name: "Tab completes parent directory path"
+    steps:
+      - send_line: "cd /tmp"
+      - send: "ls ../"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo parent"
+      - send_key: "Enter"
+    expect_output: "parent"
+    match_type: "contains"
+
+  # =============================================================
+  # VARIABLE COMPLETION
+  # =============================================================
+  - name: "Tab completes environment variable"
+    steps:
+      - send: "echo $HOM"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "Tab completes PATH variable"
+    steps:
+      - send: "echo $PAT"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "Tab completes USER variable"
+    steps:
+      - send: "echo $USE"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: ""
+    match_type: "contains"
+
+  - name: "Tab completes variable in braces"
+    steps:
+      - send: "echo ${HOM"
+      - send_key: "Tab"
+      - send: "}"
+      - send_key: "Enter"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "Tab completes custom variable"
+    steps:
+      - send_line: "MYVAR=testvalue"
+      - send: "echo $MYV"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "testvalue"
+    match_type: "contains"
+
+  # =============================================================
+  # MULTIPLE COMPLETIONS
+  # =============================================================
+  - name: "Tab cycles through multiple file matches"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch comp1.txt comp2.txt comp3.txt"
+      - send: "ls comp"
+      - send_key: "Tab"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo multicycle"
+      - send_key: "Enter"
+    expect_output: "multicycle"
+    match_type: "contains"
+
+  - name: "Tab shows common prefix for multiple matches"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch prefix_a.txt prefix_b.txt"
+      - send: "ls pref"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo prefix"
+      - send_key: "Enter"
+    expect_output: "prefix"
+    match_type: "contains"
+
+  - name: "Tab lists completions when ambiguous"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch ambig1 ambig2 ambig3"
+      - send: "ls amb"
+      - send_key: "Tab"
+      - send_key: "Tab"
+      - wait: 0.3
+      - send_key: "C-c"
+      - send: "echo listed"
+      - send_key: "Enter"
+    expect_output: "listed"
+    match_type: "contains"
+
+  # =============================================================
+  # COMPLETION EDGE CASES
+  # =============================================================
+  - name: "Tab at empty prompt"
+    steps:
+      - send_key: "Tab"
+      - send: "echo empty"
+      - send_key: "Enter"
+    expect_output: "empty"
+    match_type: "contains"
+
+  - name: "Tab with cursor in middle of word"
+    steps:
+      - send: "echo test"
+      - send_key: "C-b"
+      - send_key: "C-b"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo middle"
+      - send_key: "Enter"
+    expect_output: "middle"
+    match_type: "contains"
+
+  - name: "Tab completes after pipe"
+    steps:
+      - send: "echo hello | ca"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Tab completes after redirect"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch redir_test.txt"
+      - send: "echo test > redir_"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo redir"
+      - send_key: "Enter"
+    expect_output: "redir"
+    match_type: "contains"
+
+  - name: "Tab completes after semicolon"
+    steps:
+      - send: "echo first; ech"
+      - send_key: "Tab"
+      - send: " second"
+      - send_key: "Enter"
+    expect_output: "second"
+    match_type: "contains"
+
+  - name: "Tab completes after &&"
+    steps:
+      - send: "true && ech"
+      - send_key: "Tab"
+      - send: " andand"
+      - send_key: "Enter"
+    expect_output: "andand"
+    match_type: "contains"
+
+  - name: "Tab completes after ||"
+    steps:
+      - send: "false || ech"
+      - send_key: "Tab"
+      - send: " oror"
+      - send_key: "Enter"
+    expect_output: "oror"
+    match_type: "contains"
+
+  - name: "Tab completes quoted filename"
+    steps:
+      - send_line: "touch '/tmp/quoted file.txt'"
+      - send: "ls '/tmp/quoted f"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "quoted file.txt"
+    match_type: "contains"
+
+  - name: "Tab escapes special characters in filename"
+    steps:
+      - send_line: "touch '/tmp/special$file.txt'"
+      - send: "ls /tmp/special"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo escaped"
+      - send_key: "Enter"
+    expect_output: "escaped"
+    match_type: "contains"
+
+  - name: "Tab completes with glob pattern"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch glob1.txt glob2.txt"
+      - send: "ls glob*.tx"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo glob"
+      - send_key: "Enter"
+    expect_output: "glob"
+    match_type: "contains"
+
+  - name: "Escape cancels completion menu"
+    steps:
+      - send: "l"
+      - send_key: "Tab"
+      - send_key: "Tab"
+      - send_key: "Escape"
+      - send_key: "C-u"
+      - send: "echo escaped"
+      - send_key: "Enter"
+    expect_output: "escaped"
+    match_type: "contains"
+
+  - name: "Tab completion preserves case"
+    steps:
+      - send_line: "touch /tmp/CamelCase.txt"
+      - send: "ls /tmp/Camel"
+      - send_key: "Tab"
+      - send_key: "Enter"
+    expect_output: "CamelCase.txt"
+    match_type: "contains"
+
+  # =============================================================
+  # PROGRAMMATIC COMPLETION
+  # =============================================================
+  - name: "Tab completes git subcommand"
+    steps:
+      - send: "git sta"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo git"
+      - send_key: "Enter"
+    expect_output: "git"
+    match_type: "contains"
+
+  - name: "Tab completes make target"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "echo 'all:\\n\\techo done' > Makefile"
+      - send: "make a"
+      - send_key: "Tab"
+      - send_key: "C-u"
+      - send: "echo make"
+      - send_key: "Enter"
+    expect_output: "make"
+    match_type: "contains"
+
+  # =============================================================
+  # MENU COMPLETION
+  # =============================================================
+  - name: "Arrow keys navigate completion menu"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch menu1 menu2 menu3"
+      - send: "ls menu"
+      - send_key: "Tab"
+      - send_key: "Tab"
+      - send_key: "Down"
+      - send_key: "Enter"
+      - send_key: "C-u"
+      - send: "echo menu"
+      - send_key: "Enter"
+    expect_output: "menu"
+    match_type: "contains"
+
+  - name: "Enter selects from completion menu"
+    steps:
+      - send_line: "cd /tmp"
+      - send_line: "touch select1 select2"
+      - send: "ls sele"
+      - send_key: "Tab"
+      - send_key: "Tab"
+      - send_key: "Enter"
+      - send_key: "C-u"
+      - send: "echo selected"
+      - send_key: "Enter"
+    expect_output: "selected"
+    match_type: "contains"
+

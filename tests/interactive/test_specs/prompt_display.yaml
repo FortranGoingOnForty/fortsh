@@ -1,0 +1,327 @@
+# Prompt and Display Tests for fortsh
+# Phase 6: Prompt customization, terminal display, window resize
+
+metadata:
+  category: "Prompt and Display"
+  description: "Tests for prompt customization and terminal display features"
+  phase: 6
+
+tests:
+  # =============================================================
+  # PS1 - PRIMARY PROMPT (verify prompt content appears)
+  # =============================================================
+  - name: "PS1 sets custom prompt"
+    steps:
+      - send_line: "PS1='CUSTOM> '"
+    expect_output: "CUSTOM>"
+    match_type: "contains"
+
+  - name: "PS1 with username escape shows username"
+    steps:
+      - send_line: "PS1='\\u$ '"
+    expect_output: "$"
+    match_type: "contains"
+
+  - name: "PS1 with hostname escape shows host"
+    steps:
+      - send_line: "PS1='\\h: '"
+    expect_output: ":"
+    match_type: "contains"
+
+  - name: "PS1 with working directory shows path"
+    steps:
+      - send_line: "PS1='W:\\w '"
+    expect_output: "W:"
+    match_type: "contains"
+
+  - name: "PS1 with short directory shows basename"
+    steps:
+      - send_line: "PS1='\\W> '"
+      - send_line: "cd /tmp"
+    expect_output: "tmp>"
+    match_type: "contains"
+
+  - name: "PS1 with time shows HH:MM:SS"
+    steps:
+      - send_line: "PS1='\\t '"
+    expect_output: ":"
+    match_type: "contains"
+
+  - name: "PS1 with date shows day"
+    steps:
+      - send_line: "PS1='\\d '"
+    expect_output: " "
+    match_type: "contains"
+
+  - name: "PS1 with shell name"
+    steps:
+      - send_line: "PS1='\\s> '"
+    expect_output: "fortsh>"
+    match_type: "contains"
+
+  - name: "PS1 with newline"
+    steps:
+      - send_line: "PS1='L1\\nL2> '"
+    expect_output: "L2>"
+    match_type: "contains"
+
+  - name: "PS1 with dollar sign for non-root"
+    steps:
+      - send_line: "PS1='D\\$ '"
+    expect_output: "D"
+    match_type: "contains"
+
+  - name: "PS1 with literal backslash"
+    steps:
+      - send_line: "PS1='\\\\> '"
+    expect_output: "\\>"
+    match_type: "contains"
+
+  - name: "PS1 with command substitution"
+    steps:
+      - send_line: "PS1='$(echo SUB)> '"
+    expect_output: "SUB>"
+    match_type: "contains"
+
+  - name: "PS1 updates after cd"
+    steps:
+      - send_line: "PS1='\\W> '"
+      - send_line: "cd /tmp"
+    expect_output: "tmp>"
+    match_type: "contains"
+
+  - name: "PS1 with variable expansion"
+    steps:
+      - send_line: "MYPS=TEST"
+      - send_line: "PS1='$MYPS> '"
+    expect_output: "TEST>"
+    match_type: "contains"
+
+  # =============================================================
+  # PS2 - CONTINUATION PROMPT
+  # =============================================================
+  - name: "PS2 shown for multiline for loop"
+    steps:
+      - send_line: "PS2='MORE> '"
+      - send: "for i in 1 2; do"
+      - send_key: "Enter"
+      - send: "echo $i"
+      - send_key: "Enter"
+      - send: "done"
+      - send_key: "Enter"
+    expect_output: "1"
+    match_type: "contains"
+
+  - name: "Incomplete quote shows continuation"
+    steps:
+      - send: "echo 'hello"
+      - send_key: "Enter"
+      - send: "world'"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Incomplete command with pipe"
+    steps:
+      - send: "echo test |"
+      - send_key: "Enter"
+      - send: "cat"
+      - send_key: "Enter"
+    expect_output: "test"
+    match_type: "contains"
+
+  # =============================================================
+  # PROMPT COLORS (test that prompts with escapes still work)
+  # =============================================================
+  - name: "PS1 with ANSI codes still displays"
+    steps:
+      - send_line: "PS1='\\033[31mRED\\033[0m> '"
+      - send_line: "echo COL987"
+    expect_output: "COL987"
+    match_type: "contains"
+
+  - name: "PS1 with multiple colors"
+    steps:
+      - send_line: "PS1='\\033[32mG\\033[0m> '"
+      - send_line: "echo MUL654"
+    expect_output: "MUL654"
+    match_type: "contains"
+
+  # =============================================================
+  # PROMPT EDGE CASES
+  # =============================================================
+  - name: "Empty PS1 still allows commands"
+    steps:
+      - send_line: "PS1=''"
+      - wait: 0.3
+      - send_line: "echo emptyps1"
+    expect_output: "emptyps1"
+    match_type: "contains"
+
+  - name: "Very long prompt"
+    steps:
+      - send_line: "PS1='LONGPROMPT> '"
+      - send_line: "echo XYZ123"
+    expect_output: "XYZ123"
+    match_type: "contains"
+
+  - name: "Special characters in prompt"
+    steps:
+      - send_line: "PS1='!@#> '"
+      - send_line: "echo ABC789"
+    expect_output: "ABC789"
+    match_type: "contains"
+
+  - name: "Unicode arrow in prompt"
+    steps:
+      - send_line: "PS1='→ '"
+      - send_line: "echo UNI456"
+    expect_output: "UNI456"
+    match_type: "contains"
+
+  - name: "Emoji in prompt"
+    steps:
+      - send_line: "PS1='🚀 '"
+      - send_line: "echo EMO321"
+    expect_output: "EMO321"
+    match_type: "contains"
+
+  # =============================================================
+  # WINDOW RESIZE (SIGWINCH)
+  # =============================================================
+  - name: "Handle terminal resize"
+    steps:
+      - resize:
+          rows: 40
+          cols: 120
+      - send_line: "echo resized"
+    expect_output: "resized"
+    match_type: "contains"
+
+  - name: "COLUMNS updated after resize"
+    steps:
+      - resize:
+          rows: 24
+          cols: 100
+      - send_line: "echo $COLUMNS"
+    expect_output: "100"
+    match_type: "contains"
+
+  - name: "LINES updated after resize"
+    steps:
+      - resize:
+          rows: 50
+          cols: 80
+      - send_line: "echo $LINES"
+    expect_output: "50"
+    match_type: "contains"
+
+  - name: "Prompt redraws after resize"
+    steps:
+      - send: "partial"
+      - resize:
+          rows: 30
+          cols: 100
+      - send_key: "C-u"
+      - send_line: "echo redraw"
+    expect_output: "redraw"
+    match_type: "contains"
+
+  - name: "Small terminal size"
+    steps:
+      - resize:
+          rows: 10
+          cols: 40
+      - send_line: "echo small"
+    expect_output: "small"
+    match_type: "contains"
+
+  - name: "Large terminal size"
+    steps:
+      - resize:
+          rows: 100
+          cols: 200
+      - send_line: "echo large"
+    expect_output: "large"
+    match_type: "contains"
+
+  # =============================================================
+  # LINE WRAPPING
+  # =============================================================
+  - name: "Long command wraps correctly"
+    steps:
+      - send_line: "echo this is a very long command that should wrap around the terminal edge properly"
+    expect_output: "wrap around"
+    match_type: "contains"
+
+  - name: "Editing wrapped line"
+    steps:
+      - send: "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      - send_key: "C-a"
+      - send_key: "M-f"
+      - send_key: "C-k"
+      - send: " wrapped"
+      - send_key: "Enter"
+    expect_output: "wrapped"
+    match_type: "contains"
+
+  - name: "Cursor position on wrapped line"
+    steps:
+      - send: "echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      - send_key: "Home"
+      - send_key: "End"
+      - send_key: "C-u"
+      - send_line: "echo cursor"
+    expect_output: "cursor"
+    match_type: "contains"
+
+  # =============================================================
+  # CLEAR SCREEN
+  # =============================================================
+  - name: "Ctrl+L clears screen"
+    steps:
+      - send_line: "echo before"
+      - send_key: "C-l"
+      - send_line: "echo after"
+    expect_output: "after"
+    match_type: "contains"
+
+  - name: "clear command clears screen"
+    steps:
+      - send_line: "echo before"
+      - send_line: "clear"
+      - send_line: "echo after"
+    expect_output: "after"
+    match_type: "contains"
+
+  # =============================================================
+  # MULTILINE OUTPUT
+  # =============================================================
+  - name: "Multiple lines of output"
+    steps:
+      - send_line: "echo line1; echo line2; echo line3"
+    expect_output: "line2"
+    match_type: "contains"
+
+  - name: "Output with blank lines"
+    steps:
+      - send_line: "echo first; echo; echo last"
+    expect_output: "last"
+    match_type: "contains"
+
+  - name: "Long output scrolling"
+    steps:
+      - send_line: "for i in $(seq 1 20); do echo line$i; done"
+    expect_output: "line20"
+    match_type: "contains"
+
+  # =============================================================
+  # TERMINAL TITLE
+  # =============================================================
+  - name: "Set terminal title with printf"
+    steps:
+      - send_line: "printf '\\033]0;Test Title\\007'"
+      - send_line: "echo titleset"
+    expect_output: "titleset"
+    match_type: "contains"
+

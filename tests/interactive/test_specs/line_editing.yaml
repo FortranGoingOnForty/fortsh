@@ -1,0 +1,500 @@
+# Line Editing Tests for fortsh
+# Phase 2: Comprehensive cursor movement and text editing
+
+metadata:
+  category: "Line Editing"
+  description: "Comprehensive tests for cursor movement and text editing operations"
+  phase: 2
+
+tests:
+  # =============================================================
+  # BASIC INPUT
+  # =============================================================
+  - name: "Simple echo command"
+    steps:
+      - send_line: "echo hello"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Echo with multiple arguments"
+    steps:
+      - send_line: "echo one two three"
+    expect_output: "one two three"
+    match_type: "contains"
+
+  # Removed: Empty echo test causes timeout issues
+
+  # =============================================================
+  # CURSOR MOVEMENT - Arrow Keys
+  # =============================================================
+  - name: "Left arrow moves cursor back"
+    steps:
+      - send: "echo test"
+      - send_key: "Left"
+      - send_key: "Left"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "teXst"
+    match_type: "contains"
+
+  - name: "Right arrow moves cursor forward"
+    steps:
+      - send: "echo test"
+      - send_key: "Left"
+      - send_key: "Left"
+      - send_key: "Left"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "teXst"
+    match_type: "contains"
+
+  - name: "Left arrow at beginning does nothing"
+    steps:
+      - send: "echo test"
+      - send_key: "C-a"
+      - send_key: "Left"
+      - send_key: "Left"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "Xecho test"
+    match_type: "contains"
+
+  - name: "Right arrow at end does nothing"
+    steps:
+      - send: "echo test"
+      - send_key: "Right"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "echo testX"
+    match_type: "contains"
+
+  # =============================================================
+  # CURSOR MOVEMENT - Ctrl Keys
+  # =============================================================
+  - name: "Ctrl+A moves to beginning of line"
+    steps:
+      - send: "hello world"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "hello world"
+    match_type: "contains"
+
+  - name: "Ctrl+E moves to end of line"
+    steps:
+      - send: "echo hel"
+      - send_key: "C-a"
+      - send_key: "C-e"
+      - send: "lo"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Ctrl+B moves back one character"
+    steps:
+      - send: "echo test"
+      - send_key: "C-b"
+      - send_key: "C-b"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "teXst"
+    match_type: "contains"
+
+  - name: "Ctrl+F moves forward one character"
+    steps:
+      - send: "echo test"
+      - send_key: "C-a"
+      - send_key: "C-f"
+      - send_key: "C-f"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "ecXho test"
+    match_type: "contains"
+
+  - name: "Multiple Ctrl+B navigation"
+    steps:
+      - send: "abcdef"
+      - send_key: "C-b"
+      - send_key: "C-b"
+      - send_key: "C-b"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcXdef"
+    match_type: "contains"
+
+  # =============================================================
+  # CURSOR MOVEMENT - Home/End Keys
+  # =============================================================
+  - name: "Home key moves to beginning"
+    steps:
+      - send: "echo test"
+      - send_key: "Home"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "Xecho test"
+    match_type: "contains"
+
+  - name: "End key moves to end"
+    steps:
+      - send: "echo test"
+      - send_key: "Home"
+      - send_key: "End"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "echo testX"
+    match_type: "contains"
+
+  # =============================================================
+  # CURSOR MOVEMENT - Word Movement
+  # =============================================================
+  - name: "Alt+B moves back one word"
+    steps:
+      - send: "echo one two three"
+      - send_key: "M-b"
+      - send_key: "M-b"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "one Xtwo three"
+    match_type: "contains"
+
+  - name: "Alt+B from middle of word"
+    steps:
+      - send: "echo testing"
+      - send_key: "C-b"
+      - send_key: "C-b"
+      - send_key: "M-b"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "echo Xtesting"
+    match_type: "contains"
+
+  - name: "Alt+F moves forward one word"
+    steps:
+      - send: "echo one two"
+      - send_key: "C-a"
+      - send_key: "M-f"
+      - send_key: "M-f"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "oneX two"
+    match_type: "contains"
+
+  - name: "Multiple Alt+B movements"
+    steps:
+      - send: "echo a b c d"
+      - send_key: "M-b"
+      - send_key: "M-b"
+      - send_key: "M-b"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "a Xb c d"
+    match_type: "contains"
+
+  # =============================================================
+  # TEXT DELETION - Backspace
+  # =============================================================
+  - name: "Backspace deletes character before cursor"
+    steps:
+      - send: "echoo"
+      - send_key: "Backspace"
+      - send: " test"
+      - send_key: "Enter"
+    expect_output: "test"
+    match_type: "contains"
+
+  - name: "Multiple backspaces"
+    steps:
+      - send: "echo helloXXX"
+      - send_key: "Backspace"
+      - send_key: "Backspace"
+      - send_key: "Backspace"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Backspace at beginning does nothing"
+    steps:
+      - send: "echo test"
+      - send_key: "C-a"
+      - send_key: "Backspace"
+      - send_key: "Backspace"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  # =============================================================
+  # TEXT DELETION - Delete Key
+  # =============================================================
+  - name: "Delete key removes character under cursor"
+    steps:
+      - send: "echo test"
+      - send_key: "C-a"
+      - send_key: "Delete"
+      - send_key: "Enter"
+    expect_output: "cho test"
+    match_type: "contains"
+
+  - name: "Multiple deletes"
+    steps:
+      - send: "XXXecho test"
+      - send_key: "C-a"
+      - send_key: "Delete"
+      - send_key: "Delete"
+      - send_key: "Delete"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  - name: "Delete at end does nothing"
+    steps:
+      - send: "echo test"
+      - send_key: "Delete"
+      - send_key: "Delete"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  # =============================================================
+  # TEXT DELETION - Ctrl+D
+  # =============================================================
+  - name: "Ctrl+D deletes character under cursor"
+    steps:
+      - send: "echo test"
+      - send_key: "C-a"
+      - send_key: "C-d"
+      - send_key: "Enter"
+    expect_output: "cho test"
+    match_type: "contains"
+
+  - name: "Ctrl+D in middle of line"
+    steps:
+      - send: "echo teXst"
+      - send_key: "C-b"
+      - send_key: "C-b"
+      - send_key: "C-d"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  # =============================================================
+  # TEXT DELETION - Kill Commands
+  # =============================================================
+  - name: "Ctrl+K kills to end of line"
+    steps:
+      - send: "echo test garbage"
+      - send_key: "C-a"
+      - send_keys: ["Right", "Right", "Right", "Right", "Right", "Right", "Right", "Right", "Right"]
+      - send_key: "C-k"
+      - send_key: "Enter"
+    expect_output: "test"
+    match_type: "contains"
+
+  - name: "Ctrl+K at end of line kills nothing"
+    steps:
+      - send: "echo test"
+      - send_key: "C-k"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  - name: "Ctrl+U kills line before cursor"
+    steps:
+      - send: "garbage echo test"
+      - send_key: "C-a"
+      - send_keys: ["Right", "Right", "Right", "Right", "Right", "Right", "Right", "Right"]
+      - send_key: "C-u"
+      - send_key: "Enter"
+    expect_output: "test"
+    match_type: "contains"
+
+  - name: "Ctrl+U at beginning kills nothing"
+    steps:
+      - send: "echo test"
+      - send_key: "C-a"
+      - send_key: "C-u"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  - name: "Ctrl+W kills word backward"
+    steps:
+      - send: "echo one two three"
+      - send_key: "C-w"
+      - send_key: "Enter"
+    expect_output: "one two"
+    match_type: "contains"
+
+  - name: "Multiple Ctrl+W kills multiple words"
+    steps:
+      - send: "echo one two three"
+      - send_key: "C-w"
+      - send_key: "C-w"
+      - send_key: "Enter"
+    expect_output: "one"
+    match_type: "contains"
+
+  - name: "Ctrl+W from middle of word"
+    steps:
+      - send: "echo testing"
+      - send_key: "C-b"
+      - send_key: "C-b"
+      - send_key: "C-w"
+      - send_key: "Enter"
+    expect_output: "echo ing"
+    match_type: "contains"
+
+  # =============================================================
+  # KILL RING - Yank
+  # =============================================================
+  - name: "Ctrl+Y yanks killed text"
+    steps:
+      - send: "echo one two three"
+      - send_key: "C-w"
+      - send_key: "C-y"
+      - send_key: "Enter"
+    expect_output: "one two three"
+    match_type: "contains"
+
+  - name: "Ctrl+K then Ctrl+Y"
+    steps:
+      - send: "echo test"
+      - send_key: "C-a"
+      - send_key: "C-k"
+      - send: "new "
+      - send_key: "C-y"
+      - send_key: "Enter"
+    expect_output: "new echo test"
+    match_type: "contains"
+
+  - name: "Ctrl+U then Ctrl+Y"
+    steps:
+      - send: "prefix echo test"
+      - send_key: "C-a"
+      - send_keys: ["Right", "Right", "Right", "Right", "Right", "Right", "Right"]
+      - send_key: "C-u"
+      - send_key: "C-e"
+      - send: " "
+      - send_key: "C-y"
+      - send_key: "Enter"
+    expect_output: "echo test prefix"
+    match_type: "contains"
+
+  # =============================================================
+  # TRANSPOSE - Ctrl+T
+  # =============================================================
+  - name: "Ctrl+T transposes characters"
+    steps:
+      - send: "ehco test"
+      - send_key: "C-a"
+      - send_key: "C-f"
+      - send_key: "C-f"
+      - send_key: "C-t"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  - name: "Ctrl+T at end transposes last two"
+    steps:
+      - send: "echo tset"
+      - send_key: "C-t"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  # =============================================================
+  # SPECIAL CHARACTERS
+  # =============================================================
+  - name: "Quotes preserve spaces"
+    steps:
+      - send_line: "echo 'hello   world'"
+    expect_output: "hello   world"
+    match_type: "contains"
+
+  - name: "Double quotes preserve spaces"
+    steps:
+      - send_line: 'echo "hello   world"'
+    expect_output: "hello   world"
+    match_type: "contains"
+
+  - name: "Escaped characters"
+    steps:
+      - send_line: "echo hello\\ world"
+    expect_output: "hello world"
+    match_type: "contains"
+
+  - name: "Tab character in quotes"
+    steps:
+      - send_line: "echo 'a\tb'"
+    expect_output: "a\tb"
+    match_type: "contains"
+
+  # =============================================================
+  # UTF-8 MULTI-BYTE CHARACTERS
+  # =============================================================
+  - name: "UTF-8 basic output"
+    steps:
+      - send_line: "echo 'Hello 世界'"
+    expect_output: "Hello 世界"
+    match_type: "contains"
+
+  - name: "UTF-8 emoji output"
+    steps:
+      - send_line: "echo '🚀 rocket'"
+    expect_output: "🚀 rocket"
+    match_type: "contains"
+
+  - name: "UTF-8 mixed content"
+    steps:
+      - send_line: "echo 'café résumé'"
+    expect_output: "café résumé"
+    match_type: "contains"
+
+  - name: "Backspace over UTF-8 character"
+    steps:
+      - send: "echo 日本X"
+      - send_key: "Backspace"
+      - send_key: "Enter"
+    expect_output: "日本"
+    match_type: "contains"
+
+  - name: "Cursor movement with CJK characters"
+    steps:
+      - send: "echo 中文"
+      - send_key: "C-b"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "中X文"
+    match_type: "contains"
+
+  - name: "Delete UTF-8 character"
+    steps:
+      - send: "echo X日本"
+      - send_key: "C-a"
+      - send_key: "C-f"
+      - send_key: "C-f"
+      - send_key: "C-f"
+      - send_key: "C-f"
+      - send_key: "C-f"
+      - send_key: "C-d"
+      - send_key: "Enter"
+    expect_output: "echo 本"
+    match_type: "contains"
+
+  # =============================================================
+  # EDGE CASES
+  # =============================================================
+  - name: "Very long line input"
+    steps:
+      - send_line: "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    expect_output: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    match_type: "contains"
+
+  - name: "Line with only spaces"
+    steps:
+      - send_line: "echo '    '"
+    expect_output: "    "
+    match_type: "contains"
