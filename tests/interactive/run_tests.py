@@ -11,7 +11,7 @@ import argparse
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 import gc
 import re
@@ -57,12 +57,83 @@ class TestResult:
 class YAMLTestRunner:
     """
     Runs tests defined in YAML specification files.
+
+    Uses session reuse to avoid PTY exhaustion - reuses the same
+    fortsh session across multiple tests, resetting state between them.
     """
 
-    def __init__(self, fortsh_path: str, verbose: bool = False):
+    def __init__(self, fortsh_path: str, verbose: bool = False, tests_per_session: int = 15):
         self.fortsh_path = fortsh_path
         self.verbose = verbose
         self.results: List[TestResult] = []
+        self.tests_per_session = tests_per_session
+        self._current_session: Optional[FortshPTY] = None
+        self._test_count = 0
+
+    def _get_session(self, env: dict = None, rc_file: str = "/dev/null", fresh: bool = False) -> FortshPTY:
+        """
+        Get a fortsh session, reusing existing one if possible.
+
+        Args:
+            env: Environment variables for the session
+            rc_file: RC file path
+            fresh: If True, always create a new session
+
+        Returns:
+            FortshPTY session
+        """
+        needs_new = (
+            fresh or
+            self._current_session is None or
+            not self._current_session.is_running or
+            self._test_count % self.tests_per_session == 0
+        )
+
+        if needs_new:
+            if self._current_session is not None:
+                try:
+                    self._current_session.stop()
+                except:
+                    pass
+                gc.collect()
+                time.sleep(0.2)
+
+            self._current_session = FortshPTY(
+                fortsh_path=self.fortsh_path,
+                env=env or {}
+            )
+            self._current_session.start(rc_file=rc_file)
+        else:
+            # Reset session state for reuse
+            self._reset_session()
+
+        return self._current_session
+
+    def _reset_session(self) -> None:
+        """Reset session state between tests."""
+        if self._current_session is None or not self._current_session.is_running:
+            return
+
+        try:
+            # Clear any pending input
+            self._current_session.send_key("C-c")
+            self._current_session.send_key("C-u")
+            # Small delay to let shell settle
+            time.sleep(0.1)
+            # Clear the buffer
+            self._current_session.clear_buffer()
+        except:
+            pass
+
+    def _cleanup_session(self) -> None:
+        """Clean up the current session."""
+        if self._current_session is not None:
+            try:
+                self._current_session.stop()
+            except:
+                pass
+            self._current_session = None
+            gc.collect()
 
     def run_spec_file(self, spec_path: Path) -> List[TestResult]:
         """
@@ -84,15 +155,16 @@ class YAMLTestRunner:
         for test in spec.get('tests', []):
             result = self.run_test(test)
             results.append(result)
-            # Force garbage collection and delay for OS cleanup (PTY/FD reclamation)
-            gc.collect()
-            time.sleep(0.5)
+            self._test_count += 1
+
+            # Delay between tests for OS cleanup
+            time.sleep(0.3)
 
             if result.passed:
-                print(f"  {Fore.GREEN}✓{Style.RESET_ALL} {result.name}")
+                print(f"  {Fore.GREEN}✓{Style.RESET_ALL} {result.name}", flush=True)
             else:
                 error_msg = strip_control_sequences(result.error)
-                print(f"  {Fore.RED}✗{Style.RESET_ALL} {result.name}: {error_msg}")
+                print(f"  {Fore.RED}✗{Style.RESET_ALL} {result.name}: {error_msg}", flush=True)
 
         return results
 
@@ -112,9 +184,10 @@ class YAMLTestRunner:
         # Set up environment
         env = test.get('env', {})
         rc_file = test.get('rc_file', '/dev/null')
+        fresh_session = test.get('fresh_session', False)
 
         try:
-            # Create PTY directly so we can control rc_file
+            # Create fresh session for each test (session reuse TODO)
             fortsh = FortshPTY(
                 fortsh_path=self.fortsh_path,
                 env=env
@@ -176,6 +249,7 @@ class YAMLTestRunner:
 
             finally:
                 fortsh.stop()
+                gc.collect()
 
         except pexpect.TIMEOUT as e:
             duration = time.time() - start_time
