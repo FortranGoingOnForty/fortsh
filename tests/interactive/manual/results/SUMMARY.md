@@ -12,13 +12,13 @@
 | 2 | Line Editing | 49 | 27 | 55.1% |
 | 3 | History | 37 | 28 | 75.7% |
 | 4 | Completion | 37 | 23 | 62.2% |
-| 5 | Signals & Jobs | 40 | ~16 | ~40.0% |
+| 5 | Signals & Jobs | 40 | 21 | 52.5% |
 | 6 | Prompt & Display | 39 | 24 | 61.5% |
-| **Total** | | **321** | **~228** | **~71%** |
+| **Total** | | **321** | **~233** | **~72.6%** |
 
 *Note: Session reuse implemented - 10 tests per session with PS1 reset
-*Note: Signals & Jobs tests may timeout due to job control issues
-*Note: Some buffer pollution between tests causes false failures
+*Note: Autocomplete suggestions cause some buffer noise in test output
+*Note: All categories now complete without resource exhaustion
 
 ## Test Framework
 
