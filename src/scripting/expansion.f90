@@ -2248,6 +2248,12 @@ contains
       else if (depth == 0 .and. (expr(i:i) == '+' .or. expr(i:i) == '-')) then
         ! Skip if it's part of unary operator at start
         if (i == 1) cycle
+        ! Skip if this is part of ++ or -- (increment/decrement operators)
+        ! Check next character (we're scanning right to left)
+        if (i < len_trim(expr)) then
+          if (expr(i:i) == '+' .and. expr(i+1:i+1) == '+') cycle
+          if (expr(i:i) == '-' .and. expr(i+1:i+1) == '-') cycle
+        end if
         ! Skip if previous non-space char makes this unary
         ! Find previous non-space character
         prev_ch = ' '

@@ -365,6 +365,63 @@ contains
       case ('PS4')
         var_len = shell%ps4_len
         return
+      case ('PWD')
+        var_len = len_trim(shell%cwd)
+        return
+      case ('OLDPWD')
+        var_len = len_trim(shell%oldpwd)
+        return
+      case ('?')
+        write(temp_value, '(i15)') shell%last_exit_status
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('#')
+        write(temp_value, '(i15)') shell%num_positional
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('0')
+        var_len = len_trim(shell%shell_name)
+        return
+      case ('$')
+        write(temp_value, '(i15)') shell%shell_pid
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('PPID')
+        write(temp_value, '(i15)') shell%parent_pid
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('UID')
+        write(temp_value, '(i15)') shell%uid
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('EUID')
+        write(temp_value, '(i15)') shell%euid
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('SECONDS')
+        var_len = 10  ! Max digits for seconds
+        return
+      case ('RANDOM')
+        var_len = 5  ! Max digits for RANDOM (0-32767)
+        return
+      case ('LINENO')
+        write(temp_value, '(i15)') shell%current_line_number
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('HISTFILE')
+        var_len = len_trim(shell%histfile)
+        return
+      case ('HISTSIZE')
+        write(temp_value, '(i15)') shell%histsize
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('HISTFILESIZE')
+        write(temp_value, '(i15)') shell%histfilesize
+        var_len = len_trim(adjustl(temp_value))
+        return
+      case ('HISTCONTROL')
+        var_len = len_trim(shell%histcontrol)
+        return
       ! Note: No case default here - fall through to regular variable handling
     end select
 
@@ -380,6 +437,16 @@ contains
         return
       end if
     end do
+
+    ! Check environment variables
+    block
+      character(len=:), allocatable :: env_val
+      env_val = get_environment_var(trim(name))
+      if (allocated(env_val) .and. len(env_val) > 0) then
+        var_len = len(env_val)
+        return
+      end if
+    end block
 
     ! Not found - return 0
     var_len = 0
