@@ -179,6 +179,8 @@ class YAMLTestRunner:
 
         # Clean up session at end of spec file
         self._cleanup_session()
+        # Reset test count for fresh session at start of next category
+        self._test_count = 0
 
         return results
 
