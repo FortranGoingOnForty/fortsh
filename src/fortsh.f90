@@ -30,7 +30,7 @@ program fortran_shell
   character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
   integer :: iostat, i, num_args, ret
   character(len=1024) :: arg1, command_string
-  logical :: execute_command_string, execute_script_file
+  logical :: execute_command_string, execute_script_file, syntax_check_only
   character(len=:), allocatable :: script_file
   ! Command duration tracking
   integer :: cmd_start_time, cmd_end_time, cmd_duration_ms, clock_rate
@@ -52,20 +52,9 @@ program fortran_shell
   ! Initialize these BEFORE initialize_shell since it uses them to check interactivity
   execute_command_string = .false.
   execute_script_file = .false.
+  syntax_check_only = .false.
 
-  ! Initialize shell state (detects login shell from arguments)
-  call initialize_shell(shell)
-
-  ! Initialize builtin function pointers (breaks circular dependency)
-  call init_builtins()
-
-  ! Initialize control flow callbacks (breaks circular dependency)
-  call init_control_flow_callbacks()
-
-  ! Initialize command history (needed even in non-interactive mode)
-  call init_history()
-
-  ! Check for command-line arguments
+  ! Check for command-line arguments FIRST to detect non-interactive modes
   num_args = command_argument_count()
 
   ! Handle command-line arguments for script execution
@@ -74,8 +63,8 @@ program fortran_shell
 
     ! Check for -n flag (syntax check only, no execution)
     if (trim(arg1) == '-n') then
-      shell%option_noexec = .true.
-      shell%is_interactive = .false.
+      syntax_check_only = .true.
+      execute_script_file = .true.
       ! If there's a script file after -n, use it
       if (num_args >= 2) then
         if (.not. allocated(script_file)) allocate(character(len=1024) :: script_file)
@@ -87,7 +76,6 @@ program fortran_shell
       if (num_args >= 2) then
         call get_command_argument(2, command_string)
         execute_command_string = .true.
-        shell%is_interactive = .false.
       else
         write(error_unit, '(a)') 'fortsh: -c: option requires an argument'
         stop 2
@@ -96,9 +84,25 @@ program fortran_shell
     else if (arg1(1:1) /= '-') then
       script_file = trim(arg1)
       execute_script_file = .true.
-      shell%is_interactive = .false.
     end if
   end if
+
+  ! Initialize shell (reads execute_command_string/execute_script_file to set is_interactive)
+  call initialize_shell(shell)
+
+  ! Set option_noexec if -n flag was used
+  if (syntax_check_only) then
+    shell%option_noexec = .true.
+  end if
+
+  ! Initialize builtin function pointers (breaks circular dependency)
+  call init_builtins()
+
+  ! Initialize control flow callbacks (breaks circular dependency)
+  call init_control_flow_callbacks()
+
+  ! Initialize command history (needed even in non-interactive mode)
+  call init_history()
 
   ! Initialize signal handling module
   call init_signal_handling(shell)
