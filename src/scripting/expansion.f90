@@ -2093,42 +2093,48 @@ contains
 
     expr_len = len_trim(expr)
 
-    ! Check for post-increment: x++
+    ! Check for post-increment: x++ (only if x is a valid variable name)
     if (expr_len > 2 .and. expr(expr_len-1:expr_len) == '++') then
       var_name = trim(adjustl(expr(:expr_len-2)))
-      ! Get current value
-      var_value = get_shell_variable(shell, trim(var_name))
-      if (len_trim(var_value) > 0) then
-        read(var_value, *, iostat=iostat) value
-        if (iostat /= 0) value = 0
-      else
-        value = 0
+      ! Only treat as post-increment if var_name is a valid identifier (no operators)
+      if (is_valid_identifier(var_name)) then
+        ! Get current value
+        var_value = get_shell_variable(shell, trim(var_name))
+        if (len_trim(var_value) > 0) then
+          read(var_value, *, iostat=iostat) value
+          if (iostat /= 0) value = 0
+        else
+          value = 0
+        end if
+        ! Increment and set
+        new_val = value + 1
+        write(var_value_str, '(I0)') new_val
+        call set_shell_variable(shell, trim(var_name), trim(var_value_str))
+        ! Return old value
+        return
       end if
-      ! Increment and set
-      new_val = value + 1
-      write(var_value_str, '(I0)') new_val
-      call set_shell_variable(shell, trim(var_name), trim(var_value_str))
-      ! Return old value
-      return
     end if
 
-    ! Check for post-decrement: x--
+    ! Check for post-decrement: x-- (only if x is a valid variable name)
     if (expr_len > 2 .and. expr(expr_len-1:expr_len) == '--') then
       var_name = trim(adjustl(expr(:expr_len-2)))
-      ! Get current value
-      var_value = get_shell_variable(shell, trim(var_name))
-      if (len_trim(var_value) > 0) then
-        read(var_value, *, iostat=iostat) value
-        if (iostat /= 0) value = 0
-      else
-        value = 0
+      ! Only treat as post-decrement if var_name is a valid identifier (no operators)
+      if (is_valid_identifier(var_name)) then
+        ! Get current value
+        var_value = get_shell_variable(shell, trim(var_name))
+        if (len_trim(var_value) > 0) then
+          read(var_value, *, iostat=iostat) value
+          if (iostat /= 0) value = 0
+        else
+          value = 0
+        end if
+        ! Decrement and set
+        new_val = value - 1
+        write(var_value_str, '(I0)') new_val
+        call set_shell_variable(shell, trim(var_name), trim(var_value_str))
+        ! Return old value
+        return
       end if
-      ! Decrement and set
-      new_val = value - 1
-      write(var_value_str, '(I0)') new_val
-      call set_shell_variable(shell, trim(var_name), trim(var_value_str))
-      ! Return old value
-      return
     end if
 
     ! Handle parentheses
@@ -2271,21 +2277,23 @@ contains
             end if
           end if
         end if
-        ! Skip for post-increment/decrement: x++ or x-- (preceded by letter/digit/underscore)
+        ! Skip for post-increment/decrement: x++ or x-- (preceded by valid identifier)
         if (i > 1) then
-          if (expr(i:i) == '+' .and. expr(i+1:i+1) == '+') then
-            ! Check if preceded by identifier character
-            if ((expr(i-1:i-1) >= 'a' .and. expr(i-1:i-1) <= 'z') .or. &
-                (expr(i-1:i-1) >= 'A' .and. expr(i-1:i-1) <= 'Z') .or. &
-                (expr(i-1:i-1) >= '0' .and. expr(i-1:i-1) <= '9') .or. &
-                expr(i-1:i-1) == '_') cycle
-          end if
-          if (expr(i:i) == '-' .and. expr(i+1:i+1) == '-') then
-            ! Check if preceded by identifier character
-            if ((expr(i-1:i-1) >= 'a' .and. expr(i-1:i-1) <= 'z') .or. &
-                (expr(i-1:i-1) >= 'A' .and. expr(i-1:i-1) <= 'Z') .or. &
-                (expr(i-1:i-1) >= '0' .and. expr(i-1:i-1) <= '9') .or. &
-                expr(i-1:i-1) == '_') cycle
+          if ((expr(i:i) == '+' .and. expr(i+1:i+1) == '+') .or. &
+              (expr(i:i) == '-' .and. expr(i+1:i+1) == '-')) then
+            ! Extract the full token before the operator
+            ! Find the start of the identifier by scanning backwards
+            j = i - 1
+            do while (j > 1)
+              if (.not. ((expr(j-1:j-1) >= 'a' .and. expr(j-1:j-1) <= 'z') .or. &
+                         (expr(j-1:j-1) >= 'A' .and. expr(j-1:j-1) <= 'Z') .or. &
+                         (expr(j-1:j-1) >= '0' .and. expr(j-1:j-1) <= '9') .or. &
+                         expr(j-1:j-1) == '_')) exit
+              j = j - 1
+            end do
+            ! Now j points to the start of the potential identifier
+            ! Check if it's a valid identifier (not just digits, must start with letter/_)
+            if (is_valid_identifier(expr(j:i-1))) cycle
           end if
         end if
         ! Skip if previous non-space char makes this unary
@@ -2536,11 +2544,39 @@ contains
   function is_alnum(c) result(is_valid)
     character, intent(in) :: c
     logical :: is_valid
-    
+
     is_valid = (c >= 'a' .and. c <= 'z') .or. &
                (c >= 'A' .and. c <= 'Z') .or. &
                (c >= '0' .and. c <= '9')
   end function
+
+  ! Check if a string is a valid shell variable identifier
+  function is_valid_identifier(str) result(is_valid)
+    character(len=*), intent(in) :: str
+    logical :: is_valid
+    integer :: i
+    character(len=1) :: c
+
+    is_valid = .false.
+    if (len_trim(str) == 0) return
+
+    ! First character must be letter or underscore
+    c = str(1:1)
+    if (.not. ((c >= 'a' .and. c <= 'z') .or. &
+               (c >= 'A' .and. c <= 'Z') .or. &
+               c == '_')) return
+
+    ! Remaining characters must be letters, digits, or underscores
+    do i = 2, len_trim(str)
+      c = str(i:i)
+      if (.not. ((c >= 'a' .and. c <= 'z') .or. &
+                 (c >= 'A' .and. c <= 'Z') .or. &
+                 (c >= '0' .and. c <= '9') .or. &
+                 c == '_')) return
+    end do
+
+    is_valid = .true.
+  end function is_valid_identifier
 
   ! Field splitting based on IFS
   subroutine field_split(input, ifs_chars, fields, field_count)
