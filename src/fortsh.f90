@@ -129,8 +129,8 @@ program fortran_shell
 
   ! Execute command string if -c was specified
   if (execute_command_string) then
-    ! Check if string contains heredoc and pre-process it
-    if (index(command_string, '<<') > 0) then
+    ! Check if string contains heredoc outside quotes and pre-process it
+    if (has_heredoc_outside_quotes(command_string)) then
       ! Pre-process heredocs before parsing
       command_string = preprocess_heredocs_for_c(command_string, shell)
       ! write(error_unit, '(A,A)') 'DEBUG: After preprocess, command_string=', trim(command_string)
@@ -546,6 +546,38 @@ contains
     end do
   end function
 
+  ! Check if a string contains heredoc syntax (<<) outside of quotes
+  function has_heredoc_outside_quotes(str) result(has_heredoc)
+    character(len=*), intent(in) :: str
+    logical :: has_heredoc
+    integer :: i
+    logical :: in_single_quote, in_double_quote
+    character :: ch
+
+    has_heredoc = .false.
+    in_single_quote = .false.
+    in_double_quote = .false.
+
+    do i = 1, len_trim(str) - 1
+      ch = str(i:i)
+
+      ! Track quote state
+      if (.not. in_double_quote .and. ch == "'") then
+        in_single_quote = .not. in_single_quote
+      else if (.not. in_single_quote .and. ch == '"') then
+        in_double_quote = .not. in_double_quote
+      end if
+
+      ! Check for << when outside quotes
+      if (.not. in_single_quote .and. .not. in_double_quote) then
+        if (str(i:i+1) == '<<') then
+          has_heredoc = .true.
+          return
+        end if
+      end if
+    end do
+  end function
+
   ! Pre-process heredocs in -c commands
   ! Extracts heredoc content and stores it for later use
   function preprocess_heredocs_for_c(input, shell) result(output)
@@ -575,12 +607,44 @@ contains
     cmd_line = input(1:cmd_line_end-1)
 
     ! Count and collect all heredoc delimiters from the command line
+    ! Only match << when it's outside quotes
     num_heredocs = 0
     i = 1
     do while (i <= len_trim(cmd_line))
-      j = index(cmd_line(i:), '<<')
+      ! Find next << outside of quotes
+      j = 0
+      block
+        integer :: search_pos
+        logical :: in_single_quote, in_double_quote
+        character :: ch
+
+        in_single_quote = .false.
+        in_double_quote = .false.
+        search_pos = i
+
+        do while (search_pos <= len_trim(cmd_line) - 1)
+          ch = cmd_line(search_pos:search_pos)
+
+          ! Track quote state
+          if (.not. in_double_quote .and. ch == "'") then
+            in_single_quote = .not. in_single_quote
+          else if (.not. in_single_quote .and. ch == '"') then
+            in_double_quote = .not. in_double_quote
+          end if
+
+          ! Check for << when outside quotes
+          if (.not. in_single_quote .and. .not. in_double_quote) then
+            if (cmd_line(search_pos:search_pos+1) == '<<') then
+              j = search_pos
+              exit
+            end if
+          end if
+
+          search_pos = search_pos + 1
+        end do
+      end block
+
       if (j == 0) exit
-      j = i + j - 1  ! Adjust to absolute position
 
       ! Check for <<- (strip tabs)
       strip_tabs = .false.
@@ -815,26 +879,31 @@ contains
       ! If EOF was reached during continuation, exit
       if (iostat /= 0) exit
 
-      ! Check if this is the start of a function definition
-      if (.not. in_function .and. is_function_definition(input_line, func_name)) then
-        in_function = .true.
-        brace_depth = count_braces(input_line)
-        func_line_count = 0
+      ! NOTE: Function definitions are now handled by the AST parser
+      ! The old special handling has been removed to ensure functions are properly
+      ! added to the AST cache (not just the old text-based format)
 
-        ! If the opening brace is on the same line, start capturing from next line
-        ! Otherwise, this line might have the brace on next line
+      ! Check if this is the start of a MULTI-LINE function definition only
+      ! (single-line functions like "f() { cmd; }" are handled by the parser below)
+      if (.not. in_function .and. is_function_definition(input_line, func_name)) then
+        ! Check if this is a multi-line function (no closing brace on first line)
         if (index(input_line, '{') > 0) then
-          ! Extract any commands after the opening brace on the same line
-          call extract_first_line_body(input_line, func_body, func_line_count)
-          if (brace_depth == 0) then
-            ! Function complete on one line: name() { commands; }
-            call add_function(shell, trim(func_name), func_body, func_line_count)
-            in_function = .false.
-            func_name = ''
+          brace_depth = count_braces(input_line)
+          if (brace_depth > 0) then
+            ! Multi-line function - need to capture it
+            in_function = .true.
             func_line_count = 0
+            call extract_first_line_body(input_line, func_body, func_line_count)
+            cycle
           end if
+          ! else: single-line function, fall through to normal parsing
+        else
+          ! Opening brace on next line - this is multi-line
+          in_function = .true.
+          brace_depth = 0
+          func_line_count = 0
+          cycle
         end if
-        cycle
       end if
 
       ! If we're capturing a function, accumulate lines
@@ -887,7 +956,10 @@ contains
             exit_code = execute_ast(ast_root, shell)
             shell%last_exit_status = exit_code
           end if
-          call destroy_command_node(ast_root)
+          ! Don't destroy AST nodes yet - defer cleanup
+          ! (function bodies need to remain alive in cache)
+          ! TODO: Implement proper AST node lifecycle management
+          !call destroy_command_node(ast_root)
         else if (last_parse_had_error) then
           ! Parse error occurred (not just empty command)
           shell%last_exit_status = 2
@@ -929,7 +1001,9 @@ contains
       end if
 
       ! Stop execution if exit command was encountered
-      if (.not. shell%running) exit
+      if (.not. shell%running) then
+        exit
+      end if
 
       ! Stop execution if return was called from sourced script
       if (shell%function_return_pending .and. shell%source_depth > 0) exit
