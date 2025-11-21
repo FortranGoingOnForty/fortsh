@@ -19,7 +19,8 @@
 #   1: Some tests failed
 #   2: Invalid arguments
 
-set -e
+# Don't use set -e because test suites may exit with non-zero on failure
+# and we want to capture and report those failures, not abort the whole script
 
 # Colors
 RED='\033[0;31m'
