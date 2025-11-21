@@ -37,7 +37,7 @@ RUN_POSIX=1
 RUN_MEMORY=0
 RUN_INTERACTIVE=0
 SKIP_SLOW=0
-SHOW_PROGRESS=1
+SHOW_PROGRESS=0  # Disabled by default due to output buffering issues
 
 # Parse arguments
 for arg in "$@"; do
@@ -173,9 +173,10 @@ run_test_suite() {
         exit_code=$?
     else
         if [ "$SHOW_PROGRESS" -eq 1 ]; then
-            # Show a simple progress indicator
+            # Show a simple progress indicator using a temp file
+            local tmpfile=$(mktemp)
             printf "  Running"
-            output=$("$suite_path" 2>&1) &
+            "$suite_path" > "$tmpfile" 2>&1 &
             local test_pid=$!
             while kill -0 $test_pid 2>/dev/null; do
                 printf "."
@@ -183,6 +184,8 @@ run_test_suite() {
             done
             wait $test_pid
             exit_code=$?
+            output=$(cat "$tmpfile")
+            rm -f "$tmpfile"
             printf " done\n"
         else
             output=$("$suite_path" 2>&1)
