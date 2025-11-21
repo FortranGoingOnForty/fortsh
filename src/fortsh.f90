@@ -1198,18 +1198,24 @@ contains
       ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
     end if
 
-    ! Query terminal size
-    success = get_terminal_size(shell%term_rows, shell%term_cols)
-    ! Set COLUMNS and LINES in both environment and shell variables
-    write(cols_str, '(I0)') shell%term_cols
-    write(rows_str, '(I0)') shell%term_rows
-    success = set_environment_var('COLUMNS', trim(cols_str))
-    success = set_environment_var('LINES', trim(rows_str))
-    call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
-    call set_shell_variable(shell, 'LINES', trim(rows_str))
+    ! Query terminal size (only if interactive to avoid SIGTTOU)
+    if (shell%is_interactive) then
+      success = get_terminal_size(shell%term_rows, shell%term_cols)
+      ! Set COLUMNS and LINES in both environment and shell variables
+      write(cols_str, '(I0)') shell%term_cols
+      write(rows_str, '(I0)') shell%term_rows
+      success = set_environment_var('COLUMNS', trim(cols_str))
+      success = set_environment_var('LINES', trim(rows_str))
+      call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
+      call set_shell_variable(shell, 'LINES', trim(rows_str))
+    end if
 
-    ! Check terminal capabilities (ANSI support)
-    shell%term_supports_color = terminal_supports_ansi()
+    ! Check terminal capabilities (ANSI support) - only if interactive
+    if (shell%is_interactive) then
+      shell%term_supports_color = terminal_supports_ansi()
+    else
+      shell%term_supports_color = .false.
+    end if
 
     ! Set initial terminal title if interactive (only for ANSI terminals)
     if (shell%is_interactive .and. shell%term_supports_color) then
