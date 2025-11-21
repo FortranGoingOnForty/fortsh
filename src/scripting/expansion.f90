@@ -2252,20 +2252,40 @@ contains
         ! Skip if it's part of unary operator at start
         if (i == 1) cycle
         ! Skip if this is part of ++ or -- (increment/decrement operators)
-        ! Only skip if followed by identifier (letter/underscore), not a digit
-        ! e.g., ++x or --y, but not 5--3 (which is 5 - (-3))
-        if (i < len_trim(expr) - 1) then
+        ! Check for both pre-increment (++x) and post-increment (x++)
+        if (i < len_trim(expr)) then
           if (expr(i:i) == '+' .and. expr(i+1:i+1) == '+') then
-            ! Check if followed by letter/underscore (pre-increment)
-            if ((expr(i+2:i+2) >= 'a' .and. expr(i+2:i+2) <= 'z') .or. &
-                (expr(i+2:i+2) >= 'A' .and. expr(i+2:i+2) <= 'Z') .or. &
-                expr(i+2:i+2) == '_') cycle
+            ! Skip for pre-increment: ++x (followed by letter/underscore)
+            if (i+2 <= len_trim(expr)) then
+              if ((expr(i+2:i+2) >= 'a' .and. expr(i+2:i+2) <= 'z') .or. &
+                  (expr(i+2:i+2) >= 'A' .and. expr(i+2:i+2) <= 'Z') .or. &
+                  expr(i+2:i+2) == '_') cycle
+            end if
           end if
           if (expr(i:i) == '-' .and. expr(i+1:i+1) == '-') then
-            ! Check if followed by letter/underscore (pre-decrement)
-            if ((expr(i+2:i+2) >= 'a' .and. expr(i+2:i+2) <= 'z') .or. &
-                (expr(i+2:i+2) >= 'A' .and. expr(i+2:i+2) <= 'Z') .or. &
-                expr(i+2:i+2) == '_') cycle
+            ! Skip for pre-decrement: --x (followed by letter/underscore)
+            if (i+2 <= len_trim(expr)) then
+              if ((expr(i+2:i+2) >= 'a' .and. expr(i+2:i+2) <= 'z') .or. &
+                  (expr(i+2:i+2) >= 'A' .and. expr(i+2:i+2) <= 'Z') .or. &
+                  expr(i+2:i+2) == '_') cycle
+            end if
+          end if
+        end if
+        ! Skip for post-increment/decrement: x++ or x-- (preceded by letter/digit/underscore)
+        if (i > 1) then
+          if (expr(i:i) == '+' .and. expr(i+1:i+1) == '+') then
+            ! Check if preceded by identifier character
+            if ((expr(i-1:i-1) >= 'a' .and. expr(i-1:i-1) <= 'z') .or. &
+                (expr(i-1:i-1) >= 'A' .and. expr(i-1:i-1) <= 'Z') .or. &
+                (expr(i-1:i-1) >= '0' .and. expr(i-1:i-1) <= '9') .or. &
+                expr(i-1:i-1) == '_') cycle
+          end if
+          if (expr(i:i) == '-' .and. expr(i+1:i+1) == '-') then
+            ! Check if preceded by identifier character
+            if ((expr(i-1:i-1) >= 'a' .and. expr(i-1:i-1) <= 'z') .or. &
+                (expr(i-1:i-1) >= 'A' .and. expr(i-1:i-1) <= 'Z') .or. &
+                (expr(i-1:i-1) >= '0' .and. expr(i-1:i-1) <= '9') .or. &
+                expr(i-1:i-1) == '_') cycle
           end if
         end if
         ! Skip if previous non-space char makes this unary
