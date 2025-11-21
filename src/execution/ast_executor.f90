@@ -146,9 +146,14 @@ contains
         block
           use variables, only: set_shell_variable
           use parser, only: expand_variables
-          integer :: assign_idx, assign_eq_pos, value_len, token_len
+          integer :: assign_idx, assign_eq_pos, value_len, token_len, saved_status
           character(len=256) :: assign_name, assign_value
           character(len=:), allocatable :: expanded_value
+
+          ! Save the exit status before assignment expansion
+          ! POSIX: Pure assignment exit status should be 0 unless command substitution fails
+          saved_status = shell%last_exit_status
+          shell%last_exit_status = 0
 
           do assign_idx = 1, node%simple_cmd%num_assignments
             ! Use tracked length to preserve trailing whitespace
