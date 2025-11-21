@@ -1,6 +1,5 @@
 bin/
 build/
-docs/
 
 # Build artifacts
 *.mod
@@ -11,20 +10,8 @@ docs/
 *.bak
 *.tmp
 
-# Planning/status markdown files (keep only README.md and COMPILER_NOTES.md)
-PHASE*.md
-POSIX*.md
-PARSER*.md
-REGRESSION*.md
-*STATUS*.md
-*PROGRESS*.md
-NINETY*.md
-MACOS*.md
-HEREDOC*.md
-LATEST*.md
-FINAL*.md
-COMPLETE*.md
-SITUATION*.md
+# Planning/status documents (archived planning docs, only README.md and COMPILER_NOTES.md are tracked)
+PLANNING/
 
 # Debug/test artifacts
 gfortran_bug*.f90
@@ -33,3 +20,4 @@ find_dangerous_patterns.py
 get_crash_info.sh
 install_*.sh
 lldb_interactive.sh
+}_*.txt
