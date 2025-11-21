@@ -6,9 +6,10 @@
 # Usage: ./run_all_tests.sh [OPTIONS]
 #
 # Options:
-#   --posix-only     Run only POSIX compliance tests
-#   --memory-only    Run only memory pool tests
-#   --quick          Run only fast POSIX tests (skip coverage, untested)
+#   --posix-only     Run only POSIX compliance tests (default, ~1 min)
+#   --memory-only    Run only memory pool tests (SLOW: rebuilds fortsh, 5-10 min)
+#   --all            Run POSIX + memory tests (SLOW: 5-10 min total)
+#   --quick          Run only fast POSIX tests (skip coverage, untested, ~30s)
 #   --verbose        Show detailed output from each test
 #   --stop-on-fail   Stop running tests after first failure
 #   --help           Show this help message
@@ -36,6 +37,7 @@ RUN_POSIX=1
 RUN_MEMORY=0
 RUN_INTERACTIVE=0
 SKIP_SLOW=0
+SHOW_PROGRESS=1
 
 # Parse arguments
 for arg in "$@"; do
@@ -151,17 +153,45 @@ run_test_suite() {
     printf "Running: ${BOLD}%s${NC}${BLUE} [%s]\n" "$suite" "$category"
     printf "========================================${NC}\n"
 
+    # Warn about slow tests
+    case "$suite" in
+        memory_pool_*.sh)
+            printf "${YELLOW}⚠  Note: This test rebuilds fortsh and may take several minutes...${NC}\n"
+            ;;
+        posix_compliance_coverage.sh|posix_compliance_untested.sh)
+            printf "${CYAN}ℹ  Note: This is a comprehensive test suite (may take 30+ seconds)...${NC}\n"
+            ;;
+    esac
+
     # Run the test suite and capture output
     local output
     local exit_code
+    local start_time=$(date +%s)
 
     if [ "$VERBOSE" -eq 1 ]; then
         "$suite_path"
         exit_code=$?
     else
-        output=$("$suite_path" 2>&1)
-        exit_code=$?
+        if [ "$SHOW_PROGRESS" -eq 1 ]; then
+            # Show a simple progress indicator
+            printf "  Running"
+            output=$("$suite_path" 2>&1) &
+            local test_pid=$!
+            while kill -0 $test_pid 2>/dev/null; do
+                printf "."
+                sleep 2
+            done
+            wait $test_pid
+            exit_code=$?
+            printf " done\n"
+        else
+            output=$("$suite_path" 2>&1)
+            exit_code=$?
+        fi
     fi
+
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
 
     # Parse test results from output if not verbose
     if [ "$VERBOSE" -eq 0 ]; then
@@ -189,6 +219,11 @@ run_test_suite() {
             [ -n "$skipped" ] && [ "$skipped" -gt 0 ] && printf " ${YELLOW}%d skipped${NC}" "$skipped"
             printf "\n"
         fi
+    fi
+
+    # Show duration for slow tests
+    if [ "$duration" -ge 5 ]; then
+        printf "  ${CYAN}Duration: %ds${NC}\n" "$duration"
     fi
 
     # Check exit code
@@ -246,6 +281,11 @@ if [ "$RUN_MEMORY" -eq 1 ]; then
     printf "${CYAN}${BOLD}══════════════════════════════════════════\n"
     printf "MEMORY POOL TESTS\n"
     printf "══════════════════════════════════════════${NC}\n\n"
+
+    printf "${YELLOW}${BOLD}WARNING:${NC} ${YELLOW}Memory pool tests rebuild fortsh from scratch!\n"
+    printf "These tests may take 5-10 minutes to complete.\n"
+    printf "Press Ctrl+C within 5 seconds to cancel, or wait to continue...${NC}\n\n"
+    sleep 5
 
     for suite in $MEMORY_TESTS; do
         run_test_suite "$suite" "Memory"
