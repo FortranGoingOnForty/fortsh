@@ -19,6 +19,10 @@ contains
     ast_root => parse_command_line(command)
     if (associated(ast_root)) then
       exit_status = execute_ast(ast_root, shell)
+      ! If errexit triggered (shell%running = .false.), use the failing exit status
+      if (.not. shell%running) then
+        exit_status = shell%last_exit_status
+      end if
       ! TODO: Add AST cleanup when deallocate_command_tree is available
     else
       exit_status = 127
