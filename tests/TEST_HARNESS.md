@@ -26,13 +26,14 @@ The primary test runner that provides categorized test execution with detailed r
 
 **Examples:**
 ```bash
-# Quick POSIX compliance check (recommended for development)
+# Quick POSIX compliance check (recommended for development, ~30s)
 ./run_all_tests.sh --quick
 
-# Full POSIX compliance suite
+# Full POSIX compliance suite (~1-2 minutes)
 ./run_all_tests.sh --posix-only
 
-# Everything (POSIX + memory pool tests)
+# Everything (POSIX + memory pool tests) - SLOW: 5-10 minutes
+# WARNING: Memory tests rebuild fortsh from scratch!
 ./run_all_tests.sh --all
 
 # Verbose mode with stop on first failure
@@ -41,6 +42,9 @@ The primary test runner that provides categorized test execution with detailed r
 
 **Output Features:**
 - Color-coded test results
+- **Progress indicators** - Shows dots (.) while tests are running so you know it's not hung
+- **Duration tracking** - Shows how long each test suite took (if ≥5s)
+- **Warnings for slow tests** - Alerts you before running tests that rebuild fortsh
 - Individual test counts aggregated across all suites
 - Suite-level pass/fail tracking
 - Detailed summary with pass rates
@@ -83,9 +87,13 @@ This runner includes all POSIX test suites:
 
 ### Memory Pool Tests
 
-- `memory_pool_test_bench.sh` - Comprehensive memory pool testing
-- `memory_pool_validation.sh` - Memory pool validation
-- `macos_arm64_pool_checks.sh` - macOS ARM64 specific tests
+**⚠️ WARNING:** These tests rebuild fortsh from scratch and are VERY slow (5-10 minutes)!
+
+- `memory_pool_test_bench.sh` - Comprehensive memory pool testing (rebuilds twice)
+- `memory_pool_validation.sh` - Memory pool validation (rebuilds)
+- `macos_arm64_pool_checks.sh` - macOS ARM64 specific tests (rebuilds)
+
+When you run `--all` or `--memory-only`, you'll get a 5-second warning before these tests start.
 
 ### Interactive Tests
 
