@@ -288,8 +288,13 @@ if [ "$RUN_MEMORY" -eq 1 ]; then
 
     printf "${YELLOW}${BOLD}WARNING:${NC} ${YELLOW}Memory pool tests rebuild fortsh from scratch!\n"
     printf "These tests may take 5-10 minutes to complete.\n"
-    printf "Press Ctrl+C within 5 seconds to cancel, or wait to continue...${NC}\n\n"
-    sleep 5
+    # Only sleep if running interactively (stdin is a terminal)
+    if [ -t 0 ]; then
+        printf "Press Ctrl+C within 5 seconds to cancel, or wait to continue...${NC}\n\n"
+        sleep 5
+    else
+        printf "${NC}\n"
+    fi
 
     for suite in $MEMORY_TESTS; do
         run_test_suite "$suite" "Memory"
