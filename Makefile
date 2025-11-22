@@ -31,7 +31,12 @@ ifeq ($(NO_MEMPOOL),1)
     $(info Memory pooling DISABLED - using standard allocation)
 else
     POOL_FLAGS = -DUSE_MEMORY_POOL
-    $(info Memory pooling ENABLED - using zero-copy string pool [DEFAULT])
+    ifeq ($(MEMPOOL_DEBUG),1)
+        POOL_FLAGS += -DMEMPOOL_DEBUG
+        $(info Memory pooling ENABLED with DEBUG output - using zero-copy string pool)
+    else
+        $(info Memory pooling ENABLED - using zero-copy string pool [DEFAULT])
+    endif
 endif
 
 # C compiler for string operations library
@@ -97,11 +102,9 @@ else
     POOL_OBJECTS = $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o
 endif
 
-# Object files in dependency order
-# Note: Circular dependencies exist between parser/expansion/substitution/command_capture
-# The linker resolves these at link time, so build order matters
-# Force sequential build to handle circular dependencies correctly
-.NOTPARALLEL:
+# Object files with explicit dependencies
+# All module dependencies are properly declared in the rules below,
+# so parallel builds work correctly
 OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/common/error_handling.o \
           $(BUILDDIR)/common/performance.o \
@@ -415,6 +418,7 @@ help:
 	@echo "Memory pooling options:"
 	@echo "  make          - Build with memory pooling (DEFAULT)"
 	@echo "  NO_MEMPOOL=1 make - Build without memory pooling"
+	@echo "  MEMPOOL_DEBUG=1 make - Build with memory pool debug output"
 	@echo ""
 	@echo "C string library (flang-new workaround):"
 	@echo "  c-strings     - Build C string library test"
