@@ -84,6 +84,12 @@ contains
     dashboard%verbose = .false.
     if (present(verbose)) dashboard%verbose = verbose
 
+#ifdef MEMPOOL_DEBUG
+    ! Enable verbose output when MEMPOOL_DEBUG is defined
+    dashboard%verbose = .true.
+    write(output_unit, '(A)') "[MEMPOOL_DEBUG] Memory dashboard initialized in debug mode"
+#endif
+
     ! Get start time (simplified - would use system clock in real implementation)
     dashboard%session_start_time = 0
 

@@ -76,7 +76,7 @@ section "1. BUILD VALIDATION"
 subsection "Building pooled version"
 cd "$FORTSH_DIR" || exit 1
 make clean > /dev/null 2>&1
-if MEMPOOL=1 make > /dev/null 2>&1; then
+if make > /dev/null 2>&1; then
     pass "Pooled build successful"
     cp bin/fortsh "$FORTSH_POOLED"
 else
@@ -86,7 +86,7 @@ fi
 
 subsection "Building traditional version"
 make clean > /dev/null 2>&1
-if make > /dev/null 2>&1; then
+if make NO_MEMPOOL=1 > /dev/null 2>&1; then
     pass "Traditional build successful"
     cp bin/fortsh "$FORTSH_TRADITIONAL"
 else
@@ -266,15 +266,15 @@ else
 fi
 
 subsection "Nested expansions"
-# Test deeply nested expansions
-TEST_CMD='A=1; B=A; C=B; D=C; E=D; eval eval eval eval echo \$\$\$\$$E'
+# Test deeply nested expansions with variable indirection (deterministic)
+TEST_CMD='V=world; X="\$V"; Y="\$X"; eval eval echo "$Y"'
 POOLED_OUT=$("$FORTSH_POOLED" -c "$TEST_CMD" 2>&1)
 TRAD_OUT=$("$FORTSH_TRADITIONAL" -c "$TEST_CMD" 2>&1)
 
 if [ "$POOLED_OUT" = "$TRAD_OUT" ]; then
     pass "Stress: Nested expansions"
 else
-    fail "Stress: Different nested expansion behavior"
+    fail "Stress: Different nested expansion behavior" "Pooled: '$POOLED_OUT', Traditional: '$TRAD_OUT'"
 fi
 
 # =====================================
