@@ -12,7 +12,7 @@ import sys
 
 
 def unescape_variables(command: str) -> str:
-    """
+    r"""
     Remove backslashes before $ signs that were needed in shell scripts
     but not needed in interactive mode.
 

@@ -57,13 +57,16 @@ tests:
 - name: '3. POSIX PARAMETER EXPANSION: assign default'
   steps:
   - send_line: UNSET=; echo "${UNSET:=assigned}"; echo $UNSET
-  expect_output: MANUAL_REVIEW
+  expect_output: 'assigned
+
+    assigned'
   match_type: contains
+  auto_fixed: shell_execution
 - name: '3. POSIX PARAMETER EXPANSION: error if unset'
   steps:
   - send_line: echo "${VAR:+alternative}"
-  expect_output: MANUAL_REVIEW
-  match_type: contains
+  expect_output: ''
+  match_type: exact
 - name: '3. POSIX PARAMETER EXPANSION: string length'
   steps:
   - send_line: VAR=hello; echo "${#VAR}"
@@ -124,13 +127,14 @@ tests:
 - name: '4. POSIX COMMAND SUBSTITUTION: dollar paren substitution'
   steps:
   - send_line: echo $(echo test)
-  expect_output: MANUAL_REVIEW
+  expect_output: test
   match_type: contains
 - name: '4. POSIX COMMAND SUBSTITUTION: nested substitution'
   steps:
   - send_line: echo $(echo $(echo nested))
-  expect_output: MANUAL_REVIEW
+  expect_output: nested
   match_type: contains
+  auto_fixed: shell_execution
 - name: '5. POSIX ARITHMETIC: expr addition'
   steps:
   - send_line: expr 5 + 3
@@ -197,79 +201,68 @@ tests:
   steps:
   - send_line: test -d /tmp
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test -n nonempty (exit code)'
   steps:
   - send_line: test -n 'hello'
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test -z empty (exit code)'
   steps:
   - send_line: test -z ''
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test string = (exit code)'
   steps:
   - send_line: test 'hello' = 'hello'
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test string != (exit code)'
   steps:
   - send_line: test 'hello' != 'world'
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test number -eq (exit code)'
   steps:
   - send_line: test 5 -eq 5
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test number -ne (exit code)'
   steps:
   - send_line: test 5 -ne 3
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test number -gt (exit code)'
   steps:
   - send_line: test 5 -gt 3
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test number -ge (exit code)'
   steps:
   - send_line: test 5 -ge 5
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test number -lt (exit code)'
   steps:
   - send_line: test 3 -lt 5
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '8. POSIX TEST COMMAND: test number -le (exit code)'
   steps:
   - send_line: test 3 -le 3
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '9. POSIX CONDITIONALS: if true'
   steps:
   - send_line: if true; then echo yes; fi
@@ -292,28 +285,45 @@ tests:
 - name: '10. POSIX LOOPS: for loop'
   steps:
   - send_line: for i in a b c; do echo $i; done
-  expect_output: MANUAL_REVIEW
+  expect_output: 'a
+
+    b
+
+    c'
   match_type: contains
+  auto_fixed: shell_execution
 - name: '10. POSIX LOOPS: while loop'
   steps:
   - send_line: i=3; while [ $i -gt 0 ]; do echo $i; i=$((i - 1)); done
-  expect_output: MANUAL_REVIEW
+  expect_output: '3
+
+    2
+
+    1'
   match_type: contains
+  auto_fixed: shell_execution
 - name: '10. POSIX LOOPS: until loop'
   steps:
   - send_line: i=1; until [ $i -gt 3 ]; do echo $i; i=$((i + 1)); done
-  expect_output: MANUAL_REVIEW
+  expect_output: '1
+
+    2
+
+    3'
   match_type: contains
+  auto_fixed: shell_execution
 - name: '11. POSIX CASE STATEMENT: case exact match'
   steps:
   - send_line: x=2; case $x in 1) echo one;; 2) echo two;; esac
-  expect_output: MANUAL_REVIEW
+  expect_output: two
   match_type: contains
+  auto_fixed: shell_execution
 - name: '11. POSIX CASE STATEMENT: case pattern match'
   steps:
   - send_line: x=hello; case $x in h*) echo h_prefix;; esac
-  expect_output: MANUAL_REVIEW
+  expect_output: h_prefix
   match_type: contains
+  auto_fixed: shell_execution
 - name: '11. POSIX CASE STATEMENT: case default'
   steps:
   - send_line: x=z; case $x in a) echo a;; b) echo b;; *) echo default;; esac
@@ -383,36 +393,33 @@ tests:
 - name: '13. POSIX SPECIAL VARIABLES: \$0 script name'
   steps:
   - send_line: echo $0 | grep -c sh
-  expect_output: MANUAL_REVIEW
+  expect_output: '1'
   match_type: contains
+  auto_fixed: shell_execution
 - name: '14. POSIX LOGICAL OPERATORS: true && true (exit code)'
   steps:
   - send_line: true && true
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '14. POSIX LOGICAL OPERATORS: true && false (exit code)'
   steps:
   - send_line: true && false
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=1
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '14. POSIX LOGICAL OPERATORS: false || true (exit code)'
   steps:
   - send_line: false || true
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=0
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '14. POSIX LOGICAL OPERATORS: false || false (exit code)'
   steps:
   - send_line: false || false
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=1
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '14. POSIX LOGICAL OPERATORS: command && echo'
   steps:
   - send_line: true && echo success
@@ -461,8 +468,9 @@ tests:
 - name: '16. POSIX SUBSHELLS: subshell var isolation'
   steps:
   - send_line: (VAR=inner; echo $VAR); echo $VAR
-  expect_output: MANUAL_REVIEW
+  expect_output: inner
   match_type: contains
+  auto_fixed: shell_execution
 - name: '17. POSIX COMPOUND COMMANDS: command grouping {}'
   steps:
   - send_line: '{ echo a; echo b; } | wc -l'
@@ -527,9 +535,8 @@ tests:
   steps:
   - send_line: nonexistent_command_xyz 2>/dev/null
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=127
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'
 - name: '22. POSIX EXIT STATUS: return from function (exit code)'
   steps:
   - send_line: func() { return 3; }; func
@@ -564,6 +571,5 @@ tests:
   steps:
   - send_line: readonly VAR=test; VAR=new 2>/dev/null
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=
+  expect_output: EXIT=127
   match_type: contains
-  note: 'MANUAL REVIEW NEEDED: Check expected exit code'

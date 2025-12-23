@@ -121,10 +121,11 @@ class YAMLTestRunner:
             self._current_session.send_key("C-c")
             time.sleep(0.1)
             self._current_session.send_key("C-u")
-            time.sleep(0.05)
+            time.sleep(0.1)  # Increased from 0.05s
 
             # Clear buffer before reset command
             self._current_session.clear_buffer()
+            time.sleep(0.05)  # Let buffer fully clear
 
             # Reset PS1 to default (matching DEFAULT_PROMPT_PATTERN) and use echo marker
             marker = f"RESET_{self._test_count}"
@@ -136,9 +137,10 @@ class YAMLTestRunner:
             except:
                 pass
 
-            # Wait for prompt after marker
+            # Wait for prompt after marker and clear buffer again
             time.sleep(0.2)
             self._current_session.clear_buffer()
+            time.sleep(0.05)  # Extra settling time
         except:
             pass
 
@@ -283,13 +285,17 @@ class YAMLTestRunner:
         """Execute a single test step."""
         if 'send' in step:
             fortsh.send(step['send'])
+            time.sleep(0.02)  # Small delay for processing
         elif 'send_line' in step:
             fortsh.send_line(step['send_line'])
+            time.sleep(0.05)  # Let command complete and output settle
         elif 'send_key' in step:
             fortsh.send_key(step['send_key'])
+            time.sleep(0.02)  # Small delay for key processing
         elif 'send_keys' in step:
             for key in step['send_keys']:
                 fortsh.send_key(key)
+                time.sleep(0.02)
         elif 'wait' in step:
             time.sleep(step['wait'])
         elif 'wait_for_prompt' in step:
