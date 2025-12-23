@@ -98,6 +98,10 @@ module readline
   integer, parameter :: MAX_DIR_ENTRIES = 200  ! Max directory entries (increased for better completion)
   integer, parameter :: MAX_SCORED_ITEMS = 50  ! Max scored completion items (increased from 30)
 
+  ! Test mode configuration
+  logical, save :: test_mode_enabled = .false.
+  logical, save :: test_mode_initialized = .false.
+
   type :: input_state_t
 #ifdef USE_C_STRINGS
     ! C string buffers - bypass flang-new 128-byte bug on macOS ARM64
@@ -230,6 +234,21 @@ module readline
   integer, save :: module_cursor_screen_col = 0
 
 contains
+
+  !============================================================================
+  ! TEST MODE INITIALIZATION
+  !============================================================================
+  ! Initialize test mode from environment variable
+  ! This disables tab completion and syntax highlighting for reliable testing
+  subroutine init_test_mode()
+    character(len=:), allocatable :: test_mode_env
+
+    if (test_mode_initialized) return
+
+    test_mode_env = get_environment_var('FORTSH_TEST_MODE')
+    test_mode_enabled = (allocated(test_mode_env) .and. trim(test_mode_env) == '1')
+    test_mode_initialized = .true.
+  end subroutine init_test_mode
 
   !============================================================================
   ! BUFFER OPERATION WRAPPERS - Platform abstraction layer
@@ -1087,8 +1106,14 @@ contains
           end if
           
         case(KEY_TAB)
-          ! Tab completion or menu navigation
-          if (module_input_state%in_menu_select) then
+          ! Initialize test mode if needed
+          if (.not. test_mode_initialized) call init_test_mode()
+
+          ! Skip completion in test mode
+          if (test_mode_enabled) then
+            ! In test mode - do nothing (no completion, no artifacts)
+            continue
+          else if (module_input_state%in_menu_select) then
             call handle_menu_navigation(module_input_state, KEY_TAB, done)
           else
             ! Call separate subroutine to work around macOS ARM64 crash

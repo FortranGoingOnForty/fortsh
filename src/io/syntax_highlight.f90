@@ -101,6 +101,13 @@ contains
     call pool_init()
 #endif
 
+    ! Check for test mode FIRST - disable highlighting if in test mode
+    call get_environment_variable('FORTSH_TEST_MODE', term_type, status=status)
+    if (status == 0 .and. trim(term_type) == '1') then
+      highlighting_enabled = .false.
+      return
+    end if
+
     ! Check if terminal supports colors based on TERM environment variable
     call get_environment_variable('TERM', term_type, status=status)
 
