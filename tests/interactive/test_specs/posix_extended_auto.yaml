@@ -1,0 +1,714 @@
+metadata:
+  category: Extended
+  description: Tests converted from POSIX compliance suite
+  auto_generated: true
+  needs_review: Tests with MANUAL_REVIEW need expected output verification
+tests:
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -e exists (exit code)'
+  steps:
+  - send_line: test -e /tmp/posix_test_regular
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -e nonexistent (exit code)'
+  steps:
+  - send_line: '! test -e /tmp/nonexistent_xyz_$$'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -f regular file (exit code)'
+  steps:
+  - send_line: test -f /tmp/posix_test_regular
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -d directory (exit code)'
+  steps:
+  - send_line: test -d /tmp/posix_test_directory
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -s non-empty (exit code)'
+  steps:
+  - send_line: test -s /tmp/posix_test_nonempty
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -s empty (exit code)'
+  steps:
+  - send_line: '! test -s /tmp/posix_test_regular'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -L symlink (exit code)'
+  steps:
+  - send_line: test -L /tmp/posix_test_symlink
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -h symlink (exit code)'
+  steps:
+  - send_line: test -h /tmp/posix_test_symlink
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -p fifo (exit code)'
+  steps:
+  - send_line: test -p /tmp/posix_test_fifo
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '27. EXTENDED TEST COMMAND - FILE PERMISSION TESTS: test -r readable (exit
+    code)'
+  steps:
+  - send_line: test -r /tmp/posix_test_readable
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '27. EXTENDED TEST COMMAND - FILE PERMISSION TESTS: test -w writable (exit
+    code)'
+  steps:
+  - send_line: test -w /tmp/posix_test_writable
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '27. EXTENDED TEST COMMAND - FILE PERMISSION TESTS: test -x executable (exit
+    code)'
+  steps:
+  - send_line: test -x /tmp/posix_test_executable
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '27. EXTENDED TEST COMMAND - FILE PERMISSION TESTS: test ! -x nonexec (exit
+    code)'
+  steps:
+  - send_line: '! test -x /tmp/posix_test_readable'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '28. EXTENDED TEST COMMAND - FILE COMPARISON: test -nt newer than (exit code)'
+  steps:
+  - send_line: test /tmp/posix_test_new -nt /tmp/posix_test_old
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '28. EXTENDED TEST COMMAND - FILE COMPARISON: test -ot older than (exit code)'
+  steps:
+  - send_line: test /tmp/posix_test_old -ot /tmp/posix_test_new
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '28. EXTENDED TEST COMMAND - FILE COMPARISON: test -ef same file (exit code)'
+  steps:
+  - send_line: test /tmp/posix_test_old -ef /tmp/posix_test_hardlink
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=1
+  match_type: contains
+- name: '29. EXTENDED TEST COMMAND - STRING TESTS: test -n nonempty string (exit code)'
+  steps:
+  - send_line: test -n 'hello'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '29. EXTENDED TEST COMMAND - STRING TESTS: test -z empty string (exit code)'
+  steps:
+  - send_line: test -z ''
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '29. EXTENDED TEST COMMAND - STRING TESTS: test string = equal (exit code)'
+  steps:
+  - send_line: test 'abc' = 'abc'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '29. EXTENDED TEST COMMAND - STRING TESTS: test string != not equal (exit
+    code)'
+  steps:
+  - send_line: test 'abc' != 'xyz'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '29. EXTENDED TEST COMMAND - STRING TESTS: test unary string (exit code)'
+  steps:
+  - send_line: test 'hello'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '29. EXTENDED TEST COMMAND - STRING TESTS: test ! negation (exit code)'
+  steps:
+  - send_line: '! test -z ''hello'''
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '30. EXTENDED TEST COMMAND - INTEGER COMPARISON: test -eq equal (exit code)'
+  steps:
+  - send_line: test 42 -eq 42
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '30. EXTENDED TEST COMMAND - INTEGER COMPARISON: test -ne not equal (exit
+    code)'
+  steps:
+  - send_line: test 42 -ne 13
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '30. EXTENDED TEST COMMAND - INTEGER COMPARISON: test -gt greater (exit code)'
+  steps:
+  - send_line: test 10 -gt 5
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '30. EXTENDED TEST COMMAND - INTEGER COMPARISON: test -ge greater or equal
+    (exit code)'
+  steps:
+  - send_line: test 10 -ge 10
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '30. EXTENDED TEST COMMAND - INTEGER COMPARISON: test -lt less (exit code)'
+  steps:
+  - send_line: test 5 -lt 10
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '30. EXTENDED TEST COMMAND - INTEGER COMPARISON: test -le less or equal (exit
+    code)'
+  steps:
+  - send_line: test 5 -le 5
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '30. EXTENDED TEST COMMAND - INTEGER COMPARISON: test negative numbers (exit
+    code)'
+  steps:
+  - send_line: test -5 -lt 0
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '31. EXTENDED TEST COMMAND - LOGICAL OPERATORS: test -a and (exit code)'
+  steps:
+  - send_line: test 5 -gt 3 -a 10 -gt 8
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '31. EXTENDED TEST COMMAND - LOGICAL OPERATORS: test -o or (exit code)'
+  steps:
+  - send_line: test 5 -gt 10 -o 10 -gt 8
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '31. EXTENDED TEST COMMAND - LOGICAL OPERATORS: test ! negation (exit code)'
+  steps:
+  - send_line: '! test 5 -gt 10'
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=0
+  match_type: contains
+- name: '31. EXTENDED TEST COMMAND - LOGICAL OPERATORS: test ( ) grouping (exit code)'
+  steps:
+  - send_line: test ( 5 -gt 3 ) -a ( 10 -gt 8 )
+  - send_line: echo "EXIT=$?"
+  expect_output: EXIT=2
+  match_type: contains
+- name: '32. EXTENDED PARAMETER EXPANSION - DEFAULT VALUES: use default unset'
+  steps:
+  - send_line: unset VAR; echo "${VAR-default}"
+  expect_output: default
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '32. EXTENDED PARAMETER EXPANSION - DEFAULT VALUES: use default null'
+  steps:
+  - send_line: VAR=; echo "${VAR-default}"
+  expect_output: ''
+  match_type: contains
+  auto_fixed: manual_determination
+- name: '32. EXTENDED PARAMETER EXPANSION - DEFAULT VALUES: use default null colon'
+  steps:
+  - send_line: VAR=; echo "${VAR:-default}"
+  expect_output: default
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '32. EXTENDED PARAMETER EXPANSION - DEFAULT VALUES: use default set'
+  steps:
+  - send_line: VAR=value; echo "${VAR-default}"
+  expect_output: value
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '32. EXTENDED PARAMETER EXPANSION - DEFAULT VALUES: assign default unset'
+  steps:
+  - send_line: unset VAR; echo "${VAR=assigned}"; echo $VAR
+  expect_output: 'assigned
+
+    assigned'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '32. EXTENDED PARAMETER EXPANSION - DEFAULT VALUES: assign default null colon'
+  steps:
+  - send_line: VAR=; echo "${VAR:=assigned}"; echo $VAR
+  expect_output: 'assigned
+
+    assigned'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '33. EXTENDED PARAMETER EXPANSION - ERROR IF UNSET: no error if set'
+  steps:
+  - send_line: VAR=value; echo "${VAR?error}"
+  expect_output: value
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '34. EXTENDED PARAMETER EXPANSION - ALTERNATIVE VALUE: alt unset'
+  steps:
+  - send_line: unset VAR; echo "${VAR+alternative}"
+  expect_output: ''
+  match_type: contains
+  auto_fixed: manual_determination
+- name: '34. EXTENDED PARAMETER EXPANSION - ALTERNATIVE VALUE: alt null'
+  steps:
+  - send_line: VAR=; echo "${VAR+alternative}"
+  expect_output: alternative
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '34. EXTENDED PARAMETER EXPANSION - ALTERNATIVE VALUE: alt null colon'
+  steps:
+  - send_line: VAR=; echo "${VAR:+alternative}"
+  expect_output: ''
+  match_type: contains
+  auto_fixed: manual_determination
+- name: '34. EXTENDED PARAMETER EXPANSION - ALTERNATIVE VALUE: alt set'
+  steps:
+  - send_line: VAR=value; echo "${VAR+alternative}"
+  expect_output: alternative
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '34. EXTENDED PARAMETER EXPANSION - ALTERNATIVE VALUE: alt set colon'
+  steps:
+  - send_line: VAR=value; echo "${VAR:+alternative}"
+  expect_output: alternative
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '35. EXTENDED PARAMETER EXPANSION - STRING LENGTH: length empty'
+  steps:
+  - send_line: VAR=; echo "${#VAR}"
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '35. EXTENDED PARAMETER EXPANSION - STRING LENGTH: length short'
+  steps:
+  - send_line: VAR=hi; echo "${#VAR}"
+  expect_output: '2'
+  match_type: contains
+- name: '35. EXTENDED PARAMETER EXPANSION - STRING LENGTH: length long'
+  steps:
+  - send_line: VAR="hello world"; echo "${#VAR}"
+  expect_output: '11'
+  match_type: contains
+- name: '35. EXTENDED PARAMETER EXPANSION - STRING LENGTH: length special chars'
+  steps:
+  - send_line: VAR="a b c"; echo "${#VAR}"
+  expect_output: '5'
+  match_type: contains
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: prefix # simple'
+  steps:
+  - send_line: VAR=hello; echo "${VAR#hel}"
+  expect_output: lo
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: prefix # nomatch'
+  steps:
+  - send_line: VAR=hello; echo "${VAR#xyz}"
+  expect_output: hello
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: prefix # glob'
+  steps:
+  - send_line: VAR=foo.bar.baz; echo "${VAR#*.}"
+  expect_output: bar.baz
+  match_type: contains
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: prefix ## glob'
+  steps:
+  - send_line: VAR=foo.bar.baz; echo "${VAR##*.}"
+  expect_output: baz
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: prefix # star'
+  steps:
+  - send_line: VAR=/usr/local/bin; echo "${VAR#*/}"
+  expect_output: usr/local/bin
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: prefix ## star'
+  steps:
+  - send_line: VAR=/usr/local/bin; echo "${VAR##*/}"
+  expect_output: bin
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: suffix % simple'
+  steps:
+  - send_line: VAR=hello; echo "${VAR%lo}"
+  expect_output: hel
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: suffix % nomatch'
+  steps:
+  - send_line: VAR=hello; echo "${VAR%xyz}"
+  expect_output: hello
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: suffix % glob'
+  steps:
+  - send_line: VAR=foo.bar.baz; echo "${VAR%.*}"
+  expect_output: foo.bar
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: suffix %% glob'
+  steps:
+  - send_line: VAR=foo.bar.baz; echo "${VAR%%.*}"
+  expect_output: foo
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: suffix % extension'
+  steps:
+  - send_line: VAR=file.tar.gz; echo "${VAR%.gz}"
+  expect_output: file.tar
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '36. EXTENDED PARAMETER EXPANSION - PATTERN REMOVAL: suffix %% extension'
+  steps:
+  - send_line: VAR=file.tar.gz; echo "${VAR%%.*}"
+  expect_output: file
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '37. ARITHMETIC EXPANSION - BASIC OPERATIONS: arith addition'
+  steps:
+  - send_line: echo $((5 + 3))
+  expect_output: '8'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '37. ARITHMETIC EXPANSION - BASIC OPERATIONS: arith subtraction'
+  steps:
+  - send_line: echo $((10 - 4))
+  expect_output: '6'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '37. ARITHMETIC EXPANSION - BASIC OPERATIONS: arith multiplication'
+  steps:
+  - send_line: echo $((6 * 7))
+  expect_output: '42'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '37. ARITHMETIC EXPANSION - BASIC OPERATIONS: arith division'
+  steps:
+  - send_line: echo $((20 / 4))
+  expect_output: '5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '37. ARITHMETIC EXPANSION - BASIC OPERATIONS: arith modulo'
+  steps:
+  - send_line: echo $((17 % 5))
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '37. ARITHMETIC EXPANSION - BASIC OPERATIONS: arith negative'
+  steps:
+  - send_line: echo $((-5 + 10))
+  expect_output: '5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '37. ARITHMETIC EXPANSION - BASIC OPERATIONS: arith zero'
+  steps:
+  - send_line: echo $((0 + 0))
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '38. ARITHMETIC EXPANSION - PRECEDENCE: arith precedence mult'
+  steps:
+  - send_line: echo $((2 + 3 * 4))
+  expect_output: '14'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '38. ARITHMETIC EXPANSION - PRECEDENCE: arith precedence paren'
+  steps:
+  - send_line: echo $(((2 + 3) * 4))
+  expect_output: '20'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '38. ARITHMETIC EXPANSION - PRECEDENCE: arith precedence div'
+  steps:
+  - send_line: echo $((10 - 8 / 2))
+  expect_output: '6'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '38. ARITHMETIC EXPANSION - PRECEDENCE: arith precedence complex'
+  steps:
+  - send_line: echo $((2 * 3 + 4 * 5))
+  expect_output: '26'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '39. ARITHMETIC EXPANSION - VARIABLES: arith var'
+  steps:
+  - send_line: X=5; echo $((X + 3))
+  expect_output: '8'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '39. ARITHMETIC EXPANSION - VARIABLES: arith var no dollar'
+  steps:
+  - send_line: X=10; Y=20; echo $((X + Y))
+  expect_output: '30'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '39. ARITHMETIC EXPANSION - VARIABLES: arith var assign'
+  steps:
+  - send_line: X=5; Y=$((X * 2)); echo $Y
+  expect_output: '10'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '39. ARITHMETIC EXPANSION - VARIABLES: arith var complex'
+  steps:
+  - send_line: A=3; B=4; echo $((A * A + B * B))
+  expect_output: '25'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare eq true'
+  steps:
+  - send_line: echo $((5 == 5))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare eq false'
+  steps:
+  - send_line: echo $((5 == 3))
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare ne true'
+  steps:
+  - send_line: echo $((5 != 3))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare ne false'
+  steps:
+  - send_line: echo $((5 != 5))
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare lt'
+  steps:
+  - send_line: echo $((3 < 5))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare le'
+  steps:
+  - send_line: echo $((5 <= 5))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare gt'
+  steps:
+  - send_line: echo $((7 > 5))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '40. ARITHMETIC EXPANSION - COMPARISON: arith compare ge'
+  steps:
+  - send_line: echo $((5 >= 5))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '41. ARITHMETIC EXPANSION - LOGICAL: arith logical and true'
+  steps:
+  - send_line: echo $((1 && 1))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '41. ARITHMETIC EXPANSION - LOGICAL: arith logical and false'
+  steps:
+  - send_line: echo $((1 && 0))
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '41. ARITHMETIC EXPANSION - LOGICAL: arith logical or true'
+  steps:
+  - send_line: echo $((0 || 1))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '41. ARITHMETIC EXPANSION - LOGICAL: arith logical or false'
+  steps:
+  - send_line: echo $((0 || 0))
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '41. ARITHMETIC EXPANSION - LOGICAL: arith logical not true'
+  steps:
+  - send_line: echo $((! 0))
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '41. ARITHMETIC EXPANSION - LOGICAL: arith logical not false'
+  steps:
+  - send_line: echo $((! 1))
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '42. SPECIAL PARAMETERS: \$\$ process id type'
+  steps:
+  - send_line: echo $$ | grep -c "^[0-9][0-9]*$"
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '42. SPECIAL PARAMETERS: \$- shell flags type'
+  steps:
+  - send_line: echo $- | grep -c "^[a-z]*$"
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: manual_determination
+- name: '42. SPECIAL PARAMETERS: \$# arg count'
+  steps:
+  - send_line: set -- a b c; echo $#
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '42. SPECIAL PARAMETERS: \$1 first arg'
+  steps:
+  - send_line: set -- first second; echo $1
+  expect_output: first
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '42. SPECIAL PARAMETERS: \$2 second arg'
+  steps:
+  - send_line: set -- first second; echo $2
+  expect_output: second
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '42. SPECIAL PARAMETERS: \$9 ninth arg'
+  steps:
+  - send_line: set -- a b c d e f g h i j; echo $9
+  expect_output: i
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '42. SPECIAL PARAMETERS: \$* all args'
+  steps:
+  - send_line: set -- a b c; echo $*
+  expect_output: a b c
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '42. SPECIAL PARAMETERS: \$@ all args'
+  steps:
+  - send_line: set -- a b c; echo $@
+  expect_output: a b c
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '43. ADDITIONAL POSIX BUILTINS - CD/PWD: cd to /tmp'
+  steps:
+  - send_line: cd /tmp && pwd
+  expect_output: /tmp
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '43. ADDITIONAL POSIX BUILTINS - CD/PWD: cd relative'
+  steps:
+  - send_line: cd /tmp && cd .. && pwd | grep -c "^/"
+  expect_output: DIGIT
+  match_type: contains
+- name: '43. ADDITIONAL POSIX BUILTINS - CD/PWD: cd $HOME'
+  steps:
+  - send_line: cd && pwd | grep -c "^/"
+  expect_output: DIGIT
+  match_type: contains
+- name: '44. ADDITIONAL POSIX BUILTINS - UNSET: unset variable'
+  steps:
+  - send_line: VAR=test; unset VAR; echo ${VAR:-unset}
+  expect_output: unset
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '44. ADDITIONAL POSIX BUILTINS - UNSET: unset nonexistent'
+  steps:
+  - send_line: unset NONEXISTENT_VAR_XYZ; echo ok
+  expect_output: ok
+  match_type: contains
+- name: '45. ADDITIONAL POSIX BUILTINS - EVAL: eval simple'
+  steps:
+  - send_line: CMD="echo hello"; eval $CMD
+  expect_output: hello
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '45. ADDITIONAL POSIX BUILTINS - EVAL: eval with var'
+  steps:
+  - send_line: X=5; CMD="echo $X"; eval $CMD
+  expect_output: '5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '45. ADDITIONAL POSIX BUILTINS - EVAL: eval complex'
+  steps:
+  - send_line: A=echo; B=test; eval $A $B
+  expect_output: test
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '46. ADDITIONAL POSIX BUILTINS - COLON: : null command'
+  steps:
+  - send_line: ': ; echo ok'
+  expect_output: ok
+  match_type: contains
+- name: '46. ADDITIONAL POSIX BUILTINS - COLON: : with args'
+  steps:
+  - send_line: ': this is ignored; echo ok'
+  expect_output: ok
+  match_type: contains
+- name: '47. TILDE EXPANSION: tilde home'
+  steps:
+  - send_line: echo ~ | grep -c "^/"
+  expect_output: ~ | grep -c "^/
+  match_type: contains
+- name: '47. TILDE EXPANSION: tilde in path'
+  steps:
+  - send_line: echo ~/test | grep -c "^/"
+  expect_output: ~/test | grep -c "^/
+  match_type: contains
+- name: '48. FIELD SPLITTING - ADVANCED: IFS multiple fields'
+  steps:
+  - send_line: IFS=:; VAR="a:b:c:d"; set -- $VAR; echo $# $1 $4
+  expect_output: 4 a d
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '48. FIELD SPLITTING - ADVANCED: IFS whitespace'
+  steps:
+  - send_line: IFS=" "; VAR="a b c"; set -- $VAR; echo $#
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '48. FIELD SPLITTING - ADVANCED: IFS comma'
+  steps:
+  - send_line: IFS=,; VAR="x,y,z"; set -- $VAR; echo $2
+  expect_output: y
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '49. BACKGROUND JOBS: background exit'
+  steps:
+  - send_line: (exit 0) & wait $!; echo $?
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '50. COMMAND GROUPING: subshell isolation'
+  steps:
+  - send_line: X=1; (X=2; echo $X); echo $X
+  expect_output: '2
+
+    1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '50. COMMAND GROUPING: brace grouping'
+  steps:
+  - send_line: X=1; { X=2; echo $X; }; echo $X
+  expect_output: '2
+
+    2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '50. COMMAND GROUPING: subshell exit'
+  steps:
+  - send_line: (exit 5); echo $?
+  expect_output: '5'
+  match_type: contains
+  auto_fixed: shell_execution

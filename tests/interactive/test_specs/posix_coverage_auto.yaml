@@ -1,0 +1,604 @@
+metadata:
+  category: Coverage
+  description: Tests converted from POSIX compliance suite
+  auto_generated: true
+  needs_review: Tests with MANUAL_REVIEW need expected output verification
+tests:
+- name: '200. ARITHMETIC - OCTAL AND HEX LITERALS: octal literal'
+  steps:
+  - send_line: echo $((010))
+  expect_output: '8'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '200. ARITHMETIC - OCTAL AND HEX LITERALS: hex literal lowercase'
+  steps:
+  - send_line: echo $((0xff))
+  expect_output: '255'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '200. ARITHMETIC - OCTAL AND HEX LITERALS: hex literal uppercase'
+  steps:
+  - send_line: echo $((0xFF))
+  expect_output: '255'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '200. ARITHMETIC - OCTAL AND HEX LITERALS: octal in expression'
+  steps:
+  - send_line: echo $((010 + 1))
+  expect_output: '9'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '200. ARITHMETIC - OCTAL AND HEX LITERALS: hex in expression'
+  steps:
+  - send_line: echo $((0x10 + 1))
+  expect_output: '17'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '200. ARITHMETIC - OCTAL AND HEX LITERALS: mixed bases'
+  steps:
+  - send_line: echo $((0x10 + 010 + 10))
+  expect_output: '34'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '201. ARITHMETIC - NEGATIVE NUMBERS: negative literal'
+  steps:
+  - send_line: echo $((-5))
+  expect_output: '-5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '201. ARITHMETIC - NEGATIVE NUMBERS: negative in addition'
+  steps:
+  - send_line: echo $((10 + -3))
+  expect_output: '7'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '201. ARITHMETIC - NEGATIVE NUMBERS: negative in subtraction'
+  steps:
+  - send_line: echo $((5 - -3))
+  expect_output: '8'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '201. ARITHMETIC - NEGATIVE NUMBERS: double negative'
+  steps:
+  - send_line: echo $((--5))
+  expect_output: '5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '201. ARITHMETIC - NEGATIVE NUMBERS: negative multiplication'
+  steps:
+  - send_line: echo $((-3 * -4))
+  expect_output: '12'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '201. ARITHMETIC - NEGATIVE NUMBERS: negative division'
+  steps:
+  - send_line: echo $((-10 / 3))
+  expect_output: '-3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '201. ARITHMETIC - NEGATIVE NUMBERS: negative modulo'
+  steps:
+  - send_line: echo $((-10 % 3))
+  expect_output: '-1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '202. ARITHMETIC - NESTED EXPRESSIONS: nested arithmetic'
+  steps:
+  - send_line: echo $((1 + $((2 + 3))))
+  expect_output: '6'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '202. ARITHMETIC - NESTED EXPRESSIONS: deeply nested'
+  steps:
+  - send_line: echo $((1 + $((2 + $((3 + 4))))))
+  expect_output: '10'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '202. ARITHMETIC - NESTED EXPRESSIONS: nested with vars'
+  steps:
+  - send_line: a=5; echo $((a + $((a * 2))))
+  expect_output: '15'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '203. ARITHMETIC - COMMA OPERATOR: comma operator'
+  steps:
+  - send_line: echo $((1, 2, 3))
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '203. ARITHMETIC - COMMA OPERATOR: comma with assignment'
+  steps:
+  - send_line: echo $((a=1, b=2, a+b))
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '203. ARITHMETIC - COMMA OPERATOR: comma side effects'
+  steps:
+  - send_line: a=0; echo $((a=1, a=a+1, a))
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '210. WORD SPLITTING - EMPTY IFS: empty IFS no split'
+  steps:
+  - send_line: IFS=""; var="a b c"; set -- $var; echo $#
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '210. WORD SPLITTING - EMPTY IFS: empty IFS preserves spaces'
+  steps:
+  - send_line: IFS=""; var="a  b"; set -- $var; echo "$1"
+  expect_output: a  b
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '211. WORD SPLITTING - IFS VARIATIONS: IFS whitespace only'
+  steps:
+  - send_line: IFS=" "; var="a  b"; set -- $var; echo $#
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '211. WORD SPLITTING - IFS VARIATIONS: IFS non-whitespace'
+  steps:
+  - send_line: IFS=":"; var="a:b:c"; set -- $var; echo $#
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '211. WORD SPLITTING - IFS VARIATIONS: IFS mixed'
+  steps:
+  - send_line: 'IFS=" :"; var="a : b"; set -- $var; echo $#'
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '211. WORD SPLITTING - IFS VARIATIONS: IFS tab'
+  steps:
+  - send_line: "IFS=\"\t\"; var=\"a\tb\tc\"; set -- $var; echo $#"
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '212. WORD SPLITTING - $@ VS $*: $* unquoted'
+  steps:
+  - send_line: set -- "a b" "c d"; for x in $*; do echo "[$x]"; done
+  expect_output: '[a]
+
+    [b]
+
+    [c]
+
+    [d]'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '212. WORD SPLITTING - $@ VS $*: $@ unquoted'
+  steps:
+  - send_line: set -- "a b" "c d"; for x in $@; do echo "[$x]"; done
+  expect_output: '[a]
+
+    [b]
+
+    [c]
+
+    [d]'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '212. WORD SPLITTING - $@ VS $*: $* quoted'
+  steps:
+  - send_line: set -- "a b" "c d"; for x in "$*"; do echo "[$x]"; done
+  expect_output: '[a b c d]'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '212. WORD SPLITTING - $@ VS $*: $@ quoted'
+  steps:
+  - send_line: set -- "a b" "c d"; for x in "$@"; do echo "[$x]"; done
+  expect_output: '[a b]
+
+    [c d]'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '212. WORD SPLITTING - $@ VS $*: $* with IFS'
+  steps:
+  - send_line: IFS=:; set -- a b c; echo "$*"
+  expect_output: a:b:c
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '212. WORD SPLITTING - $@ VS $*: $@ with IFS'
+  steps:
+  - send_line: IFS=:; set -- a b c; echo "$@"
+  expect_output: a b c
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '220. PARAMETER EXPANSION - EMPTY VS UNSET: :+ empty var'
+  steps:
+  - send_line: var=""; echo "${var:+set}"
+  expect_output: ''
+  match_type: exact
+- name: '220. PARAMETER EXPANSION - EMPTY VS UNSET: :+ unset var'
+  steps:
+  - send_line: unset var; echo "${var:+set}"
+  expect_output: ''
+  match_type: exact
+- name: '220. PARAMETER EXPANSION - EMPTY VS UNSET: + empty var'
+  steps:
+  - send_line: var=""; echo "${var+set}"
+  expect_output: set
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '220. PARAMETER EXPANSION - EMPTY VS UNSET: + unset var'
+  steps:
+  - send_line: unset var; echo "${var+set}"
+  expect_output: ''
+  match_type: exact
+- name: '220. PARAMETER EXPANSION - EMPTY VS UNSET: :- empty var'
+  steps:
+  - send_line: var=""; echo "${var:-default}"
+  expect_output: default
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '220. PARAMETER EXPANSION - EMPTY VS UNSET: - empty var'
+  steps:
+  - send_line: var=""; echo "${var-default}"
+  expect_output: ''
+  match_type: exact
+- name: '221. PARAMETER EXPANSION - ASSIGNMENT FORMS: := assigns when empty'
+  steps:
+  - send_line: unset var; echo "${var:=default}"; echo "$var"
+  expect_output: 'default
+
+    default'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '221. PARAMETER EXPANSION - ASSIGNMENT FORMS: = assigns when unset'
+  steps:
+  - send_line: unset var; echo "${var=default}"; echo "$var"
+  expect_output: 'default
+
+    default'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '221. PARAMETER EXPANSION - ASSIGNMENT FORMS: := with empty'
+  steps:
+  - send_line: var=""; echo "${var:=default}"; echo "$var"
+  expect_output: 'default
+
+    default'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '221. PARAMETER EXPANSION - ASSIGNMENT FORMS: = with empty'
+  steps:
+  - send_line: var=""; echo "${var=default}"; echo "$var"
+  expect_output: ''
+  match_type: exact
+- name: '222. PARAMETER EXPANSION - PATTERN IN EXPANSION: nested pattern removal'
+  steps:
+  - send_line: suffix=.txt; file=test.txt; echo "${file%$suffix}"
+  expect_output: test
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '222. PARAMETER EXPANSION - PATTERN IN EXPANSION: var in pattern'
+  steps:
+  - send_line: pat=t; var=test; echo "${var#$pat}"
+  expect_output: est
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '222. PARAMETER EXPANSION - PATTERN IN EXPANSION: var in suffix pattern'
+  steps:
+  - send_line: pat=st; var=test; echo "${var%$pat}"
+  expect_output: te
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '230. TRAP - IGNORE VS RESET: trap ignore'
+  steps:
+  - send_line: trap "" INT; trap; trap - INT; trap
+  expect_output: trap -- '' INT
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '230. TRAP - IGNORE VS RESET: trap reset'
+  steps:
+  - send_line: trap "echo caught" INT; trap - INT; trap
+  expect_output: ''
+  match_type: exact
+- name: '230. TRAP - IGNORE VS RESET: trap empty string'
+  steps:
+  - send_line: trap "" EXIT; echo done
+  expect_output: done
+  match_type: contains
+- name: '231. TRAP - IN SUBSHELLS: trap not inherited'
+  steps:
+  - send_line: trap "echo trap" EXIT; (trap); echo done
+  expect_output: done
+  match_type: contains
+- name: '231. TRAP - IN SUBSHELLS: ignore trap inherited'
+  steps:
+  - send_line: trap "" INT; (trap)
+  expect_output: trap -- '' INT
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '232. TRAP - MULTIPLE SIGNALS: trap multiple'
+  steps:
+  - send_line: trap "echo exit" EXIT; trap "echo err" ERR 2>/dev/null || true; echo
+      done
+  expect_output: done
+  match_type: contains
+- name: '240. SET -e EDGE CASES: set -e with &&'
+  steps:
+  - send_line: set -e; false && true; echo reached
+  expect_output: reached
+  match_type: contains
+- name: '240. SET -e EDGE CASES: set -e with ||'
+  steps:
+  - send_line: set -e; false || true; echo reached
+  expect_output: reached
+  match_type: contains
+- name: '240. SET -e EDGE CASES: set -e with !'
+  steps:
+  - send_line: set -e; ! false; echo reached
+  expect_output: reached
+  match_type: contains
+- name: '240. SET -e EDGE CASES: set -e in if condition'
+  steps:
+  - send_line: set -e; if false; then echo no; fi; echo reached
+  expect_output: reached
+  match_type: contains
+- name: '240. SET -e EDGE CASES: set -e in while condition'
+  steps:
+  - send_line: set -e; while false; do echo no; done; echo reached
+  expect_output: reached
+  match_type: contains
+- name: '241. SET -e IN SUBSHELLS: set -e inherited'
+  steps:
+  - send_line: set -e; (false; echo no) || echo caught
+  expect_output: no) || echo caught
+  match_type: contains
+- name: '241. SET -e IN SUBSHELLS: set -e in command sub'
+  steps:
+  - send_line: set -e; x=$(false; echo yes); echo "x=$x"
+  expect_output: ''
+  match_type: exact
+- name: '242. COMMAND NOT FOUND: command not found status'
+  steps:
+  - send_line: $test_cmd
+  expect_output: ''
+  match_type: exact
+- name: '250. FUNCTION - BUILTIN SHADOWING: function shadows builtin'
+  steps:
+  - send_line: 'echo() { printf "custom: %s\n" "$1"; }; echo test; unset -f echo'
+  expect_output: 'custom: test'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '250. FUNCTION - BUILTIN SHADOWING: function named cd'
+  steps:
+  - send_line: cd() { echo "custom cd"; }; cd /tmp; unset -f cd
+  expect_output: custom cd
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '251. FUNCTION - REDEFINITION: redefine function'
+  steps:
+  - send_line: f() { echo v1; }; f; f() { echo v2; }; f
+  expect_output: 'v1
+
+    v2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '252. FUNCTION - INDIRECT RECURSION: mutual recursion'
+  steps:
+  - send_line: a() { [ $1 -le 0 ] && echo done || b $(($1-1)); }; b() { a $1; }; a
+      3
+  expect_output: done
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '253. FUNCTION - RETURN EDGE CASES: return outside function'
+  steps:
+  - send_line: (return 5 2>/dev/null); echo $?
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '253. FUNCTION - RETURN EDGE CASES: return in sourced file'
+  steps:
+  - send_line: echo "return 42" > /tmp/ret.sh; . /tmp/ret.sh; echo $?; rm /tmp/ret.sh
+  expect_output: '42'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '260. REDIRECTION - CLOSED FD OPERATIONS: write to closed fd'
+  steps:
+  - send_line: exec 3>&-; echo test >&3 2>&1 | head -1
+  expect_output: test >&3 2>&1 | head -1
+  match_type: contains
+- name: '260. REDIRECTION - CLOSED FD OPERATIONS: read from closed fd'
+  steps:
+  - send_line: exec 3<&-; cat <&3 2>&1 | head -1
+  expect_output: ''
+  match_type: exact
+- name: '262. REDIRECTION - NOCLOBBER WITH APPEND: noclobber allows append'
+  steps:
+  - send_line: set -C; echo a > /tmp/nc_test; echo b >> /tmp/nc_test; cat /tmp/nc_test;
+      rm /tmp/nc_test
+  expect_output: 'a
+
+    b'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '270. PIPELINE - BUILTIN ONLY: pipeline all builtins'
+  steps:
+  - send_line: 'echo test | { read x; echo "got: $x"; }'
+  expect_output: 'got: test'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '270. PIPELINE - BUILTIN ONLY: pipeline with :'
+  steps:
+  - send_line: ': | echo piped'
+  expect_output: piped
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '271. PIPELINE - LONG CHAINS: 5-stage pipeline'
+  steps:
+  - send_line: echo test | cat | cat | cat | cat | cat
+  expect_output: test | cat | cat | cat | cat | cat
+  match_type: contains
+- name: '271. PIPELINE - LONG CHAINS: pipeline with failures'
+  steps:
+  - send_line: echo ok | false | cat; echo $?
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '280. ALIAS - SPECIAL CASES: alias with quotes'
+  steps:
+  - send_line: alias greet='echo hello'; greet; unalias greet
+  expect_output: ''
+  match_type: exact
+- name: '280. ALIAS - SPECIAL CASES: alias with semicolon'
+  steps:
+  - send_line: alias both='echo a; echo b'; both; unalias both
+  expect_output: ''
+  match_type: exact
+- name: '280. ALIAS - SPECIAL CASES: alias -p format'
+  steps:
+  - send_line: alias foo=bar; alias -p | grep foo; unalias foo
+  expect_output: alias foo='bar'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '281. ALIAS - EXPANSION CONTEXT: alias in function'
+  steps:
+  - send_line: alias e=echo; f() { e test; }; f; unalias e
+  expect_output: ''
+  match_type: exact
+- name: '290. DOT - PATH HANDLING: dot with arguments'
+  steps:
+  - send_line: 'echo "echo args: $1 $2" > /tmp/src.sh; . /tmp/src.sh a b; rm /tmp/src.sh'
+  expect_output: 'args: a b'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '290. DOT - PATH HANDLING: dot return value'
+  steps:
+  - send_line: echo "false" > /tmp/src.sh; . /tmp/src.sh; echo $?; rm /tmp/src.sh
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '290. DOT - PATH HANDLING: dot modifies vars'
+  steps:
+  - send_line: echo "X=modified" > /tmp/src.sh; X=original; . /tmp/src.sh; echo $X;
+      rm /tmp/src.sh
+  expect_output: modified
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '300. SPECIAL BUILTINS - ERROR BEHAVIOR: break outside loop'
+  steps:
+  - send_line: (break 2>/dev/null); echo $?
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '300. SPECIAL BUILTINS - ERROR BEHAVIOR: continue outside loop'
+  steps:
+  - send_line: (continue 2>/dev/null); echo $?
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '300. SPECIAL BUILTINS - ERROR BEHAVIOR: colon with redirect'
+  steps:
+  - send_line: ': > /tmp/colon_test; test -f /tmp/colon_test && echo exists; rm /tmp/colon_test'
+  expect_output: exists
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '310. ENVIRONMENT - PATH HANDLING: empty PATH component'
+  steps:
+  - send_line: echo "echo found" > /tmp/pathtest; chmod +x /tmp/pathtest; PATH="/tmp:$PATH"
+      pathtest; rm /tmp/pathtest
+  expect_output: found
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '311. ENVIRONMENT - EXPORT BEHAVIOR: export in subshell'
+  steps:
+  - send_line: X=1; (export X=2); echo $X
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '311. ENVIRONMENT - EXPORT BEHAVIOR: export preserves'
+  steps:
+  - send_line: export X=1; X=2; sh -c "echo $X"
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '320. GLOB - SPECIAL FILENAMES: glob with spaces'
+  steps:
+  - send_line: mkdir -p /tmp/gt; touch "/tmp/gt/a b"; echo /tmp/gt/*; rm -r /tmp/gt
+  expect_output: /tmp/gt/a b
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '320. GLOB - SPECIAL FILENAMES: glob no match'
+  steps:
+  - send_line: echo /nonexistent/path/*.xyz 2>/dev/null
+  expect_output: /nonexistent/path/*.xyz 2>/dev/null
+  match_type: contains
+- name: '321. GLOB - CHARACTER CLASSES: glob [:alpha:]'
+  steps:
+  - send_line: mkdir -p /tmp/gc; touch /tmp/gc/a1 /tmp/gc/1a; echo /tmp/gc/[[:alpha:]]*;
+      rm -r /tmp/gc
+  expect_output: /tmp/gc/a1
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '321. GLOB - CHARACTER CLASSES: glob [:digit:]'
+  steps:
+  - send_line: mkdir -p /tmp/gc; touch /tmp/gc/a1 /tmp/gc/1a; echo /tmp/gc/[[:digit:]]*;
+      rm -r /tmp/gc
+  expect_output: /tmp/gc/1a
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '330. QUOTING - COMPLEX NESTING: quotes in command sub'
+  steps:
+  - send_line: echo "$(echo "inner")"
+  expect_output: inner
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '330. QUOTING - COMPLEX NESTING: escaped quotes'
+  steps:
+  - send_line: echo "say \"hello\""
+  expect_output: say \"hello\
+  match_type: contains
+- name: '330. QUOTING - COMPLEX NESTING: single in double'
+  steps:
+  - send_line: echo \
+  expect_output: \
+  match_type: contains
+- name: '330. QUOTING - COMPLEX NESTING: backslash in single'
+  steps:
+  - send_line: echo 'back\\slash'
+  expect_output: back\\slash
+  match_type: contains
+- name: '331. QUOTING - EMPTY STRINGS: empty preserves arg'
+  steps:
+  - send_line: set -- "" "a"; echo $#
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '331. QUOTING - EMPTY STRINGS: unquoted empty gone'
+  steps:
+  - send_line: e=""; set -- $e a; echo $#
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '340. MISC - COMPOUND COMMANDS: if with compound cond'
+  steps:
+  - send_line: if true && true; then echo yes; fi
+  expect_output: 'yes'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '340. MISC - COMPOUND COMMANDS: while with pipeline cond'
+  steps:
+  - send_line: n=0; while echo $n | grep -q 0 && [ $n -lt 1 ]; do n=$((n+1)); done;
+      echo $n
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '341. MISC - COMPLEX COMBINATIONS: redirect in loop'
+  steps:
+  - send_line: for i in 1 2 3; do echo $i; done > /tmp/loop_out; cat /tmp/loop_out;
+      rm /tmp/loop_out
+  expect_output: '1
+
+    2
+
+    3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '341. MISC - COMPLEX COMBINATIONS: case with patterns'
+  steps:
+  - send_line: x=abc; case $x in a*) echo match;; esac
+  expect_output: match
+  match_type: contains
+  auto_fixed: shell_execution

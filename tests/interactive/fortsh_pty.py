@@ -64,6 +64,11 @@ class FortshPTY:
         env["LANG"] = "en_US.UTF-8"
         env["LC_ALL"] = "en_US.UTF-8"
 
+        # Disable interactive features that pollute test output
+        env["FORTSH_NO_COMPLETION"] = "1"
+        env["FORTSH_MINIMAL_ECHO"] = "1"
+        env["FORTSH_TEST_MODE"] = "1"
+
         # Use /dev/null for clean testing unless specified
         if rc_file is not None:
             env["FORTSH_RC_FILE"] = rc_file

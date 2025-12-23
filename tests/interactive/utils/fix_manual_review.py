@@ -115,13 +115,14 @@ def try_run_command(command: str, shell: str = '/bin/sh') -> str:
             [shell, '-c', command],
             capture_output=True,
             text=True,
-            timeout=2
+            timeout=5
         )
         output = result.stdout.strip()
-        # Only use if successful and output is reasonable
-        if result.returncode == 0 and len(output) < 100 and '\n' not in output:
-            return output
-    except:
+        # Only use if successful and output is reasonable (allow multi-line and longer output)
+        if result.returncode == 0 and len(output) < 500:
+            return output if output else ""  # Allow empty output
+    except Exception as e:
+        # Silently skip errors for dangerous commands
         pass
     return None
 
