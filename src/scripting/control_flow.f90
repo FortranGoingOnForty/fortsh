@@ -1006,6 +1006,7 @@ contains
     integer :: num_tokens, i, pos, start_pos, test_exit_status
     character(len=1024) :: trimmed_cmd
     character(len=:), allocatable :: expanded_result
+    character(len=1) :: quote_char
 
     ! Check if this is a [[ ]] expression
     trimmed_cmd = trim(test_cmd)
@@ -1017,7 +1018,7 @@ contains
       num_tokens = 0
       start_pos = 1
 
-      ! Simple tokenization by spaces
+      ! Quote-aware tokenization
       do while (start_pos <= len_trim(trimmed_cmd) .and. num_tokens < 50)
         ! Skip leading spaces
         do while (start_pos <= len_trim(trimmed_cmd) .and. trimmed_cmd(start_pos:start_pos) == ' ')
@@ -1026,16 +1027,41 @@ contains
 
         if (start_pos > len_trim(trimmed_cmd)) exit
 
-        ! Find end of token
-        pos = start_pos
-        do while (pos <= len_trim(trimmed_cmd) .and. trimmed_cmd(pos:pos) /= ' ')
-          pos = pos + 1
-        end do
-
-        ! Extract token
-        num_tokens = num_tokens + 1
-        tokens(num_tokens) = trimmed_cmd(start_pos:pos-1)
-        start_pos = pos + 1
+        ! Check if token starts with a quote
+        if (trimmed_cmd(start_pos:start_pos) == '"' .or. trimmed_cmd(start_pos:start_pos) == "'") then
+          ! Find matching closing quote
+          quote_char = trimmed_cmd(start_pos:start_pos)
+          pos = start_pos + 1
+          do while (pos <= len_trim(trimmed_cmd))
+            if (trimmed_cmd(pos:pos) == quote_char) then
+              ! Check if escaped (preceded by backslash)
+              if (pos > start_pos + 1 .and. trimmed_cmd(pos-1:pos-1) == '\') then
+                pos = pos + 1
+                cycle
+              end if
+              exit
+            end if
+            pos = pos + 1
+          end do
+          ! Extract quoted content (without the quotes)
+          num_tokens = num_tokens + 1
+          if (pos > start_pos + 1) then
+            tokens(num_tokens) = trimmed_cmd(start_pos+1:pos-1)
+          else
+            tokens(num_tokens) = ''
+          end if
+          start_pos = pos + 1
+        else
+          ! Find end of token (space-delimited)
+          pos = start_pos
+          do while (pos <= len_trim(trimmed_cmd) .and. trimmed_cmd(pos:pos) /= ' ')
+            pos = pos + 1
+          end do
+          ! Extract token
+          num_tokens = num_tokens + 1
+          tokens(num_tokens) = trimmed_cmd(start_pos:pos-1)
+          start_pos = pos + 1
+        end if
       end do
 
       ! Call advanced test evaluator

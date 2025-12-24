@@ -78,7 +78,7 @@ contains
       test_result = TEST_ERROR
       return
     end if
-    
+
     ! Skip [[ and ]] tokens
     if (num_tokens == 3) then
       ! Single condition: [[ condition ]]
@@ -204,12 +204,22 @@ contains
           ! Binary test
           next_result = evaluate_binary_test(shell, tokens(i), tokens(i+1), tokens(i+2))
           i = i + 3
+          ! After a binary test, next token must be logical operator or ]]
+          ! Extra tokens are a syntax error (e.g., [[ x =~ foo bar ]] is invalid)
+          if (i < num_tokens) then
+            if (tokens(i) /= '&&' .and. tokens(i) /= '||' .and. tokens(i) /= ']]') then
+              ! Syntax error: unexpected token after binary test
+              ! This catches cases like [[ x =~ foo bar ]] where "bar" is invalid
+              result_bool = .false.
+              return
+            end if
+          end if
         else
           ! Unary test
           next_result = evaluate_unary_test(shell, tokens(i))
           i = i + 1
         end if
-        
+
         ! Apply logical operator
         select case (trim(logical_op))
         case ('&&')
@@ -221,7 +231,7 @@ contains
         case ('')
           current_result = next_result
         end select
-        
+
         logical_op = ''
       end if
     end do
