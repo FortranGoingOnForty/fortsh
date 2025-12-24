@@ -67,13 +67,19 @@ module readline
   integer, parameter :: KEY_LEFT = 68
   
   ! History and line management
-  ! MAX_LINE_LEN MUST stay at 128 on macOS - flang-new has FUNDAMENTAL 128-byte limit
-  ! Even heap-allocated buffers cause heap corruption above 128 bytes
-  ! IMPORTANT: Actual usable command length is 127 characters to prevent off-by-one errors
+  ! NOTE: The 128-byte limit was based on older flang-new versions.
+  ! Testing with flang-new 21.x shows both fixed-length and allocatable strings
+  ! work correctly with >128 bytes. The C string library provides additional safety.
   ! MAX_HISTORY can be increased safely because it uses array allocation, not per-element size
 #ifdef __APPLE__
   integer, parameter :: MAX_HISTORY = 100      ! Increased from 10 (heap-allocated array, safe)
+#ifdef USE_C_STRINGS
+  ! C string library enabled - use larger buffers (tested working with flang-new 21.x)
+  integer, parameter :: MAX_LINE_LEN = 1024
+#else
+  ! Legacy limit for older flang-new versions without C string library
   integer, parameter :: MAX_LINE_LEN = 128     ! Buffer size - actual limit is 127 chars!
+#endif
 #else
   integer, parameter :: MAX_HISTORY = 1000
   integer, parameter :: MAX_LINE_LEN = 1024
@@ -1241,7 +1247,9 @@ contains
         ! Redraw line if needed
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         ! Skip redraw when in menu selection mode - menu handles its own display
-        if (module_input_state%dirty .and. .not. module_input_state%in_menu_select) then
+        ! In test mode, skip full redraw to avoid polluting PTY output
+        if (.not. test_mode_initialized) call init_test_mode()
+        if (module_input_state%dirty .and. .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
           ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
           ! Variables moved to subroutine level
 
@@ -7284,6 +7292,14 @@ contains
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
     character(len=MAX_LINE_LEN), allocatable :: suggestion_candidate
+
+    ! Disable autosuggestion in test mode - prevents output pollution
+    if (.not. test_mode_initialized) call init_test_mode()
+    if (test_mode_enabled) then
+      input_state%suggestion = ''
+      input_state%suggestion_length = 0
+      return
+    end if
 
     ! Allocate buffers on heap
     allocate(current_input)
