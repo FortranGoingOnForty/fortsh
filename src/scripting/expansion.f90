@@ -2983,7 +2983,16 @@ contains
 
       ! Only expand if we found at least one comma
       if (.not. found_comma) then
-        ! No comma found - not a valid brace expansion, return unchanged
+        ! No comma found at this level - check if inner content has braces to expand
+        if (index(brace_content, '{') > 0) then
+          ! Inner content has braces - expand them but preserve outer braces
+          ! e.g., {a{1,2}} should become {a1} {a2}
+          item = recursive_expand_all_braces(brace_content)
+          ! Add literal braces around each expanded word
+          expanded = add_braces_to_words(item, prefix, suffix)
+          return
+        end if
+        ! No comma and no inner braces - not a valid brace expansion, return unchanged
         return
       end if
 
@@ -3093,6 +3102,50 @@ contains
     if (allocated(final_result)) deallocate(final_result)
     if (allocated(temp_piece)) deallocate(temp_piece)
   end function recursive_expand_all_braces
+
+  ! Helper function to add literal braces around each word in a space-separated list
+  ! e.g., "a1 a2" with prefix="" and suffix="" becomes "{a1} {a2}"
+  function add_braces_to_words(words_str, prefix, suffix) result(output)
+    character(len=*), intent(in) :: words_str, prefix, suffix
+    character(len=:), allocatable :: output
+    character(len=1024) :: result_buf, word_buf
+    integer :: i, word_start, word_len
+
+    result_buf = ''
+    word_start = 1
+    i = 1
+
+    do while (i <= len_trim(words_str))
+      if (words_str(i:i) == ' ') then
+        ! End of word - add braces around it
+        word_len = i - word_start
+        if (word_len > 0) then
+          word_buf = words_str(word_start:i-1)
+          if (len_trim(result_buf) > 0) then
+            result_buf = trim(result_buf) // ' ' // trim(prefix) // '{' // &
+                         trim(word_buf) // '}' // trim(suffix)
+          else
+            result_buf = trim(prefix) // '{' // trim(word_buf) // '}' // trim(suffix)
+          end if
+        end if
+        word_start = i + 1
+      end if
+      i = i + 1
+    end do
+
+    ! Handle last word
+    if (word_start <= len_trim(words_str)) then
+      word_buf = words_str(word_start:len_trim(words_str))
+      if (len_trim(result_buf) > 0) then
+        result_buf = trim(result_buf) // ' ' // trim(prefix) // '{' // &
+                     trim(word_buf) // '}' // trim(suffix)
+      else
+        result_buf = trim(prefix) // '{' // trim(word_buf) // '}' // trim(suffix)
+      end if
+    end if
+
+    output = trim(result_buf)
+  end function add_braces_to_words
 
   ! Helper subroutine to grow expansion array
   subroutine grow_expansion_array(array, current_size)
