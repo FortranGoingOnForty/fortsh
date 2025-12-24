@@ -42,10 +42,17 @@ module fd_redirection
   integer, parameter :: FD_FD_O_RDONLY = int(Z'00000000')
   integer, parameter :: FD_O_WRONLY = int(Z'00000001')
   integer, parameter :: FD_O_RDWR = int(Z'00000002')
-  ! macOS values (TODO: add Linux support with preprocessor)
-  integer, parameter :: FD_O_CREAT = 512   ! 0x200 on macOS, 0x40 on Linux
-  integer, parameter :: FD_O_TRUNC = 1024  ! 0x400 on macOS, 0x200 on Linux
-  integer, parameter :: FD_O_APPEND = 8    ! 0x8 on macOS, 0x400 on Linux
+  ! Platform-specific O_* flags
+#ifdef __APPLE__
+  integer, parameter :: FD_O_CREAT = 512   ! 0x200 on macOS
+  integer, parameter :: FD_O_TRUNC = 1024  ! 0x400 on macOS
+  integer, parameter :: FD_O_APPEND = 8    ! 0x8 on macOS
+#else
+  ! Linux values
+  integer, parameter :: FD_O_CREAT = 64    ! 0x40 on Linux
+  integer, parameter :: FD_O_TRUNC = 512   ! 0x200 on Linux
+  integer, parameter :: FD_O_APPEND = 1024 ! 0x400 on Linux
+#endif
 
   ! Standard file descriptors - use local names to avoid conflicts
   integer, parameter :: FD_STDIN = 0
