@@ -165,6 +165,7 @@ contains
 
       ! Create sub-command without the '!'
       sub_cmd%num_tokens = cmd%num_tokens - 1
+      allocate(character(len=256) :: sub_cmd%tokens(sub_cmd%num_tokens))
       sub_cmd%tokens(1) = cmd%tokens(1)  ! 'test'
       do i = 2, sub_cmd%num_tokens
         sub_cmd%tokens(i) = cmd%tokens(i+1)
@@ -172,6 +173,7 @@ contains
 
       ! Recursively evaluate
       call execute_test_command(sub_cmd, shell)
+      deallocate(sub_cmd%tokens)
 
       ! Negate the result
       if (shell%last_exit_status == 0) then
