@@ -3294,4 +3294,48 @@ contains
     has_unclosed = in_single_quote .or. in_double_quote
   end function
 
+  function ends_with_continuation_backslash(line) result(needs_continuation)
+    character(len=*), intent(in) :: line
+    logical :: needs_continuation
+    integer :: i, line_len
+    logical :: in_single_quote, in_double_quote
+    character :: prev_char
+
+    needs_continuation = .false.
+    line_len = len_trim(line)
+
+    ! Empty line doesn't need continuation
+    if (line_len == 0) return
+
+    ! Quick check: if line doesn't end with backslash, no continuation needed
+    if (line(line_len:line_len) /= '\') return
+
+    ! Now we need to check if the trailing backslash is inside quotes
+    in_single_quote = .false.
+    in_double_quote = .false.
+    prev_char = ' '
+
+    do i = 1, line_len
+      ! Check for escape character (in double quotes or unquoted)
+      if (prev_char == '\' .and. .not. in_single_quote) then
+        ! Skip this character as it's escaped
+        prev_char = ' '  ! Reset escape
+        cycle
+      end if
+
+      ! Track quote state
+      if (line(i:i) == "'" .and. .not. in_double_quote) then
+        in_single_quote = .not. in_single_quote
+      else if (line(i:i) == '"' .and. .not. in_single_quote) then
+        in_double_quote = .not. in_double_quote
+      end if
+
+      prev_char = line(i:i)
+    end do
+
+    ! If we're not inside quotes and line ends with backslash, need continuation
+    ! (prev_char is backslash at this point since it's the last char)
+    needs_continuation = .not. in_single_quote .and. .not. in_double_quote
+  end function
+
 end module parser
