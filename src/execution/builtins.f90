@@ -585,7 +585,7 @@ contains
 
     first = .true.
     suppress_newline = .false.
-    interpret_escapes = .true.  ! POSIX default: interpret escape sequences
+    interpret_escapes = .false.  ! Bash default: do NOT interpret escapes (use -e to enable)
     start_token = 2
 
     ! Parse options (must be first arguments)

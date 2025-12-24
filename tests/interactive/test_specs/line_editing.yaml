@@ -428,7 +428,7 @@ tests:
 
   - name: "Tab character in quotes"
     steps:
-      - send_line: "echo 'a\tb'"
+      - send_line: "echo -e 'a\\tb'"
     expect_output: "a\tb"
     match_type: "contains"
 
