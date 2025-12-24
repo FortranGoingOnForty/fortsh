@@ -58,9 +58,10 @@ else
 endif
 
 # Development flags (verbose warnings, debug symbols)
-FCFLAGS = $(WARN_FLAGS) -std=f2018 -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
+# -fall-intrinsics allows GNU extensions like flush() with -std=f2018
+FCFLAGS = $(WARN_FLAGS) -std=f2018 -fall-intrinsics -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 # Production flags (minimal warnings, optimized, no debug symbols)
-FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) -std=f2018 -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
+FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) -std=f2018 -fall-intrinsics -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 
 # C string library (for flang-new workaround)
 # Automatically enable on macOS ARM64 unless explicitly disabled
@@ -73,6 +74,9 @@ ifeq ($(UNAME_S),Darwin)
     endif
   endif
 endif
+
+# Core C objects needed on all platforms (fd operations, terminal size)
+CORE_C_OBJS = $(BUILDDIR)/c_interop/fd_wrapper.o $(BUILDDIR)/c_interop/terminal_size.o
 
 ifeq ($(USE_C_STRINGS),1)
   C_STRING_LIB = $(BUILDDIR)/c_interop/libfortsh_strings.a
@@ -166,8 +170,8 @@ $(BUILDDIR)/common $(BUILDDIR)/system $(BUILDDIR)/parsing $(BUILDDIR)/execution 
 	mkdir -p $@
 
 # Build target
-$(TARGET): $(OBJECTS) $(C_STRING_OBJ) $(C_STRING_LIB) | $(BINDIR)
-	$(FC) $(C_STRING_OBJ) $(OBJECTS) -o $@ $(LDFLAGS)
+$(TARGET): $(OBJECTS) $(CORE_C_OBJS) $(C_STRING_OBJ) $(C_STRING_LIB) | $(BINDIR)
+	$(FC) $(C_STRING_OBJ) $(CORE_C_OBJS) $(OBJECTS) -o $@ $(LDFLAGS)
 	@echo "Fortsh built successfully!"
 
 # Individual compilation rules with proper dependencies
@@ -207,7 +211,7 @@ $(BUILDDIR)/system/signal_handling.o: src/system/signal_handling.f90 $(BUILDDIR)
 $(BUILDDIR)/parsing/glob.o: src/parsing/glob.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/substitution.o | $(BUILDDIR)/parsing
+$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/scripting/expansion.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/parsing/lexer.o: src/parsing/lexer.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/parsing
@@ -288,7 +292,7 @@ $(BUILDDIR)/execution/better_errors.o: src/execution/better_errors.f90 $(BUILDDI
 $(BUILDDIR)/scripting/config.o: src/scripting/config.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/aliases.o: src/scripting/aliases.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/aliases.o: src/scripting/aliases.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/abbreviations.o: src/scripting/abbreviations.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
@@ -312,7 +316,7 @@ $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDD
 $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o | $(BUILDDIR)
+$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/execution/command_capture_callback.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/common/performance.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 # ============================================================================
