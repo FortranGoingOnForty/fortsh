@@ -14,6 +14,7 @@ program fortran_shell
   use job_control
   use readline
   use shell_config
+  use variables, only: get_shell_variable, set_shell_variable
   use aliases
   use shell_options
   use performance
@@ -28,6 +29,8 @@ program fortran_shell
   character(len=1024) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, history_expanded
   character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
+  character(len=1024) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
+  character(len=:), allocatable :: rprompt_value  ! RPROMPT variable value
   integer :: iostat, i, num_args
   character(len=1024) :: arg1, command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
@@ -256,7 +259,15 @@ program fortran_shell
     if (shell%is_interactive) then
       ! Use safe_expand_prompt to avoid LLVM Flang heap corruption
       call safe_expand_prompt(shell%ps1, shell, shell%ps1_len, prompt_str)
-      call readline_enhanced(trim(prompt_str), input_line, iostat)
+
+      ! Get RPROMPT if set (zsh-style right prompt)
+      rprompt_value = get_shell_variable(shell, 'RPROMPT')
+      if (len_trim(rprompt_value) > 0) then
+        call safe_expand_prompt(rprompt_value, shell, len(rprompt_value), rprompt_str)
+        call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str))
+      else
+        call readline_enhanced(trim(prompt_str), input_line, iostat)
+      end if
     else
       read(input_unit, '(a)', iostat=iostat) input_line
       ! Note: History will be added after expansion below
