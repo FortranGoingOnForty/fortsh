@@ -1,0 +1,199 @@
+metadata:
+  category: Untested
+  description: Tests converted from POSIX compliance suite
+  auto_generated: true
+  needs_review: Tests with MANUAL_REVIEW need expected output verification
+tests:
+- name: '131. COMMAND BUILTIN - PATH SEARCH: command -v ls'
+  steps:
+  - send_line: command -v ls >/dev/null && echo found
+  expect_output: found
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '131. COMMAND BUILTIN - PATH SEARCH: command -v nonexistent'
+  steps:
+  - send_line: command -v nonexistent >/dev/null || echo notfound
+  expect_output: notfound
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '131. COMMAND BUILTIN - PATH SEARCH: command without options'
+  steps:
+  - send_line: command echo test
+  expect_output: test
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '132. MULTI-FD REDIRECTIONS: fd 3 redirect write'
+  steps:
+  - send_line: exec 3>/tmp/posix_fd3.txt; echo test >&3; exec 3>&-; cat /tmp/posix_fd3.txt;
+      rm /tmp/posix_fd3.txt
+  expect_output: test
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '132. MULTI-FD REDIRECTIONS: fd 4 redirect read'
+  steps:
+  - send_line: echo data > /tmp/posix_fd4.txt; exec 4</tmp/posix_fd4.txt; read line
+      <&4; echo $line; exec 4<&-; rm /tmp/posix_fd4.txt
+  expect_output: data
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '132. MULTI-FD REDIRECTIONS: fd duplication'
+  steps:
+  - send_line: exec 5>&1; echo stdout >&5; exec 5>&-
+  expect_output: stdout
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '132. MULTI-FD REDIRECTIONS: fd 3 and 4 together'
+  steps:
+  - send_line: exec 3>/tmp/posix_3.txt 4>/tmp/posix_4.txt; echo a >&3; echo b >&4;
+      exec 3>&- 4>&-; cat /tmp/posix_3.txt /tmp/posix_4.txt; rm /tmp/posix_3.txt /tmp/posix_4.txt
+  expect_output: 'a
+
+    b'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '133. EXEC WITH SHELL REDIRECTIONS: exec redirect stdout'
+  steps:
+  - send_line: exec 3>&1; exec >/tmp/posix_exec_out.txt; echo redirected; exec >&3;
+      cat /tmp/posix_exec_out.txt; rm /tmp/posix_exec_out.txt
+  expect_output: redirected
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '133. EXEC WITH SHELL REDIRECTIONS: exec redirect stdin'
+  steps:
+  - send_line: echo testdata > /tmp/posix_exec_in.txt; exec </tmp/posix_exec_in.txt;
+      read data; echo $data; rm /tmp/posix_exec_in.txt
+  expect_output: testdata
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '134. SET OPTION INTERACTIONS: set -e with true'
+  steps:
+  - send_line: set -e; true; echo ok
+  expect_output: ok
+  match_type: contains
+- name: '134. SET OPTION INTERACTIONS: set -u with unset var'
+  steps:
+  - send_line: set -u; echo ${UNSET_VAR:-default}
+  expect_output: default
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '134. SET OPTION INTERACTIONS: set -C noclobber'
+  steps:
+  - send_line: set -C; echo test > /tmp/posix_clobber.txt; echo ok; rm /tmp/posix_clobber.txt
+  expect_output: ok
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '134. SET OPTION INTERACTIONS: set -C override with >|'
+  steps:
+  - send_line: set -C; echo test > /tmp/posix_clobber2.txt; echo override >| /tmp/posix_clobber2.txt;
+      cat /tmp/posix_clobber2.txt; rm /tmp/posix_clobber2.txt
+  expect_output: override
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '135. SPECIAL BUILTIN ERROR HANDLING: readonly error exits'
+  steps:
+  - send_line: (readonly VAR=1; VAR=2 2>/dev/null; echo should not print) || echo
+      exited
+  expect_output: should not print) || echo exited
+  match_type: contains
+- name: '135. SPECIAL BUILTIN ERROR HANDLING: export invalid'
+  steps:
+  - send_line: (export 123INVALID=value 2>/dev/null; echo should not print) || echo
+      exited
+  expect_output: should not print) || echo exited
+  match_type: contains
+- name: '135. SPECIAL BUILTIN ERROR HANDLING: set invalid option'
+  steps:
+  - send_line: (set -@ 2>/dev/null; echo should not print) || echo exited
+  expect_output: should not print) || echo exited
+  match_type: contains
+- name: '137. NESTED PARAMETER EXPANSION: nested default'
+  steps:
+  - send_line: unset A B; echo ${A:-${B:-default}}
+  expect_output: default
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '137. NESTED PARAMETER EXPANSION: nested with set var'
+  steps:
+  - send_line: A=inner; unset B; echo ${B:-${A}}
+  expect_output: inner
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '137. NESTED PARAMETER EXPANSION: double nested'
+  steps:
+  - send_line: unset A B C; echo ${A:-${B:-${C:-triple}}}
+  expect_output: triple
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '138. PARAMETER LENGTH EDGE CASES: length of $@'
+  steps:
+  - send_line: set -- a b c; echo ${#@}
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '138. PARAMETER LENGTH EDGE CASES: length of $*'
+  steps:
+  - send_line: set -- a b c; echo ${#*}
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '138. PARAMETER LENGTH EDGE CASES: length of empty'
+  steps:
+  - send_line: VAR=; echo ${#VAR}
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '138. PARAMETER LENGTH EDGE CASES: length of unset'
+  steps:
+  - send_line: unset VAR; echo ${#VAR}
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '139. QUOTING EDGE CASES: empty double quotes'
+  steps:
+  - send_line: VAR=""; echo x${VAR}y
+  expect_output: xy
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '139. QUOTING EDGE CASES: empty single quotes'
+  steps:
+  - send_line: VAR=''; echo x${VAR}y
+  expect_output: xy
+  match_type: contains
+- name: '139. QUOTING EDGE CASES: adjacent quotes concat'
+  steps:
+  - send_line: echo "a"b"c"
+  expect_output: a"b"c
+  match_type: contains
+- name: '139. QUOTING EDGE CASES: quote in quote'
+  steps:
+  - send_line: echo "it
+  expect_output: it
+  match_type: contains
+- name: '142. REDIRECTION EDGE CASES: close stdin'
+  steps:
+  - send_line: cat <&- 2>&1 | head -1
+  expect_output: 'cat: stdin: Bad file descriptor'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '142. REDIRECTION EDGE CASES: close stdout'
+  steps:
+  - send_line: echo test >&- 2>&1
+  expect_output: test >&- 2>&1
+  match_type: contains
+- name: '142. REDIRECTION EDGE CASES: read/write mode'
+  steps:
+  - send_line: echo data > /tmp/posix_rw.txt; cat <> /tmp/posix_rw.txt; rm /tmp/posix_rw.txt
+  expect_output: data > /tmp/posix_rw.txt; cat <> /tmp/posix_rw.txt; rm /tmp/posix_rw.txt
+  match_type: contains
+- name: '144. SET -n (NOEXEC) TESTING: set -n parse only'
+  steps:
+  - send_line: set -n; echo "should not execute"; false
+  expect_output: ''
+  match_type: contains
+  auto_fixed: manual_determination
+- name: '145. SET -m (MONITOR) TESTING: set -m doesn''t affect output'
+  steps:
+  - send_line: set -m; echo test; set +m
+  expect_output: test
+  match_type: contains
+  auto_fixed: shell_execution

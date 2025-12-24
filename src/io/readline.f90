@@ -2543,16 +2543,17 @@ contains
 
     pos = input_state%cursor_pos + 1
 
-    ! Skip current word
+    ! Bash/readline M-f: Skip spaces first, then move to end of word
+    ! Skip any leading spaces
+    do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) == ' ')
+      pos = pos + 1
+    end do
+
+    ! Skip word characters (stop at end of word)
     do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) /= ' ')
       pos = pos + 1
     end do
 
-    ! Skip spaces
-    do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) == ' ')
-      pos = pos + 1
-    end do
-    
     input_state%cursor_pos = min(pos - 1, input_state%length)
     input_state%dirty = .true.
   end subroutine
