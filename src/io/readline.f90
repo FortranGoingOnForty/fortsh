@@ -900,10 +900,11 @@ contains
 #endif
 
   ! Enhanced readline with character-by-character input processing
-  subroutine readline_enhanced(prompt, line, iostat)
+  subroutine readline_enhanced(prompt, line, iostat, rprompt)
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
+    character(len=*), intent(in), optional :: rprompt  ! Right-side prompt (like zsh)
 
     ! Use module-level module_input_state directly (avoids flang-new pointer corruption bug)
     character :: ch
@@ -921,6 +922,8 @@ contains
     integer :: utf8_num_bytes, utf8_i
     logical :: debug_utf8
     integer :: debug_stat
+    ! Variables for RPROMPT (right-side prompt)
+    integer :: rprompt_visual_len, padding_needed
 
 
     ! Check if UTF-8 debug mode is enabled
@@ -975,9 +978,50 @@ contains
     end if
 
 
-    ! Print prompt
-    write(output_unit, '(a)', advance='no') prompt
-    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+    ! Print prompt (and RPROMPT if provided)
+    prompt_visual_len = visual_length(prompt)
+    if (prompt_visual_len < 0) prompt_visual_len = 0
+
+    ! Get terminal width for RPROMPT positioning
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success) term_cols = 80  ! Default fallback
+
+    ! Check if we have RPROMPT and enough space
+    if (present(rprompt) .and. len_trim(rprompt) > 0) then
+      rprompt_visual_len = visual_length(rprompt)
+      if (rprompt_visual_len < 0) rprompt_visual_len = 0
+
+      ! Calculate if we have room for both prompts with some space between
+      ! Need: prompt + space + gap + rprompt
+      padding_needed = term_cols - prompt_visual_len - 1 - rprompt_visual_len
+
+      if (padding_needed >= 4) then  ! Minimum 4 chars gap
+        ! Print left prompt
+        write(output_unit, '(a)', advance='no') prompt
+        write(output_unit, '(a)', advance='no') ' '
+
+        ! Print padding to right-align RPROMPT
+        do i_redraw = 1, padding_needed - 1
+          write(output_unit, '(a)', advance='no') ' '
+        end do
+
+        ! Print RPROMPT
+        write(output_unit, '(a)', advance='no') trim(rprompt)
+
+        ! Move cursor back to after the left prompt
+        ! Use ANSI escape: move cursor to column (prompt_visual_len + 2)
+        write(output_unit, '(a,i0,a)', advance='no') char(27)//'[', prompt_visual_len + 2, 'G'
+      else
+        ! Not enough space - just print prompt normally
+        write(output_unit, '(a)', advance='no') prompt
+        write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+      end if
+    else
+      ! No RPROMPT - just print prompt
+      write(output_unit, '(a)', advance='no') prompt
+      write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+    end if
+
     flush(output_unit)
 
     module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
@@ -985,8 +1029,6 @@ contains
     ! Initialize cursor screen position tracking
     ! Cursor starts at row 0, column = prompt_visual_length + 1 (for space)
     module_cursor_screen_row = 0
-    prompt_visual_len = visual_length(prompt)
-    if (prompt_visual_len < 0) prompt_visual_len = 0
     module_cursor_screen_col = prompt_visual_len + 1
 
 
