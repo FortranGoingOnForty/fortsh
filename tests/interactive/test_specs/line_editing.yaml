@@ -190,7 +190,7 @@ tests:
     expect_output: "Xtesting"
     match_type: "contains"
 
-  # NOTE: Alt+F in fortsh moves to start of next word (after space)
+  # Alt+F moves to end of current word (bash/readline behavior)
   - name: "Alt+F moves forward one word"
     steps:
       - send: "one two"
@@ -201,7 +201,7 @@ tests:
       - send: "echo "
       - send_key: "Enter"
       - wait: 0.3
-    expect_output: "one Xtwo"
+    expect_output: "oneX two"
     match_type: "contains"
 
   # Three Alt+B from end of "a b c d" moves: d->c->b->a (to beginning)
