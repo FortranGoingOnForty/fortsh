@@ -252,6 +252,19 @@ program fortran_shell
       ! Note: History will be added after expansion below
     end if
 
+    ! Check for terminal resize that may have occurred during readline
+    ! (SIGWINCH can arrive while waiting for input)
+    if (g_terminal_resized) then
+      g_terminal_resized = .false.
+      success = get_terminal_size(shell%term_rows, shell%term_cols)
+      write(cols_str, '(I0)') shell%term_cols
+      write(rows_str, '(I0)') shell%term_rows
+      success = set_environment_var('COLUMNS', trim(cols_str))
+      success = set_environment_var('LINES', trim(rows_str))
+      call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
+      call set_shell_variable(shell, 'LINES', trim(rows_str))
+    end if
+
     ! Check for EOF (Ctrl-D)
     if (iostat /= 0) then
       ! Only print newline in interactive mode for clean exit

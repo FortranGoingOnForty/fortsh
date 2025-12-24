@@ -69,6 +69,9 @@ ifeq ($(UNAME_S),Darwin)
   endif
 endif
 
+# C wrappers always needed (for fd_redirection.f90 and system/interface.f90)
+C_WRAPPER_OBJS = $(BUILDDIR)/c_interop/fd_wrapper.o $(BUILDDIR)/c_interop/terminal_size.o
+
 ifeq ($(USE_C_STRINGS),1)
   C_STRING_LIB = $(BUILDDIR)/c_interop/libfortsh_strings.a
   C_STRING_OBJ = $(BUILDDIR)/c_interop/fortsh_c_strings.o
@@ -81,7 +84,7 @@ else
   C_STRING_LIB =
   C_STRING_OBJ =
   C_STRING_FLAGS =
-  LDFLAGS =
+  LDFLAGS = $(C_WRAPPER_OBJS)
   $(info C string library DISABLED - using native Fortran strings)
 endif 
 
@@ -163,7 +166,7 @@ $(BUILDDIR)/common $(BUILDDIR)/system $(BUILDDIR)/parsing $(BUILDDIR)/execution 
 	mkdir -p $@
 
 # Build target
-$(TARGET): $(OBJECTS) $(C_STRING_OBJ) $(C_STRING_LIB) | $(BINDIR)
+$(TARGET): $(OBJECTS) $(C_STRING_OBJ) $(C_STRING_LIB) $(C_WRAPPER_OBJS) | $(BINDIR)
 	$(FC) $(C_STRING_OBJ) $(OBJECTS) -o $@ $(LDFLAGS)
 	@echo "Fortsh built successfully!"
 

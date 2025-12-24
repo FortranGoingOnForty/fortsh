@@ -3796,7 +3796,8 @@ contains
       end do
 
       if (debug_utf8) then
-        write(error_unit, '(a,i0,a,i0,a,i0)') '[UTF8 DEBUG] Moving back ', num_bytes, ' bytes from ', start_pos, ' to ', start_pos - num_bytes
+        write(error_unit, '(a,i0,a,i0,a,i0)') '[UTF8 DEBUG] Moving back ', &
+              num_bytes, ' bytes from ', start_pos, ' to ', start_pos - num_bytes
       end if
     else
       ! Not a continuation byte - single byte character (ASCII or orphaned byte)
@@ -5128,13 +5129,55 @@ contains
 
       select case(ch2)
       case('A')  ! Up arrow
-        call handle_history_up(input_state)
+        if (input_state%in_search) then
+          ! In search mode, up arrow finds previous match
+          call search_next_match(input_state)
+          call update_search_display(input_state, input_state%menu_prompt)
+        else
+          call handle_history_up(input_state)
+        end if
       case('B')  ! Down arrow
-        call handle_history_down(input_state)
+        if (input_state%in_search) then
+          ! In search mode, down arrow finds next match (forward direction)
+          input_state%search_forward = .true.
+          call search_next_match(input_state)
+          input_state%search_forward = .false.  ! Restore reverse direction
+          call update_search_display(input_state, input_state%menu_prompt)
+        else
+          call handle_history_down(input_state)
+        end if
       case('C')  ! Right arrow
-        call handle_cursor_right(input_state)
+        if (input_state%in_search) then
+          ! Exit search mode and allow editing (bash behavior)
+          ! Simply exit search mode - main loop will redraw
+          input_state%in_search = .false.
+#ifdef USE_MEMORY_POOL
+          input_state%search_string_ref%data = ''
+#else
+          input_state%search_string = ''
+#endif
+          input_state%search_length = 0
+          input_state%search_match_index = 0
+          input_state%dirty = .true.
+        else
+          call handle_cursor_right(input_state)
+        end if
       case('D')  ! Left arrow
-        call handle_cursor_left(input_state)
+        if (input_state%in_search) then
+          ! Exit search mode and allow editing (bash behavior)
+          ! Simply exit search mode - main loop will redraw
+          input_state%in_search = .false.
+#ifdef USE_MEMORY_POOL
+          input_state%search_string_ref%data = ''
+#else
+          input_state%search_string = ''
+#endif
+          input_state%search_length = 0
+          input_state%search_match_index = 0
+          input_state%dirty = .true.
+        else
+          call handle_cursor_left(input_state)
+        end if
       case('2')
         ! Could be bracketed paste (ESC[200~ or ESC[201~) or extended escape
         call handle_paste_or_extended(input_state, done)
@@ -5878,10 +5921,17 @@ contains
     ! Redraw prompt and full buffer with syntax highlighting
     write(output_unit, '(a)', advance='no') prompt
     write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
-    if (input_state%length > 0) then
+    if (input_state%length > 0 .and. input_state%length <= MAX_LINE_LEN) then
       ! Extract buffer for highlighting
       call state_buffer_get(input_state, temp_buf)
-      call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len)
+      ! Safety: ensure length doesn't exceed buffer
+      if (input_state%length <= len(temp_buf)) then
+        call highlight_command_line(temp_buf(:input_state%length), highlighted, highlighted_len)
+      else
+        ! Fallback: just write the buffer without highlighting
+        write(output_unit, '(a)', advance='no') temp_buf(:min(input_state%length, len(temp_buf)))
+        highlighted_len = 0
+      end if
       if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
         write(output_unit, '(a)', advance='no') highlighted(1:highlighted_len)
       end if
@@ -7975,7 +8025,9 @@ contains
     end do
 
     if (debug_utf8) then
-      write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[VISUAL] cursor_pos=', cursor_pos, ' prompt_len=', prompt_visual_len, ' visual_width=', visual_width, ' total=', prompt_visual_len + 1 + visual_width
+      write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[VISUAL] cursor_pos=', cursor_pos, &
+            ' prompt_len=', prompt_visual_len, ' visual_width=', visual_width, &
+            ' total=', prompt_visual_len + 1 + visual_width
     end if
 
     ! Total position = prompt + space + visual width of buffer content
