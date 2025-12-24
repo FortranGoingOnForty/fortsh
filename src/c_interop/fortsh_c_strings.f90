@@ -299,14 +299,18 @@ contains
     character(len=1), intent(in) :: ch
     logical :: status
     integer(c_int) :: ret
+    character(kind=c_char) :: c_ch
 
     if (.not. c_associated(buf%handle)) then
       status = .false.
       return
     end if
 
+    ! Explicitly convert to c_char for proper C interop
+    c_ch = ch
+
     ! Convert from Fortran 1-based to C 0-based indexing
-    ret = fortsh_buffer_set_char_c(buf%handle, int(pos - 1, c_size_t), ch)
+    ret = fortsh_buffer_set_char_c(buf%handle, int(pos - 1, c_size_t), c_ch)
     status = (ret == 0)
   end function c_string_set_char
 
@@ -323,8 +327,9 @@ contains
     end if
 
     ! Convert from Fortran 1-based to C 0-based indexing
+    ! Don't trim - preserve exact string content including trailing spaces
     ret = fortsh_buffer_insert_c(buf%handle, int(pos - 1, c_size_t), &
-                                  trim(str) // c_null_char)
+                                  str // c_null_char)
     status = (ret == 0)
   end function c_string_insert
 
@@ -392,7 +397,7 @@ contains
     character(len=*), intent(in) :: fortran_str
     logical :: status
     integer(c_int) :: ret
-    integer :: actual_len, i
+    integer :: actual_len
 
     if (.not. c_associated(buf%handle)) then
       status = .false.
