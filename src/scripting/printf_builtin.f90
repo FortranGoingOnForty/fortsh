@@ -15,7 +15,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=2048) :: format_string, output_buffer
-    integer :: arg_index, prev_arg_index, di
+    integer :: arg_index, prev_arg_index
 
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'printf: usage: printf FORMAT [ARGUMENTS...]'

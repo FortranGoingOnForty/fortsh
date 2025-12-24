@@ -47,7 +47,6 @@ contains
     
     character(len=32) :: severity_str, category_str
     character(len=64) :: loc_str
-    integer :: i
     
     ! Increment error count and store in history
     error_count = error_count + 1

@@ -21,9 +21,9 @@ contains
     character(len=*), intent(in) :: input
     type(pipeline_t), intent(out) :: pipeline
 
-    character(len=len(input)) :: working_input, proc_subst_input
-    integer :: pos, start, cmd_count
-    integer :: i, comment_pos, newline_pos
+    character(len=len(input)) :: working_input
+    integer :: start, cmd_count
+    integer :: i, newline_pos
     type(command_t), allocatable :: temp_commands(:)
     logical :: background, in_quotes, in_param_expansion, in_for_arith, after_case_in
     character(len=1) :: quote_char
@@ -843,7 +843,7 @@ contains
     integer, intent(out) :: num_tokens
 
     character(len=len(input)) :: working_copy
-    integer :: pos, start, token_count, i, token_len
+    integer :: pos, start, token_count, i
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     logical :: in_quotes, in_arith, in_array_literal, in_cmd_subst, escaped
     character :: quote_char
@@ -1312,7 +1312,7 @@ contains
 
       if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ')) then
         ! Tilde expansion
-        call process_tilde_expansion(working_token, i, result, j, shell)
+        call process_tilde_expansion(working_token, i, result, j)
       else if (working_token(i:i) == '$' .and. i < len_trim(working_token)) then
         i = i + 1
         
@@ -1691,7 +1691,8 @@ contains
     character(len=MAX_HEREDOC_LEN) :: output
 
     integer :: i, j, var_start, var_end
-    character(len=256) :: var_name, var_value
+    character(len=256) :: var_name
+    character(len=1024) :: var_value  ! 1024 to match get_shell_variable return size
 
     output = ''
     i = 1
@@ -1754,7 +1755,7 @@ contains
   function strip_leading_tabs(input) result(output)
     character(len=*), intent(in) :: input
     character(len=MAX_HEREDOC_LEN) :: output
-    integer :: i, j, line_start
+    integer :: i, j
     logical :: at_line_start
 
     output = ''
@@ -1785,11 +1786,11 @@ contains
     character(len=:), allocatable, intent(out) :: content
 
     integer :: i, line_start, line_end, content_start
-    integer :: newline_pos, delim_line_start
+    integer :: newline_pos
     character(len=len(input)) :: current_line
     character(len=MAX_HEREDOC_LEN) :: buffer
     integer :: buffer_pos
-    logical :: found_start, found_end
+    logical :: found_end
 
     ! Check if input contains newlines (heredoc marker)
     newline_pos = index(input, char(10))
@@ -1887,8 +1888,7 @@ contains
 
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_tokens(:)
     character(len=MAX_TOKEN_LEN), allocatable :: original_tokens(:)
-    character(len=MAX_TOKEN_LEN), allocatable :: filtered_tokens(:)
-    integer :: expanded_count, i, filtered_count
+    integer :: expanded_count, i
     logical :: has_expandable
 
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
@@ -2960,12 +2960,11 @@ contains
     end if
   end subroutine
 
-  subroutine process_tilde_expansion(token, pos, result, result_pos, shell)
+  subroutine process_tilde_expansion(token, pos, result, result_pos)
     character(len=*), intent(in) :: token
     integer, intent(inout) :: pos, result_pos
     character(len=*), intent(inout) :: result
-    type(shell_state_t), intent(in) :: shell
-    
+
     character(len=MAX_TOKEN_LEN) :: username, home_path
     character(len=:), allocatable :: home_dir
     integer :: start_pos

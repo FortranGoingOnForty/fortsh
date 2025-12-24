@@ -92,7 +92,7 @@ contains
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
     logical, intent(in), optional :: noclobber
-    integer(c_int) :: file_fd, target_fd, flags, mode
+    integer(c_int) :: file_fd, flags, mode
     character(len=1024) :: filename_c
     logical :: check_noclobber
 

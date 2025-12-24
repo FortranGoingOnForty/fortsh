@@ -139,7 +139,7 @@ contains
     character(len=*), intent(out) :: replacement
 
     character(len=:), allocatable :: temp  ! Heap allocation to avoid stack overflow
-    integer :: values(8), year, month, day, hour, minute, second
+    integer :: values(8), hour
     character(len=3), dimension(7) :: day_names = &
       ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     character(len=3), dimension(12) :: month_names = &
@@ -512,7 +512,6 @@ contains
   function get_git_branch() result(branch)
     character(len=:), allocatable :: branch
     character(len=256) :: output
-    integer :: iostat, unit
 
     ! Try to get branch name using git command
     ! Use git symbolic-ref for speed (faster than git branch)
@@ -531,7 +530,6 @@ contains
   function get_git_status_indicator() result(indicator)
     character(len=:), allocatable :: indicator
     character(len=256) :: output
-    logical :: has_changes
 
     ! First check if we're in a git repo
     output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')

@@ -285,8 +285,8 @@ contains
   subroutine state_buffer_set(state, str)
     type(input_state_t), intent(inout) :: state
     character(len=*), intent(in) :: str
-    logical :: success
 #ifdef USE_C_STRINGS
+    logical :: success
     success = c_string_set(state%buffer_c, str)
     if (.not. success) then
       ! Fallback: truncate to buffer size
@@ -306,8 +306,8 @@ contains
     type(input_state_t), intent(in) :: state
     character(len=*), intent(out) :: str
     integer, intent(out), optional :: actual_len
-    integer :: len_out
 #ifdef USE_C_STRINGS
+    integer :: len_out
     call c_string_to_fortran(state%buffer_c, str, len_out)
     if (present(actual_len)) actual_len = len_out
 #else
@@ -350,8 +350,8 @@ contains
     type(input_state_t), intent(inout) :: state
     integer, intent(in) :: pos
     character(len=1), intent(in) :: ch
-    logical :: success
 #ifdef USE_C_STRINGS
+    logical :: success
     success = c_string_set_char(state%buffer_c, pos, ch)
 #else
 #ifdef USE_MEMORY_POOL
@@ -369,8 +369,8 @@ contains
   ! Copy main buffer to original_buffer
   subroutine state_buffer_save(state)
     type(input_state_t), intent(inout) :: state
-    logical :: success
 #ifdef USE_C_STRINGS
+    logical :: success
     success = c_string_copy(state%original_buffer_c, state%buffer_c)
 #else
 #ifdef USE_MEMORY_POOL
@@ -384,8 +384,8 @@ contains
   ! Restore main buffer from original_buffer
   subroutine state_buffer_restore(state)
     type(input_state_t), intent(inout) :: state
-    logical :: success
 #ifdef USE_C_STRINGS
+    logical :: success
     success = c_string_copy(state%buffer_c, state%original_buffer_c)
 #else
 #ifdef USE_MEMORY_POOL
@@ -428,8 +428,8 @@ contains
   subroutine state_kill_buffer_set(state, str)
     type(input_state_t), intent(inout) :: state
     character(len=*), intent(in) :: str
-    logical :: success
 #ifdef USE_C_STRINGS
+    logical :: success
     success = c_string_set(state%kill_buffer_c, str)
 #else
 #ifdef USE_MEMORY_POOL
@@ -472,8 +472,8 @@ contains
   ! Set last completion buffer from main buffer
   subroutine state_last_completion_buffer_set_from_buffer(state)
     type(input_state_t), intent(inout) :: state
-    logical :: success
 #ifdef USE_C_STRINGS
+    logical :: success
     success = c_string_copy(state%last_completion_buffer_c, state%buffer_c)
 #else
 #ifdef USE_MEMORY_POOL
@@ -489,9 +489,8 @@ contains
   function state_buffer_equals_last_completion(state) result(equals)
     type(input_state_t), intent(in) :: state
     logical :: equals
-    character(len=MAX_LINE_LEN) :: buf, last_buf
-    integer :: i
 #ifdef USE_C_STRINGS
+    character(len=MAX_LINE_LEN) :: buf, last_buf
     call c_string_to_fortran(state%buffer_c, buf)
     call c_string_to_fortran(state%last_completion_buffer_c, last_buf)
     equals = (trim(buf) == trim(last_buf))
@@ -500,6 +499,7 @@ contains
     equals = (trim(state%buffer_ref%data(:state%length)) == &
               trim(state%last_completion_buffer_ref%data(:state%last_completion_buffer_len)))
 #else
+    integer :: i
     equals = .true.
     if (state%length /= state%last_completion_buffer_len) then
       equals = .false.
@@ -915,8 +915,6 @@ contains
     integer :: suggestion_display_len, available_space
     integer :: current_col, current_row
     integer :: highlighted_len  ! Actual length of highlighted string
-    character(len=32) :: buffer_fmt  ! Dynamic format string for buffer write
-    character(len=MAX_LINE_LEN) :: display_buffer  ! Temporary buffer for display
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -2624,7 +2622,7 @@ contains
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)  ! Max 50 completions
     integer, intent(out) :: num_completions
     
-    character(len=MAX_LINE_LEN) :: last_word, dir_path, file_pattern
+    character(len=MAX_LINE_LEN) :: last_word
     integer :: last_space_pos, i
     
     num_completions = 0
@@ -2943,7 +2941,7 @@ contains
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     
-    character(len=MAX_LINE_LEN) :: dir_path, file_pattern, current_dir
+    character(len=MAX_LINE_LEN) :: dir_path, file_pattern
     integer :: last_slash_pos, i
     
     num_completions = 0
@@ -3148,7 +3146,7 @@ contains
     character(len=:), allocatable :: ls_output_alloc  ! From execute_and_capture
     character(len=2048) :: ls_output  ! 2KB buffer - large enough for ls but safe for stack
     character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
-    character(len=MAX_LINE_LEN) :: full_path, check_path
+    character(len=MAX_LINE_LEN) :: full_path
     character(len=:), allocatable :: home_dir, debug_mode
     ! Use allocatable array to avoid static storage
     type(scored_completion_t), allocatable :: scored(:)
@@ -3678,7 +3676,7 @@ contains
   subroutine insert_char_impl(input_state, ch)
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
-    integer :: i, term_cols
+    integer :: term_cols
     character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
 
     ! Allocate temp buffer on heap
@@ -3879,7 +3877,7 @@ contains
 
   subroutine handle_backspace(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, term_cols, old_row, old_col, new_row, new_col
+    integer :: i
     integer :: bytes_to_delete, delete_count
 
     ! Defensive checks for buffer corruption
@@ -4169,7 +4167,7 @@ contains
     character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_LINE_LEN) :: saved_input
     character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
-    integer :: num_completions, i, j, copy_len
+    integer :: num_completions, i
     logical :: completed, made_progress, buffer_changed
 
     ! Exit history mode if we're browsing
@@ -4336,11 +4334,13 @@ contains
   subroutine draw_completion_menu(input_state, initial_draw)
     type(input_state_t), intent(inout) :: input_state  ! inout to cache layout
     logical, intent(in) :: initial_draw
-    integer :: i, j, cols_per_item, items_per_row, row, col, item_idx
+    integer :: i, j, cols_per_item, items_per_row, col, item_idx
     integer :: term_rows, term_cols, item_len
     character(len=MAX_MENU_ITEM_LEN) :: current_item
     character(len=1) :: ch
     logical :: success
+
+    if (.false.) print *, initial_draw  ! Silence unused warning
 
     ! Get terminal size
     success = get_terminal_size(term_rows, term_cols)
@@ -4419,7 +4419,9 @@ contains
     logical, intent(inout) :: done
     integer :: old_selection, new_selection
     integer :: items_per_row
-    integer :: current_row, current_col, target_row, target_col
+    integer :: current_row, current_col, target_row
+
+    if (.false.) print *, done  ! Silence unused warning (set by caller)
 
     if (.not. input_state%in_menu_select) return
 
@@ -4615,7 +4617,8 @@ contains
     type(input_state_t), intent(inout) :: input_state  ! inout to pass to draw function
     integer, intent(in) :: old_selection
     integer :: i, num_menu_rows, extra_lines, total_lines
-    logical :: success
+
+    if (.false.) print *, old_selection  ! Silence unused warning
 
     ! Use cached layout from input_state (avoids repeated array iterations)
     num_menu_rows = input_state%menu_num_rows
@@ -4672,7 +4675,6 @@ contains
     character(len=MAX_MENU_ITEM_LEN) :: current_item
     character(len=MAX_HIGHLIGHT_LEN) :: highlighted_preview  ! Fixed-length to avoid flang-new bugs
     character(len=1) :: ch
-    integer :: current_row, items_per_row
 
     ! Initialize buffer
     highlighted_preview = ' '
@@ -4809,9 +4811,8 @@ contains
     integer, intent(out) :: pids(MAX_MENU_ITEMS)
     integer, intent(out) :: num_processes
 
-    integer :: unit, iostat, pid, i
+    integer :: unit, iostat, pid
     character(len=512) :: line, cmd_name, username
-    character(len=32) :: pid_str
     integer :: stat
 
     num_processes = 0
@@ -5232,6 +5233,8 @@ contains
     character(len=MAX_LINE_LEN) :: paste_buffer
     integer :: paste_len, i
     character :: ch_paste
+
+    if (.false.) print *, done  ! Silence unused warning
 
     ! After ESC[2, check next chars for:
     ! - 00~ = paste start (ESC[200~)
@@ -5849,9 +5852,9 @@ contains
     type(input_state_t), intent(in) :: input_state
     character(len=:), allocatable :: highlighted  ! Heap allocation to avoid stack overflow
     integer :: highlighted_len
-    integer :: term_rows, term_cols, total_visual_chars
-    integer :: prompt_visual_len, current_line, end_line
-    integer :: cursor_visual_pos, cursor_line, cursor_col
+    integer :: term_rows, term_cols
+    integer :: prompt_visual_len, current_line
+    integer :: cursor_visual_pos
     integer :: i, k, suggestion_display_len, available_space
     logical :: success
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
@@ -6077,7 +6080,7 @@ contains
     use iso_fortran_env, only: output_unit
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: temp_buf
-    integer :: current_row, current_col, term_cols, i
+    integer :: current_row, current_col, i
 
     ! Save entire line in kill buffer
     if (input_state%length > 0) then
@@ -6404,7 +6407,7 @@ contains
   ! Uppercase word (Alt+u) - convert from cursor to end of word to uppercase
   subroutine handle_uppercase_word(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: pos, word_end
+    integer :: pos
     character :: ch
 
     if (input_state%cursor_pos >= input_state%length) return
@@ -6890,6 +6893,8 @@ contains
     character(len=32) :: direction_str
     character(len=MAX_LINE_LEN) :: temp_buf
 
+    if (.false.) print *, prompt  ! Silence unused warning
+
     ! Determine search direction string
     if (input_state%search_forward) then
       direction_str = '(i-search)'
@@ -7220,7 +7225,6 @@ contains
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     integer :: num_completions, last_space_pos, i, j
     integer :: common_prefix_len, input_len
-    logical :: all_match
     character(len=MAX_LINE_LEN) :: suggestion_text
 
     ! Clear any existing suggestion
@@ -7420,7 +7424,7 @@ contains
   ! Accept the current autosuggestion
   subroutine accept_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, j, new_length
+    integer :: j, new_length
 
     if (input_state%suggestion_length == 0) return
 
@@ -7549,7 +7553,7 @@ contains
   subroutine launch_fzf_file_browser(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
-    character(len=1024) :: fzf_cmd, selected_path
+    character(len=1024) :: fzf_cmd
     character(len=512) :: preview_cmd
     integer :: unit, iostat, exit_status
     logical :: file_exists

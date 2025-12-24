@@ -57,8 +57,6 @@ contains
     character(len=4096) :: output
 
     character(len=4096) :: processed_input
-    integer :: i, paren_count, start_pos
-    character(len=2048) :: inner_cmd, inner_result
 
     output = ''
     processed_input = input
@@ -83,7 +81,7 @@ contains
     character(len=*), intent(inout) :: cmd_str
 
     character(len=len(cmd_str)) :: result
-    integer :: i, start_pos, paren_count, subst_start, subst_end
+    integer :: i, paren_count, subst_start, subst_end
     character(len=2048) :: inner_cmd, inner_result
     logical :: found_nested
 
@@ -172,9 +170,8 @@ contains
     character(len=*), intent(in) :: command
     logical, intent(in) :: is_input
     type(proc_subst_t) :: proc_subst
-    
+
     character(len=256) :: fifo_name
-    integer :: status
     character(len=1024) :: full_cmd
     
     proc_subst%is_input = is_input
@@ -223,7 +220,7 @@ contains
     character(len=256), intent(out) :: expanded_list(100)
     integer, intent(out) :: count
 
-    integer :: brace_start, brace_end, comma_pos, depth, pos
+    integer :: brace_start, brace_end, depth, pos
     character(len=256) :: prefix, suffix, middle_part
     character(len=256) :: options(50)
     integer :: option_count, i
@@ -331,7 +328,7 @@ contains
     character(len=256), intent(out) :: options(50)
     integer, intent(out) :: count
 
-    integer :: pos, start_pos, comma_pos, depth
+    integer :: pos, start_pos, depth
 
     count = 0
     pos = 1
@@ -367,7 +364,7 @@ contains
     integer, intent(inout) :: count
 
     character(len=256) :: temp_list(100), expanded_temp(100)
-    integer :: i, j, temp_count, expanded_count, total_count
+    integer :: i, j, expanded_count, total_count
 
     total_count = 0
 

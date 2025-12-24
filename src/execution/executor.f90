@@ -87,7 +87,6 @@ contains
     integer(c_int), allocatable :: pipefd(:,:)
     integer(c_pid_t), allocatable :: pids(:)
     integer(c_pid_t) :: pgid
-    integer(c_int), target :: status
     integer :: ret, job_id
     logical :: foreground
     type(c_funptr) :: old_handler
@@ -604,7 +603,7 @@ contains
     else if (cmd%num_tokens == 1 .and. file_is_directory(trim(cmd%tokens(1)))) then
       ! Create synthetic cd command by properly reallocating tokens array
       block
-        character(len=:), allocatable :: dir_path, old_tokens(:)
+        character(len=:), allocatable :: dir_path
         integer :: token_len
         ! Save the directory path
         dir_path = trim(cmd%tokens(1))
@@ -1204,15 +1203,14 @@ contains
     use expansion, only: field_split
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i, j, num_words, total_tokens
+    integer :: i, j, total_tokens
     character(len=:), allocatable :: expanded
     character(len=1024), allocatable :: temp_tokens(:)  ! Increased to match split_words length
     logical :: is_format_string
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
     character(len=1024) :: split_words(30)
-    character(len=MAX_TOKEN_LEN) :: word
     character(len=256) :: ifs_to_use
-    integer :: word_count, start_pos, pos, k, ifs_check_i, ifs_len_to_use
+    integer :: word_count, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
     logical :: is_double_bracket_cmd
 
@@ -1379,7 +1377,7 @@ contains
     integer(c_pid_t) :: pid, pgid, ret
     integer(c_int), target :: wait_status
     integer(c_int) :: pgid_ret
-    integer :: job_id, retry_count
+    integer :: job_id
     logical :: foreground
     type(c_funptr) :: old_handler
 
@@ -1733,7 +1731,7 @@ contains
     character(len=1024), allocatable :: function_body(:)
     character(len=1024) :: saved_positional_params(50)
     integer :: saved_num_positional
-    integer :: i, saved_exit_status
+    integer :: i
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line
     logical :: function_returned
@@ -1827,7 +1825,6 @@ contains
     character(len=*), intent(in) :: prev_word
 
     type(command_t) :: cmd
-    character(len=1024), allocatable :: function_body(:)
 
     ! Check if function exists
     if (.not. is_function(shell, func_name)) then
@@ -2205,10 +2202,8 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: result
 
-    type(command_t) :: cmd
     type(pipeline_t) :: pipeline
-    character(len=256) :: tokens(50)
-    integer :: num_tokens, i, saved_depth
+    integer :: saved_depth, i
 
     ! POSIX: Suppress errexit during condition evaluation (if/while/until test expressions)
     shell%evaluating_condition = .true.
@@ -2481,7 +2476,8 @@ contains
     integer(c_int), target :: wait_status
     integer :: ret
     type(pipeline_t) :: subshell_pipeline
-    integer :: i
+
+    if (.false.) print *, original_input  ! Silence unused warning
 
     pid = c_fork()
 

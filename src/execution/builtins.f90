@@ -247,7 +247,7 @@ contains
 
   subroutine builtin_exit(cmd, shell)
     use signal_handling, only: get_trap_command
-    use grammar_parser, only: parse_command_line, last_parse_had_error
+    use grammar_parser, only: parse_command_line
     use ast_executor, only: execute_ast_node
     use command_tree, only: command_node_t, destroy_command_node
     use executor, only: execute_pipeline
@@ -512,6 +512,8 @@ contains
   subroutine builtin_pwd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
+
+    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
 
     ! Use FD-aware I/O to respect redirections
     call write_stdout(trim(shell%cwd))
@@ -1385,7 +1387,7 @@ contains
   subroutine builtin_alias(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: eq_pos, i, full_len
+    integer :: eq_pos, i
     character(len=256) :: alias_name, alias_command
     character(len=1024) :: full_arg
 
@@ -1532,7 +1534,9 @@ contains
   subroutine builtin_help(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
+
+    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
+
     write(output_unit, '(a)') 'Fortran Shell (fortsh) - Built-in Commands:'
     write(output_unit, '(a)') '========================================'
     write(output_unit, '(a)') ''
@@ -1669,7 +1673,9 @@ contains
     character :: ch
     logical :: success
     integer :: char_code
-    
+
+    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
+
     write(output_unit, '(a)') 'Raw mode test - press keys to see codes, q to quit:'
     write(output_unit, '(a)') 'Entering raw mode...'
     
@@ -2882,8 +2888,6 @@ contains
 
     subroutine display_all_limits(sh)
       type(shell_state_t), intent(inout) :: sh
-      type(rlimit_t) :: r
-      integer :: res_ret
 
       write(output_unit, '(a)') 'core file size          (blocks, -c) ' // get_limit_str(RLIMIT_CORE)
       write(output_unit, '(a)') 'data seg size           (kbytes, -d) ' // get_limit_str(RLIMIT_DATA)
@@ -2937,6 +2941,8 @@ contains
     integer :: ret
     real :: self_user_sec, self_sys_sec, children_user_sec, children_sys_sec
     integer :: self_user_min, self_sys_min, children_user_min, children_sys_min
+
+    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
 
     ! Get resource usage for the shell itself
     ret = c_getrusage(RUSAGE_SELF, self_usage)
@@ -3580,7 +3586,7 @@ contains
   subroutine builtin_complete(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i, arg_idx
+    integer :: i
     character(len=256) :: arg
     type(completion_spec_t) :: spec
     logical :: remove_flag, list_flag, print_flag
@@ -3974,6 +3980,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
+    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
+
     ! Check if we can go back (must be at index > 1)
     if (shell%dir_history_index <= 1) then
       write(error_unit, '(a)') 'prevd: no previous directory'
@@ -4000,6 +4008,8 @@ contains
   subroutine builtin_nextd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
+
+    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
 
     ! Check if we can go forward (must be at index < size)
     if (shell%dir_history_index >= shell%dir_history_size) then
@@ -4028,6 +4038,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i
+
+    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
 
     if (shell%dir_history_size == 0) then
       write(output_unit, '(a)') 'Directory history is empty'

@@ -362,8 +362,6 @@ contains
 
   recursive subroutine destroy_command_node(node)
     type(command_node_t), pointer, intent(inout) :: node
-    integer :: i
-    type(command_node_t), pointer :: temp_cmd
 
     if (.not. associated(node)) return
 

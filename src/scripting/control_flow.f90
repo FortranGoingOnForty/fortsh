@@ -177,7 +177,7 @@ contains
     case('if')
       call process_if_statement(cmd, shell, should_execute)
     case('then')
-      call process_then_statement(cmd, shell, should_execute)
+      call process_then_statement(shell, should_execute)
     case('else')
       call process_else_statement(shell, should_execute)
     case('elif')
@@ -367,8 +367,8 @@ contains
     character(len=256) :: expanded_items(100)
     character(len=256) :: glob_matches(100)
     character(len=256) :: final_items(100)
-    integer :: expanded_count, final_count, glob_count, start_pos, end_pos
-    integer :: in_pos, i, j, k, word_start, word_end
+    integer :: expanded_count, final_count, glob_count
+    integer :: i, j
 
     should_execute = .false.  ! Don't execute the for command itself
 
@@ -597,8 +597,7 @@ contains
     end if
   end subroutine
 
-  subroutine process_then_statement(cmd, shell, should_execute)
-    type(command_t), intent(in) :: cmd
+  subroutine process_then_statement(shell, should_execute)
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
 
@@ -1368,7 +1367,7 @@ contains
     logical, intent(out) :: matches
 
     character(len=256) :: sub_patterns(20)
-    integer :: num_patterns, i, start_pos, pipe_pos
+    integer :: num_patterns, i, pipe_pos
     character(len=256) :: remaining
 
     matches = .false.

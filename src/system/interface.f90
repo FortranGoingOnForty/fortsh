@@ -1220,17 +1220,10 @@ contains
   function file_owned_by_egid(path) result(is_owned)
     character(len=*), intent(in) :: path
     logical :: is_owned
-    character(len=256), target :: c_path
-    integer :: ret
-    type(stat_t) :: statbuf
-    integer(c_int) :: egid
-
-    c_path = trim(path)//c_null_char
-    ret = c_stat(c_loc(c_path), statbuf)
-
     ! Note: getegid() not declared yet, so we'll skip this check for now
     ! This should be added when getegid() is available
     is_owned = .false.
+    if (.false.) print *, path  ! Silence unused warning
   end function
 
   function file_is_newer(file1, file2) result(is_newer)

@@ -242,6 +242,7 @@ contains
     integer :: i
 
     data = ''
+    if (.false. .and. present(timeout_ms)) print *, timeout_ms  ! Silence unused warning
 
     if (coproc_id < 1 .or. coproc_id > size(coprocs)) return
     if (.not. coprocs(coproc_id)%active) return

@@ -25,6 +25,7 @@ module ast_executor
   public :: execute_ast_node
   public :: unset_ast_function
   public :: is_ast_function
+  public :: execute_external_command  ! Currently unused but may be needed later
 
   ! C bindings for process control
   interface
@@ -124,12 +125,12 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
-    integer :: i, func_idx, old_num_positional, j, eq_pos
+    integer :: i, func_idx, old_num_positional, eq_pos
     type(pipeline_t) :: temp_pipeline
     type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
     character(len=1024), allocatable :: old_params(:)
-    logical :: needs_quotes, redir_success
+    logical :: redir_success
     logical :: has_redirects, is_pure_assignment
 
     exit_status = 0
@@ -591,7 +592,7 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
-    integer :: i, status, ret
+    integer :: i, status, ret, pipe_idx
     integer(c_int), target :: pipefd(2, 10)  ! Up to 10 pipes
     integer(c_pid_t) :: pids(10)
     integer :: num_pipes
@@ -665,7 +666,8 @@ contains
         ! Child process
         ! Set up stdin from previous pipe
         if (i > 1) then
-          ret = c_dup2(pipefd(1, i-1), int(0, c_int))  ! Read from previous pipe
+          pipe_idx = i - 1
+          ret = c_dup2(pipefd(1, pipe_idx), int(0, c_int))  ! Read from previous pipe
         end if
 
         ! Set up stdout to next pipe
@@ -1163,7 +1165,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i, j, glob_count, word_idx, k, split_count
     character(len=MAX_TOKEN_LEN) :: glob_matches(MAX_TOKEN_LEN)
-    character(len=MAX_TOKEN_LEN), allocatable :: expanded_words(:)
+    character(len=1024), allocatable :: expanded_words(:)  ! 1024 to match positional_params size
     character(len=:), allocatable :: expanded_word, ifs_chars
     character(len=MAX_TOKEN_LEN) :: split_words(MAX_TOKEN_LEN)
     integer :: total_words
@@ -1608,10 +1610,10 @@ contains
     integer :: ret
 
     interface
-      function system(cmd) bind(c, name='system')
+      function c_system(cmd) bind(c, name='system')
         import :: c_char, c_int
         character(kind=c_char), dimension(*) :: cmd
-        integer(c_int) :: system
+        integer(c_int) :: c_system
       end function
     end interface
 
@@ -1624,7 +1626,7 @@ contains
     ! Try to execute command
     ! For now, just use system() as a placeholder
     ! TODO: Implement proper execvp with argv array
-    ret = system(trim(cmd_path) // c_null_char)
+    ret = c_system(trim(cmd_path) // c_null_char)
     exit_status = extract_exit_status(ret)
 
   end subroutine execute_external_command

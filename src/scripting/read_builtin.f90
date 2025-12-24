@@ -215,12 +215,13 @@ contains
     character(len=*), intent(out) :: input_line
     integer, intent(out) :: exit_status
     integer :: iostat
-    
+
     ! Simplified timeout implementation
-    ! In a real implementation, this would use select() or similar
+    ! In a real implementation, this would use select() or similar with timeout_sec
     input_line = ''
     exit_status = 1  ! Timeout
-    
+    if (.false.) print *, timeout_sec  ! Silence unused warning (timeout not yet implemented)
+
     ! For now, just read normally
     read(input_unit, '(a)', iostat=iostat) input_line
     if (iostat == 0) then
@@ -276,9 +277,9 @@ contains
   subroutine store_array_result(shell, var_name, input_line)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: var_name, input_line
-    
+
     character(len=256) :: words(50)
-    integer :: word_count, i, start_pos, pos
+    integer :: word_count, start_pos, pos
     
     word_count = 0
     pos = 1
@@ -315,7 +316,7 @@ contains
     character(len=*), intent(in) :: input_line
 
     character(len=256) :: words(20)
-    character(len=256) :: ifs_value
+    character(len=1024) :: ifs_value
     integer :: word_count, var_count, i, pos, start_pos, input_len
     logical :: is_ifs_char
 

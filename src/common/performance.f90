@@ -207,7 +207,7 @@ contains
 
   ! Optimize memory usage by compacting pools
   subroutine optimize_memory_pools()
-    integer :: i, j, active_pools
+    integer :: i, active_pools
     
     active_pools = 0
     

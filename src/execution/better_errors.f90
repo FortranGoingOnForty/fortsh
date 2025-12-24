@@ -90,7 +90,7 @@ contains
 
     character(len=:), allocatable :: candidates(:)
     integer, allocatable :: distances(:)
-    integer :: num_candidates, i, j, min_dist
+    integer :: num_candidates, i, min_dist
     character(len=256) :: temp_suggestions(MAX_SUGGESTIONS)
 
     ! Get candidate commands
@@ -149,9 +149,8 @@ contains
 
     character(len=256), allocatable :: temp_candidates(:)
     character(len=:), allocatable :: path_env
-    character(len=1024) :: dir, cmd_path
+    character(len=1024) :: dir
     integer :: max_candidates, path_start, path_end, colon_pos
-    integer :: unit, iostat
     logical :: dir_exists
 
     max_candidates = 1000

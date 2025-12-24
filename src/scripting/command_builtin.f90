@@ -265,6 +265,8 @@ contains
     logical :: found_any, suppress_errors, is_v_flag
     character(len=1024) :: full_path
 
+    if (.false.) print *, function_flag  ! Silence unused warning
+
     found_any = .false.
     suppress_errors = .false.
     is_v_flag = .false.
@@ -347,9 +349,11 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command_name
     logical, intent(in) :: all_flag, silent_flag
-    
+
     character(len=1024) :: full_path
-    
+
+    if (.false.) print *, all_flag  ! Silence unused warning
+
     if (find_executable_in_path(shell, command_name, full_path)) then
       if (.not. silent_flag) then
         call write_stdout(trim(full_path))
@@ -511,6 +515,8 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_name
     logical :: is_alias
+
+    if (.false.) print *, shell%cwd, command_name  ! Silence unused warning
 
     ! Simplified - in real implementation would check alias table
     is_alias = .false.

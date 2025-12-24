@@ -50,6 +50,8 @@ contains
     logical :: fortshrc_exists, fortsh_profile_exists
     character(len=10) :: response
 
+    if (.false.) print *, shell%cwd  ! Silence unused warning - shell kept for future use
+
     ! Get home directory using intrinsic
     home_dir = ''
     call get_environment_variable('HOME', home_dir)
