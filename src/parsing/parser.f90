@@ -2491,7 +2491,7 @@ contains
       operation = param_expr(op_pos:op_pos+1)
       default_value = param_expr(op_pos+2:)
 
-      ! Expand nested parameter expansions in pattern (e.g., ${VAR%/*} in ${VAR#${VAR%/*}})
+      ! Expand nested parameter expansions in pattern (e.g., ${VAR%/star} in ${VAR#${VAR%/star}})
       if (index(default_value, '${') > 0) then
         block
           character(len=:), allocatable :: expanded_pattern
