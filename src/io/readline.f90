@@ -7309,6 +7309,25 @@ contains
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
     character(len=MAX_LINE_LEN), allocatable :: suggestion_candidate
+    character(len=256) :: env_val
+    integer :: stat
+
+    ! Check if autosuggestions are disabled via environment variable
+    ! FORTSH_TEST_MODE or FORTSH_NO_COMPLETION will disable autosuggestions
+    call get_environment_variable('FORTSH_TEST_MODE', env_val, status=stat)
+    if (stat == 0 .and. len_trim(env_val) > 0) then
+      ! Autosuggestions disabled in test mode
+      input_state%suggestion = ''
+      input_state%suggestion_length = 0
+      return
+    end if
+    call get_environment_variable('FORTSH_NO_COMPLETION', env_val, status=stat)
+    if (stat == 0 .and. len_trim(env_val) > 0) then
+      ! Autosuggestions disabled
+      input_state%suggestion = ''
+      input_state%suggestion_length = 0
+      return
+    end if
 
     ! Allocate buffers on heap
     allocate(current_input)
