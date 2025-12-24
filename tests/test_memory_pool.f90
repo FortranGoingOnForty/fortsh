@@ -22,7 +22,7 @@ program test_memory_pool
   call pool_init()
   ref1 = pool_get_string(100)
 
-  if (.not. allocated(ref1%data)) then
+  if (.not. associated(ref1%data)) then
     print *, "  FAILED: String not allocated"
     all_tests_passed = .false.
   else
@@ -108,7 +108,7 @@ program test_memory_pool
   print *, "Test 6: Large allocation fallback..."
   ref1 = pool_get_string(100000)  ! 100KB - should bypass pool
 
-  if (.not. allocated(ref1%data)) then
+  if (.not. associated(ref1%data)) then
     print *, "  FAILED: Large allocation failed"
     all_tests_passed = .false.
   else
