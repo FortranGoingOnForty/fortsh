@@ -49,6 +49,12 @@ contains
     character(len=MAX_PATH_LEN) :: home_dir
     logical :: fortshrc_exists, fortsh_profile_exists
     character(len=10) :: response
+    character(len=16) :: test_mode
+    integer :: stat
+
+    ! Skip first-run prompt in test mode
+    call get_environment_variable('FORTSH_TEST_MODE', test_mode, status=stat)
+    if (stat == 0 .and. len_trim(test_mode) > 0) return
 
     if (.false.) print *, shell%cwd  ! Silence unused warning - shell kept for future use
 

@@ -6,7 +6,7 @@ program fortran_shell
   use system_interface
   use signal_handler
   use signal_handling
-  use parser, only: convert_backticks_to_dollar_paren
+  use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash
   use grammar_parser  ! New grammar-aware parser
   use ast_executor    ! AST execution for new parser
   use command_tree    ! Command tree for new parser
@@ -262,6 +262,19 @@ program fortran_shell
       ! Note: History will be added after expansion below
     end if
 
+    ! Check for terminal resize that may have occurred during readline
+    ! (SIGWINCH can arrive while waiting for input)
+    if (g_terminal_resized) then
+      g_terminal_resized = .false.
+      success = get_terminal_size(shell%term_rows, shell%term_cols)
+      write(cols_str, '(I0)') shell%term_cols
+      write(rows_str, '(I0)') shell%term_rows
+      success = set_environment_var('COLUMNS', trim(cols_str))
+      success = set_environment_var('LINES', trim(rows_str))
+      call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
+      call set_shell_variable(shell, 'LINES', trim(rows_str))
+    end if
+
     ! Check for EOF (Ctrl-D)
     if (iostat /= 0) then
       ! Only print newline in interactive mode for clean exit
@@ -274,8 +287,8 @@ program fortran_shell
     ! Skip empty lines
     if (len_trim(input_line) == 0) cycle
 
-    ! Check for unclosed quotes and continue reading lines if needed
-    do while (has_unclosed_quote(input_line))
+    ! Check for unclosed quotes or backslash continuation and continue reading
+    do while (has_unclosed_quote(input_line) .or. ends_with_continuation_backslash(input_line))
       if (shell%is_interactive) then
         ! Full readline with PS2 prompt expansion
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
@@ -297,6 +310,9 @@ program fortran_shell
       ! Append the continuation line with a newline character
       input_line = trim(input_line) // char(10) // trim(proc_subst_line)
     end do
+
+    ! Handle line continuation (backslash-newline)
+    input_line = remove_line_continuations(input_line)
 
     ! Expand history (!!, !n, !string, etc.) if needed
     if (needs_history_expansion(input_line)) then
@@ -878,13 +894,16 @@ contains
         if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
       end if
 
-      ! Check for unclosed quotes and continue reading lines if needed
-      do while (has_unclosed_quote(input_line))
+      ! Check for unclosed quotes or backslash continuation
+      do while (has_unclosed_quote(input_line) .or. ends_with_continuation_backslash(input_line))
         read(file_unit, '(a)', iostat=iostat) continuation_line
         if (iostat /= 0) exit  ! End of file during continuation
         ! Append the continuation line with a newline character
         input_line = trim(input_line) // char(10) // trim(continuation_line)
       end do
+
+      ! Handle line continuation (backslash-newline)
+      input_line = remove_line_continuations(input_line)
 
       ! If EOF was reached during continuation, exit
       if (iostat /= 0) exit

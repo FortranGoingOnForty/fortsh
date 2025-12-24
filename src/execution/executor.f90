@@ -300,8 +300,15 @@ contains
     do i = 1, num_processes
       ret = c_waitpid(pids(i), c_loc(status), WUNTRACED)
       if (ret > 0) then
-        exit_statuses(i) = WEXITSTATUS(status)
-        
+        if (WIFEXITED(status)) then
+          exit_statuses(i) = WEXITSTATUS(status)
+        else if (WIFSIGNALED(status)) then
+          ! Process was killed by a signal - exit status is 128 + signal_number
+          exit_statuses(i) = 128 + WTERMSIG(status)
+        else
+          exit_statuses(i) = 1
+        end if
+
         ! Track first failure for pipefail option
         if (exit_statuses(i) /= 0 .and. first_failure == 0) then
           first_failure = exit_statuses(i)
@@ -1438,6 +1445,9 @@ contains
         if (ret == pid) then
           if (WIFEXITED(wait_status)) then
             shell%last_exit_status = WEXITSTATUS(wait_status)
+          else if (WIFSIGNALED(wait_status)) then
+            ! Process was killed by a signal - exit status is 128 + signal_number
+            shell%last_exit_status = 128 + WTERMSIG(wait_status)
           else if (WIFSTOPPED(wait_status)) then
             job_id = add_job(shell, pgid, original_input, .true.)
             write(output_unit, '(a)') 'Stopped'
@@ -2500,6 +2510,8 @@ contains
 
       if (WIFEXITED(wait_status)) then
         shell%last_exit_status = WEXITSTATUS(wait_status)
+      else if (WIFSIGNALED(wait_status)) then
+        shell%last_exit_status = 128 + WTERMSIG(wait_status)
       else
         shell%last_exit_status = 1
       end if

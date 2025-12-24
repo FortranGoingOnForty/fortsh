@@ -1,0 +1,366 @@
+# History Tests for fortsh
+# Phase 3: History navigation, search, and expansion
+
+metadata:
+  category: "History"
+  description: "Tests for command history navigation, search, and expansion"
+  phase: 3
+
+tests:
+  # =============================================================
+  # HISTORY NAVIGATION - Arrow Keys
+  # =============================================================
+  - name: "Up arrow recalls previous command"
+    steps:
+      - send_line: "echo first"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "first"
+    match_type: "contains"
+
+  - name: "Multiple up arrows navigate history"
+    steps:
+      - send_line: "echo one"
+      - send_line: "echo two"
+      - send_line: "echo three"
+      - send_key: "Up"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "two"
+    match_type: "contains"
+
+  - name: "Down arrow navigates forward in history"
+    steps:
+      - send_line: "echo first"
+      - send_line: "echo second"
+      - send_key: "Up"
+      - send_key: "Up"
+      - send_key: "Down"
+      - send_key: "Enter"
+    expect_output: "second"
+    match_type: "contains"
+
+  - name: "Down arrow at end returns to empty line"
+    steps:
+      - send_line: "echo test"
+      - send_key: "Up"
+      - send_key: "Down"
+      - send: "echo new"
+      - send_key: "Enter"
+    expect_output: "new"
+    match_type: "contains"
+
+  - name: "Up arrow at beginning of history stops"
+    steps:
+      - send_line: "echo only"
+      - send_key: "Up"
+      - send_key: "Up"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "only"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY NAVIGATION - Ctrl Keys
+  # =============================================================
+  - name: "Ctrl+P recalls previous command"
+    steps:
+      - send_line: "echo previous"
+      - send_key: "C-p"
+      - send_key: "Enter"
+    expect_output: "previous"
+    match_type: "contains"
+
+  - name: "Ctrl+N navigates forward in history"
+    steps:
+      - send_line: "echo one"
+      - send_line: "echo two"
+      - send_key: "C-p"
+      - send_key: "C-p"
+      - send_key: "C-n"
+      - send_key: "Enter"
+    expect_output: "two"
+    match_type: "contains"
+
+  - name: "Mixed Ctrl+P and Up arrow"
+    steps:
+      - send_line: "echo first"
+      - send_line: "echo second"
+      - send_key: "Up"
+      - send_key: "C-p"
+      - send_key: "Enter"
+    expect_output: "first"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY EDITING
+  # =============================================================
+  - name: "Edit recalled command before executing"
+    steps:
+      - send_line: "echo original"
+      - send_key: "Up"
+      - send_key: "C-a"
+      - send_key: "M-f"
+      - send_key: "C-k"
+      - send: " modified"
+      - send_key: "Enter"
+    expect_output: "modified"
+    match_type: "contains"
+
+  - name: "Cancel history navigation with Ctrl+G"
+    steps:
+      - send_line: "echo first"
+      - send_key: "Up"
+      - send_key: "C-g"
+      - send: "echo second"
+      - send_key: "Enter"
+    expect_output: "second"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY SEARCH - Ctrl+R
+  # =============================================================
+  - name: "Ctrl+R starts reverse search"
+    steps:
+      - send_line: "echo findme"
+      - send_line: "echo other"
+      - send_key: "C-r"
+      - send: "find"
+      - send_key: "Enter"
+    expect_output: "findme"
+    match_type: "contains"
+
+  - name: "Ctrl+R finds partial match"
+    steps:
+      - send_line: "echo hello world"
+      - send_line: "echo goodbye"
+      - send_key: "C-r"
+      - send: "hello"
+      - send_key: "Enter"
+    expect_output: "hello world"
+    match_type: "contains"
+
+  - name: "Ctrl+R multiple matches cycles backwards"
+    steps:
+      - send_line: "echo match1"
+      - send_line: "echo match2"
+      - send_line: "echo match3"
+      - send_key: "C-r"
+      - send: "match"
+      - send_key: "C-r"
+      - send_key: "Enter"
+    expect_output: "match2"
+    match_type: "contains"
+
+  - name: "Ctrl+G cancels search"
+    steps:
+      - send_line: "echo searchme"
+      - send_key: "C-r"
+      - send: "search"
+      - send_key: "C-g"
+      - send: "echo cancelled"
+      - send_key: "Enter"
+    expect_output: "cancelled"
+    match_type: "contains"
+
+  - name: "Enter executes found command"
+    steps:
+      - send_line: "echo execute"
+      - send_key: "C-r"
+      - send: "exec"
+      - send_key: "Enter"
+    expect_output: "execute"
+    match_type: "contains"
+
+  - name: "Right arrow exits search and edits"
+    steps:
+      - send_line: "echo editme"
+      - send_key: "C-r"
+      - send: "edit"
+      - send_key: "Right"
+      - send_key: "C-e"
+      - send: " added"
+      - send_key: "Enter"
+    expect_output: "editme added"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY EXPANSION - Basic
+  # =============================================================
+  - name: "!! repeats last command"
+    steps:
+      - send_line: "echo repeat"
+      - send_line: "!!"
+    expect_output: "repeat"
+    match_type: "contains"
+
+  - name: "!-1 repeats last command"
+    steps:
+      - send_line: "echo minusone"
+      - send_line: "!-1"
+    expect_output: "minusone"
+    match_type: "contains"
+
+  - name: "!-2 repeats second to last"
+    steps:
+      - send_line: "echo first"
+      - send_line: "echo second"
+      - send_line: "!-2"
+    expect_output: "first"
+    match_type: "contains"
+
+  - name: "!string finds command starting with string"
+    steps:
+      - send_line: "echo hello"
+      - send_line: "pwd"
+      - send_line: "!echo"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "!?string finds command containing string"
+    steps:
+      - send_line: "echo findthis"
+      - send_line: "pwd"
+      - send_line: "!?find"
+    expect_output: "findthis"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY EXPANSION - Substitution
+  # =============================================================
+  - name: "^old^new substitution"
+    steps:
+      - send_line: "echo old"
+      - send_line: "^old^new"
+    expect_output: "new"
+    match_type: "contains"
+
+  # DISABLED: History word modifiers (:s/old/new/) not yet implemented
+  # - name: "!!:s/old/new/ substitution"
+  #   steps:
+  #     - send_line: "echo oldvalue"
+  #     - send_line: "!!:s/old/new/"
+  #   expect_output: "newvalue"
+  #   match_type: "contains"
+
+  # =============================================================
+  # HISTORY EXPANSION - Word Designators
+  # =============================================================
+  - name: "!!:0 gets command name"
+    steps:
+      - send_line: "echo one two three"
+      - send_line: "!!:0"
+    expect_output: "echo"
+    match_type: "contains"
+
+  - name: "!!:1 gets first argument"
+    steps:
+      - send_line: "echo first second third"
+      - send_line: "echo !!:1"
+    expect_output: "first"
+    match_type: "contains"
+
+  - name: "!!:$ gets last argument"
+    steps:
+      - send_line: "echo one two last"
+      - send_line: "echo !!:$"
+    expect_output: "last"
+    match_type: "contains"
+
+  - name: "!!:* gets all arguments"
+    steps:
+      - send_line: "echo a b c"
+      - send_line: "printf '%s\\n' !!:*"
+    expect_output: "a"
+    match_type: "contains"
+
+  - name: "!$ gets last argument of previous command"
+    steps:
+      - send_line: "echo one two three"
+      - send_line: "echo !$"
+    expect_output: "three"
+    match_type: "contains"
+
+  - name: "Alt+. inserts last argument"
+    steps:
+      - send_line: "echo lastarg"
+      - send: "echo "
+      - send_key: "M-."
+      - send_key: "Enter"
+    expect_output: "lastarg"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY - Duplicates and Ignoring
+  # =============================================================
+  - name: "Duplicate commands in history"
+    steps:
+      - send_line: "echo dup"
+      - send_line: "echo dup"
+      - send_key: "Up"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "dup"
+    match_type: "contains"
+
+  - name: "Commands with leading space may be ignored"
+    steps:
+      - send_line: " echo secret"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "secret"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY - Edge Cases
+  # =============================================================
+  - name: "Empty history navigation"
+    steps:
+      - send_key: "Up"
+      - send: "echo empty"
+      - send_key: "Enter"
+    expect_output: "empty"
+    match_type: "contains"
+
+  - name: "History with special characters"
+    steps:
+      - send_line: "echo 'special chars: $HOME'"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "special chars:"
+    match_type: "contains"
+
+  - name: "History with pipes"
+    steps:
+      - send_line: "echo hello | cat"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "History with redirects"
+    steps:
+      - send_line: "echo test > /dev/null"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: ""
+    match_type: "contains"
+
+  - name: "Long command in history"
+    steps:
+      - send_line: "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY - Multiline
+  # =============================================================
+  - name: "History preserves multiline commands"
+    steps:
+      - send_line: "for i in 1 2; do echo $i; done"
+      - send_key: "Up"
+      - send_key: "Enter"
+    expect_output: "1"
+    match_type: "contains"

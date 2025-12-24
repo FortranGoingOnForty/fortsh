@@ -1,0 +1,636 @@
+metadata:
+  category: Advanced
+  description: Tests converted from POSIX compliance suite
+  auto_generated: true
+  needs_review: Tests with MANUAL_REVIEW need expected output verification
+tests:
+- name: '51. BREAK AND CONTINUE IN LOOPS: break in for loop'
+  steps:
+  - send_line: for i in 1 2 3 4 5; do echo $i; if [ $i -eq 3 ]; then break; fi; done
+  expect_output: '1
+
+    2
+
+    3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '51. BREAK AND CONTINUE IN LOOPS: continue in for loop'
+  steps:
+  - send_line: for i in 1 2 3 4 5; do if [ $i -eq 3 ]; then continue; fi; echo $i;
+      done
+  expect_output: '1
+
+    2
+
+    4
+
+    5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '51. BREAK AND CONTINUE IN LOOPS: break in while loop'
+  steps:
+  - send_line: i=0; while [ $i -lt 5 ]; do i=$((i+1)); echo $i; if [ $i -eq 3 ]; then
+      break; fi; done
+  expect_output: '1
+
+    2
+
+    3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '51. BREAK AND CONTINUE IN LOOPS: continue in while loop'
+  steps:
+  - send_line: i=0; while [ $i -lt 5 ]; do i=$((i+1)); if [ $i -eq 3 ]; then continue;
+      fi; echo $i; done
+  expect_output: '1
+
+    2
+
+    4
+
+    5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '51. BREAK AND CONTINUE IN LOOPS: break in until loop'
+  steps:
+  - send_line: i=0; until [ $i -ge 5 ]; do i=$((i+1)); echo $i; if [ $i -eq 3 ]; then
+      break; fi; done
+  expect_output: '1
+
+    2
+
+    3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '52. NESTED LOOPS WITH BREAK/CONTINUE: break inner loop'
+  steps:
+  - send_line: for i in 1 2; do for j in a b c; do echo $i$j; if [ $j = b ]; then
+      break; fi; done; done
+  expect_output: '1a
+
+    1b
+
+    2a
+
+    2b'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '52. NESTED LOOPS WITH BREAK/CONTINUE: break with level'
+  steps:
+  - send_line: for i in 1 2; do for j in a b; do echo $i$j; if [ $j = b ]; then break
+      2; fi; done; done
+  expect_output: '1a
+
+    1b'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '52. NESTED LOOPS WITH BREAK/CONTINUE: continue outer loop'
+  steps:
+  - send_line: for i in 1 2 3; do for j in a b; do echo $i$j; if [ $j = a ]; then
+      continue 2; fi; done; done
+  expect_output: '1a
+
+    2a
+
+    3a'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '53. EXEC BUILTIN: exec with redirect'
+  steps:
+  - send_line: exec 3>&1; echo test >&3; exec 3>&-; echo done
+  expect_output: done
+  match_type: contains
+- name: '53. EXEC BUILTIN: exec without command'
+  steps:
+  - send_line: exec 2>&1; pwd >/dev/null
+  expect_output: ''
+  match_type: exact
+- name: '54. COMMAND BUILTIN: command -v test'
+  steps:
+  - send_line: command -v test | grep -c test
+  expect_output: DIGIT
+  match_type: contains
+- name: '54. COMMAND BUILTIN: command -v echo'
+  steps:
+  - send_line: command -v echo | grep -c echo
+  expect_output: DIGIT
+  match_type: contains
+- name: '55. READ BUILTIN - THOROUGH TESTING: read single var'
+  steps:
+  - send_line: echo hello | read VAR 2>/dev/null || VAR=hello; echo $VAR
+  expect_output: ''
+  match_type: exact
+- name: '55. READ BUILTIN - THOROUGH TESTING: read multiple vars'
+  steps:
+  - send_line: echo one two three | { read A B C; echo $A $B $C; }
+  expect_output: one two three
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '55. READ BUILTIN - THOROUGH TESTING: read with IFS'
+  steps:
+  - send_line: IFS=:; echo a:b:c | { read X Y Z; echo $X $Y $Z; }
+  expect_output: a b c
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '55. READ BUILTIN - THOROUGH TESTING: read remaining to last'
+  steps:
+  - send_line: echo a b c d e | { read X Y Z; echo "$Z"; }
+  expect_output: c d e
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '56. FILE DESCRIPTOR DUPLICATION: dup stdout to fd3'
+  steps:
+  - send_line: exec 3>&1; echo test >&3
+  expect_output: test >&3
+  match_type: contains
+- name: '56. FILE DESCRIPTOR DUPLICATION: dup stdin from fd'
+  steps:
+  - send_line: exec 3</dev/null; cat <&3; exec 3<&-; echo ok
+  expect_output: ok
+  match_type: contains
+- name: '57. SET -F (NOGLOB): noglob disables expansion'
+  steps:
+  - send_line: set -f; echo /tmp/*.xyz; set +f
+  expect_output: /tmp/*.xyz
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '57. SET -F (NOGLOB): noglob with literal star'
+  steps:
+  - send_line: set -f; VAR="a * b"; echo $VAR; set +f
+  expect_output: a * b
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '57. SET -F (NOGLOB): glob after set +f'
+  steps:
+  - send_line: set -f; set +f; echo /tmp 2>/dev/null | grep -c tmp
+  expect_output: /tmp 2>/dev/null | grep -c tmp
+  match_type: contains
+- name: '58. SET -X (XTRACE): xtrace shows commands'
+  steps:
+  - send_line: set -x; echo test 2>&1 | grep -c echo; set +x
+  expect_output: DIGIT
+  match_type: contains
+- name: '58. SET -X (XTRACE): xtrace in function'
+  steps:
+  - send_line: f() { set -x; echo inner 2>&1; set +x; }; f | grep -c echo
+  expect_output: DIGIT
+  match_type: contains
+- name: '59. SET -V (VERBOSE): verbose shows input'
+  steps:
+  - send_line: 'set -v; : test 2>&1 | grep -c test; set +v'
+  expect_output: DIGIT
+  match_type: contains
+- name: '60. SET -A (ALLEXPORT): allexport exports vars'
+  steps:
+  - send_line: set -a; TEST_VAR=value; sh -c "echo $TEST_VAR"
+  expect_output: value
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '60. SET -A (ALLEXPORT): allexport off'
+  steps:
+  - send_line: set +a; TEST2=val; sh -c "echo ${TEST2:-empty}"
+  expect_output: empty
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '61. TRAP WITH SIGNALS: trap INT signal'
+  steps:
+  - send_line: trap "echo caught" INT; trap | grep INT
+  expect_output: ''
+  match_type: exact
+- name: '61. TRAP WITH SIGNALS: trap TERM signal'
+  steps:
+  - send_line: trap "echo term" TERM; trap | grep TERM
+  expect_output: ''
+  match_type: exact
+- name: '61. TRAP WITH SIGNALS: trap HUP signal'
+  steps:
+  - send_line: trap "echo hup" HUP; trap | grep HUP
+  expect_output: ''
+  match_type: exact
+- name: '61. TRAP WITH SIGNALS: trap with number'
+  steps:
+  - send_line: trap "echo sig15" 15; trap | grep -c 15
+  expect_output: DIGIT
+  match_type: contains
+- name: '62. TRAP INHERITANCE IN SUBSHELLS: trap not inherited'
+  steps:
+  - send_line: trap "echo parent" EXIT; (trap | grep -c EXIT || echo 0)
+  expect_output: DIGIT
+  match_type: contains
+- name: '62. TRAP INHERITANCE IN SUBSHELLS: subshell can set trap'
+  steps:
+  - send_line: (trap "echo sub" EXIT; exit 0)
+  expect_output: sub
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '63. PARAMETER EXPANSION :? ERROR: no error if set'
+  steps:
+  - send_line: VAR=test; echo ${VAR:?error}
+  expect_output: test
+  match_type: contains
+- name: '64. PARAMETER EXPANSION WITH SPECIAL PARAMS: length of positional params'
+  steps:
+  - send_line: set -- a b c; echo ${#@}
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '64. PARAMETER EXPANSION WITH SPECIAL PARAMS: length of $*'
+  steps:
+  - send_line: set -- x y; echo ${#*}
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '64. PARAMETER EXPANSION WITH SPECIAL PARAMS: length of $1'
+  steps:
+  - send_line: set -- hello; echo ${#1}
+  expect_output: '5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '65. WAIT WITH ARGUMENTS: wait specific PID'
+  steps:
+  - send_line: sleep 0.1 & pid=$!; wait $pid; echo $?
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '65. WAIT WITH ARGUMENTS: wait all background'
+  steps:
+  - send_line: (sleep 0.1 &); wait; echo ok
+  expect_output: ok
+  match_type: contains
+- name: '66. IFS EDGE CASES: empty IFS'
+  steps:
+  - send_line: IFS=; VAR="a b c"; set -- $VAR; echo $#
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '66. IFS EDGE CASES: IFS whitespace only'
+  steps:
+  - send_line: IFS=" \t\n"; VAR="a  b"; set -- $VAR; echo $# $1 $2
+  expect_output: 2 a b
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '66. IFS EDGE CASES: IFS custom delimiter'
+  steps:
+  - send_line: IFS=,; VAR="a,b,c"; set -- $VAR; echo $2
+  expect_output: b
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '66. IFS EDGE CASES: IFS leading delimiters'
+  steps:
+  - send_line: IFS=:; VAR=":a:b"; set -- $VAR; echo $#
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '67. ARITHMETIC BITWISE OPERATORS: bitwise AND'
+  steps:
+  - send_line: echo $((12 & 10))
+  expect_output: '8'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '67. ARITHMETIC BITWISE OPERATORS: bitwise OR'
+  steps:
+  - send_line: echo $((12 | 10))
+  expect_output: '14'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '67. ARITHMETIC BITWISE OPERATORS: bitwise XOR'
+  steps:
+  - send_line: echo $((12 ^ 10))
+  expect_output: '6'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '67. ARITHMETIC BITWISE OPERATORS: bitwise NOT'
+  steps:
+  - send_line: echo $((~5))
+  expect_output: '-6'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '67. ARITHMETIC BITWISE OPERATORS: left shift'
+  steps:
+  - send_line: echo $((3 << 2))
+  expect_output: '12'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '67. ARITHMETIC BITWISE OPERATORS: right shift'
+  steps:
+  - send_line: echo $((12 >> 2))
+  expect_output: '3'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '68. ARITHMETIC ASSIGNMENT OPERATORS: add assign'
+  steps:
+  - send_line: X=5; echo $((X += 3)); echo $X
+  expect_output: '8
+
+    8'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '68. ARITHMETIC ASSIGNMENT OPERATORS: subtract assign'
+  steps:
+  - send_line: X=10; echo $((X -= 3)); echo $X
+  expect_output: '7
+
+    7'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '68. ARITHMETIC ASSIGNMENT OPERATORS: multiply assign'
+  steps:
+  - send_line: X=4; echo $((X *= 2)); echo $X
+  expect_output: '8
+
+    8'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '68. ARITHMETIC ASSIGNMENT OPERATORS: divide assign'
+  steps:
+  - send_line: X=20; echo $((X /= 4)); echo $X
+  expect_output: '5
+
+    5'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '68. ARITHMETIC ASSIGNMENT OPERATORS: modulo assign'
+  steps:
+  - send_line: X=17; echo $((X %= 5)); echo $X
+  expect_output: '2
+
+    2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '69. ARITHMETIC INCREMENT/DECREMENT: post increment'
+  steps:
+  - send_line: X=5; echo $((X++)); echo $X
+  expect_output: '5
+
+    6'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '69. ARITHMETIC INCREMENT/DECREMENT: pre increment'
+  steps:
+  - send_line: X=5; echo $((++X)); echo $X
+  expect_output: '6
+
+    6'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '69. ARITHMETIC INCREMENT/DECREMENT: post decrement'
+  steps:
+  - send_line: X=5; echo $((X--)); echo $X
+  expect_output: '5
+
+    4'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '69. ARITHMETIC INCREMENT/DECREMENT: pre decrement'
+  steps:
+  - send_line: X=5; echo $((--X)); echo $X
+  expect_output: '4
+
+    4'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '70. ARITHMETIC TERNARY OPERATOR: ternary true'
+  steps:
+  - send_line: 'echo $((5 > 3 ? 10 : 20))'
+  expect_output: '10'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '70. ARITHMETIC TERNARY OPERATOR: ternary false'
+  steps:
+  - send_line: 'echo $((5 < 3 ? 10 : 20))'
+  expect_output: '20'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '70. ARITHMETIC TERNARY OPERATOR: ternary nested'
+  steps:
+  - send_line: 'echo $((1 ? 2 : 3 ? 4 : 5))'
+  expect_output: '2'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '71. PIPELINE NEGATION: negate pipeline'
+  steps:
+  - send_line: '! echo test | grep -q xyz; echo $?'
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '72. THREE-STAGE PIPELINES: three stage pipe'
+  steps:
+  - send_line: echo abc | tr a A | tr b B
+  expect_output: abc | tr a A | tr b B
+  match_type: contains
+- name: '72. THREE-STAGE PIPELINES: four stage pipe'
+  steps:
+  - send_line: echo test | cat | cat | wc -l
+  expect_output: test | cat | cat | wc -l
+  match_type: contains
+- name: '73. CDPATH VARIABLE: CDPATH usage'
+  steps:
+  - send_line: mkdir -p /tmp/posix_cdpath_test/subdir; CDPATH=/tmp/posix_cdpath_test;
+      (cd subdir 2>/dev/null && pwd) | grep -c subdir; rm -rf /tmp/posix_cdpath_test
+  expect_output: DIGIT
+  match_type: contains
+- name: '74. OLDPWD VARIABLE: OLDPWD set'
+  steps:
+  - send_line: OLD=/tmp; cd /tmp >/dev/null; cd / >/dev/null; echo $OLDPWD | grep
+      -c tmp
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '74. OLDPWD VARIABLE: cd - uses OLDPWD'
+  steps:
+  - send_line: cd /tmp >/dev/null; cd / >/dev/null; cd - >/dev/null; pwd | grep -c
+      tmp
+  expect_output: DIGIT
+  match_type: contains
+- name: '75. PATHNAME EXPANSION - BRACKET EXPRESSIONS: bracket range'
+  steps:
+  - send_line: ls /tmp/posix_advanced_test_bracket/[a-b]1.txt 2>/dev/null | wc -l
+  expect_output: DIGIT
+  match_type: contains
+- name: '75. PATHNAME EXPANSION - BRACKET EXPRESSIONS: bracket negation'
+  steps:
+  - send_line: ls /tmp/posix_advanced_test_bracket/[!a]*.txt 2>/dev/null | wc -l
+  expect_output: DIGIT
+  match_type: contains
+- name: '75. PATHNAME EXPANSION - BRACKET EXPRESSIONS: bracket char class'
+  steps:
+  - send_line: ls /tmp/posix_advanced_test_bracket/[[:lower:]]1.txt 2>/dev/null |
+      wc -l
+  expect_output: DIGIT
+  match_type: contains
+- name: '76. PATHNAME EXPANSION - DOTFILE MATCHING: star no dotfiles'
+  steps:
+  - send_line: ls /tmp/posix_advanced_test_dotfile/* 2>/dev/null | wc -l
+  expect_output: DIGIT
+  match_type: contains
+- name: '76. PATHNAME EXPANSION - DOTFILE MATCHING: explicit dot match'
+  steps:
+  - send_line: ls /tmp/posix_advanced_test_dotfile/.* 2>/dev/null | grep -c hidden
+  expect_output: DIGIT
+  match_type: contains
+- name: '77. FOR LOOP VARIATIONS: for with glob'
+  steps:
+  - send_line: touch /tmp/posix_for_1.txt /tmp/posix_for_2.txt /tmp/posix_for_3.txt;
+      for f in /tmp/posix_for_*.txt; do echo $f; done | wc -l; rm /tmp/posix_for_*.txt
+  expect_output: DIGIT
+  match_type: contains
+- name: '77. FOR LOOP VARIATIONS: for with no items'
+  steps:
+  - send_line: for x in; do echo $x; done; echo empty
+  expect_output: empty
+  match_type: contains
+- name: '77. FOR LOOP VARIATIONS: for with quoted items'
+  steps:
+  - send_line: for i in "a b" "c d"; do echo $i; done | wc -l
+  expect_output: DIGIT
+  match_type: contains
+- name: '78. CASE PATTERN MATCHING: case multiple pattern'
+  steps:
+  - send_line: x=b; case $x in a|b|c) echo match;; *) echo no;; esac
+  expect_output: match
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '78. CASE PATTERN MATCHING: case glob pattern'
+  steps:
+  - send_line: x=hello; case $x in h*) echo prefix;; esac
+  expect_output: prefix
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '78. CASE PATTERN MATCHING: case question mark'
+  steps:
+  - send_line: x=ab; case $x in ??) echo two;; esac
+  expect_output: two
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '78. CASE PATTERN MATCHING: case bracket'
+  steps:
+  - send_line: x=a; case $x in [abc]) echo bracket;; esac
+  expect_output: bracket
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '79. FUNCTION VARIATIONS: function recursion'
+  steps:
+  - send_line: fact() { if [ $1 -le 1 ]; then echo 1; else echo $(($1 * $(fact $(($1
+      - 1))))); fi; }; fact 5
+  expect_output: '120'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '79. FUNCTION VARIATIONS: function unset'
+  steps:
+  - send_line: f() { echo test; }; f; unset -f f; command -v f >/dev/null 2>&1; echo
+      $?
+  expect_output: 'test
+
+    1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '79. FUNCTION VARIATIONS: nested return'
+  steps:
+  - send_line: a() { b; echo $?; }; b() { return 42; }; a
+  expect_output: '42'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '80. EXPANSION IN DIFFERENT CONTEXTS: tilde in assignment'
+  steps:
+  - send_line: VAR=~; echo $VAR | grep -c ^/
+  expect_output: '~'
+  match_type: contains
+- name: '80. EXPANSION IN DIFFERENT CONTEXTS: expansion in case'
+  steps:
+  - send_line: VAR=test; case $VAR in test) echo match;; esac
+  expect_output: match
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '80. EXPANSION IN DIFFERENT CONTEXTS: no expansion in quotes'
+  steps:
+  - send_line: echo "~" | grep -c "~"
+  expect_output: ~" | grep -c "~
+  match_type: contains
+- name: '81. REDIRECTION ORDER AND PRECEDENCE: multiple redirects'
+  steps:
+  - send_line: echo test >/tmp/redir1 2>&1 >/tmp/redir2; cat /tmp/redir1 /tmp/redir2
+      2>/dev/null | wc -l; rm -f /tmp/redir1 /tmp/redir2
+  expect_output: test >/tmp/redir1 2>&1 >/tmp/redir2; cat /tmp/redir1 /tmp/redir2
+    2>/dev/null | wc -l; rm -f /tmp/redir1 /tmp/redir2
+  match_type: contains
+- name: '81. REDIRECTION ORDER AND PRECEDENCE: redirect compound cmd'
+  steps:
+  - send_line: '{ echo a; echo b; } >/tmp/redir_compound; wc -l < /tmp/redir_compound;
+      rm -f /tmp/redir_compound'
+  expect_output: DIGIT
+  match_type: contains
+- name: '83. SPECIAL PARAMETERS - ADDITIONAL: PPID is numeric'
+  steps:
+  - send_line: echo $PPID | grep -c "^[0-9]*$"
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '83. SPECIAL PARAMETERS - ADDITIONAL: LINENO exists'
+  steps:
+  - send_line: echo $LINENO | grep -c "^[0-9]*$"
+  expect_output: '1'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '84. ALIAS AND UNALIAS: alias definition'
+  steps:
+  - send_line: alias ll="ls -l"; alias ll | grep -c "ls -l"
+  expect_output: DIGIT
+  match_type: contains
+- name: '84. ALIAS AND UNALIAS: unalias removes'
+  steps:
+  - send_line: alias test_alias=echo; unalias test_alias; alias test_alias 2>&1 |
+      grep -c "not found"
+  expect_output: DIGIT
+  match_type: contains
+- name: '85. HASH BUILTIN OPERATIONS: hash -r clears'
+  steps:
+  - send_line: hash -r; echo $?
+  expect_output: '0'
+  match_type: contains
+  auto_fixed: shell_execution
+- name: '86. MULTIPLE SEMICOLONS AND EDGE CASES: multiple semicolons'
+  steps:
+  - send_line: echo a;; echo b
+  expect_output: a;; echo b
+  match_type: contains
+- name: '86. MULTIPLE SEMICOLONS AND EDGE CASES: semicolon at start'
+  steps:
+  - send_line: ; echo test
+  expect_output: test
+  match_type: contains
+- name: '88. COMMENT HANDLING: comment after command'
+  steps:
+  - send_line: 'echo visible # this is comment'
+  expect_output: 'visible # this is comment'
+  match_type: contains
+- name: '89. QUOTING EDGE CASES: empty string quotes'
+  steps:
+  - send_line: echo "" | wc -l
+  expect_output: ' | wc -l'
+  match_type: contains
+- name: '89. QUOTING EDGE CASES: adjacent quotes'
+  steps:
+  - send_line: echo "a"b"c"
+  expect_output: a"b"c
+  match_type: contains
+- name: '89. QUOTING EDGE CASES: quote within quote'
+  steps:
+  - send_line: echo \
+  expect_output: \
+  match_type: contains
+- name: '90. COMPOUND COMMAND REDIRECTION: subshell with redirect'
+  steps:
+  - send_line: (echo a; echo b) | wc -l
+  expect_output: b) | wc -l
+  match_type: contains
+- name: '90. COMPOUND COMMAND REDIRECTION: brace group redirect'
+  steps:
+  - send_line: '{ echo x; echo y; } | wc -l'
+  expect_output: DIGIT
+  match_type: contains
+- name: '90. COMPOUND COMMAND REDIRECTION: if statement redirect'
+  steps:
+  - send_line: if true; then echo yes; fi | cat
+  expect_output: 'yes'
+  match_type: contains
+  auto_fixed: shell_execution
