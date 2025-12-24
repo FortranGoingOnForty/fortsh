@@ -3829,7 +3829,8 @@ contains
       end do
 
       if (debug_utf8) then
-        write(error_unit, '(a,i0,a,i0,a,i0)') '[UTF8 DEBUG] Moving back ', num_bytes, ' bytes from ', start_pos, ' to ', start_pos - num_bytes
+        write(error_unit, '(a,i0,a,i0,a,i0)') '[UTF8 DEBUG] Moving back ', num_bytes, &
+          ' bytes from ', start_pos, ' to ', start_pos - num_bytes
       end if
     else
       ! Not a continuation byte - single byte character (ASCII or orphaned byte)
@@ -4219,8 +4220,8 @@ contains
             input_state%menu_total_items = num_completions
             input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
-              ! Use temp_buffer and simple assignment to avoid substring operations
-              temp_buffer = completions(i)
+              ! Use temp_buffer and explicit copy to avoid truncation warnings
+              temp_buffer = completions(i)(1:min(len_trim(completions(i)), MAX_MENU_ITEM_LEN))
               input_state%menu_items(i) = temp_buffer
             end do
             input_state%menu_selection = 1
@@ -4246,8 +4247,8 @@ contains
         input_state%menu_total_items = num_completions
         input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
-          ! Use temp_buffer and simple trim to avoid substring operations
-          temp_buffer = completions(i)
+          ! Use temp_buffer and explicit copy to avoid truncation warnings
+          temp_buffer = completions(i)(1:min(len_trim(completions(i)), MAX_MENU_ITEM_LEN))
           input_state%menu_items(i) = temp_buffer
         end do
         input_state%menu_selection = 1
@@ -4285,8 +4286,8 @@ contains
     input_state%suggestion_length = 0
 
     do i = 1, input_state%menu_num_items
-      ! Use temp_buffer and simple assignment
-      temp_buffer = completions(i)
+      ! Use temp_buffer and explicit copy to avoid truncation warnings
+      temp_buffer = completions(i)(1:min(len_trim(completions(i)), MAX_MENU_ITEM_LEN))
       input_state%menu_items(i) = temp_buffer
     end do
 
@@ -8016,7 +8017,9 @@ contains
     end do
 
     if (debug_utf8) then
-      write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[VISUAL] cursor_pos=', cursor_pos, ' prompt_len=', prompt_visual_len, ' visual_width=', visual_width, ' total=', prompt_visual_len + 1 + visual_width
+      write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[VISUAL] cursor_pos=', cursor_pos, &
+        ' prompt_len=', prompt_visual_len, ' visual_width=', visual_width, &
+        ' total=', prompt_visual_len + 1 + visual_width
     end if
 
     ! Total position = prompt + space + visual width of buffer content
