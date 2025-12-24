@@ -501,7 +501,7 @@ smoke-test: $(TARGET)
 	@echo "echo 'Hello from Fortsh!'" | $(TARGET) && echo "✓ Basic execution works"
 	@echo -e "help\nexit" | $(TARGET) >/dev/null && echo "✓ Help command works"
 	@echo -e "echo *.txt\nexit" | $(TARGET) >/dev/null && echo "✓ Glob expansion works"
-	@echo "perf on\necho 'test'\nperf\nexit" | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
+	@echo -e "perf on\necho 'test'\nperf\nexit" | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
 	@echo "All smoke tests passed!"
 
 # macOS ARM64 specific tests - only run on Darwin arm64
@@ -559,6 +559,73 @@ test-macos: test-macos-pool test-macos-compiler
 	@echo "All macOS ARM64 Tests Complete"
 	@echo "=========================================="
 
+# ============================================================================
+# Unit Test Bench Files
+# ============================================================================
+
+# Build rules for unit tests
+$(BUILDDIR)/test_memory_pool: tests/test_memory_pool.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o -o $@
+
+$(BUILDDIR)/test_lexer_simple: tests/test_lexer_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
+
+$(BUILDDIR)/test_parser_simple: tests/test_parser_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
+
+$(BUILDDIR)/test_executor_simple: tests/test_executor_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
+
+$(BUILDDIR)/test_expansion_simple: tests/test_expansion_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
+
+$(BUILDDIR)/test_variables_simple: tests/test_variables_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
+
+# Individual test targets
+test-memory-pool: $(BUILDDIR)/test_memory_pool
+	@echo "=========================================="
+	@echo "Testing Memory Pool (String Pool)"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_memory_pool
+
+test-lexer: $(BUILDDIR)/test_lexer_simple
+	@echo "=========================================="
+	@echo "Testing Lexer"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_lexer_simple
+
+test-parser: $(BUILDDIR)/test_parser_simple
+	@echo "=========================================="
+	@echo "Testing Parser"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_parser_simple
+
+test-executor: $(BUILDDIR)/test_executor_simple
+	@echo "=========================================="
+	@echo "Testing Executor"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_executor_simple
+
+test-expansion: $(BUILDDIR)/test_expansion_simple
+	@echo "=========================================="
+	@echo "Testing Expansion"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_expansion_simple
+
+test-variables: $(BUILDDIR)/test_variables_simple
+	@echo "=========================================="
+	@echo "Testing Variables"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_variables_simple
+
+# Run all unit bench tests (working tests only)
+test-bench: test-memory-pool test-lexer test-executor test-c-strings
+	@echo ""
+	@echo "=========================================="
+	@echo "All bench tests passed!"
+	@echo "=========================================="
+
 # Test C string library (flang-new workaround)
 test-c-strings: $(BUILDDIR)/test_c_strings
 	@echo "=========================================="
@@ -576,4 +643,4 @@ c-strings: $(BUILDDIR)/test_c_strings
 	@echo "C string library built successfully!"
 	@echo "Run 'make test-c-strings' to test it"
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-bench
