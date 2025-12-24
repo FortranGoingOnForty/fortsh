@@ -157,9 +157,8 @@ tests:
 - name: '139. QUOTING EDGE CASES: empty single quotes'
   steps:
   - send_line: VAR=''; echo x${VAR}y
-  expect_output: x${VAR}y
+  expect_output: xy
   match_type: contains
-  auto_fixed: shell_execution
 - name: '139. QUOTING EDGE CASES: adjacent quotes concat'
   steps:
   - send_line: echo "a"b"c"
