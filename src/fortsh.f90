@@ -110,6 +110,9 @@ program fortran_shell
   ! Initialize command capture callback (for command substitution)
   call init_command_capture()
 
+  ! Initialize completion function executor callback (for -F completion)
+  call init_completion_executor()
+
   ! Setup signal handlers if interactive
   if (shell%is_interactive) then
     call setup_signal_handlers()

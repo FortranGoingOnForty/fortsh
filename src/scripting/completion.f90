@@ -68,6 +68,29 @@ module completion
 
   type(completion_context_t), save :: current_comp_context
 
+  ! ===========================================================================
+  ! CALLBACK INTERFACE FOR FUNCTION EXECUTION
+  ! This allows the executor module to register itself without circular deps
+  ! ===========================================================================
+
+  ! Abstract interface for completion function execution callback
+  abstract interface
+    subroutine completion_func_executor_t(shell, func_name, command, word, prev_word)
+      import :: shell_state_t
+      type(shell_state_t), intent(inout) :: shell
+      character(len=*), intent(in) :: func_name
+      character(len=*), intent(in) :: command
+      character(len=*), intent(in) :: word
+      character(len=*), intent(in) :: prev_word
+    end subroutine completion_func_executor_t
+  end interface
+
+  ! Procedure pointer for function execution (set by executor at startup)
+  procedure(completion_func_executor_t), pointer, save :: completion_func_executor => null()
+
+  ! Public interface for callback registration
+  public :: register_completion_executor, completion_func_executor_t
+
 contains
 
   ! Initialize the completion system
@@ -104,6 +127,14 @@ contains
       completion_specs(i)%builtin_builtin = .false.
     end do
   end subroutine init_completion_system
+
+  ! Register the completion function executor callback
+  ! Called by executor module at shell startup to avoid circular dependency
+  subroutine register_completion_executor(executor_proc)
+    procedure(completion_func_executor_t) :: executor_proc
+
+    completion_func_executor => executor_proc
+  end subroutine register_completion_executor
 
   ! Register a new completion spec
   function register_completion_spec(spec) result(success)
@@ -563,19 +594,32 @@ contains
     ! For simplicity, we'll call with just command and word
     function_call = trim(spec%function_name) // ' "' // trim(command) // '" "' // trim(word_prefix) // '" ""'
 
-    ! Execute the completion function
-    ! Note: This is a simplified version. In a full implementation,
-    ! we'd need to execute the function via the shell's executor
-    ! For now, we'll just set up the context and expect the function
-    ! to populate COMPREPLY
+    ! Execute the completion function via callback
+    ! The callback is registered by the executor module at shell startup
+    if (associated(completion_func_executor)) then
+      ! Clear COMPREPLY before calling the function
+      call clear_compreply(shell)
 
-    ! TODO: Actually execute the function via shell executor
-    ! For Phase 3, we'll implement a stub that returns empty results
-    ! The full integration will happen in Phase 5
+      ! Call the completion function via the registered executor
+      ! The function is expected to populate COMPREPLY array
+      call completion_func_executor(shell, trim(spec%function_name), &
+                                     trim(command), trim(word_prefix), '')
+    end if
 
-    ! Get results from COMPREPLY
+    ! Get results from COMPREPLY (populated by the completion function)
     call get_compreply_results(shell, completions, count)
   end subroutine generate_function_completions
+
+  ! Clear the COMPREPLY array
+  subroutine clear_compreply(shell)
+    use variables, only: set_array_variable
+    type(shell_state_t), intent(inout) :: shell
+    character(len=1) :: empty_arr(1)
+
+    ! Clear the COMPREPLY array by setting it to empty
+    empty_arr(1) = ''
+    call set_array_variable(shell, 'COMPREPLY', empty_arr, 0)
+  end subroutine clear_compreply
 
   ! ===========================================================================
   ! BUILT-IN COMPLETERS

@@ -15,9 +15,12 @@ module executor
   use shell_options
   use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR
   use better_errors
+  use completion, only: register_completion_executor, completion_func_executor_t
   use iso_fortran_env, only: error_unit, input_unit
   use iso_c_binding
   implicit none
+
+  public :: init_completion_executor
 
 contains
 
@@ -322,7 +325,7 @@ contains
     deallocate(exit_statuses)
   end subroutine
 
-  subroutine execute_single(cmd, shell, original_input)
+  recursive subroutine execute_single(cmd, shell, original_input)
     use control_flow, only: capture_loop_command, is_control_flow_keyword
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
@@ -1204,10 +1207,20 @@ contains
     character(len=256) :: ifs_to_use
     integer :: word_count, start_pos, pos, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
+    logical :: is_double_bracket_cmd
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
     total_tokens = 0
+
+    ! Check if this is a [[ ]] command - word splitting is NOT performed in [[ ]]
+    ! per POSIX and bash behavior
+    is_double_bracket_cmd = .false.
+    if (cmd%num_tokens > 0) then
+      if (trim(cmd%tokens(1)) == '[[') then
+        is_double_bracket_cmd = .true.
+      end if
+    end if
 
     ! Determine IFS characters to use
     ! Interpret escape sequences in IFS (\t -> tab, \n -> newline)
@@ -1291,8 +1304,10 @@ contains
         ! PARSER FIX: Check if token starts with % (printf format string)
         is_format_string = (len_trim(expanded) > 0 .and. expanded(1:1) == '%')
 
-        ! Only split if no quotes, no equals sign, no escaped spaces, and not a format string
-        should_split = (.not. has_quotes .and. .not. has_equals .and. .not. has_escaped .and. .not. is_format_string)
+        ! Only split if no quotes, no equals sign, no escaped spaces, not a format string,
+        ! and NOT inside a [[ ]] expression (word splitting is disabled in [[ ]])
+        should_split = (.not. has_quotes .and. .not. has_equals .and. .not. has_escaped &
+                        .and. .not. is_format_string .and. .not. is_double_bracket_cmd)
       end if
 
       if (should_split) then
@@ -1791,6 +1806,50 @@ contains
     shell%positional_params = saved_positional_params
     shell%num_positional = saved_num_positional
   end subroutine
+
+  ! ===========================================================================
+  ! COMPLETION FUNCTION EXECUTOR
+  ! Called by completion module to execute -F completion functions
+  ! ===========================================================================
+  subroutine execute_completion_function(shell, func_name, command, word, prev_word)
+    use variables, only: set_shell_variable, get_function_body, is_function
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: func_name
+    character(len=*), intent(in) :: command
+    character(len=*), intent(in) :: word
+    character(len=*), intent(in) :: prev_word
+
+    type(command_t) :: cmd
+    character(len=1024), allocatable :: function_body(:)
+
+    ! Check if function exists
+    if (.not. is_function(shell, func_name)) then
+      return
+    end if
+
+    ! Set up COMP_* variables for the completion function
+    ! COMP_LINE - the full command line (simplified)
+    call set_shell_variable(shell, 'COMP_LINE', trim(command) // ' ' // trim(word))
+    ! COMP_POINT - cursor position
+    call set_shell_variable(shell, 'COMP_POINT', '0')
+    ! COMP_CWORD - index of word containing cursor (0-based)
+    call set_shell_variable(shell, 'COMP_CWORD', '1')
+
+    ! Build command structure to execute the function
+    ! The function receives: command word prev_word
+    allocate(character(len=256) :: cmd%tokens(4))
+    cmd%num_tokens = 4
+    cmd%tokens(1) = trim(func_name)
+    cmd%tokens(2) = trim(command)
+    cmd%tokens(3) = trim(word)
+    cmd%tokens(4) = trim(prev_word)
+
+    ! Execute the function
+    call execute_function(cmd, shell)
+
+    ! Clean up
+    deallocate(cmd%tokens)
+  end subroutine execute_completion_function
 
   ! Execute eval builtin (moved here to avoid circular dependency with builtins module)
   subroutine execute_eval_builtin(cmd, shell)
@@ -2534,5 +2593,14 @@ contains
     close(file_unit)
     shell%source_file = ''
   end subroutine process_source_inline
+
+  ! ===========================================================================
+  ! COMPLETION EXECUTOR INITIALIZATION
+  ! Registers the executor's completion function handler with the completion module
+  ! ===========================================================================
+  subroutine init_completion_executor()
+    ! Register our execute_completion_function as the callback
+    call register_completion_executor(execute_completion_function)
+  end subroutine init_completion_executor
 
 end module executor
