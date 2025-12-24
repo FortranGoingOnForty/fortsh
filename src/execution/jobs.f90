@@ -79,6 +79,9 @@ contains
             if (WIFEXITED(status)) then
               shell%jobs(i)%state = JOB_DONE
               ! DON'T set last_exit_status for background jobs!
+            else if (WIFSIGNALED(status)) then
+              shell%jobs(i)%state = JOB_DONE
+              ! DON'T set last_exit_status for background jobs!
             else if (WIFSTOPPED(status)) then
               shell%jobs(i)%state = JOB_STOPPED
             end if
@@ -138,6 +141,10 @@ contains
         if (WIFEXITED(status)) then
           shell%jobs(i)%state = JOB_DONE
           shell%last_exit_status = WEXITSTATUS(status)
+          call remove_job(shell, job_id)
+        else if (WIFSIGNALED(status)) then
+          shell%jobs(i)%state = JOB_DONE
+          shell%last_exit_status = 128 + WTERMSIG(status)
           call remove_job(shell, job_id)
         else if (WIFSTOPPED(status)) then
           shell%jobs(i)%state = JOB_STOPPED
@@ -338,6 +345,10 @@ contains
       if (WIFEXITED(status)) then
         shell%jobs(job_index)%state = JOB_DONE
         shell%last_exit_status = WEXITSTATUS(status)
+        call remove_job(shell, job_id)
+      else if (WIFSIGNALED(status)) then
+        shell%jobs(job_index)%state = JOB_DONE
+        shell%last_exit_status = 128 + WTERMSIG(status)
         call remove_job(shell, job_id)
       else if (WIFSTOPPED(status)) then
         shell%jobs(job_index)%state = JOB_STOPPED

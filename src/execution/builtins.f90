@@ -564,8 +564,8 @@ contains
     use io_helpers, only: write_stdout_checked, write_stdout_nonl_checked
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i, j, len_token
-    logical :: first, suppress_newline, write_ok, had_error
+    integer :: i, j, len_token, start_token
+    logical :: first, suppress_newline, write_ok, had_error, interpret_escapes
     character(len=:), allocatable :: processed
     character(len=MAX_TOKEN_LEN) :: token
 
@@ -585,8 +585,42 @@ contains
 
     first = .true.
     suppress_newline = .false.
+    interpret_escapes = .true.  ! POSIX default: interpret escape sequences
+    start_token = 2
 
+    ! Parse options (must be first arguments)
     do i = 2, cmd%num_tokens
+      token = cmd%tokens(i)
+      if (token(1:1) /= '-' .or. len_trim(token) < 2) exit
+
+      ! Check for valid option characters
+      if (trim(token) == '-n') then
+        suppress_newline = .true.
+        start_token = i + 1
+      else if (trim(token) == '-e') then
+        interpret_escapes = .true.
+        start_token = i + 1
+      else if (trim(token) == '-E') then
+        interpret_escapes = .false.
+        start_token = i + 1
+      else if (trim(token) == '-ne' .or. trim(token) == '-en') then
+        suppress_newline = .true.
+        interpret_escapes = .true.
+        start_token = i + 1
+      else if (trim(token) == '-nE' .or. trim(token) == '-En') then
+        suppress_newline = .true.
+        interpret_escapes = .false.
+        start_token = i + 1
+      else if (trim(token) == '--') then
+        start_token = i + 1
+        exit
+      else
+        ! Not a recognized option, treat as regular argument
+        exit
+      end if
+    end do
+
+    do i = start_token, cmd%num_tokens
       ! POSIX: Skip empty tokens (unquoted empty variables disappear)
       if (len_trim(cmd%tokens(i)) == 0) cycle
 
@@ -595,47 +629,52 @@ contains
         if (.not. write_ok) had_error = .true.
       end if
 
-      ! Process escape sequences in token
+      ! Process escape sequences in token (only if interpret_escapes is true)
       token = cmd%tokens(i)
       len_token = len_trim(token)
       processed = ''
       j = 1
 
-      do while (j <= len_token)
-        if (token(j:j) == '\' .and. j < len_token) then
-          ! Escape sequence
-          j = j + 1
-          select case (token(j:j))
-            case ('a')
-              processed = processed // achar(7)  ! Alert (bell)
-            case ('b')
-              processed = processed // achar(8)  ! Backspace
-            case ('c')
-              suppress_newline = .true.
-              exit  ! Stop processing
-            case ('f')
-              processed = processed // achar(12) ! Form feed
-            case ('n')
-              processed = processed // new_line('a')  ! Newline
-            case ('r')
-              processed = processed // achar(13) ! Carriage return
-            case ('t')
-              processed = processed // achar(9)  ! Tab
-            case ('v')
-              processed = processed // achar(11) ! Vertical tab
-            case ('\')
-              processed = processed // '\'       ! Backslash
-            case default
-              ! Unknown escape - keep literal backslash and character
-              processed = processed // '\' // token(j:j)
-          end select
-          j = j + 1
-        else
-          ! Regular character
-          processed = processed // token(j:j)
-          j = j + 1
-        end if
-      end do
+      if (interpret_escapes) then
+        do while (j <= len_token)
+          if (token(j:j) == '\' .and. j < len_token) then
+            ! Escape sequence
+            j = j + 1
+            select case (token(j:j))
+              case ('a')
+                processed = processed // achar(7)  ! Alert (bell)
+              case ('b')
+                processed = processed // achar(8)  ! Backspace
+              case ('c')
+                suppress_newline = .true.
+                exit  ! Stop processing
+              case ('f')
+                processed = processed // achar(12) ! Form feed
+              case ('n')
+                processed = processed // new_line('a')  ! Newline
+              case ('r')
+                processed = processed // achar(13) ! Carriage return
+              case ('t')
+                processed = processed // achar(9)  ! Tab
+              case ('v')
+                processed = processed // achar(11) ! Vertical tab
+              case ('\')
+                processed = processed // '\'       ! Backslash
+              case default
+                ! Unknown escape - keep literal backslash and character
+                processed = processed // '\' // token(j:j)
+            end select
+            j = j + 1
+          else
+            ! Regular character
+            processed = processed // token(j:j)
+            j = j + 1
+          end if
+        end do
+      else
+        ! -E flag: don't interpret escape sequences
+        processed = token(:len_token)
+      end if
 
       call write_stdout_nonl_checked(processed, write_ok)
       if (.not. write_ok) had_error = .true.
@@ -1140,7 +1179,7 @@ contains
         if (shell%jobs(i)%job_id > 0 .and. &
             shell%jobs(i)%state == JOB_RUNNING) then
           ret = c_waitpid(shell%jobs(i)%pgid, c_loc(wait_status), 0)
-          if (WIFEXITED(wait_status)) then
+          if (WIFEXITED(wait_status) .or. WIFSIGNALED(wait_status)) then
             shell%jobs(i)%state = JOB_DONE
           end if
         end if
@@ -1173,6 +1212,8 @@ contains
           if (ret > 0) then
             if (WIFEXITED(wait_status)) then
               shell%last_exit_status = WEXITSTATUS(wait_status)
+            else if (WIFSIGNALED(wait_status)) then
+              shell%last_exit_status = 128 + WTERMSIG(wait_status)
             else
               shell%last_exit_status = 1
             end if

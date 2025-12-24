@@ -708,6 +708,21 @@ contains
     exit_status = ishft(iand(status, 65280), -8)
   end function
 
+  function WIFSIGNALED(status) result(signaled)
+    integer(c_int), intent(in) :: status
+    logical :: signaled
+    integer :: low7
+    low7 = iand(status, 127)
+    ! Process was killed by a signal if low 7 bits are non-zero and not 0x7f (stopped)
+    signaled = (low7 /= 0) .and. (low7 /= 127)
+  end function
+
+  function WTERMSIG(status) result(sig)
+    integer(c_int), intent(in) :: status
+    integer :: sig
+    sig = iand(status, 127)
+  end function
+
   function execute_and_capture(command) result(output)
     character(len=*), intent(in) :: command
     character(len=:), allocatable :: output
@@ -890,7 +905,7 @@ contains
       ! ESC[?2004h = Enable bracketed paste
       ! Terminal will wrap pasted text in ESC[200~ ... ESC[201~
       write(output_unit, '(A)', advance='no') char(27) // '[?2004h'
-      call flush(output_unit)
+      flush(output_unit)
 
       ! Debug: Check if FORTSH_DEBUG_PASTE is set
       block
@@ -918,7 +933,7 @@ contains
     ! Disable bracketed paste mode before restoring terminal
     ! ESC[?2004l = Disable bracketed paste
     write(output_unit, '(A)', advance='no') char(27) // '[?2004l'
-    call flush(output_unit)
+    flush(output_unit)
 
     ret = c_tcsetattr(STDIN_FD, TCSANOW, original_termios)
     success = (ret == 0)
@@ -1440,7 +1455,7 @@ contains
     character(len=*), intent(in) :: title
     ! ESC ] 0 ; title BEL
     write(output_unit, '(A)', advance='no') char(27) // ']0;' // trim(title) // char(7)
-    call flush(output_unit)
+    flush(output_unit)
   end subroutine
 
   ! Check if terminal supports ANSI escape codes
