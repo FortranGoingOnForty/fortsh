@@ -48,8 +48,8 @@ contains
     type(pipeline_t), intent(out) :: pipeline
     type(shell_state_t), intent(inout) :: shell
     pipeline%num_commands = 0
-    if (shell%control_depth >= 0) then
-    end if
+    ! Silence unused warnings
+    if (.false.) print *, input, shell%control_depth
   end subroutine
 
   function current_token(state) result(tok)
@@ -208,7 +208,7 @@ contains
   recursive function parse_pipeline_node(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, temp_node, commands(:)
-    integer :: num_commands, i
+    integer :: num_commands
     logical :: negate
     type(token_t) :: tok
     negate = .false.
@@ -662,7 +662,7 @@ contains
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, cond, then_part, else_part, elif_node
     type(token_t) :: tok
-    nullify(else_part)
+    nullify(node, else_part)
     if (.not. expect(state, 'if')) return
     call skip_newlines(state)
     cond => parse_list(state)
@@ -706,7 +706,7 @@ contains
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, cond, then_part, else_part
     type(token_t) :: tok
-    nullify(else_part)
+    nullify(node, else_part)
     tok = current_token(state)
     if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'elif') then
       call advance(state)
@@ -733,6 +733,7 @@ contains
     type(parser_state_t), intent(inout) :: state
     logical, intent(in) :: is_until
     type(command_node_t), pointer :: node, cond, body
+    nullify(node)
     if (is_until) then
       if (.not. expect(state, 'until')) return
     else
@@ -755,6 +756,7 @@ contains
     character(len=MAX_TOKEN_LEN) :: variable, words(MAX_TOKENS)
     integer :: num_words, quote_types(MAX_TOKENS)
     type(token_t) :: tok
+    nullify(node)
     num_words = 0
     quote_types = QUOTE_NONE
     if (.not. expect(state, 'for')) return
@@ -917,6 +919,7 @@ contains
   recursive function parse_subshell(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, commands
+    nullify(node)
     if (.not. expect(state, '(')) return
     call skip_newlines(state)
     commands => parse_list(state)
@@ -928,6 +931,7 @@ contains
   recursive function parse_brace_group(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, commands
+    nullify(node)
     if (.not. expect(state, '{')) return
     call skip_newlines(state)
     commands => parse_list(state)

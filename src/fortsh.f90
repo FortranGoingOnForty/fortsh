@@ -28,7 +28,7 @@ program fortran_shell
   character(len=1024) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, history_expanded
   character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
-  integer :: iostat, i, num_args, ret
+  integer :: iostat, i, num_args
   character(len=1024) :: arg1, command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
   character(len=:), allocatable :: script_file
@@ -45,6 +45,9 @@ program fortran_shell
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
+
+  ! Silence unused function warning for convert_escape_sequences (kept for future use)
+  if (.false.) input_line = convert_escape_sequences('')
 
   ! Allocate shell to avoid large stack allocation on macOS
   allocate(shell)
@@ -1033,7 +1036,7 @@ contains
     character(len=*), intent(in) :: line
     character(len=*), intent(out) :: func_name
     logical :: is_func
-    integer :: paren_pos, brace_pos, func_pos, i
+    integer :: paren_pos, func_pos, i
     character(len=1024) :: trimmed
 
     is_func = .false.

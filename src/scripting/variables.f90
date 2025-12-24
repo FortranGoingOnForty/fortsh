@@ -567,7 +567,7 @@ contains
     character(len=*), intent(in) :: var_name, array_expr
     ! Use allocatable array to avoid static storage
     character(len=1024), allocatable :: values(:)
-    integer :: count, i, start_pos, pos, capacity
+    integer :: count, start_pos, pos, capacity
     character(len=1024) :: content
     logical :: in_quotes
     
@@ -1141,7 +1141,6 @@ contains
     character(len=256) :: param_name, default_value
     character(len=1024) :: var_value  ! Must match get_shell_variable return type
     character(len=1024) :: expanded_pattern_buf
-    character(len=:), allocatable :: expanded_pattern
     integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
     integer :: percent_pos, hash_pos, percent2_pos, hash2_pos
     logical :: has_colon

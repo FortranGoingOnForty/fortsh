@@ -194,11 +194,12 @@ contains
     integer, intent(out) :: match_count
 
     ! Simple implementation - in a full shell this would use opendir/readdir
-    character(len=MAX_FILENAME_LEN) :: test_files(500)  ! Increased from 20 to 500
+    ! Use allocatable to avoid stack overflow on macOS
+    character(len=MAX_FILENAME_LEN), allocatable :: test_files(:)
     integer :: num_test_files, i
-    character(len=MAX_FILENAME_LEN) :: full_path
 
     match_count = 0
+    allocate(test_files(500))
 
     ! For now, simulate some common files for testing
     ! In a real implementation, this would read the actual directory
@@ -220,6 +221,8 @@ contains
         end if
       end if
     end do
+
+    if (allocated(test_files)) deallocate(test_files)
   end subroutine
 
   ! Get actual directory contents (simplified implementation)
@@ -390,10 +393,10 @@ contains
     character(len=*), intent(in) :: pattern, text
     integer, intent(in) :: p_pos, t_pos
     logical :: matches
-    
+
     integer :: p_len, t_len, i, bracket_end
     character(len=1) :: p_char, t_char
-    logical :: bracket_match, negated
+    logical :: bracket_match
     
     p_len = len_trim(pattern)
     t_len = len_trim(text)

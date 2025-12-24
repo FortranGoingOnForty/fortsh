@@ -24,10 +24,11 @@ contains
     character(len=*), intent(in) :: expression
     character(len=2048) :: expanded
 
-    character(len=256) :: var_name, operation, param1, param2, pattern, replacement
+    character(len=256) :: var_name, operation, param1, param2, replacement
+    character(len=1024) :: pattern  ! 1024 to match get_shell_variable return size
     character(len=1024) :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos, equals_pos, question_pos
-    integer :: offset, length, i, double_op_pos, at_pos
+    integer :: offset, length, i, at_pos
     character :: transform_op
     logical :: replace_all, greedy, has_colon, var_is_set, var_is_null
 
@@ -768,7 +769,7 @@ contains
     character(len=*), intent(in) :: input, pattern
     logical, intent(in) :: greedy
     character(len=*), intent(out) :: output
-    integer :: pos, best_pos, i
+    integer :: best_pos, i
 
     output = input
 
@@ -804,7 +805,7 @@ contains
     character(len=*), intent(in) :: input, pattern
     logical, intent(in) :: greedy
     character(len=*), intent(out) :: output
-    integer :: pos, best_pos, i
+    integer :: best_pos, i
 
     output = input
 
@@ -969,7 +970,7 @@ contains
   ! Ternary conditional operator (? :)
   recursive function eval_ternary(expr) result(value)
     character(len=*), intent(in) :: expr
-    integer(kind=8) :: value, true_val, false_val
+    integer(kind=8) :: value
     integer :: qmark_pos, colon_pos, depth, i
     character(len=512) :: condition_expr, true_expr, false_expr
 
@@ -1567,7 +1568,7 @@ contains
   recursive function eval_ternary_shell(expr, shell) result(value)
     character(len=*), intent(in) :: expr
     type(shell_state_t), intent(inout) :: shell
-    integer(kind=8) :: value, true_val, false_val
+    integer(kind=8) :: value
     integer :: qmark_pos, colon_pos, depth, i
     character(len=512) :: condition_expr, true_expr, false_expr
 
@@ -2358,10 +2359,10 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=:), allocatable :: result
-    integer :: i, start_pos, end_pos, bracket_count, result_capacity, result_pos
+    integer :: i, start_pos, bracket_count, result_capacity, result_pos
     character(len=256) :: var_expr
     character(len=2048) :: var_value
-    logical :: in_expansion, in_single_quote, in_double_quote
+    logical :: in_single_quote, in_double_quote
 
     ! Allocate with initial capacity
     result_capacity = len(input) * 2 + 256
@@ -3172,7 +3173,7 @@ contains
     character(len=*), intent(out) :: output
     character(len=1024) :: home_dir
     character(len=:), allocatable :: env_home
-    integer :: tilde_pos, slash_pos
+    integer :: tilde_pos
 
     output = input
 
@@ -3258,7 +3259,6 @@ contains
 
     character(len=:), allocatable :: temp_result, brace_expanded
     character(len=1024) :: tilde_expanded, quote_removed
-    integer :: i
 
     word_count = 1
 

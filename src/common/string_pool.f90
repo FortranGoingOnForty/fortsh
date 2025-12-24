@@ -17,7 +17,7 @@ module string_pool
 
   ! Constants
   integer, parameter :: NUM_BUCKETS = 5
-  integer, parameter :: BUCKET_SIZES(NUM_BUCKETS) = [64, 256, 1024, 4096, 16384]
+  ! Bucket sizes: 64, 256, 1024, 4096, 16384 bytes
   integer, parameter :: INITIAL_SLOTS = 100
   integer, parameter :: MAX_SLOTS = 10000
 

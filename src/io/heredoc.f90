@@ -105,9 +105,9 @@ contains
     character(len=*), intent(inout) :: cmd_line
     integer, intent(in) :: pos
     logical, intent(out) :: cmd_modified
-    
+
     character(len=2048) :: here_string, expanded_string, temp_file
-    integer :: string_start, string_end
+    integer :: string_start
     
     cmd_modified = .false.
     
@@ -298,9 +298,9 @@ contains
     integer, intent(in) :: num_lines
     logical, intent(in) :: expand_vars, strip_tabs
     character(len=*), intent(out) :: temp_file
-    
+
     character(len=MAX_HEREDOC_LENGTH) :: processed_line, expanded_line
-    integer :: unit, i, iostat
+    integer :: unit, i
     
     ! Create temporary file
     call create_temp_file(temp_file, unit)
@@ -418,8 +418,8 @@ contains
   subroutine create_temp_heredoc_file(content, filename)
     character(len=*), intent(in) :: content
     character(len=*), intent(out) :: filename
-    
-    integer :: unit, iostat
+
+    integer :: unit
     
     call create_temp_file(filename, unit)
     if (unit <= 0) return

@@ -243,10 +243,9 @@ contains
   function file_test(filename, test_type) result(test_result)
     character(len=*), intent(in) :: filename, test_type
     logical :: test_result
-    
+
     logical :: exists, is_file, is_dir, is_executable, is_readable, is_writable
-    integer :: status
-    
+
     test_result = .false.
     
     ! Check file existence and properties
@@ -489,17 +488,19 @@ contains
   function file_newer_than(file1, file2) result(newer)
     character(len=*), intent(in) :: file1, file2
     logical :: newer
-    
+
     ! Placeholder implementation
     newer = .false.
+    if (.false.) print *, file1, file2  ! Silence unused warnings
   end function
 
   function file_older_than(file1, file2) result(older)
     character(len=*), intent(in) :: file1, file2
     logical :: older
-    
+
     ! Placeholder implementation
     older = .false.
+    if (.false.) print *, file1, file2  ! Silence unused warnings
   end function
 
   function file_size(filename) result(size)
@@ -526,36 +527,41 @@ contains
   function is_symbolic_link(filename) result(is_link)
     character(len=*), intent(in) :: filename
     logical :: is_link
-    
+
     is_link = .false.  ! Placeholder
+    if (.false.) print *, filename  ! Silence unused warning
   end function
 
   function is_block_device(filename) result(is_block)
     character(len=*), intent(in) :: filename
     logical :: is_block
-    
+
     is_block = .false.  ! Placeholder
+    if (.false.) print *, filename  ! Silence unused warning
   end function
 
   function is_char_device(filename) result(is_char)
     character(len=*), intent(in) :: filename
     logical :: is_char
-    
+
     is_char = .false.  ! Placeholder
+    if (.false.) print *, filename  ! Silence unused warning
   end function
 
   function is_named_pipe(filename) result(is_pipe)
     character(len=*), intent(in) :: filename
     logical :: is_pipe
-    
+
     is_pipe = .false.  ! Placeholder
+    if (.false.) print *, filename  ! Silence unused warning
   end function
 
   function is_socket(filename) result(is_sock)
     character(len=*), intent(in) :: filename
     logical :: is_sock
-    
+
     is_sock = .false.  ! Placeholder
+    if (.false.) print *, filename  ! Silence unused warning
   end function
 
   subroutine get_file_info(filename, exists, is_file, is_dir, is_executable, is_readable, is_writable)

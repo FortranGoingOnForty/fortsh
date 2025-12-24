@@ -19,6 +19,7 @@ module syntax_highlight
   public :: clear_command_cache
   public :: MAX_HIGHLIGHT_LEN  ! Export buffer size for callers
   public :: cleanup_syntax_highlighting
+  public :: build_highlighted_string  ! Alternative implementation (exposed to silence warning)
 
   ! ANSI color codes
   integer, parameter :: COLOR_RESET = 0
@@ -298,7 +299,7 @@ contains
 
     integer :: i, token_start, token_end, j
     logical :: in_quotes, in_comment
-    character(len=1) :: quote_char, current_char
+    character(len=1) :: quote_char
 
     ! Use module-level working buffer (avoids stack overflow and substring temporaries)
 
@@ -518,11 +519,13 @@ contains
     integer, intent(in) :: input_len
 
     integer :: token_idx, token_len, i, j, pos, color_len, reset_len
-    integer :: input_pos, token_char_idx
+    integer :: input_pos
     character(len=32) :: color_str, reset_str
     character(len=4096) :: local_buffer  ! Local copy to avoid substring on module variable
     character(len=1) :: ch
     logical :: matched
+
+    if (.false.) print *, input  ! Silence unused warning - we use tokens directly
 
     ! Initialize output buffer
     highlighted = ' '

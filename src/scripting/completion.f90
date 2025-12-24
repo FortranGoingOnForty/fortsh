@@ -365,9 +365,6 @@ contains
     integer :: i, prefix_len, word_len, compare_len
     logical :: matches
     character(len=256) :: word, prefix_trimmed
-#ifdef USE_MEMORY_POOL
-    type(string_ref) :: word_ref, prefix_ref
-#endif
 
     count = 0
     prefix_trimmed = trim(prefix)
@@ -636,6 +633,8 @@ contains
     ! Simplified implementation - return empty for now
     ! Phase 5 will integrate with readline's existing file completion
     count = 0
+    completions = ''  ! Initialize to silence warning
+    if (.false.) print *, prefix  ! Silence unused warning
   end subroutine complete_files
 
   ! Complete directory names only
@@ -648,6 +647,8 @@ contains
     ! Simplified implementation - return empty for now
     ! Phase 5 will integrate with readline's existing directory completion
     count = 0
+    completions = ''  ! Initialize to silence warning
+    if (.false.) print *, prefix  ! Silence unused warning
   end subroutine complete_directories
 
   ! Complete command names from PATH
@@ -660,6 +661,8 @@ contains
 
     ! Simplified implementation - return empty for now
     ! Phase 5 will add full command completion
+    completions = ''  ! Initialize to silence warning
+    if (.false.) print *, prefix, shell%cwd  ! Silence unused warnings
     count = 0
   end subroutine complete_commands
 

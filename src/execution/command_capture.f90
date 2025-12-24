@@ -82,7 +82,6 @@ contains
     character(len=*), intent(out) :: output
 
     integer(c_int) :: pipe_fds(2)
-    integer(c_int) :: saved_stdout, saved_stderr
     integer(c_int) :: ret, exit_status
     integer(c_pid_t) :: pid
     character(kind=c_char), target :: buffer(4096)
