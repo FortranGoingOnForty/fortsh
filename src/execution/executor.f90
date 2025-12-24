@@ -907,15 +907,22 @@ contains
 
     ! For quoted tokens, preserve whitespace by not trimming
     ! For unquoted tokens, trim is safe
-    if (allocated(cmd%token_quoted) .and. size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1)) then
-      ! Quoted token - preserve whitespace, track actual length
-      ! Use token_lengths array if available, otherwise fall back to len()
-      if (allocated(cmd%token_lengths) .and. size(cmd%token_lengths) >= 1) then
-        token_len = cmd%token_lengths(1)
+    ! NOTE: Check allocation first to avoid accessing unallocated arrays
+    if (allocated(cmd%token_quoted) .and. allocated(cmd%token_lengths)) then
+      if (size(cmd%token_quoted) >= 1 .and. cmd%token_quoted(1)) then
+        ! Quoted token - preserve whitespace, track actual length
+        ! Use token_lengths array if available, otherwise fall back to len()
+        if (size(cmd%token_lengths) >= 1) then
+          token_len = cmd%token_lengths(1)
+        else
+          token_len = len(cmd%tokens(1))
+        end if
+        token = cmd%tokens(1)
       else
-        token_len = len(cmd%tokens(1))
+        ! Token arrays allocated but this token not quoted - use standard processing
+        token = cmd%tokens(1)
+        token_len = len_trim(token)
       end if
-      token = cmd%tokens(1)
     else
       ! Old parser: token may contain quotes with whitespace inside
       ! We need to find the actual token end, not use len_trim which strips whitespace
