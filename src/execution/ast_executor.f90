@@ -169,8 +169,16 @@ contains
               assign_value = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:)
               value_len = token_len - assign_eq_pos
 
+              ! Check if this is an array assignment: VAR=(...)
+              if (value_len >= 2 .and. assign_value(1:1) == '(' .and. &
+                  assign_value(value_len:value_len) == ')') then
+                ! Array assignment - delegate to handle_array_assignment
+                block
+                  use variables, only: handle_array_assignment
+                  call handle_array_assignment(shell, trim(assign_name), assign_value(1:value_len))
+                end block
               ! Expand variables and command substitutions in the value
-              if (index(assign_value, '$') > 0 .or. index(assign_value, '~') > 0) then
+              else if (index(assign_value, '$') > 0 .or. index(assign_value, '~') > 0) then
                 call expand_variables(assign_value, expanded_value, shell)
                 if (allocated(expanded_value)) then
                   call set_shell_variable(shell, trim(assign_name), expanded_value, len(expanded_value))

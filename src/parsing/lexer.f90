@@ -629,6 +629,98 @@ contains
               current_token(token_len:token_len) = ch
             end if
             pos = pos + 1
+          else if (ch == '(' .and. token_len >= 1 .and. &
+                   current_token(token_len:token_len) == '=') then
+            ! Array assignment: VAR=(...) - include the parenthesized content
+            ! Scan for matching ) respecting quotes and nested parens
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = '('
+            end if
+            pos = pos + 1
+            paren_depth = 1
+            do while (pos <= input_len .and. paren_depth > 0)
+              ch = input(pos:pos)
+              if (ch == '"') then
+                ! Skip double-quoted string
+                if (token_len < MAX_TOKEN_LEN) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = ch
+                end if
+                pos = pos + 1
+                do while (pos <= input_len .and. input(pos:pos) /= '"')
+                  if (input(pos:pos) == '\' .and. pos < input_len) then
+                    if (token_len < MAX_TOKEN_LEN - 1) then
+                      token_len = token_len + 1
+                      current_token(token_len:token_len) = input(pos:pos)
+                      token_len = token_len + 1
+                      current_token(token_len:token_len) = input(pos+1:pos+1)
+                    end if
+                    pos = pos + 2
+                  else
+                    if (token_len < MAX_TOKEN_LEN) then
+                      token_len = token_len + 1
+                      current_token(token_len:token_len) = input(pos:pos)
+                    end if
+                    pos = pos + 1
+                  end if
+                end do
+                if (pos <= input_len) then
+                  if (token_len < MAX_TOKEN_LEN) then
+                    token_len = token_len + 1
+                    current_token(token_len:token_len) = '"'
+                  end if
+                  pos = pos + 1
+                end if
+              else if (ch == "'") then
+                ! Skip single-quoted string
+                if (token_len < MAX_TOKEN_LEN) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = ch
+                end if
+                pos = pos + 1
+                do while (pos <= input_len .and. input(pos:pos) /= "'")
+                  if (token_len < MAX_TOKEN_LEN) then
+                    token_len = token_len + 1
+                    current_token(token_len:token_len) = input(pos:pos)
+                  end if
+                  pos = pos + 1
+                end do
+                if (pos <= input_len) then
+                  if (token_len < MAX_TOKEN_LEN) then
+                    token_len = token_len + 1
+                    current_token(token_len:token_len) = "'"
+                  end if
+                  pos = pos + 1
+                end if
+              else if (ch == '(') then
+                paren_depth = paren_depth + 1
+                if (token_len < MAX_TOKEN_LEN) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = ch
+                end if
+                pos = pos + 1
+              else if (ch == ')') then
+                paren_depth = paren_depth - 1
+                if (token_len < MAX_TOKEN_LEN) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = ch
+                end if
+                pos = pos + 1
+              else
+                if (token_len < MAX_TOKEN_LEN) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = ch
+                end if
+                pos = pos + 1
+              end if
+            end do
+            ! Token complete with closing )
+            call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                    token_start, pos-1, token_has_quoted_part, in_escape)
+            state = LEX_NORMAL
+            in_escape = .false.
+            token_has_quoted_part = .false.
           else
             ! Not in substitution - end word, let paren be operator
             call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
