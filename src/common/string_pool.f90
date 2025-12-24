@@ -174,11 +174,13 @@ contains
     else
       ! Too large for pool - allocate directly
       ! NOTE: Direct allocation on macOS ARM64 (flang-new) should be avoided
-      ! for strings >127 bytes due to compiler limitations
+      ! for strings >127 bytes due to compiler limitations UNLESS the C string
+      ! library is enabled (which handles dangerous operations safely)
       bucket_idx = 0
       slot_idx = -1
-#ifdef __APPLE__
-      ! On macOS, cap direct allocations at 127 bytes (flang-new limit)
+#if defined(__APPLE__) && !defined(USE_C_STRINGS)
+      ! On macOS WITHOUT C string library, cap direct allocations at 127 bytes
+      ! When USE_C_STRINGS is defined, the C library handles large strings safely
       if (length > 127) then
         ! Allocation would exceed safe limit - return null ref
         ref%pool_index = 0
@@ -581,8 +583,9 @@ contains
 
     str_len = len_trim(str)
 
-#ifdef __APPLE__
-    ! On macOS ARM64, cap interned string length to 127 bytes (flang-new limit)
+#if defined(__APPLE__) && !defined(USE_C_STRINGS)
+    ! On macOS WITHOUT C string library, cap interned string length to 127 bytes
+    ! When USE_C_STRINGS is defined, the C library handles large strings safely
     if (str_len > 127) then
       ! String too long for safe interning on macOS - use regular pool instead
       ref = pool_get_string(min(str_len, 127))
