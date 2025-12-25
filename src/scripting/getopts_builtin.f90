@@ -145,13 +145,10 @@ contains
     end do
     
     if (.not. found_option) then
-      ! Invalid option
+      ! Invalid option - set optname to '?' and optionally set OPTARG
+      call set_shell_variable(shell, trim(optname), '?')
       if (silent_mode) then
-        call set_shell_variable(shell, trim(optname), '?')
         call set_shell_variable(shell, 'OPTARG', opt_char)
-      else
-        write(error_unit, '(a,a,a)') 'getopts: illegal option -- ', opt_char, ''
-        call set_shell_variable(shell, trim(optname), '?')
       end if
       
       if (current_pos > len_trim(current_arg)) then

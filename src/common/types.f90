@@ -247,6 +247,7 @@ module shell_types
     integer :: signal = 0
     character(len=1024) :: command = ''
     logical :: active = .false.
+    logical :: inherited = .false.  ! Trap inherited from parent (visible but not executed)
   end type shell_trap_t
 
   ! Command hash table entry (for 'hash' builtin)
@@ -376,7 +377,7 @@ module shell_types
     character(len=MAX_PATH_LEN) :: oldpwd = '' ! $OLDPWD (previous working directory)
     logical :: is_login_shell = .false.        ! Started as login shell
     ! Prompt strings
-    character(len=1024) :: ps1 = '%F{yellow}\u%f@%F{magenta}\h%f :: %F{cyan}\w%f\n> ' ! 2-line prompt with zsh colors
+    character(len=1024) :: ps1 = '%F{green}\u@\h%f :: %F{blue}\w%f\n> ' ! 2-line prompt with zsh colors
     integer :: ps1_len = 0                     ! Actual length of PS1 (preserves trailing spaces)
     character(len=256) :: ps2 = '> '              ! Continuation prompt
     integer :: ps2_len = 0                     ! Actual length of PS2

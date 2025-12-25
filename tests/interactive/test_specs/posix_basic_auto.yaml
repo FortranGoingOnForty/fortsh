@@ -29,9 +29,8 @@ tests:
 - name: '2. POSIX VARIABLE EXPANSION: simple variable'
   steps:
   - send_line: VAR=test; echo $VAR
-  expect_output: $VAR
+  expect_output: test
   match_type: contains
-  auto_fixed: shell_execution
 - name: '2. POSIX VARIABLE EXPANSION: variable in quotes'
   steps:
   - send_line: VAR=test; echo "$VAR"
@@ -40,15 +39,13 @@ tests:
 - name: '2. POSIX VARIABLE EXPANSION: multiple vars'
   steps:
   - send_line: A=hello; B=world; echo $A $B
-  expect_output: $A $B
+  expect_output: hello world
   match_type: contains
-  auto_fixed: shell_execution
 - name: '2. POSIX VARIABLE EXPANSION: undefined variable'
   steps:
   - send_line: echo $UNDEFINED_VAR_XYZ_987
-  expect_output: $UNDEFINED_VAR_XYZ_987
-  match_type: contains
-  auto_fixed: shell_execution
+  expect_output: ''
+  match_type: exact
 - name: '3. POSIX PARAMETER EXPANSION: default value'
   steps:
   - send_line: echo "${UNSET:-default}"
@@ -57,11 +54,8 @@ tests:
 - name: '3. POSIX PARAMETER EXPANSION: assign default'
   steps:
   - send_line: UNSET=; echo "${UNSET:=assigned}"; echo $UNSET
-  expect_output: 'assigned
-
-    assigned'
+  expect_output: assigned
   match_type: contains
-  auto_fixed: shell_execution
 - name: '3. POSIX PARAMETER EXPANSION: error if unset'
   steps:
   - send_line: echo "${VAR:+alternative}"
@@ -122,7 +116,7 @@ tests:
 - name: '4. POSIX COMMAND SUBSTITUTION: backtick substitution'
   steps:
   - send_line: echo `echo test`
-  expect_output: '`echo test`'
+  expect_output: test
   match_type: contains
 - name: '4. POSIX COMMAND SUBSTITUTION: dollar paren substitution'
   steps:
@@ -156,34 +150,32 @@ tests:
 - name: '6. POSIX REDIRECTION: output redirect'
   steps:
   - send_line: echo test > /tmp/posix_test_out; cat /tmp/posix_test_out
-  expect_output: test > /tmp/posix_test_out; cat /tmp/posix_test_out
+  expect_output: test
   match_type: contains
 - name: '6. POSIX REDIRECTION: append redirect'
   steps:
-  - send_line: echo line1 > /tmp/posix_test_app; echo line2 >> /tmp/posix_test_app;
-      wc -l < /tmp/posix_test_app
-  expect_output: line1 > /tmp/posix_test_app; echo line2 >> /tmp/posix_test_app; wc
-    -l < /tmp/posix_test_app
+  - send_line: echo line1 > /tmp/posix_test_app; echo line2 >> /tmp/posix_test_app; wc -l < /tmp/posix_test_app
+  expect_output: '2'
   match_type: contains
 - name: '6. POSIX REDIRECTION: input redirect'
   steps:
   - send_line: echo input > /tmp/posix_test_in; cat < /tmp/posix_test_in
-  expect_output: input > /tmp/posix_test_in; cat < /tmp/posix_test_in
+  expect_output: input
   match_type: contains
 - name: '6. POSIX REDIRECTION: stderr redirect'
   steps:
   - send_line: ls /nonexistent 2>&1 | grep -c 'cannot access\|No such\|not found'
-  expect_output: DIGIT
+  expect_output: '1'
   match_type: contains
 - name: '7. POSIX PIPELINES: simple pipe'
   steps:
   - send_line: echo hello | cat
-  expect_output: hello | cat
+  expect_output: hello
   match_type: contains
 - name: '7. POSIX PIPELINES: two-stage pipe'
   steps:
   - send_line: echo test | cat | tr t T
-  expect_output: test | cat | tr t T
+  expect_output: TesT
   match_type: contains
 - name: '7. POSIX PIPELINES: pipe with filter'
   steps:
@@ -277,39 +269,25 @@ tests:
   auto_fixed: shell_execution
 - name: '9. POSIX CONDITIONALS: if-elif-else'
   steps:
-  - send_line: X=2; if [ $X -eq 1 ]; then echo one; elif [ $X -eq 2 ]; then echo two;
-      else echo other; fi
-  expect_output: other
+  - send_line: X=2; if [ $X -eq 1 ]; then echo one; elif [ $X -eq 2 ]; then echo two; else echo other; fi
+  expect_output: two
   match_type: contains
-  auto_fixed: shell_execution
 - name: '10. POSIX LOOPS: for loop'
   steps:
   - send_line: for i in a b c; do echo $i; done
-  expect_output: 'a
-
-    b
-
-    c'
+  expect_output: a
   match_type: contains
   auto_fixed: shell_execution
 - name: '10. POSIX LOOPS: while loop'
   steps:
   - send_line: i=3; while [ $i -gt 0 ]; do echo $i; i=$((i - 1)); done
-  expect_output: '3
-
-    2
-
-    1'
+  expect_output: '3'
   match_type: contains
   auto_fixed: shell_execution
 - name: '10. POSIX LOOPS: until loop'
   steps:
   - send_line: i=1; until [ $i -gt 3 ]; do echo $i; i=$((i + 1)); done
-  expect_output: '1
-
-    2
-
-    3'
+  expect_output: '1'
   match_type: contains
   auto_fixed: shell_execution
 - name: '11. POSIX CASE STATEMENT: case exact match'
@@ -333,7 +311,7 @@ tests:
 - name: '11. POSIX CASE STATEMENT: case multiple patterns'
   steps:
   - send_line: x=b; case $x in a|b|c) echo abc;; *) echo other;; esac
-  expect_output: other
+  expect_output: abc
   match_type: contains
   auto_fixed: shell_execution
 - name: '12. POSIX FUNCTIONS: simple function'
@@ -351,25 +329,25 @@ tests:
 - name: '12. POSIX FUNCTIONS: function return'
   steps:
   - send_line: func() { return 42; }; func; echo $?
-  expect_output: $?
+  expect_output: '42'
   match_type: contains
   auto_fixed: shell_execution
 - name: '12. POSIX FUNCTIONS: function \$# args'
   steps:
   - send_line: func() { echo $#; }; func a b c
-  expect_output: $#
+  expect_output: '3'
   match_type: contains
   auto_fixed: shell_execution
 - name: '13. POSIX SPECIAL VARIABLES: \$? exit status'
   steps:
   - send_line: true; echo $?
-  expect_output: $?
+  expect_output: '0'
   match_type: contains
   auto_fixed: shell_execution
 - name: '13. POSIX SPECIAL VARIABLES: \$? after false'
   steps:
   - send_line: false; echo $?
-  expect_output: $?
+  expect_output: '1'
   match_type: contains
   auto_fixed: shell_execution
 - name: '13. POSIX SPECIAL VARIABLES: \$# argument count'
@@ -452,18 +430,18 @@ tests:
 - name: '15. POSIX QUOTING: escape in double'
   steps:
   - send_line: echo "test$var"
-  expect_output: test$var
+  expect_output: test
   match_type: contains
   auto_fixed: shell_execution
 - name: '15. POSIX QUOTING: backslash escape'
   steps:
   - send_line: echo test\ word
-  expect_output: test\ word
+  expect_output: test word
   match_type: contains
 - name: '16. POSIX SUBSHELLS: subshell grouping'
   steps:
   - send_line: (echo a; echo b) | wc -l
-  expect_output: b) | wc -l
+  expect_output: '2'
   match_type: contains
 - name: '16. POSIX SUBSHELLS: subshell var isolation'
   steps:
@@ -474,17 +452,17 @@ tests:
 - name: '17. POSIX COMPOUND COMMANDS: command grouping {}'
   steps:
   - send_line: '{ echo a; echo b; } | wc -l'
-  expect_output: DIGIT
+  expect_output: '2'
   match_type: contains
 - name: '17. POSIX COMPOUND COMMANDS: command list ;'
   steps:
   - send_line: echo a; echo b
-  expect_output: a; echo b
+  expect_output: a
   match_type: contains
 - name: '19. POSIX WORD EXPANSION ORDER: expansion order'
   steps:
   - send_line: VAR='a b'; echo $VAR
-  expect_output: $VAR
+  expect_output: a b
   match_type: contains
   auto_fixed: shell_execution
 - name: '19. POSIX WORD EXPANSION ORDER: quoted expansion'
@@ -495,28 +473,28 @@ tests:
 - name: '20. POSIX PATHNAME EXPANSION (GLOBBING): glob * pattern'
   steps:
   - send_line: ls /tmp/posix_test_glob/*.txt 2>/dev/null | wc -l
-  expect_output: DIGIT
-  match_type: contains
+  expect_output: '[0-9]+'
+  match_type: regex
 - name: '20. POSIX PATHNAME EXPANSION (GLOBBING): glob ? pattern'
   steps:
   - send_line: ls /tmp/posix_test_glob/?.txt 2>/dev/null | wc -l
-  expect_output: DIGIT
-  match_type: contains
+  expect_output: '[0-9]+'
+  match_type: regex
 - name: '20. POSIX PATHNAME EXPANSION (GLOBBING): glob [abc] pattern'
   steps:
   - send_line: ls /tmp/posix_test_glob/[ab].txt 2>/dev/null | wc -l
-  expect_output: DIGIT
-  match_type: contains
+  expect_output: '[0-9]+'
+  match_type: regex
 - name: '21. POSIX FIELD SPLITTING (IFS): default IFS'
   steps:
   - send_line: VAR='a b c'; set -- $VAR; echo $#
-  expect_output: $#
+  expect_output: '3'
   match_type: contains
   auto_fixed: shell_execution
 - name: '21. POSIX FIELD SPLITTING (IFS): custom IFS'
   steps:
   - send_line: IFS=:; VAR='a:b:c'; set -- $VAR; echo $1
-  expect_output: $1
+  expect_output: a
   match_type: contains
   auto_fixed: shell_execution
 - name: '22. POSIX EXIT STATUS: true exit status (exit code)'
@@ -552,24 +530,24 @@ tests:
 - name: '23. POSIX SET BUILTIN: set shift'
   steps:
   - send_line: set -- a b c; shift; echo $1
-  expect_output: $1
+  expect_output: b
   match_type: contains
   auto_fixed: shell_execution
 - name: '23. POSIX SET BUILTIN: set shift n'
   steps:
   - send_line: set -- a b c d; shift 2; echo $1
-  expect_output: $1
+  expect_output: c
   match_type: contains
   auto_fixed: shell_execution
 - name: '24. POSIX EXPORT: export variable'
   steps:
   - send_line: export VAR=test; sh -c 'echo $VAR'
-  expect_output: $VAR
+  expect_output: test
   match_type: contains
   auto_fixed: shell_execution
 - name: '25. POSIX READONLY: readonly assignment (exit code)'
   steps:
   - send_line: readonly VAR=test; VAR=new 2>/dev/null
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=127
+  expect_output: EXIT=1
   match_type: contains

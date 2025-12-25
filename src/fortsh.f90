@@ -1351,6 +1351,9 @@ contains
 
     if (len_trim(trap_command) == 0) return
 
+    ! Don't execute inherited traps (visible in subshell but not executed)
+    if (is_trap_inherited(shell, signum)) return
+
     ! Save current exit status (trap should not affect $?)
     saved_exit_status = shell%last_exit_status
 

@@ -86,19 +86,23 @@ contains
   end subroutine
 
   ! Apply a single redirection
-  subroutine apply_single_redirection(redir, success, noclobber)
+  ! permanent: if true, don't save original fd (for exec redirections)
+  subroutine apply_single_redirection(redir, success, noclobber, permanent)
     use iso_c_binding, only: c_int
     use system_interface, only: file_exists
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
     logical, intent(in), optional :: noclobber
+    logical, intent(in), optional :: permanent
     integer(c_int) :: file_fd, flags, mode
     character(len=1024) :: filename_c
-    logical :: check_noclobber
+    logical :: check_noclobber, is_permanent
 
     success = .true.
     check_noclobber = .false.
+    is_permanent = .false.
     if (present(noclobber)) check_noclobber = noclobber
+    if (present(permanent)) is_permanent = permanent
 
     select case (redir%type)
       case (REDIR_IN)
@@ -110,7 +114,7 @@ contains
           success = .false.
           return
         end if
-        call save_fd(FD_STDIN)
+        if (.not. is_permanent) call save_fd(FD_STDIN)
         if (c_dup2(file_fd, FD_STDIN) < 0) then
           success = .false.
         end if
@@ -136,7 +140,7 @@ contains
           success = .false.
           return
         end if
-        call save_fd(FD_STDOUT)
+        if (.not. is_permanent) call save_fd(FD_STDOUT)
         if (c_dup2(file_fd, FD_STDOUT) < 0) then
           success = .false.
         end if
@@ -155,7 +159,7 @@ contains
           success = .false.
           return
         end if
-        call save_fd(FD_STDOUT)
+        if (.not. is_permanent) call save_fd(FD_STDOUT)
         if (c_dup2(file_fd, FD_STDOUT) < 0) then
           success = .false.
         end if
@@ -172,7 +176,7 @@ contains
           success = .false.
           return
         end if
-        call save_fd(redir%fd)
+        if (.not. is_permanent) call save_fd(redir%fd)
         ! Only dup2 if the file_fd is different from target fd
         ! If they're the same, we're already done (the file is open on the desired FD)
         if (file_fd /= redir%fd) then
@@ -204,7 +208,7 @@ contains
           success = .false.
           return
         end if
-        call save_fd(redir%fd)
+        if (.not. is_permanent) call save_fd(redir%fd)
         ! Only dup2 if the file_fd is different from target fd
         if (file_fd /= redir%fd) then
           if (c_dup2(file_fd, redir%fd) < 0) then
@@ -226,7 +230,7 @@ contains
           success = .false.
           return
         end if
-        call save_fd(redir%fd)
+        if (.not. is_permanent) call save_fd(redir%fd)
         ! Only dup2 if the file_fd is different from target fd
         if (file_fd /= redir%fd) then
           if (c_dup2(file_fd, redir%fd) < 0) then
@@ -240,13 +244,13 @@ contains
       case (REDIR_DUP_IN)
         ! n<&m (duplicate fd m to fd n, default n=0)
         if (redir%fd < 0) then
-          call save_fd(FD_STDIN)
+          if (.not. is_permanent) call save_fd(FD_STDIN)
           if (c_dup2(redir%target_fd, FD_STDIN) < 0) then
             write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
           end if
         else
-          call save_fd(redir%fd)
+          if (.not. is_permanent) call save_fd(redir%fd)
           if (c_dup2(redir%target_fd, redir%fd) < 0) then
             write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
@@ -256,13 +260,13 @@ contains
       case (REDIR_DUP_OUT)
         ! n>&m (duplicate fd m to fd n, default n=1)
         if (redir%fd < 0) then
-          call save_fd(FD_STDOUT)
+          if (.not. is_permanent) call save_fd(FD_STDOUT)
           if (c_dup2(redir%target_fd, FD_STDOUT) < 0) then
             write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
           end if
         else
-          call save_fd(redir%fd)
+          if (.not. is_permanent) call save_fd(redir%fd)
           if (c_dup2(redir%target_fd, redir%fd) < 0) then
             write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
             success = .false.
@@ -271,7 +275,7 @@ contains
         
       case (REDIR_CLOSE)
         ! n>&- (close fd n)
-        call save_fd(redir%fd)
+        if (.not. is_permanent) call save_fd(redir%fd)
         if (c_close(redir%fd) < 0) then
           success = .false.
         end if
@@ -287,12 +291,12 @@ contains
             success = .false.
           else
             if (redir%fd < 0) then
-              call save_fd(FD_STDIN)
+              if (.not. is_permanent) call save_fd(FD_STDIN)
               if (c_dup2(file_fd, FD_STDIN) < 0) then
                 success = .false.
               end if
             else
-              call save_fd(redir%fd)
+              if (.not. is_permanent) call save_fd(redir%fd)
               if (c_dup2(file_fd, redir%fd) < 0) then
                 success = .false.
               end if

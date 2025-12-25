@@ -235,7 +235,7 @@ contains
           end if
           temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
 
-          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber, permanent=.true.)
           if (.not. redir_success) then
             exit_status = 1
             return
@@ -1932,23 +1932,22 @@ contains
     valid = .true.
   end function is_valid_assignment_name
 
-  ! Filter traps for subshell: keep only ignored traps (empty action)
-  ! POSIX: Ignored signals remain ignored in subshells, but trap actions are not inherited
+  ! Mark traps as inherited for subshell: traps remain visible for listing
+  ! but will not be executed when the subshell exits
+  ! POSIX: `trap` command should show parent's traps, but they don't execute in subshell
   subroutine filter_traps_for_subshell(shell)
     type(shell_state_t), intent(inout) :: shell
-    integer :: i, j
+    integer :: i
 
-    j = 0
     do i = 1, shell%num_traps
-      ! Keep trap if it's active and has empty command (ignore trap)
-      if (shell%traps(i)%active .and. len_trim(shell%traps(i)%command) == 0) then
-        j = j + 1
-        if (j /= i) then
-          shell%traps(j) = shell%traps(i)
+      if (shell%traps(i)%active) then
+        ! Mark all traps with commands as inherited (visible but not executed)
+        ! Empty command traps (ignore) remain effective
+        if (len_trim(shell%traps(i)%command) > 0) then
+          shell%traps(i)%inherited = .true.
         end if
       end if
     end do
-    shell%num_traps = j
   end subroutine filter_traps_for_subshell
 
 end module ast_executor
