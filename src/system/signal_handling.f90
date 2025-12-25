@@ -363,6 +363,24 @@ contains
     end do
   end function
 
+  ! Check if a trap is inherited from parent shell (visible but not executable)
+  function is_trap_inherited(shell, signum) result(inherited)
+    type(shell_state_t), intent(in) :: shell
+    integer, intent(in) :: signum
+    logical :: inherited
+    integer :: i
+
+    inherited = .false.
+
+    ! Find the trap for this signal
+    do i = 1, size(shell%traps)
+      if (shell%traps(i)%signal == signum .and. shell%traps(i)%active) then
+        inherited = shell%traps(i)%inherited
+        exit
+      end if
+    end do
+  end function is_trap_inherited
+
   ! Get pending trap signals and clear flags
   ! Returns array of signal numbers that have pending traps (0-terminated)
   subroutine get_pending_trap_signals(signals, count)

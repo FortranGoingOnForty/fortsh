@@ -8,7 +8,9 @@
 # Options:
 #   --posix-only     Run only POSIX compliance tests (default, ~1 min)
 #   --memory-only    Run only memory pool tests (SLOW: rebuilds fortsh, 5-10 min)
-#   --all            Run POSIX + memory tests (SLOW: 5-10 min total)
+#   --interactive    Run only interactive PTY tests (~2 min)
+#   --full           Run POSIX + interactive tests (~3 min)
+#   --all            Run POSIX + memory + interactive tests (SLOW: 10+ min)
 #   --quick          Run only fast POSIX tests (skip coverage, untested, ~30s)
 #   --verbose        Show detailed output from each test
 #   --stop-on-fail   Stop running tests after first failure
@@ -53,6 +55,16 @@ for arg in "$@"; do
             RUN_MEMORY=1
             RUN_INTERACTIVE=0
             ;;
+        --interactive)
+            RUN_POSIX=0
+            RUN_MEMORY=0
+            RUN_INTERACTIVE=1
+            ;;
+        --full)
+            RUN_POSIX=1
+            RUN_MEMORY=0
+            RUN_INTERACTIVE=1
+            ;;
         --quick)
             SKIP_SLOW=1
             ;;
@@ -65,7 +77,7 @@ for arg in "$@"; do
         --all)
             RUN_POSIX=1
             RUN_MEMORY=1
-            RUN_INTERACTIVE=0  # Interactive tests require manual interaction
+            RUN_INTERACTIVE=1
             ;;
         --help|-h)
             head -n 20 "$0" | grep '^#' | sed 's/^# \?//'
@@ -199,10 +211,11 @@ run_test_suite() {
 
     # Parse test results from output if not verbose
     if [ "$VERBOSE" -eq 0 ]; then
-        # Try to extract test counts from summary
-        local passed=$(echo "$output" | grep -i "^Passed:" | tail -1 | awk '{print $2}')
-        local failed=$(echo "$output" | grep -i "^Failed:" | tail -1 | awk '{print $2}')
-        local skipped=$(echo "$output" | grep -i "^Skipped:" | tail -1 | awk '{print $2}')
+        # Try to extract test counts from summary (strip ANSI codes first)
+        local clean_output=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+        local passed=$(echo "$clean_output" | grep -i "^Passed:" | tail -1 | awk '{print $2}')
+        local failed=$(echo "$clean_output" | grep -i "^Failed:" | tail -1 | awk '{print $2}')
+        local skipped=$(echo "$clean_output" | grep -i "^Skipped:" | tail -1 | awk '{print $2}')
 
         # Accumulate test counts
         if [ -n "$passed" ]; then
@@ -299,6 +312,89 @@ if [ "$RUN_MEMORY" -eq 1 ]; then
     for suite in $MEMORY_TESTS; do
         run_test_suite "$suite" "Memory"
     done
+fi
+
+# Run interactive PTY tests
+if [ "$RUN_INTERACTIVE" -eq 1 ]; then
+    printf "${CYAN}${BOLD}══════════════════════════════════════════\n"
+    printf "INTERACTIVE PTY TESTS\n"
+    printf "══════════════════════════════════════════${NC}\n\n"
+
+    INTERACTIVE_DIR="$SCRIPT_DIR/interactive"
+
+    if [ ! -d "$INTERACTIVE_DIR" ]; then
+        printf "${RED}Interactive test directory not found: %s${NC}\n" "$INTERACTIVE_DIR"
+        FAILED_SUITES=$((FAILED_SUITES + 1))
+    else
+        # Activate virtual environment if it exists
+        if [ -f "$INTERACTIVE_DIR/.venv/bin/activate" ]; then
+            source "$INTERACTIVE_DIR/.venv/bin/activate"
+        elif [ -f "$INTERACTIVE_DIR/venv/bin/activate" ]; then
+            source "$INTERACTIVE_DIR/venv/bin/activate"
+        fi
+
+        TOTAL_SUITES=$((TOTAL_SUITES + 1))
+
+        printf "${BLUE}========================================\n"
+        printf "Running: ${BOLD}Interactive PTY Test Suite${NC}${BLUE}\n"
+        printf "========================================${NC}\n"
+
+        start_time=$(date +%s)
+        interactive_output=""
+        interactive_exit=0
+
+        if [ "$VERBOSE" -eq 1 ]; then
+            (cd "$INTERACTIVE_DIR" && python run_tests.py)
+            interactive_exit=$?
+        else
+            interactive_output=$((cd "$INTERACTIVE_DIR" && python run_tests.py) 2>&1)
+            interactive_exit=$?
+
+            # Parse results from pytest output
+            passed=$(echo "$interactive_output" | grep -oP '\d+(?= passed)' | tail -1)
+            failed=$(echo "$interactive_output" | grep -oP '\d+(?= failed)' | tail -1)
+            skipped=$(echo "$interactive_output" | grep -oP '\d+(?= skipped)' | tail -1)
+
+            passed=${passed:-0}
+            failed=${failed:-0}
+            skipped=${skipped:-0}
+
+            TOTAL_TESTS_PASSED=$((TOTAL_TESTS_PASSED + passed))
+            TOTAL_TESTS_FAILED=$((TOTAL_TESTS_FAILED + failed))
+            TOTAL_TESTS_SKIPPED=$((TOTAL_TESTS_SKIPPED + skipped))
+
+            printf "  Tests: ${GREEN}%d passed${NC}" "$passed"
+            [ "$failed" -gt 0 ] && printf " ${RED}%d failed${NC}" "$failed"
+            [ "$skipped" -gt 0 ] && printf " ${YELLOW}%d skipped${NC}" "$skipped"
+            printf "\n"
+        fi
+
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        if [ "$duration" -ge 5 ]; then
+            printf "  ${CYAN}Duration: %ds${NC}\n" "$duration"
+        fi
+
+        if [ "$interactive_exit" -eq 0 ]; then
+            printf "${GREEN}✓ PASSED${NC}: Interactive PTY Test Suite\n\n"
+            PASSED_SUITES=$((PASSED_SUITES + 1))
+        else
+            printf "${RED}✗ FAILED${NC}: Interactive PTY Test Suite\n\n"
+            FAILED_SUITES=$((FAILED_SUITES + 1))
+            FAILED_SUITE_NAMES="${FAILED_SUITE_NAMES}  - Interactive PTY Tests\n"
+
+            if [ "$VERBOSE" -eq 0 ]; then
+                printf "${YELLOW}Last 30 lines of output:${NC}\n"
+                echo "$interactive_output" | tail -30
+                printf "\n"
+            fi
+
+            if [ "$STOP_ON_FAIL" -eq 1 ]; then
+                printf "${RED}Stopping due to --stop-on-fail${NC}\n"
+                exit 1
+            fi
+        fi
+    fi
 fi
 
 # Print final summary

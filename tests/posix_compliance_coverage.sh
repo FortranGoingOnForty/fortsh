@@ -60,6 +60,33 @@ compare_posix_output() {
     fi
 }
 
+# Normalize shell error messages by stripping "line N: " prefix
+# POSIX doesn't mandate error message format, so we normalize for comparison
+normalize_error() {
+    echo "$1" | sed 's/line [0-9]*: //'
+}
+
+# Compare error output, normalizing line number differences
+compare_posix_error() {
+    test_name="$1"
+    test_cmd="$2"
+
+    posix_output=$(FORTSH_RC_FILE=/dev/null sh -c "$test_cmd" 2>&1)
+    posix_exit=$?
+
+    fortsh_output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1)
+    fortsh_exit=$?
+
+    posix_norm=$(normalize_error "$posix_output")
+    fortsh_norm=$(normalize_error "$fortsh_output")
+
+    if [ "$posix_norm" = "$fortsh_norm" ] && [ "$posix_exit" = "$fortsh_exit" ]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "$posix_output" "$fortsh_output"
+    fi
+}
+
 # Test that fortsh accepts without error
 test_accepts() {
     test_name="$1"
@@ -240,8 +267,8 @@ compare_posix_output "return in sourced file" 'echo "return 42" > /tmp/ret.sh; .
 
 section "260. REDIRECTION - CLOSED FD OPERATIONS"
 
-compare_posix_output "write to closed fd" 'exec 3>&-; echo test >&3 2>&1 | head -1'
-compare_posix_output "read from closed fd" 'exec 3<&-; cat <&3 2>&1 | head -1'
+compare_posix_error "write to closed fd" 'exec 3>&-; echo test >&3 2>&1 | head -1'
+compare_posix_error "read from closed fd" 'exec 3<&-; cat <&3 2>&1 | head -1'
 
 section "261. REDIRECTION - MULTIPLE HEREDOCS"
 
@@ -275,14 +302,14 @@ compare_posix_output "pipeline with failures" 'echo ok | false | cat; echo $?'
 
 section "280. ALIAS - SPECIAL CASES"
 
-compare_posix_output "alias with quotes" "alias greet='echo hello'; greet; unalias greet"
-compare_posix_output "alias with semicolon" "alias both='echo a; echo b'; both; unalias both"
+compare_posix_error "alias with quotes" "alias greet='echo hello'; greet; unalias greet"
+compare_posix_error "alias with semicolon" "alias both='echo a; echo b'; both; unalias both"
 compare_posix_output "alias -p format" 'alias foo=bar; alias -p | grep foo; unalias foo'
 
 section "281. ALIAS - EXPANSION CONTEXT"
 
 # Aliases should expand in functions
-compare_posix_output "alias in function" "alias e=echo; f() { e test; }; f; unalias e"
+compare_posix_error "alias in function" "alias e=echo; f() { e test; }; f; unalias e"
 
 # =====================================
 # DOT (SOURCE) EDGE CASES

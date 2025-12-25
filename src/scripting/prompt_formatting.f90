@@ -1,6 +1,7 @@
 ! ==============================================================================
 ! Module: prompt_formatting
 ! Purpose: Prompt escape sequence expansion (PS1-PS4 with bash-style escapes)
+!          Also supports zsh-style color codes: %F{color}, %f, %B, %b, etc.
 ! ==============================================================================
 module prompt_formatting
   use shell_types
@@ -10,6 +11,11 @@ module prompt_formatting
 
   ! History counter for prompts
   integer, save :: prompt_history_number = 1
+
+  ! Public interface
+  public :: expand_prompt, safe_expand_prompt, expand_zsh_colors
+  public :: get_ansi_color_code, get_epoch_seconds, increment_prompt_history
+  public :: get_git_branch, get_git_status_indicator, is_git_repo
 
 contains
 
@@ -67,6 +73,13 @@ contains
     expanded = ''
     if (j > 1) then
       expanded = result(1:min(j-1, len(expanded)))
+    end if
+
+    ! Now process zsh-style color escapes (%F{color}, %f, etc.)
+    if (index(expanded, '%') > 0) then
+      result = ''
+      call expand_zsh_colors(expanded, result, len_trim(expanded))
+      expanded = result(1:min(len_trim(result), len(expanded)))
     end if
   end subroutine
 
@@ -130,6 +143,14 @@ contains
     expanded = result(1:j-1)
     deallocate(result)
     if (allocated(replacement)) deallocate(replacement)
+
+    ! Now process zsh-style color escapes (%F{color}, %f, etc.)
+    if (index(expanded, '%') > 0) then
+      allocate(character(len=len(expanded)*2) :: result)
+      call expand_zsh_colors(expanded, result, len(expanded))
+      expanded = trim(result)
+      deallocate(result)
+    end if
   end function
 
   ! Process individual escape sequence
@@ -290,6 +311,10 @@ contains
       case ('G')
         ! Git status indicator (* if dirty, + if staged, clean otherwise)
         replacement = get_git_status_indicator()
+
+      case ('S')
+        ! Seconds since epoch (Unix timestamp)
+        replacement = get_epoch_seconds()
 
       case default
         ! Unknown escape - just output the character
@@ -565,6 +590,316 @@ contains
     output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
     in_git = (len_trim(output) > 0)
   end function
+
+  ! Get seconds since Unix epoch (for \S escape)
+  function get_epoch_seconds() result(epoch_str)
+    character(len=20) :: epoch_str
+    integer(8) :: count, count_rate, count_max
+    integer(8) :: epoch_seconds
+
+    ! Get system clock count
+    call system_clock(count, count_rate, count_max)
+
+    ! Convert to seconds (this gives time since some system-defined epoch)
+    ! For a proper Unix epoch, we use date_and_time to calculate
+    epoch_seconds = get_unix_timestamp()
+    write(epoch_str, '(i20)') epoch_seconds
+    epoch_str = adjustl(epoch_str)
+  end function
+
+  ! Calculate Unix timestamp from current date/time
+  function get_unix_timestamp() result(timestamp)
+    integer(8) :: timestamp
+    integer :: values(8)
+    integer :: year, month, day, hour, minute, second
+    integer :: days_since_epoch, y
+
+    call date_and_time(values=values)
+    year = values(1)
+    month = values(2)
+    day = values(3)
+    hour = values(5)
+    minute = values(6)
+    second = values(7)
+
+    ! Days from 1970 to start of current year
+    days_since_epoch = 0
+    do y = 1970, year - 1
+      if (is_leap_year(y)) then
+        days_since_epoch = days_since_epoch + 366
+      else
+        days_since_epoch = days_since_epoch + 365
+      end if
+    end do
+
+    ! Days from start of year to start of current month
+    days_since_epoch = days_since_epoch + days_before_month(month, is_leap_year(year))
+
+    ! Add days in current month
+    days_since_epoch = days_since_epoch + day - 1
+
+    ! Convert to seconds and add time
+    timestamp = int(days_since_epoch, 8) * 86400_8 + &
+                int(hour, 8) * 3600_8 + int(minute, 8) * 60_8 + int(second, 8)
+  end function
+
+  ! Check if year is a leap year
+  function is_leap_year(year) result(is_leap)
+    integer, intent(in) :: year
+    logical :: is_leap
+
+    is_leap = (mod(year, 4) == 0 .and. mod(year, 100) /= 0) .or. (mod(year, 400) == 0)
+  end function
+
+  ! Get days before a given month (1-12)
+  function days_before_month(month, leap) result(days)
+    integer, intent(in) :: month
+    logical, intent(in) :: leap
+    integer :: days
+    integer, dimension(12) :: days_in_month_normal = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    integer, dimension(12) :: days_in_month_leap = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    integer :: i
+
+    days = 0
+    if (leap) then
+      do i = 1, month - 1
+        days = days + days_in_month_leap(i)
+      end do
+    else
+      do i = 1, month - 1
+        days = days + days_in_month_normal(i)
+      end do
+    end if
+  end function
+
+  ! Convert zsh-style color name or number to ANSI escape sequence
+  ! Supports: black, red, green, yellow, blue, magenta, cyan, white
+  ! Also supports 256-color numbers (0-255)
+  function get_ansi_color_code(color_name, is_foreground) result(ansi_code)
+    character(len=*), intent(in) :: color_name
+    logical, intent(in) :: is_foreground
+    character(len=16) :: ansi_code
+    integer :: color_num, base_code, iostat
+    character(len=32) :: lower_name
+
+    ansi_code = ''
+    lower_name = to_lower(trim(color_name))
+
+    ! Try to parse as number first
+    read(color_name, *, iostat=iostat) color_num
+    if (iostat == 0) then
+      ! Valid number - use 256-color mode
+      if (color_num >= 0 .and. color_num <= 255) then
+        if (is_foreground) then
+          write(ansi_code, '(a,i0,a)') char(27)//'[38;5;', color_num, 'm'
+        else
+          write(ansi_code, '(a,i0,a)') char(27)//'[48;5;', color_num, 'm'
+        end if
+      end if
+      return
+    end if
+
+    ! Named colors
+    base_code = 0
+    select case (trim(lower_name))
+      case ('black')
+        base_code = 0
+      case ('red')
+        base_code = 1
+      case ('green')
+        base_code = 2
+      case ('yellow')
+        base_code = 3
+      case ('blue')
+        base_code = 4
+      case ('magenta')
+        base_code = 5
+      case ('cyan')
+        base_code = 6
+      case ('white')
+        base_code = 7
+      case ('default')
+        if (is_foreground) then
+          ansi_code = char(27)//'[39m'
+        else
+          ansi_code = char(27)//'[49m'
+        end if
+        return
+      case default
+        return  ! Unknown color
+    end select
+
+    if (is_foreground) then
+      write(ansi_code, '(a,i0,a)') char(27)//'[', 30 + base_code, 'm'
+    else
+      write(ansi_code, '(a,i0,a)') char(27)//'[', 40 + base_code, 'm'
+    end if
+  end function
+
+  ! Convert string to lowercase
+  function to_lower(str) result(lower)
+    character(len=*), intent(in) :: str
+    character(len=len(str)) :: lower
+    integer :: i, ic
+
+    lower = str
+    do i = 1, len_trim(str)
+      ic = iachar(str(i:i))
+      if (ic >= iachar('A') .and. ic <= iachar('Z')) then
+        lower(i:i) = achar(ic + 32)
+      end if
+    end do
+  end function
+
+  ! Expand zsh-style color escapes in a string
+  ! Supports: %F{color}, %f, %K{color}, %k, %B, %b, %U, %u
+  subroutine expand_zsh_colors(input_str, output_str, input_len)
+    character(len=*), intent(in) :: input_str
+    character(len=*), intent(out) :: output_str
+    integer, intent(in), optional :: input_len
+
+    integer :: i, j, k, str_len, brace_end
+    character(len=32) :: color_name
+    character(len=16) :: ansi_code
+
+    output_str = ''
+    j = 1
+    i = 1
+
+    if (present(input_len)) then
+      str_len = input_len
+    else
+      str_len = len_trim(input_str)
+    end if
+
+    do while (i <= str_len .and. j <= len(output_str))
+      if (input_str(i:i) == '%' .and. i < str_len) then
+        select case (input_str(i+1:i+1))
+          case ('F')
+            ! Foreground color: %F{color}
+            if (i + 2 <= str_len .and. input_str(i+2:i+2) == '{') then
+              brace_end = index(input_str(i+3:), '}')
+              if (brace_end > 0) then
+                color_name = input_str(i+3:i+2+brace_end-1)
+                ansi_code = get_ansi_color_code(trim(color_name), .true.)
+                if (len_trim(ansi_code) > 0) then
+                  k = len_trim(ansi_code)
+                  if (j + k - 1 <= len(output_str)) then
+                    output_str(j:j+k-1) = trim(ansi_code)
+                    j = j + k
+                  end if
+                end if
+                i = i + 3 + brace_end
+                cycle
+              end if
+            end if
+            ! Invalid format, output as-is
+            output_str(j:j) = input_str(i:i)
+            j = j + 1
+            i = i + 1
+
+          case ('f')
+            ! Reset foreground color
+            ansi_code = char(27)//'[39m'
+            k = len_trim(ansi_code)
+            if (j + k - 1 <= len(output_str)) then
+              output_str(j:j+k-1) = trim(ansi_code)
+              j = j + k
+            end if
+            i = i + 2
+
+          case ('K')
+            ! Background color: %K{color}
+            if (i + 2 <= str_len .and. input_str(i+2:i+2) == '{') then
+              brace_end = index(input_str(i+3:), '}')
+              if (brace_end > 0) then
+                color_name = input_str(i+3:i+2+brace_end-1)
+                ansi_code = get_ansi_color_code(trim(color_name), .false.)
+                if (len_trim(ansi_code) > 0) then
+                  k = len_trim(ansi_code)
+                  if (j + k - 1 <= len(output_str)) then
+                    output_str(j:j+k-1) = trim(ansi_code)
+                    j = j + k
+                  end if
+                end if
+                i = i + 3 + brace_end
+                cycle
+              end if
+            end if
+            output_str(j:j) = input_str(i:i)
+            j = j + 1
+            i = i + 1
+
+          case ('k')
+            ! Reset background color
+            ansi_code = char(27)//'[49m'
+            k = len_trim(ansi_code)
+            if (j + k - 1 <= len(output_str)) then
+              output_str(j:j+k-1) = trim(ansi_code)
+              j = j + k
+            end if
+            i = i + 2
+
+          case ('B')
+            ! Bold on
+            ansi_code = char(27)//'[1m'
+            k = len_trim(ansi_code)
+            if (j + k - 1 <= len(output_str)) then
+              output_str(j:j+k-1) = trim(ansi_code)
+              j = j + k
+            end if
+            i = i + 2
+
+          case ('b')
+            ! Bold off
+            ansi_code = char(27)//'[22m'
+            k = len_trim(ansi_code)
+            if (j + k - 1 <= len(output_str)) then
+              output_str(j:j+k-1) = trim(ansi_code)
+              j = j + k
+            end if
+            i = i + 2
+
+          case ('U')
+            ! Underline on
+            ansi_code = char(27)//'[4m'
+            k = len_trim(ansi_code)
+            if (j + k - 1 <= len(output_str)) then
+              output_str(j:j+k-1) = trim(ansi_code)
+              j = j + k
+            end if
+            i = i + 2
+
+          case ('u')
+            ! Underline off
+            ansi_code = char(27)//'[24m'
+            k = len_trim(ansi_code)
+            if (j + k - 1 <= len(output_str)) then
+              output_str(j:j+k-1) = trim(ansi_code)
+              j = j + k
+            end if
+            i = i + 2
+
+          case ('%')
+            ! Literal %
+            output_str(j:j) = '%'
+            j = j + 1
+            i = i + 2
+
+          case default
+            ! Unknown escape, output as-is
+            output_str(j:j) = input_str(i:i)
+            j = j + 1
+            i = i + 1
+        end select
+      else
+        ! Regular character
+        output_str(j:j) = input_str(i:i)
+        j = j + 1
+        i = i + 1
+      end if
+    end do
+  end subroutine
 
   ! Helper to grow an allocatable string buffer
   subroutine grow_string_buffer(buffer, old_capacity, new_capacity)

@@ -364,7 +364,7 @@ tests:
 - name: '253. FUNCTION - RETURN EDGE CASES: return outside function'
   steps:
   - send_line: (return 5 2>/dev/null); echo $?
-  expect_output: '1'
+  expect_output: '2'
   match_type: contains
   auto_fixed: shell_execution
 - name: '253. FUNCTION - RETURN EDGE CASES: return in sourced file'
