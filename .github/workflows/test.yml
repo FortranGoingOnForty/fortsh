@@ -1,0 +1,57 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [trunk]
+  pull_request:
+    branches: [trunk]
+
+jobs:
+  posix-tests:
+    name: POSIX Compliance Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gfortran
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran
+
+      - name: Build fortsh
+        run: make
+
+      - name: Run POSIX tests
+        run: ./tests/run_all_tests.sh --posix-only
+
+  interactive-tests:
+    name: Interactive PTY Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gfortran
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build fortsh
+        run: make
+
+      - name: Install Python dependencies
+        run: |
+          cd tests/interactive
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Run interactive tests
+        run: |
+          cd tests/interactive
+          source .venv/bin/activate
+          python run_tests.py
