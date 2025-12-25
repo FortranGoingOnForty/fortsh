@@ -1676,6 +1676,32 @@ contains
           ! Literal FD
           ret = c_dup2(cmd%redirections(i)%target_fd, cmd%redirections(i)%fd)
         end if
+
+      case(REDIR_FD_OUT, REDIR_FD_APPEND)  ! n> file or n>> file
+        if (allocated(cmd%redirections(i)%filename)) then
+          block
+            character(len=256), target :: c_filename
+            integer :: fd, flags
+
+            c_filename = trim(cmd%redirections(i)%filename) // c_null_char
+
+            if (cmd%redirections(i)%type == REDIR_FD_APPEND) then
+              flags = ior(ior(O_WRONLY, O_CREAT), O_APPEND)
+            else
+              flags = ior(ior(O_WRONLY, O_CREAT), O_TRUNC)
+            end if
+
+            fd = c_open(c_loc(c_filename), flags, int(o'644', c_int))
+            if (fd >= 0) then
+              ret = c_dup2(fd, cmd%redirections(i)%fd)
+              ret = c_close(fd)
+            end if
+          end block
+        end if
+
+      case(REDIR_CLOSE)  ! n>&-
+        ret = c_close(cmd%redirections(i)%fd)
+
       end select
     end do
   end subroutine

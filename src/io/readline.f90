@@ -106,6 +106,7 @@ module readline
 
   ! Test mode configuration
   logical, save :: test_mode_enabled = .false.
+  logical, save :: completion_disabled = .false.
   logical, save :: test_mode_initialized = .false.
 
   type :: input_state_t
@@ -247,12 +248,17 @@ contains
   ! Initialize test mode from environment variable
   ! This disables tab completion and syntax highlighting for reliable testing
   subroutine init_test_mode()
-    character(len=:), allocatable :: test_mode_env
+    character(len=:), allocatable :: test_mode_env, no_completion_env
 
     if (test_mode_initialized) return
 
     test_mode_env = get_environment_var('FORTSH_TEST_MODE')
     test_mode_enabled = (allocated(test_mode_env) .and. trim(test_mode_env) == '1')
+
+    ! Completion can be disabled independently of test mode
+    no_completion_env = get_environment_var('FORTSH_NO_COMPLETION')
+    completion_disabled = (allocated(no_completion_env) .and. trim(no_completion_env) == '1')
+
     test_mode_initialized = .true.
   end subroutine init_test_mode
 
@@ -900,10 +906,11 @@ contains
 #endif
 
   ! Enhanced readline with character-by-character input processing
-  subroutine readline_enhanced(prompt, line, iostat)
+  subroutine readline_enhanced(prompt, line, iostat, rprompt)
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
+    character(len=*), intent(in), optional :: rprompt  ! Right-side prompt (like zsh)
 
     ! Use module-level module_input_state directly (avoids flang-new pointer corruption bug)
     character :: ch
@@ -921,6 +928,8 @@ contains
     integer :: utf8_num_bytes, utf8_i
     logical :: debug_utf8
     integer :: debug_stat
+    ! Variables for RPROMPT (right-side prompt)
+    integer :: rprompt_visual_len, padding_needed
 
 
     ! Check if UTF-8 debug mode is enabled
@@ -975,9 +984,50 @@ contains
     end if
 
 
-    ! Print prompt
-    write(output_unit, '(a)', advance='no') prompt
-    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+    ! Print prompt (and RPROMPT if provided)
+    prompt_visual_len = visual_length(prompt)
+    if (prompt_visual_len < 0) prompt_visual_len = 0
+
+    ! Get terminal width for RPROMPT positioning
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success) term_cols = 80  ! Default fallback
+
+    ! Check if we have RPROMPT and enough space
+    if (present(rprompt) .and. len_trim(rprompt) > 0) then
+      rprompt_visual_len = visual_length(rprompt)
+      if (rprompt_visual_len < 0) rprompt_visual_len = 0
+
+      ! Calculate if we have room for both prompts with some space between
+      ! Need: prompt + space + gap + rprompt
+      padding_needed = term_cols - prompt_visual_len - 1 - rprompt_visual_len
+
+      if (padding_needed >= 4) then  ! Minimum 4 chars gap
+        ! Print left prompt
+        write(output_unit, '(a)', advance='no') prompt
+        write(output_unit, '(a)', advance='no') ' '
+
+        ! Print padding to right-align RPROMPT
+        do i_redraw = 1, padding_needed - 1
+          write(output_unit, '(a)', advance='no') ' '
+        end do
+
+        ! Print RPROMPT
+        write(output_unit, '(a)', advance='no') trim(rprompt)
+
+        ! Move cursor back to after the left prompt
+        ! Use ANSI escape: move cursor to column (prompt_visual_len + 2)
+        write(output_unit, '(a,i0,a)', advance='no') char(27)//'[', prompt_visual_len + 2, 'G'
+      else
+        ! Not enough space - just print prompt normally
+        write(output_unit, '(a)', advance='no') prompt
+        write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+      end if
+    else
+      ! No RPROMPT - just print prompt
+      write(output_unit, '(a)', advance='no') prompt
+      write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+    end if
+
     flush(output_unit)
 
     module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
@@ -985,8 +1035,6 @@ contains
     ! Initialize cursor screen position tracking
     ! Cursor starts at row 0, column = prompt_visual_length + 1 (for space)
     module_cursor_screen_row = 0
-    prompt_visual_len = visual_length(prompt)
-    if (prompt_visual_len < 0) prompt_visual_len = 0
     module_cursor_screen_col = prompt_visual_len + 1
 
 
@@ -1113,9 +1161,9 @@ contains
           ! Initialize test mode if needed
           if (.not. test_mode_initialized) call init_test_mode()
 
-          ! Skip completion in test mode
-          if (test_mode_enabled) then
-            ! In test mode - do nothing (no completion, no artifacts)
+          ! Skip completion if explicitly disabled (FORTSH_NO_COMPLETION=1)
+          if (completion_disabled) then
+            ! Completion disabled - do nothing
             continue
           else if (module_input_state%in_menu_select) then
             call handle_menu_navigation(module_input_state, KEY_TAB, done)
@@ -5164,13 +5212,33 @@ contains
 
       select case(ch2)
       case('A')  ! Up arrow
-        call handle_history_up(input_state)
+        ! In search mode, cancel search and restore buffer
+        if (input_state%in_search) then
+          call cancel_search(input_state)
+        else
+          call handle_history_up(input_state)
+        end if
       case('B')  ! Down arrow
-        call handle_history_down(input_state)
+        ! In search mode, cancel search and restore buffer
+        if (input_state%in_search) then
+          call cancel_search(input_state)
+        else
+          call handle_history_down(input_state)
+        end if
       case('C')  ! Right arrow
-        call handle_cursor_right(input_state)
+        ! In search mode, accept search and allow editing
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          call handle_cursor_right(input_state)
+        end if
       case('D')  ! Left arrow
-        call handle_cursor_left(input_state)
+        ! In search mode, accept search and allow editing
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          call handle_cursor_left(input_state)
+        end if
       case('2')
         ! Could be bracketed paste (ESC[200~ or ESC[201~) or extended escape
         call handle_paste_or_extended(input_state, done)
@@ -6885,6 +6953,29 @@ contains
 
     ! Use redraw_line to properly display with syntax highlighting and cursor positioning
     call redraw_line(prompt, input_state)
+  end subroutine
+
+  subroutine accept_search_for_editing(input_state)
+    ! Accept the search result and prepare for normal editing
+    ! Called when arrow keys are pressed during Ctrl+R search
+    type(input_state_t), intent(inout) :: input_state
+
+    ! Keep the current buffer (matched command)
+    input_state%in_search = .false.
+#ifdef USE_MEMORY_POOL
+    input_state%search_string_ref%data = ''
+#else
+    input_state%search_string = ''
+#endif
+    input_state%search_length = 0
+    input_state%search_match_index = 0
+
+    ! Clear the search prompt line and redraw with normal prompt
+    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
+    flush(output_unit)
+
+    ! Mark dirty so line will be redrawn properly
+    input_state%dirty = .true.
   end subroutine
 
   subroutine update_search_display(input_state, prompt)

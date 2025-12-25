@@ -64,8 +64,8 @@ class FortshPTY:
         env["LANG"] = "en_US.UTF-8"
         env["LC_ALL"] = "en_US.UTF-8"
 
-        # Disable interactive features that pollute test output
-        env["FORTSH_NO_COMPLETION"] = "1"
+        # Enable test mode for cleaner output (less ANSI redraws)
+        # Note: Completion is NOT disabled here - tests can use Tab completion
         env["FORTSH_MINIMAL_ECHO"] = "1"
         env["FORTSH_TEST_MODE"] = "1"
 

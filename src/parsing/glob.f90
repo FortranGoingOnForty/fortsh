@@ -199,7 +199,7 @@ contains
     integer :: num_test_files, i
 
     match_count = 0
-    allocate(test_files(500))
+    allocate(test_files(2000))  ! Increased to handle directories with many files
 
     ! For now, simulate some common files for testing
     ! In a real implementation, this would read the actual directory
@@ -247,13 +247,16 @@ contains
     character(len=MAX_FILENAME_LEN), intent(out) :: files(:)
     integer, intent(out) :: count
 
+    ! Increased buffer size to handle directories with many files (like /tmp)
+    integer, parameter :: BUFFER_SIZE = 65536  ! 64KB buffer
+
     character(len=512) :: command
     integer(c_pid_t) :: pid
     integer(c_int), target :: status, pipefd(2)
-    integer :: ret, i, line_start
-    character(len=4096) :: buffer
+    integer :: ret, i, line_start, total_bytes, buf_pos
+    character(len=BUFFER_SIZE) :: buffer
     integer(c_size_t) :: bytes_read
-    character(kind=c_char), target :: c_buffer(4096)
+    character(kind=c_char), target :: c_buffer(8192)  ! Read in 8KB chunks
 
     count = 0
 
@@ -284,19 +287,29 @@ contains
       ! Parent: read from pipe
       ret = c_close(pipefd(2))  ! Close write end
 
-      ! Read output from pipe
-      bytes_read = c_read(pipefd(1), c_loc(c_buffer), int(4096, c_size_t))
-
-      ! Convert C buffer to Fortran string
+      ! Read output from pipe in chunks until EOF
       buffer = ''
-      do i = 1, min(int(bytes_read), 4096)
-        if (c_buffer(i) == c_null_char) exit
-        buffer(i:i) = c_buffer(i)
+      total_bytes = 0
+      do
+        bytes_read = c_read(pipefd(1), c_loc(c_buffer), int(8192, c_size_t))
+        if (bytes_read <= 0) exit  ! EOF or error
+
+        ! Append to buffer
+        do i = 1, min(int(bytes_read), 8192)
+          if (c_buffer(i) == c_null_char) exit
+          if (total_bytes < BUFFER_SIZE) then
+            total_bytes = total_bytes + 1
+            buffer(total_bytes:total_bytes) = c_buffer(i)
+          end if
+        end do
+
+        ! Stop if buffer is full
+        if (total_bytes >= BUFFER_SIZE) exit
       end do
 
       ! Parse lines from buffer
       line_start = 1
-      do i = 1, len_trim(buffer)
+      do i = 1, total_bytes
         if (buffer(i:i) == char(10)) then  ! Newline
           if (i > line_start .and. count < size(files)) then
             count = count + 1
@@ -307,9 +320,9 @@ contains
       end do
 
       ! Handle last line if no trailing newline
-      if (line_start <= len_trim(buffer) .and. count < size(files)) then
+      if (line_start <= total_bytes .and. count < size(files)) then
         count = count + 1
-        files(count) = buffer(line_start:len_trim(buffer))
+        files(count) = buffer(line_start:total_bytes)
       end if
 
       ret = c_close(pipefd(1))

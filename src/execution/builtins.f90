@@ -246,7 +246,7 @@ contains
   end subroutine
 
   subroutine builtin_exit(cmd, shell)
-    use signal_handling, only: get_trap_command
+    use signal_handling, only: get_trap_command, is_trap_inherited
     use grammar_parser, only: parse_command_line
     use ast_executor, only: execute_ast_node
     use command_tree, only: command_node_t, destroy_command_node
@@ -261,7 +261,9 @@ contains
 
     ! Execute EXIT trap before exiting (TRAP_EXIT = 0)
     ! Don't execute if we're already in a trap or if EXIT trap was already executed
-    if (.not. shell%executing_trap .and. .not. shell%exit_trap_executed) then
+    ! Don't execute inherited traps (visible in subshell but not executed)
+    if (.not. shell%executing_trap .and. .not. shell%exit_trap_executed .and. &
+        .not. is_trap_inherited(shell, 0)) then
       ! Get the trap command for EXIT signal (0)
       trap_command = get_trap_command(shell, 0)
 
@@ -2272,9 +2274,9 @@ contains
         return
       end if
       if (break_count < 1) then
-        write(error_unit, '(a)') 'break: count must be >= 1'
+        ! POSIX: behavior for n < 1 is unspecified, silently treat as 1
         invalid_count = .true.
-        break_count = 1  ! Still break, but at level 1
+        break_count = 1
       end if
     end if
 
@@ -2300,8 +2302,8 @@ contains
       end if
     end do
 
-    ! No loop found - POSIX: exit status should be 0, not 1
-    write(error_unit, '(a)') 'break: not in a loop'
+    ! No loop found - POSIX says behavior is unspecified
+    ! For maximum compatibility, silently return success (like POSIX sh)
     shell%last_exit_status = 0
   end subroutine
 
@@ -2324,9 +2326,9 @@ contains
         return
       end if
       if (continue_count < 1) then
-        write(error_unit, '(a)') 'continue: count must be >= 1'
+        ! POSIX: behavior for n < 1 is unspecified, silently treat as 1
         invalid_count = .true.
-        continue_count = 1  ! Still continue, but at level 1
+        continue_count = 1
       end if
     end if
 
@@ -2352,8 +2354,8 @@ contains
       end if
     end do
 
-    ! No loop found - POSIX: exit status should be 0, not 1
-    write(error_unit, '(a)') 'continue: not in a loop'
+    ! No loop found - POSIX says behavior is unspecified
+    ! For maximum compatibility, silently return success (like POSIX sh)
     shell%last_exit_status = 0
   end subroutine
 
@@ -2363,9 +2365,9 @@ contains
     integer :: return_code, iostat
 
     ! POSIX: return outside function/sourced script should fail
+    ! Return silently with exit status 2 (like bash)
     if (shell%function_depth == 0 .and. shell%source_depth == 0) then
-      write(error_unit, '(a)') 'return: can only return from a function or sourced script'
-      shell%last_exit_status = 1
+      shell%last_exit_status = 2
       return
     end if
 
@@ -2579,7 +2581,7 @@ contains
           return
         end if
       end do
-      write(error_unit, '(a)') 'hash: ' // trim(cmd_name) // ': not found'
+      ! Silently fail (POSIX compatible behavior)
       shell%last_exit_status = 1
       return
     end if
@@ -2647,7 +2649,8 @@ contains
 100   continue
     end do
 
-    shell%last_exit_status = 0
+    ! Don't reset exit status if an error occurred during processing
+    ! (e.g., command not found)
   end subroutine
 
   subroutine builtin_umask(cmd, shell)
