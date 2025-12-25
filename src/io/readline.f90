@@ -106,6 +106,7 @@ module readline
 
   ! Test mode configuration
   logical, save :: test_mode_enabled = .false.
+  logical, save :: completion_disabled = .false.
   logical, save :: test_mode_initialized = .false.
 
   type :: input_state_t
@@ -247,12 +248,17 @@ contains
   ! Initialize test mode from environment variable
   ! This disables tab completion and syntax highlighting for reliable testing
   subroutine init_test_mode()
-    character(len=:), allocatable :: test_mode_env
+    character(len=:), allocatable :: test_mode_env, no_completion_env
 
     if (test_mode_initialized) return
 
     test_mode_env = get_environment_var('FORTSH_TEST_MODE')
     test_mode_enabled = (allocated(test_mode_env) .and. trim(test_mode_env) == '1')
+
+    ! Completion can be disabled independently of test mode
+    no_completion_env = get_environment_var('FORTSH_NO_COMPLETION')
+    completion_disabled = (allocated(no_completion_env) .and. trim(no_completion_env) == '1')
+
     test_mode_initialized = .true.
   end subroutine init_test_mode
 
@@ -988,7 +994,6 @@ contains
     do i_redraw = 1, len_trim(prompt)
       if (prompt(i_redraw:i_redraw) == char(10)) prompt_line_count = prompt_line_count + 1
     end do
-
     ! Get terminal width for RPROMPT positioning
     success = get_terminal_size(term_rows, term_cols)
     if (.not. success) term_cols = 80  ! Default fallback
@@ -1162,9 +1167,9 @@ contains
           ! Initialize test mode if needed
           if (.not. test_mode_initialized) call init_test_mode()
 
-          ! Skip completion in test mode
-          if (test_mode_enabled) then
-            ! In test mode - do nothing (no completion, no artifacts)
+          ! Skip completion if explicitly disabled (FORTSH_NO_COMPLETION=1)
+          if (completion_disabled) then
+            ! Completion disabled - do nothing
             continue
           else if (module_input_state%in_menu_select) then
             call handle_menu_navigation(module_input_state, KEY_TAB, done)
@@ -5214,13 +5219,33 @@ contains
 
       select case(ch2)
       case('A')  ! Up arrow
-        call handle_history_up(input_state)
+        ! In search mode, cancel search and restore buffer
+        if (input_state%in_search) then
+          call cancel_search(input_state)
+        else
+          call handle_history_up(input_state)
+        end if
       case('B')  ! Down arrow
-        call handle_history_down(input_state)
+        ! In search mode, cancel search and restore buffer
+        if (input_state%in_search) then
+          call cancel_search(input_state)
+        else
+          call handle_history_down(input_state)
+        end if
       case('C')  ! Right arrow
-        call handle_cursor_right(input_state)
+        ! In search mode, accept search and allow editing
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          call handle_cursor_right(input_state)
+        end if
       case('D')  ! Left arrow
-        call handle_cursor_left(input_state)
+        ! In search mode, accept search and allow editing
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          call handle_cursor_left(input_state)
+        end if
       case('2')
         ! Could be bracketed paste (ESC[200~ or ESC[201~) or extended escape
         call handle_paste_or_extended(input_state, done)
@@ -6935,6 +6960,29 @@ contains
 
     ! Use redraw_line to properly display with syntax highlighting and cursor positioning
     call redraw_line(prompt, input_state)
+  end subroutine
+
+  subroutine accept_search_for_editing(input_state)
+    ! Accept the search result and prepare for normal editing
+    ! Called when arrow keys are pressed during Ctrl+R search
+    type(input_state_t), intent(inout) :: input_state
+
+    ! Keep the current buffer (matched command)
+    input_state%in_search = .false.
+#ifdef USE_MEMORY_POOL
+    input_state%search_string_ref%data = ''
+#else
+    input_state%search_string = ''
+#endif
+    input_state%search_length = 0
+    input_state%search_match_index = 0
+
+    ! Clear the search prompt line and redraw with normal prompt
+    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
+    flush(output_unit)
+
+    ! Mark dirty so line will be redrawn properly
+    input_state%dirty = .true.
   end subroutine
 
   subroutine update_search_display(input_state, prompt)

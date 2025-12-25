@@ -75,6 +75,33 @@ compare_posix_output() {
     fi
 }
 
+# Normalize shell error messages by stripping "line N: " prefix
+# POSIX doesn't mandate error message format, so we normalize for comparison
+normalize_error() {
+    echo "$1" | sed 's/line [0-9]*: //'
+}
+
+# Compare error output, normalizing line number differences
+compare_posix_error() {
+    test_name="$1"
+    test_cmd="$2"
+
+    posix_output=$(FORTSH_RC_FILE=/dev/null sh -c "$test_cmd" 2>&1)
+    posix_exit=$?
+
+    fortsh_output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1)
+    fortsh_exit=$?
+
+    posix_norm=$(normalize_error "$posix_output")
+    fortsh_norm=$(normalize_error "$fortsh_output")
+
+    if [ "$posix_norm" = "$fortsh_norm" ] && [ "$posix_exit" = "$fortsh_exit" ]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "$posix_output" "$fortsh_output"
+    fi
+}
+
 # Test that fortsh accepts an option/command without error
 test_accepts() {
     test_name="$1"
@@ -137,7 +164,7 @@ section "135. SPECIAL BUILTIN ERROR HANDLING"
 # POSIX: Special builtins must exit non-interactive shell on error
 # Testing with subshells to avoid killing the test script
 
-compare_posix_output "readonly error exits" '(readonly VAR=1; VAR=2 2>/dev/null; echo should not print) || echo exited'
+compare_posix_error "readonly error exits" '(readonly VAR=1; VAR=2 2>/dev/null; echo should not print) || echo exited'
 compare_posix_output "export invalid" '(export 123INVALID=value 2>/dev/null; echo should not print) || echo exited'
 compare_posix_output "set invalid option" '(set -@ 2>/dev/null; echo should not print) || echo exited'
 
@@ -185,7 +212,7 @@ echo test`'
 section "142. REDIRECTION EDGE CASES"
 
 compare_posix_output "close stdin" 'cat <&- 2>&1 | head -1'
-compare_posix_output "close stdout" 'echo test >&- 2>&1'
+compare_posix_error "close stdout" 'echo test >&- 2>&1'
 compare_posix_output "read/write mode" 'echo data > /tmp/posix_rw.txt; cat <> /tmp/posix_rw.txt; rm /tmp/posix_rw.txt'
 
 section "143. ERROR HANDLING EDGE CASES"

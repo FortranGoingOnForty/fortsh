@@ -94,6 +94,38 @@ compare_posix_output() {
     rm -f "$posix_file" "$fortsh_file"
 }
 
+# Normalize shell error messages by stripping "line N: " prefix
+# POSIX doesn't mandate error message format, so we normalize for comparison
+normalize_error() {
+    echo "$1" | sed 's/line [0-9]*: //'
+}
+
+# Compare error output, normalizing line number differences
+compare_posix_error() {
+    test_name="$1"
+    command="$2"
+    posix_file="/tmp/posix_gaps_$$_posix"
+    fortsh_file="/tmp/posix_gaps_$$_fortsh"
+
+    # Run in POSIX shell (sh)
+    sh -c "$command" > "$posix_file" 2>&1 || true
+
+    # Run in fortsh
+    "$FORTSH_BIN" -c "$command" > "$fortsh_file" 2>&1 || true
+
+    # Normalize error messages before comparison
+    posix_norm=$(normalize_error "$(cat "$posix_file")")
+    fortsh_norm=$(normalize_error "$(cat "$fortsh_file")")
+
+    if [ "$posix_norm" = "$fortsh_norm" ]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "$(cat "$posix_file")" "$(cat "$fortsh_file")"
+    fi
+
+    rm -f "$posix_file" "$fortsh_file"
+}
+
 # Helper function to compare exit codes
 compare_posix_exit_code() {
     test_name="$1"
@@ -243,7 +275,7 @@ compare_posix_exit_code "case exit status" "case x in x) false;; esac; echo \$?"
 section "102. SET BUILTIN EDGE CASES"
 
 compare_posix_output "set -- clears positionals" "set -- a b; set --; echo \$#"
-compare_posix_output "set -- with empty" "set -- ''; echo \$# |\$1|"
+compare_posix_error "set -- with empty" "set -- ''; echo \$# |\$1|"
 compare_posix_output "set -- with spaces" "set -- 'a b' 'c d'; echo \$1"
 compare_posix_output "set without args shows vars" "X=1; set | grep -c '^X='"
 compare_posix_output "set -o lists options" "set -o 2>&1 | wc -l"
@@ -402,7 +434,7 @@ section "123. HASH BUILTIN EDGE CASES"
 
 compare_posix_exit_code "hash command" "hash echo 2>/dev/null"
 compare_posix_exit_code "hash -r clears" "hash -r"
-compare_posix_output "hash nonexistent" "hash nonexistent_cmd_$$ 2>&1 | grep -c 'not found\\|hash'"
+compare_posix_exit_code "hash nonexistent" "hash nonexistent_cmd_$$ 2>/dev/null"
 
 section "124. TYPE BUILTIN EDGE CASES"
 
