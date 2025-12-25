@@ -924,7 +924,8 @@ contains
     integer :: debug_stat
     ! Variables for RPROMPT (right-side prompt)
     integer :: rprompt_visual_len, padding_needed
-
+    ! Variables for multiline prompt support
+    integer :: prompt_line_count
 
     ! Check if UTF-8 debug mode is enabled
     call get_environment_variable('FORTSH_DEBUG_UTF8', status=debug_stat)
@@ -981,6 +982,12 @@ contains
     ! Print prompt (and RPROMPT if provided)
     prompt_visual_len = visual_length(prompt)
     if (prompt_visual_len < 0) prompt_visual_len = 0
+
+    ! Count newlines in prompt for multiline prompt support
+    prompt_line_count = 0
+    do i_redraw = 1, len_trim(prompt)
+      if (prompt(i_redraw:i_redraw) == char(10)) prompt_line_count = prompt_line_count + 1
+    end do
 
     ! Get terminal width for RPROMPT positioning
     success = get_terminal_size(term_rows, term_cols)
@@ -1325,9 +1332,10 @@ contains
             ! Move cursor to start of prompt UNLESS we just exited menu mode
             if (.not. module_input_state%skip_cursor_up_on_redraw) then
               ! Move to start of first line of this command
-              if (current_row > 0) then
-                ! Move up to first line
-                do i_redraw = 1, current_row
+              ! For multiline prompts, we need to move up by both the buffer rows AND the prompt lines
+              if (current_row + prompt_line_count > 0) then
+                ! Move up to first line of prompt
+                do i_redraw = 1, current_row + prompt_line_count
                   write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
                 end do
               end if
