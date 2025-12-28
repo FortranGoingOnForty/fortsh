@@ -10,10 +10,14 @@
 FORTSH_BIN="${FORTSH_BIN:-./bin/fortsh}"
 VERBOSE="${VERBOSE:-0}"
 
+# Test identification
+TEST_PREFIX="[posix-builtins]"
+
 # Test counters
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
+FAILED_TESTS_LIST=""
 
 # Color codes (if terminal supports them)
 if [ -t 1 ]; then
@@ -34,13 +38,14 @@ fi
 pass() {
     PASSED_TESTS=$((PASSED_TESTS + 1))
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    echo -e "${GREEN}✓${NC} $1"
+    echo -e "${GREEN}✓${NC} ${TEST_PREFIX} $1"
 }
 
 fail() {
     FAILED_TESTS=$((FAILED_TESTS + 1))
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    echo -e "${RED}✗${NC} $1"
+    echo -e "${RED}✗${NC} ${TEST_PREFIX} $1"
+    FAILED_TESTS_LIST="${FAILED_TESTS_LIST}  ${TEST_PREFIX} $1\n"
     if [ "$VERBOSE" = "1" ]; then
         echo -e "${RED}  Details: $2${NC}"
     fi
@@ -618,11 +623,18 @@ main() {
     # Print summary
     echo ""
     echo "=========================================="
-    echo "TEST SUMMARY"
+    echo "TEST SUMMARY ${TEST_PREFIX}"
     echo "=========================================="
     echo -e "Total Tests:  $TOTAL_TESTS"
     echo -e "${GREEN}Passed:       $PASSED_TESTS${NC}"
     echo -e "${RED}Failed:       $FAILED_TESTS${NC}"
+
+    if [ $FAILED_TESTS -gt 0 ]; then
+        echo ""
+        echo -e "${RED}Failed tests:${NC}"
+        echo -e "$FAILED_TESTS_LIST"
+        echo "=========================================="
+    fi
 
     if [ $FAILED_TESTS -eq 0 ]; then
         echo ""

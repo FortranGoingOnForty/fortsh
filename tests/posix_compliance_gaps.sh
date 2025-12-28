@@ -27,9 +27,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Test identification
+TEST_PREFIX="[posix-gaps]"
+CURRENT_SECTION=""
+TEST_NUM=0
+
 PASSED=0
 FAILED=0
 SKIPPED=0
+FAILED_TESTS_LIST=""
 
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -44,12 +50,16 @@ fi
 
 # Test result trackers
 pass() {
-    printf "${GREEN}✓ PASS${NC}: %s\n" "$1"
+    TEST_NUM=$((TEST_NUM + 1))
+    printf "${GREEN}✓ PASS${NC} ${TEST_PREFIX} ${CURRENT_SECTION}.${TEST_NUM}: %s\n" "$1"
     PASSED=$((PASSED + 1))
 }
 
 fail() {
-    printf "${RED}✗ FAIL${NC}: %s\n" "$1"
+    TEST_NUM=$((TEST_NUM + 1))
+    TEST_ID="${TEST_PREFIX} ${CURRENT_SECTION}.${TEST_NUM}"
+    printf "${RED}✗ FAIL${NC} ${TEST_ID}: %s\n" "$1"
+    FAILED_TESTS_LIST="${FAILED_TESTS_LIST}  ${TEST_ID}: $1\n"
     if [ -n "$2" ]; then
         printf "  posix:  %s\n" "$2"
     fi
@@ -60,11 +70,15 @@ fail() {
 }
 
 skip() {
-    printf "${YELLOW}⊘ SKIP${NC}: %s - %s\n" "$1" "$2"
+    TEST_NUM=$((TEST_NUM + 1))
+    printf "${YELLOW}⊘ SKIP${NC} ${TEST_PREFIX} ${CURRENT_SECTION}.${TEST_NUM}: %s - %s\n" "$1" "$2"
     SKIPPED=$((SKIPPED + 1))
 }
 
 section() {
+    # Extract section number from header like "91. HERE DOCUMENT VARIATIONS"
+    CURRENT_SECTION=$(echo "$1" | grep -oE '^[0-9]+' || echo "0")
+    TEST_NUM=0
     printf "\n"
     printf "${BLUE}==========================================\n"
     printf "%s\n" "$1"
@@ -485,10 +499,9 @@ compare_posix_output "export multiple" "export A=1 B=2; sh -c 'echo \$A \$B'"
 compare_posix_output "export readonly" "readonly X=ro; export X; sh -c 'echo \$X'"
 
 # Summary
-section "SUMMARY"
 printf "\n"
 printf "==========================================\n"
-printf "GAP COVERAGE POSIX COMPLIANCE TEST RESULTS\n"
+printf "GAP COVERAGE POSIX COMPLIANCE TEST RESULTS ${TEST_PREFIX}\n"
 printf "==========================================\n"
 printf "${GREEN}Passed:${NC}  %d\n" "$PASSED"
 printf "${RED}Failed:${NC}  %d\n" "$FAILED"
@@ -499,6 +512,12 @@ printf "==========================================\n"
 if [ $((PASSED + FAILED)) -gt 0 ]; then
     PASS_RATE=$((PASSED * 100 / (PASSED + FAILED)))
     printf "Pass rate: %d%%\n" "$PASS_RATE"
+fi
+
+if [ "$FAILED" -gt 0 ]; then
+    printf "\n${RED}Failed tests:${NC}\n"
+    printf "%b" "$FAILED_TESTS_LIST"
+    printf "==========================================\n"
 fi
 
 if [ "$FAILED" -eq 0 ]; then
