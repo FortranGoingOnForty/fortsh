@@ -52,6 +52,7 @@ class TestResult:
         self.passed = passed
         self.error = error
         self.duration = duration
+        self.test_id = ""  # e.g., "[history] 5"
 
 
 class YAMLTestRunner:
@@ -168,11 +169,17 @@ class YAMLTestRunner:
             spec = yaml.safe_load(f)
 
         category = spec.get('metadata', {}).get('category', spec_path.stem)
+        # Use filename stem as prefix: history.yaml -> [history]
+        file_prefix = f"[{spec_path.stem}]"
         print(f"\n{Fore.CYAN}=== {category} ==={Style.RESET_ALL}")
 
         results = []
+        test_num = 0
         for test in spec.get('tests', []):
+            test_num += 1
             result = self.run_test(test)
+            # Store test ID for failed test summary
+            result.test_id = f"{file_prefix} {test_num}"
             results.append(result)
             self._test_count += 1
 
@@ -180,10 +187,10 @@ class YAMLTestRunner:
             time.sleep(0.3)
 
             if result.passed:
-                print(f"  {Fore.GREEN}✓{Style.RESET_ALL} {result.name}", flush=True)
+                print(f"  {Fore.GREEN}✓{Style.RESET_ALL} {file_prefix} {test_num}: {result.name}", flush=True)
             else:
                 error_msg = strip_control_sequences(result.error)
-                print(f"  {Fore.RED}✗{Style.RESET_ALL} {result.name}: {error_msg}", flush=True)
+                print(f"  {Fore.RED}✗{Style.RESET_ALL} {file_prefix} {test_num}: {result.name}: {error_msg}", flush=True)
 
         # Clean up session at end of spec file
         self._cleanup_session()
@@ -455,6 +462,11 @@ def main():
         print(f"\n{Fore.GREEN}✓ ALL TESTS PASSED!{Style.RESET_ALL}")
     else:
         print(f"\n{Fore.RED}✗ SOME TESTS FAILED{Style.RESET_ALL}")
+        # Print failed test summary
+        print(f"\n{Fore.RED}Failed tests:{Style.RESET_ALL}")
+        for r in results:
+            if not r.passed:
+                print(f"  {r.test_id}: {r.name}")
 
     # Generate report if requested
     if args.report:
