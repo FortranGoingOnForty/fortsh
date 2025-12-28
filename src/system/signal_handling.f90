@@ -336,6 +336,7 @@ contains
     character(len=16) :: sig_name
 
     ! Use num_traps instead of size(traps) so that subshells can clear traps
+    ! Note: Bash displays inherited traps in subshells (for listing), though they don't execute
     do i = 1, shell%num_traps
       if (shell%traps(i)%active) then
         sig_name = signal_number_to_name(shell%traps(i)%signal)

@@ -286,39 +286,44 @@ contains
         else if (working_input(i:i) == ';') then
           ! Check for ;; (double semicolon) which is used in case statements
           if (i < len_trim(working_input) .and. working_input(i+1:i+1) == ';') then
-            ! This is ;; - only valid inside case statements
-            if (case_depth == 0) then
-              ! Syntax error: ;; outside case statement
-              call parser_error(102, 'Syntax error: ";;" is only valid in case statements', 'parse_pipeline')
-              pipeline%num_commands = 0
-              pipeline%parse_error = .true.
-              return
+            ! This is ;; - inside case statements it's a pattern terminator
+            if (case_depth > 0) then
+              cmd_count = cmd_count + 1
+              if (cmd_count <= MAX_PIPELINE) then
+                call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+                temp_commands(cmd_count)%separator = SEP_SEMICOLON
+              end if
+              start = i + 2  ! Skip both semicolons
+              i = i + 1  ! Will be incremented again at end of loop
+              after_case_in = .false.  ! Reset after ;;, ready for next pattern
+            else
+              ! POSIX: ;; outside case is treated as two semicolons (null command + separator)
+              ! Parse command before first semicolon (if any)
+              if (i > start) then
+                cmd_count = cmd_count + 1
+                if (cmd_count <= MAX_PIPELINE) then
+                  call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+                  temp_commands(cmd_count)%separator = SEP_SEMICOLON
+                end if
+              end if
+              start = i + 2  ! Skip both semicolons
+              i = i + 1  ! Will be incremented again at end of loop
             end if
-            cmd_count = cmd_count + 1
-            if (cmd_count <= MAX_PIPELINE) then
-              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-              temp_commands(cmd_count)%separator = SEP_SEMICOLON
-            end if
-            start = i + 2  ! Skip both semicolons
-            i = i + 1  ! Will be incremented again at end of loop
-            after_case_in = .false.  ! Reset after ;;, ready for next pattern
           ! Only split on single semicolon if not inside for (( ... )), function braces, subshells, or case statement
           else if (in_for_arith .or. brace_depth > 0 .or. paren_depth > 0 .or. case_depth > 0) then
             ! Skip - we're inside for (( ... )), function { ... }, subshell ( ... ), or case...esac
           else
-            ! Check if semicolon is at the start (syntax error)
+            ! POSIX: semicolon at start is a null command - just skip it
             if (i == start) then
-              call parser_error(103, 'Syntax error: unexpected ";"', 'parse_pipeline')
-              pipeline%num_commands = 0
-              pipeline%parse_error = .true.
-              return
+              start = i + 1
+            else
+              cmd_count = cmd_count + 1
+              if (cmd_count <= MAX_PIPELINE) then
+                call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
+                temp_commands(cmd_count)%separator = SEP_SEMICOLON
+              end if
+              start = i + 1
             end if
-            cmd_count = cmd_count + 1
-            if (cmd_count <= MAX_PIPELINE) then
-              call parse_single_command(working_input(start:i-1), temp_commands(cmd_count))
-              temp_commands(cmd_count)%separator = SEP_SEMICOLON
-            end if
-            start = i + 1
           end if
         end if
       end if

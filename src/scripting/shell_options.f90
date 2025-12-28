@@ -405,7 +405,8 @@ contains
       trace_line = expanded_ps4(1:ps4_actual_len) // trim(command_line)
       trace_len = len_trim(trace_line)
 
-      ! Write to original stderr (not affected by command redirections like 2>&1)
+      ! Write to original stderr (shell's stderr, not affected by per-command redirections)
+      ! This matches bash behavior where xtrace goes to shell's stderr
       allocate(c_trace(trace_len + 1))
       do i = 1, trace_len
         c_trace(i) = trace_line(i:i)
