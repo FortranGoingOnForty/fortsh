@@ -92,7 +92,8 @@ contains
     type(c_funptr) :: old_handler
     type(pipeline_t) :: group_pipeline
     integer :: k
-    
+    character(len=2048) :: reconstructed_cmd
+
     ! Count pipes in chain
     pipe_count = 0
     end_idx = start_idx
@@ -125,6 +126,16 @@ contains
     end do
     
     pgid = 0
+
+    ! Trace all pipeline commands BEFORE forking (so order is deterministic)
+    if (shell%option_xtrace) then
+      do i = start_idx, end_idx
+        if (pipeline%commands(i)%num_tokens > 0) then
+          call reconstruct_command_from_tokens(pipeline%commands(i), reconstructed_cmd)
+          call trace_command(shell, trim(reconstructed_cmd))
+        end if
+      end do
+    end if
 
     ! Flush all output before forking to prevent buffer duplication
     flush(output_unit)
