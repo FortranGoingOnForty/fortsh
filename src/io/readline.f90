@@ -4186,15 +4186,22 @@ contains
           ! Copy character by character to avoid substring on allocatable (flang-new bug)
 #ifdef USE_MEMORY_POOL
           input_state%menu_prefix_ref%data = ''
+          do i = 1, last_space_pos
+            input_state%menu_prefix_ref%data(i:i) = tab_partial_input(i:i)
+          end do
 #else
           input_state%menu_prefix = ''
-#endif
           do i = 1, last_space_pos
             input_state%menu_prefix(i:i) = tab_partial_input(i:i)
           end do
+#endif
 #else
           ! Linux: Direct substring operation works fine
+#ifdef USE_MEMORY_POOL
+          input_state%menu_prefix_ref%data = tab_partial_input(:last_space_pos)
+#else
           input_state%menu_prefix = tab_partial_input(:last_space_pos)
+#endif
 #endif
           input_state%menu_prefix_len = last_space_pos
         else
