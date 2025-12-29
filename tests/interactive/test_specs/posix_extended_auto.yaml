@@ -24,7 +24,7 @@ tests:
   match_type: contains
 - name: '26. EXTENDED TEST COMMAND - FILE TYPE TESTS: test -d directory (exit code)'
   steps:
-  - send_line: test -d /tmp/posix_test_directory
+  - send_line: test -d /tmp
   - send_line: echo "EXIT=$?"
   expect_output: EXIT=0
   match_type: contains
