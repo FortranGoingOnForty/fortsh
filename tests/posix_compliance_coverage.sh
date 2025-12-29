@@ -346,8 +346,23 @@ compare_posix_output "alias -p format" 'alias foo=bar; alias -p | grep foo; unal
 
 section "281. ALIAS - EXPANSION CONTEXT"
 
-# Aliases should expand in functions
-compare_posix_error "alias in function" "alias e=echo; f() { e test; }; f; unalias e"
+# Aliases don't expand in non-interactive mode - both bash and fortsh should fail
+# Test that we get "command not found" error (exact format varies by bash version)
+test_alias_behavior() {
+    test_name="$1"
+    test_cmd="$2"
+    expected_pattern="$3"
+
+    output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1)
+
+    if echo "$output" | grep -qiE "$expected_pattern"; then
+        pass "$test_name"
+    else
+        fail "$test_name" "expected pattern: $expected_pattern" "got: $output"
+    fi
+}
+
+test_alias_behavior "alias in function" "alias e=echo; f() { e test; }; f; unalias e" "command not found|not found"
 
 # =====================================
 # DOT (SOURCE) EDGE CASES
