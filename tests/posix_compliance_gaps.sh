@@ -85,6 +85,11 @@ section() {
     printf "==========================================${NC}\n"
 }
 
+# Normalize shell error messages by stripping shell name and "line N: " prefix
+normalize_output() {
+    sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'
+}
+
 # Helper function to run command in both shells and compare
 compare_posix_output() {
     test_name="$1"
@@ -93,10 +98,10 @@ compare_posix_output() {
     fortsh_file="/tmp/posix_gaps_$$_fortsh"
 
     # Run in POSIX shell (sh)
-    bash -c "$command" > "$posix_file" 2>&1 || true
+    bash -c "$command" 2>&1 | normalize_output > "$posix_file" || true
 
     # Run in fortsh
-    "$FORTSH_BIN" -c "$command" > "$fortsh_file" 2>&1 || true
+    "$FORTSH_BIN" -c "$command" 2>&1 | normalize_output > "$fortsh_file" || true
 
     # Compare outputs
     if diff -q "$posix_file" "$fortsh_file" > /dev/null 2>&1; then
@@ -108,10 +113,10 @@ compare_posix_output() {
     rm -f "$posix_file" "$fortsh_file"
 }
 
-# Normalize shell error messages by stripping "line N: " prefix
+# Normalize shell error messages by stripping shell name and "line N: " prefix
 # POSIX doesn't mandate error message format, so we normalize for comparison
 normalize_error() {
-    echo "$1" | sed 's/line [0-9]*: //'
+    echo "$1" | sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'
 }
 
 # Compare error output, normalizing line number differences

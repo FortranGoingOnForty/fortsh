@@ -950,7 +950,7 @@ contains
     ! Check for arithmetic errors
     if (arithmetic_error) then
       write(error_unit, '(a,a)') 'fortsh: arithmetic expression: ', trim(arithmetic_error_msg)
-      shell%last_exit_status = 127  ! POSIX sh returns 127 for arithmetic errors
+      shell%last_exit_status = 1  ! bash returns 1 for arithmetic errors
       shell%arithmetic_error = .true.
       shell%arithmetic_error_msg = trim(arithmetic_error_msg)
       result_value = ''  ! Return empty string to signal error

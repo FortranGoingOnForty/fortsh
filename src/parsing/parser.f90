@@ -2026,8 +2026,13 @@ contains
 
     character(len=4096) :: temp_output
 
+    ! POSIX: errexit should not trigger in command substitution
+    shell%in_command_substitution = .true.
+
     ! Execute in current shell context to preserve functions, variables, etc.
     call execute_command_and_capture(shell, command, temp_output)
+
+    shell%in_command_substitution = .false.
 
     ! Allocate and copy result
     output = trim(temp_output)

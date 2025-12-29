@@ -73,12 +73,12 @@ test_p0_readonly_enforcement() {
         fail "P0-1.1: Readonly violation produces error message" "No error message found"
     fi
 
-    # Test 2: Exit code is 127 for readonly violation (POSIX compliance)
+    # Test 2: Exit code is 1 for readonly violation (bash compatibility)
     $FORTSH_BIN -c 'readonly VAR=test; VAR=other' >/dev/null 2>&1
-    if [ $? -eq 127 ]; then
-        pass "P0-1.2: Readonly violation returns exit code 127"
+    if [ $? -eq 1 ]; then
+        pass "P0-1.2: Readonly violation returns exit code 1"
     else
-        fail "P0-1.2: Readonly violation returns exit code 127" "Got exit code $?"
+        fail "P0-1.2: Readonly violation returns exit code 1" "Got exit code $?"
     fi
 
     # Test 3: Command after readonly violation should not execute
@@ -96,10 +96,10 @@ test_p0_readonly_enforcement() {
 
     # Test 5: Multiple readonly violations
     $FORTSH_BIN -c 'readonly A=1; readonly B=2; A=x; B=y' >/dev/null 2>&1
-    if [ $? -eq 127 ]; then
+    if [ $? -eq 1 ]; then
         pass "P0-1.5: Multiple readonly violations handled correctly"
     else
-        fail "P0-1.5: Multiple readonly violations handled correctly"
+        fail "P0-1.5: Multiple readonly violations handled correctly" "Got exit code $?"
     fi
 }
 
