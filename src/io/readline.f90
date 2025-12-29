@@ -4590,7 +4590,11 @@ contains
       ! Copy directly from menu_prefix character-by-character (avoid temp assignment)
       ! CRITICAL: Don't use intermediate variable - flang-new bug causes corruption
       do i = 1, input_state%menu_prefix_len
+#ifdef USE_MEMORY_POOL
+        ch = input_state%menu_prefix_ref%data(i:i)
+#else
         ch = input_state%menu_prefix(i:i)
+#endif
         completed_len = completed_len + 1
         completed_line(completed_len:completed_len) = ch
       end do
@@ -4766,7 +4770,11 @@ contains
       ! Direct assignment creates a temporary that gets corrupted
       current_prefix = ''  ! Initialize
       do i = 1, input_state%menu_prefix_len
+#ifdef USE_MEMORY_POOL
+        current_prefix(i:i) = input_state%menu_prefix_ref%data(i:i)
+#else
         current_prefix(i:i) = input_state%menu_prefix(i:i)
+#endif
       end do
 
       ! Now copy to preview_line
