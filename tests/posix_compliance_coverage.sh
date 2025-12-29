@@ -56,15 +56,20 @@ section() {
     printf "==========================================${NC}\n"
 }
 
+# Normalize output by stripping shell name prefix
+normalize_output() {
+    sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'
+}
+
 # Compare output between sh and fortsh
 compare_posix_output() {
     test_name="$1"
     test_cmd="$2"
 
-    posix_output=$(FORTSH_RC_FILE=/dev/null bash -c "$test_cmd" 2>&1)
+    posix_output=$(FORTSH_RC_FILE=/dev/null bash -c "$test_cmd" 2>&1 | normalize_output)
     posix_exit=$?
 
-    fortsh_output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1)
+    fortsh_output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1 | normalize_output)
     fortsh_exit=$?
 
     if [ "$posix_output" = "$fortsh_output" ] && [ "$posix_exit" = "$fortsh_exit" ]; then
