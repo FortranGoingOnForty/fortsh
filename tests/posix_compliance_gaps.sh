@@ -93,7 +93,7 @@ compare_posix_output() {
     fortsh_file="/tmp/posix_gaps_$$_fortsh"
 
     # Run in POSIX shell (sh)
-    sh -c "$command" > "$posix_file" 2>&1 || true
+    bash -c "$command" > "$posix_file" 2>&1 || true
 
     # Run in fortsh
     "$FORTSH_BIN" -c "$command" > "$fortsh_file" 2>&1 || true
@@ -122,7 +122,7 @@ compare_posix_error() {
     fortsh_file="/tmp/posix_gaps_$$_fortsh"
 
     # Run in POSIX shell (sh)
-    sh -c "$command" > "$posix_file" 2>&1 || true
+    bash -c "$command" > "$posix_file" 2>&1 || true
 
     # Run in fortsh
     "$FORTSH_BIN" -c "$command" > "$fortsh_file" 2>&1 || true
@@ -145,7 +145,7 @@ compare_posix_exit_code() {
     test_name="$1"
     command="$2"
 
-    sh -c "$command" > /dev/null 2>&1
+    bash -c "$command" > /dev/null 2>&1
     posix_exit=$?
 
     "$FORTSH_BIN" -c "$command" > /dev/null 2>&1
