@@ -278,8 +278,8 @@ contains
         end if
 
       case ('n')
-        ! Newline
-        replacement = new_line('a')
+        ! Newline - CR+LF for proper cursor positioning in terminal emulators
+        replacement = char(13) // char(10)
 
       case ('r')
         ! Carriage return

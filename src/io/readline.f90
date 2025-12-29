@@ -1012,6 +1012,9 @@ contains
         write(output_unit, '(a)', advance='no') prompt
         write(output_unit, '(a)', advance='no') ' '
 
+        ! Save cursor position before printing RPROMPT
+        write(output_unit, '(a)', advance='no') char(27) // '7'  ! DECSC - save cursor
+
         ! Print padding to right-align RPROMPT
         do i_redraw = 1, padding_needed - 1
           write(output_unit, '(a)', advance='no') ' '
@@ -1020,9 +1023,8 @@ contains
         ! Print RPROMPT
         write(output_unit, '(a)', advance='no') trim(rprompt)
 
-        ! Move cursor back to after the left prompt
-        ! Use ANSI escape: move cursor to column (prompt_visual_len + 2)
-        write(output_unit, '(a,i0,a)', advance='no') char(27)//'[', prompt_visual_len + 2, 'G'
+        ! Restore cursor position (back to after prompt + space)
+        write(output_unit, '(a)', advance='no') char(27) // '8'  ! DECRC - restore cursor
       else
         ! Not enough space - just print prompt normally
         write(output_unit, '(a)', advance='no') prompt
@@ -1039,8 +1041,9 @@ contains
     module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
     ! Initialize cursor screen position tracking
-    ! Cursor starts at row 0, column = prompt_visual_length + 1 (for space)
-    module_cursor_screen_row = 0
+    ! For multiline prompts, cursor starts at row = prompt_line_count (0-indexed from prompt start)
+    ! Column = prompt_visual_length + 1 (for space after prompt)
+    module_cursor_screen_row = prompt_line_count
     module_cursor_screen_col = prompt_visual_len + 1
 
 
