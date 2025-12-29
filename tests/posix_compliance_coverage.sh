@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # POSIX Compliance Coverage Tests - Filling Identified Gaps
 # These tests cover edge cases and behaviors not covered by other test suites
 
