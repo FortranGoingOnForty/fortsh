@@ -299,19 +299,20 @@ contains
   subroutine parse_word_list(word_list_str, spec)
     character(len=*), intent(in) :: word_list_str
     type(completion_spec_t), intent(inout) :: spec
-    integer :: i, start, pos
+    integer :: i, start, pos, str_len
     logical :: in_quotes
     character(len=1) :: quote_char
 
     spec%word_list_count = 0
     i = 1
+    str_len = len_trim(word_list_str)
 
-    do while (i <= len_trim(word_list_str) .and. spec%word_list_count < MAX_WORD_LIST)
+    do while (i <= str_len .and. spec%word_list_count < MAX_WORD_LIST)
       ! Skip leading spaces
-      do while (i <= len_trim(word_list_str) .and. word_list_str(i:i) == ' ')
+      do while (i <= str_len .and. word_list_str(i:i) == ' ')
         i = i + 1
       end do
-      if (i > len_trim(word_list_str)) exit
+      if (i > str_len) exit
 
       ! Start of word
       start = i
@@ -319,7 +320,7 @@ contains
       quote_char = ' '
 
       ! Find end of word
-      do while (i <= len_trim(word_list_str))
+      do while (i <= str_len)
         if (.not. in_quotes) then
           if (word_list_str(i:i) == '"' .or. word_list_str(i:i) == "'") then
             in_quotes = .true.
@@ -328,7 +329,11 @@ contains
             exit
           end if
         else
-          if (word_list_str(i:i) == quote_char) then
+          ! Handle escaped quotes (backslash before quote char)
+          if (word_list_str(i:i) == '\' .and. i < str_len) then
+            ! Skip backslash and the next character (escaped)
+            i = i + 1
+          else if (word_list_str(i:i) == quote_char) then
             in_quotes = .false.
           end if
         end if
@@ -455,7 +460,7 @@ contains
     write_pos = 1
     do i = 1, count
       if (.not. matches_filter(completions(i), filter_pattern)) then
-        ! Keep this completion
+        ! Keep completions that DON'T match (bash -X semantics removes matches)
         if (write_pos /= i) then
           completions(write_pos) = completions(i)
         end if

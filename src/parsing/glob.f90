@@ -253,7 +253,7 @@ contains
     character(len=512) :: command
     integer(c_pid_t) :: pid
     integer(c_int), target :: status, pipefd(2)
-    integer :: ret, i, line_start, total_bytes, buf_pos
+    integer :: ret, i, line_start, total_bytes
     character(len=BUFFER_SIZE) :: buffer
     integer(c_size_t) :: bytes_read
     character(kind=c_char), target :: c_buffer(8192)  ! Read in 8KB chunks
