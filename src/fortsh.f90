@@ -21,7 +21,9 @@ program fortran_shell
   use prompt_formatting
   use command_capture_callback, only: init_command_capture  ! For command substitution
   use builtins, only: init_builtins  ! Initialize builtin function pointers
+  use version, only: print_version, print_help
   use iso_fortran_env, only: input_unit, output_unit, error_unit
+  use iso_c_binding, only: c_int
   implicit none
 
   type(shell_state_t), allocatable :: shell
@@ -66,6 +68,18 @@ program fortran_shell
   ! Handle command-line arguments for script execution
   if (num_args > 0) then
     call get_command_argument(1, arg1)
+
+    ! Check for --version or -v flag
+    if (trim(arg1) == '--version' .or. trim(arg1) == '-v') then
+      call print_version()
+      call c_exit(0_c_int)
+    end if
+
+    ! Check for --help or -h flag
+    if (trim(arg1) == '--help' .or. trim(arg1) == '-h') then
+      call print_help()
+      call c_exit(0_c_int)
+    end if
 
     ! Check for -n flag (syntax check only, no execution)
     if (trim(arg1) == '-n') then

@@ -110,6 +110,7 @@ endif
 # All module dependencies are properly declared in the rules below,
 # so parallel builds work correctly
 OBJECTS = $(BUILDDIR)/common/types.o \
+          $(BUILDDIR)/common/version.o \
           $(BUILDDIR)/common/error_handling.o \
           $(BUILDDIR)/common/performance.o \
           $(POOL_OBJECTS) \
@@ -176,6 +177,9 @@ $(TARGET): $(OBJECTS) $(CORE_C_OBJS) $(C_STRING_OBJ) $(C_STRING_LIB) | $(BINDIR)
 
 # Individual compilation rules with proper dependencies
 $(BUILDDIR)/common/types.o: src/common/types.f90 | $(BUILDDIR)/common
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+$(BUILDDIR)/common/version.o: src/common/version.f90 | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/common/error_handling.o: src/common/error_handling.f90 | $(BUILDDIR)/common
@@ -316,7 +320,7 @@ $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDD
 $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/execution/command_capture_callback.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/common/performance.o | $(BUILDDIR)
+$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/version.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/execution/command_capture_callback.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/common/performance.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 # ============================================================================
@@ -453,7 +457,7 @@ help:
 
 # Package information
 PACKAGE = fortsh
-VERSION = 0.8.0
+VERSION = 1.0.1
 # Legacy version (pre-semver reset): 6.0.6
 
 # Distribution and packaging targets
