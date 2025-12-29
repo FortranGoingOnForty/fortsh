@@ -224,7 +224,7 @@ tests:
   steps:
   - send_line: echo $((5 / 0)) 2>/dev/null
   - send_line: echo "EXIT=$?"
-  expect_output: EXIT=127
+  expect_output: EXIT=1
   match_type: contains
 - name: '99. PATHNAME EXPANSION EDGE CASES: glob bracket literal'
   steps:
