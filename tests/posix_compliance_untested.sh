@@ -74,7 +74,7 @@ compare_posix_output() {
     test_cmd="$2"
 
     # Run with POSIX sh
-    posix_output=$(FORTSH_RC_FILE=/dev/null sh -c "$test_cmd" 2>&1)
+    posix_output=$(FORTSH_RC_FILE=/dev/null bash -c "$test_cmd" 2>&1)
     posix_exit=$?
 
     # Run with fortsh
@@ -100,7 +100,7 @@ compare_posix_error() {
     test_name="$1"
     test_cmd="$2"
 
-    posix_output=$(FORTSH_RC_FILE=/dev/null sh -c "$test_cmd" 2>&1)
+    posix_output=$(FORTSH_RC_FILE=/dev/null bash -c "$test_cmd" 2>&1)
     posix_exit=$?
 
     fortsh_output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1)
