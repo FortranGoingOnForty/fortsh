@@ -86,7 +86,7 @@ contains
         ! Check if variable is readonly
         if (shell%variables(i)%readonly) then
           write(error_unit, '(a)') 'sh: ' // trim(name) // ': readonly variable'
-          shell%last_exit_status = 127  ! POSIX: readonly assignment failure returns 127
+          shell%last_exit_status = 1  ! POSIX: readonly assignment failure returns 1
           ! POSIX: In non-interactive shells, stop execution after readonly violation
           if (.not. shell%is_interactive) then
             shell%running = .false.
