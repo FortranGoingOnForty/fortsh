@@ -118,6 +118,7 @@ posix_compliance_advanced.sh
 posix_compliance_gaps.sh
 posix_compliance_jobcontrol.sh
 posix_compliance_charclass.sh
+posix_compliance_special.sh
 "
 
 POSIX_SLOW_TESTS="
