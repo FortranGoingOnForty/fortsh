@@ -424,6 +424,184 @@ else
 fi
 
 # =====================================
+section "457. BACKSLASH IN DOUBLE QUOTES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "back\\\\slash"' 2>&1)
+if [ "$result" = 'back\slash' ]; then
+    pass "Backslash-backslash in double quotes"
+else
+    fail "Backslash-backslash in double quotes" 'back\slash' "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "newline\\n"' 2>&1)
+if [ "$result" = 'newline\n' ]; then
+    pass "Backslash-n in double quotes (literal)"
+else
+    fail "Backslash-n in double quotes (literal)" 'newline\n' "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "tab\\t"' 2>&1)
+if [ "$result" = 'tab\t' ]; then
+    pass "Backslash-t in double quotes (literal)"
+else
+    fail "Backslash-t in double quotes (literal)" 'tab\t' "$result"
+fi
+
+# =====================================
+section "458. DOLLAR IN QUOTES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "cost: \$5"' 2>&1)
+if [ "$result" = 'cost: $5' ]; then
+    pass "Escaped dollar in double quotes"
+else
+    fail "Escaped dollar in double quotes" 'cost: $5' "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo 'cost: \$5'" 2>&1)
+if [ "$result" = 'cost: $5' ]; then
+    pass "Dollar in single quotes (literal)"
+else
+    fail "Dollar in single quotes (literal)" 'cost: $5' "$result"
+fi
+
+# =====================================
+section "459. NEWLINE IN QUOTES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "line1
+line2"' 2>&1)
+expected=$(printf "line1\nline2")
+if [ "$result" = "$expected" ]; then
+    pass "Literal newline in double quotes"
+else
+    fail "Literal newline in double quotes" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo 'line1
+line2'" 2>&1)
+expected=$(printf "line1\nline2")
+if [ "$result" = "$expected" ]; then
+    pass "Literal newline in single quotes"
+else
+    fail "Literal newline in single quotes" "$expected" "$result"
+fi
+
+# =====================================
+section "460. TAB AND SPACE IN QUOTES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "	tab"' 2>&1)
+if printf "%s" "$result" | grep -q "	"; then
+    pass "Literal tab in double quotes"
+else
+    fail "Literal tab in double quotes" "string with tab" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "  spaces  "' 2>&1)
+if [ "$result" = "  spaces  " ]; then
+    pass "Multiple spaces in double quotes"
+else
+    fail "Multiple spaces in double quotes" "  spaces  " "$result"
+fi
+
+# =====================================
+section "461. QUOTING IN FOR LOOP"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'for x in "a b" c; do echo "[$x]"; done' 2>&1)
+expected=$(printf "[a b]\n[c]")
+if [ "$result" = "$expected" ]; then
+    pass "Quoted string in for list"
+else
+    fail "Quoted string in for list" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'list="a b c"; for x in $list; do echo "[$x]"; done' 2>&1)
+expected=$(printf "[a]\n[b]\n[c]")
+if [ "$result" = "$expected" ]; then
+    pass "Unquoted var splits in for"
+else
+    fail "Unquoted var splits in for" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'list="a b c"; for x in "$list"; do echo "[$x]"; done' 2>&1)
+if [ "$result" = "[a b c]" ]; then
+    pass "Quoted var no split in for"
+else
+    fail "Quoted var no split in for" "[a b c]" "$result"
+fi
+
+# =====================================
+section "462. QUOTING IN CASE STATEMENT"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x="hello world"; case "$x" in "hello world") echo match;; esac' 2>&1)
+if [ "$result" = "match" ]; then
+    pass "Quoted string in case word"
+else
+    fail "Quoted string in case word" "match" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'case "a b" in "a b") echo yes;; *) echo no;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "Quoted pattern in case"
+else
+    fail "Quoted pattern in case" "yes" "$result"
+fi
+
+# =====================================
+section "463. QUOTING SPECIAL SHELL CHARS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "hello; world"' 2>&1)
+if [ "$result" = "hello; world" ]; then
+    pass "Semicolon in double quotes"
+else
+    fail "Semicolon in double quotes" "hello; world" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo 'a && b'" 2>&1)
+if [ "$result" = "a && b" ]; then
+    pass "Double ampersand in single quotes"
+else
+    fail "Double ampersand in single quotes" "a && b" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "a || b"' 2>&1)
+if [ "$result" = "a || b" ]; then
+    pass "Double pipe in double quotes"
+else
+    fail "Double pipe in double quotes" "a || b" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo 'back\`tick'" 2>&1)
+if [ "$result" = 'back`tick' ]; then
+    pass "Backtick in single quotes"
+else
+    fail "Backtick in single quotes" 'back`tick' "$result"
+fi
+
+# =====================================
+section "464. QUOTING IN ARITHMETIC"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x=5; echo $((x + 3))' 2>&1)
+if [ "$result" = "8" ]; then
+    pass "Unquoted var in arithmetic"
+else
+    fail "Unquoted var in arithmetic" "8" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x="5"; echo $((x + 3))' 2>&1)
+if [ "$result" = "8" ]; then
+    pass "Quoted assignment used in arithmetic"
+else
+    fail "Quoted assignment used in arithmetic" "8" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
