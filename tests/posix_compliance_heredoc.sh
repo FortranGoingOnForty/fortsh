@@ -172,12 +172,16 @@ else
     fail "Here-document to wc -l" "3" "$result"
 fi
 
-result=$("$FORTSH_BIN" -c 'read x <<EOF
+# Note: read with heredoc can hang if not implemented - use timeout
+result=$(timeout 2 "$FORTSH_BIN" -c 'read x <<EOF
 test input
 EOF
 echo "$x"' 2>&1)
+exit_code=$?
 if [ "$result" = "test input" ]; then
     pass "Here-document to read"
+elif [ $exit_code -eq 124 ]; then
+    fail "Here-document to read" "test input" "(timeout - hangs)"
 else
     fail "Here-document to read" "test input" "$result"
 fi
