@@ -122,6 +122,7 @@ posix_compliance_special.sh
 posix_compliance_printf.sh
 posix_compliance_filetest.sh
 posix_compliance_options.sh
+posix_compliance_heredoc.sh
 "
 
 POSIX_SLOW_TESTS="
