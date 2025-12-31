@@ -762,6 +762,330 @@ else
 fi
 
 # =====================================
+section "388. NUMERIC COMPARISON OPERATORS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ 5 -eq 5 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 5 -eq 5 ] equals"
+else
+    fail "[ 5 -eq 5 ] equals" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 5 -ne 3 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 5 -ne 3 ] not equals"
+else
+    fail "[ 5 -ne 3 ] not equals" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 10 -gt 5 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 10 -gt 5 ] greater than"
+else
+    fail "[ 10 -gt 5 ] greater than" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 10 -ge 10 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 10 -ge 10 ] greater or equal"
+else
+    fail "[ 10 -ge 10 ] greater or equal" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 3 -lt 5 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 3 -lt 5 ] less than"
+else
+    fail "[ 3 -lt 5 ] less than" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 3 -le 3 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 3 -le 3 ] less or equal"
+else
+    fail "[ 3 -le 3 ] less or equal" "yes" "$result"
+fi
+
+# =====================================
+section "389. NEGATIVE NUMBER TESTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ -5 -lt 0 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -5 -lt 0 ] negative less than zero"
+else
+    fail "[ -5 -lt 0 ] negative less than zero" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -10 -lt -5 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -10 -lt -5 ] negative comparison"
+else
+    fail "[ -10 -lt -5 ] negative comparison" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -5 -eq -5 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -5 -eq -5 ] negative equality"
+else
+    fail "[ -5 -eq -5 ] negative equality" "yes" "$result"
+fi
+
+# =====================================
+section "390. STRING TESTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ "hello" = "hello" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \"hello\" = \"hello\" ] string equality"
+else
+    fail "[ \"hello\" = \"hello\" ] string equality" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ "hello" != "world" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \"hello\" != \"world\" ] string inequality"
+else
+    fail "[ \"hello\" != \"world\" ] string inequality" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ "abc" \< "def" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \"abc\" < \"def\" ] string less than"
+else
+    fail "[ \"abc\" < \"def\" ] string less than" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ "xyz" \> "abc" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \"xyz\" > \"abc\" ] string greater than"
+else
+    fail "[ \"xyz\" > \"abc\" ] string greater than" "yes" "$result"
+fi
+
+# =====================================
+section "391. FILE PERMISSION TESTS"
+# =====================================
+
+touch "$TEST_DIR/readable.txt"
+chmod 644 "$TEST_DIR/readable.txt"
+result=$("$FORTSH_BIN" -c '[ -r "'"$TEST_DIR"'/readable.txt" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -r file ] readable file"
+else
+    fail "[ -r file ] readable file" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -w "'"$TEST_DIR"'/readable.txt" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -w file ] writable file"
+else
+    fail "[ -w file ] writable file" "yes" "$result"
+fi
+
+# =====================================
+section "392. TEST BUILTIN vs [ COMMAND"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'test -f /etc/passwd && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "test -f /etc/passwd"
+else
+    fail "test -f /etc/passwd" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'test 5 -eq 5 && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "test 5 -eq 5"
+else
+    fail "test 5 -eq 5" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'test "hello" = "hello" && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "test string equality"
+else
+    fail "test string equality" "yes" "$result"
+fi
+
+# =====================================
+section "393. COMBINED LOGICAL TESTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ 5 -gt 3 ] && [ 10 -gt 5 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ ] && [ ] both true"
+else
+    fail "[ ] && [ ] both true" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 5 -lt 3 ] || [ 10 -gt 5 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ ] || [ ] one true"
+else
+    fail "[ ] || [ ] one true" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '! [ 5 -lt 3 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "! [ ] negation"
+else
+    fail "! [ ] negation" "yes" "$result"
+fi
+
+# =====================================
+section "394. FILE TYPE TESTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ -f /etc/passwd ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -f /etc/passwd ] regular file"
+else
+    fail "[ -f /etc/passwd ] regular file" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -d /tmp ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -d /tmp ] directory"
+else
+    fail "[ -d /tmp ] directory" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -e /etc/passwd ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -e /etc/passwd ] exists"
+else
+    fail "[ -e /etc/passwd ] exists" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -e /nonexistent/path ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ -e /nonexistent ] does not exist"
+else
+    fail "[ -e /nonexistent ] does not exist" "no" "$result"
+fi
+
+# =====================================
+section "395. FILE SIZE TESTS"
+# =====================================
+
+echo "content" > "$TEST_DIR/nonempty.txt"
+result=$("$FORTSH_BIN" -c '[ -s "'"$TEST_DIR"'/nonempty.txt" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -s file ] non-empty file"
+else
+    fail "[ -s file ] non-empty file" "yes" "$result"
+fi
+
+: > "$TEST_DIR/empty.txt"
+result=$("$FORTSH_BIN" -c '[ -s "'"$TEST_DIR"'/empty.txt" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ -s file ] empty file is false"
+else
+    fail "[ -s file ] empty file is false" "no" "$result"
+fi
+
+# =====================================
+section "396. SYMLINK TESTS"
+# =====================================
+
+ln -sf /etc/passwd "$TEST_DIR/link_to_passwd" 2>/dev/null || true
+result=$("$FORTSH_BIN" -c '[ -L "'"$TEST_DIR"'/link_to_passwd" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -L symlink ] is symlink"
+else
+    fail "[ -L symlink ] is symlink" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -h "'"$TEST_DIR"'/link_to_passwd" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -h symlink ] is symlink (alternate)"
+else
+    fail "[ -h symlink ] is symlink (alternate)" "yes" "$result"
+fi
+
+# =====================================
+section "397. SPECIAL FILE TESTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ -c /dev/null ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -c /dev/null ] character device"
+else
+    fail "[ -c /dev/null ] character device" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -p /dev/null ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ -p /dev/null ] not a pipe"
+else
+    fail "[ -p /dev/null ] not a pipe" "no" "$result"
+fi
+
+# =====================================
+section "398. TERMINAL TESTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ -t 1 ] && echo tty || echo not_tty' 2>&1)
+# When running in a script, stdout is typically not a tty
+if echo "$result" | grep -qE "(tty|not_tty)"; then
+    pass "[ -t 1 ] terminal test runs"
+else
+    fail "[ -t 1 ] terminal test runs"
+fi
+
+# =====================================
+section "399. COMPOUND EXPRESSION PRECEDENCE"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ 1 -eq 1 ] && [ 2 -eq 2 ] && [ 3 -eq 3 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "Multiple && chain"
+else
+    fail "Multiple && chain" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 1 -eq 2 ] || [ 2 -eq 2 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "|| then && precedence"
+else
+    fail "|| then && precedence" "yes" "$result"
+fi
+
+# =====================================
+section "400. EDGE CASE EXPRESSIONS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ "" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ \"\" ] empty string is false"
+else
+    fail "[ \"\" ] empty string is false" "no" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ "x" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \"x\" ] non-empty string is true"
+else
+    fail "[ \"x\" ] non-empty string is true" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 0 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 0 ] zero string is true (not numeric)"
+else
+    fail "[ 0 ] zero string is true (not numeric)" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ ! "" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ ! \"\" ] negated empty is true"
+else
+    fail "[ ! \"\" ] negated empty is true" "yes" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"

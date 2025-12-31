@@ -602,6 +602,337 @@ else
 fi
 
 # =====================================
+section "465. ESCAPE SEQUENCES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "hello\tworld"' 2>&1)
+if echo "$result" | grep -q "hello"; then
+    pass "Backslash-t in double quotes"
+else
+    fail "Backslash-t in double quotes"
+fi
+
+result=$("$FORTSH_BIN" -c "echo 'hello\nworld'" 2>&1)
+if echo "$result" | grep -q 'hello\\nworld'; then
+    pass "Backslash-n literal in single quotes"
+else
+    fail "Backslash-n literal in single quotes"
+fi
+
+# =====================================
+section "466. QUOTING AND WORD SPLITTING"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x="a b c"; set -- $x; echo $#' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "Unquoted var splits on spaces"
+else
+    fail "Unquoted var splits on spaces" "3" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x="a b c"; set -- "$x"; echo $#' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "Quoted var prevents splitting"
+else
+    fail "Quoted var prevents splitting" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=""; set -- $x; echo $#' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "Empty unquoted var produces no args"
+else
+    fail "Empty unquoted var produces no args" "0" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=""; set -- "$x"; echo $#' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "Empty quoted var produces one empty arg"
+else
+    fail "Empty quoted var produces one empty arg" "1" "$result"
+fi
+
+# =====================================
+section "467. QUOTING SPECIAL PARAMETERS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'set -- a b c; echo "$@" | wc -w' 2>&1)
+if [ "$result" = "3" ]; then
+    pass 'Quoted $@ preserves args'
+else
+    fail 'Quoted $@ preserves args' "3" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'set -- a b c; echo "$*"' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass 'Quoted $* joins args'
+else
+    fail 'Quoted $* joins args' "a b c" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'set -- a "b c" d; for x in "$@"; do echo "[$x]"; done' 2>&1)
+expected=$(printf "[a]\n[b c]\n[d]")
+if [ "$result" = "$expected" ]; then
+    pass 'Quoted $@ preserves quoting in original args'
+else
+    fail 'Quoted $@ preserves quoting in original args'
+fi
+
+# =====================================
+section "468. NESTED QUOTING"
+# =====================================
+
+result=$("$FORTSH_BIN" -c "echo 'single \"with\" double'" 2>&1)
+if [ "$result" = 'single "with" double' ]; then
+    pass "Double quotes inside single quotes"
+else
+    fail "Double quotes inside single quotes"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "double '\''with'\'' single"' 2>&1)
+if [ "$result" = "double 'with' single" ]; then
+    pass "Single quotes inside double quotes (escaped)"
+else
+    fail "Single quotes inside double quotes (escaped)"
+fi
+
+# =====================================
+section "469. QUOTING IN ASSIGNMENTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x="hello world"; echo $x' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "Quoted assignment with spaces"
+else
+    fail "Quoted assignment with spaces" "hello world" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "x='hello world'; echo \$x" 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "Single-quoted assignment with spaces"
+else
+    fail "Single-quoted assignment with spaces" "hello world" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=hello\ world; echo $x' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "Escaped space in assignment"
+else
+    fail "Escaped space in assignment" "hello world" "$result"
+fi
+
+# =====================================
+section "470. QUOTING IN COMMAND SUBSTITUTION"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x=$(echo "hello world"); echo "$x"' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "Quoted string in command substitution"
+else
+    fail "Quoted string in command substitution" "hello world" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=`echo "hello world"`; echo "$x"' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "Quoted string in backtick substitution"
+else
+    fail "Quoted string in backtick substitution" "hello world" "$result"
+fi
+
+# =====================================
+section "471. QUOTING AND GLOB PREVENTION"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "*"' 2>&1)
+if [ "$result" = "*" ]; then
+    pass "Quoted asterisk is literal"
+else
+    fail "Quoted asterisk is literal" "*" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "?"' 2>&1)
+if [ "$result" = "?" ]; then
+    pass "Quoted question mark is literal"
+else
+    fail "Quoted question mark is literal" "?" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "[abc]"' 2>&1)
+if [ "$result" = "[abc]" ]; then
+    pass "Quoted brackets are literal"
+else
+    fail "Quoted brackets are literal" "[abc]" "$result"
+fi
+
+# =====================================
+section "472. QUOTING IN TESTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x=""; [ -z "$x" ] && echo empty' 2>&1)
+if [ "$result" = "empty" ]; then
+    pass "Quoted empty var in test -z"
+else
+    fail "Quoted empty var in test -z" "empty" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x="hello"; [ -n "$x" ] && echo nonempty' 2>&1)
+if [ "$result" = "nonempty" ]; then
+    pass "Quoted var in test -n"
+else
+    fail "Quoted var in test -n" "nonempty" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x="a b"; [ "$x" = "a b" ] && echo match' 2>&1)
+if [ "$result" = "match" ]; then
+    pass "Quoted var with spaces in test ="
+else
+    fail "Quoted var with spaces in test =" "match" "$result"
+fi
+
+# =====================================
+section "473. QUOTING IN CASE PATTERNS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x="*"; case "$x" in "*") echo literal;; esac' 2>&1)
+if [ "$result" = "literal" ]; then
+    pass "Quoted asterisk matches literally in case"
+else
+    fail "Quoted asterisk matches literally in case" "literal" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x="a b"; case "$x" in "a b") echo match;; esac' 2>&1)
+if [ "$result" = "match" ]; then
+    pass "Quoted pattern with space in case"
+else
+    fail "Quoted pattern with space in case" "match" "$result"
+fi
+
+# =====================================
+section "474. QUOTING IN FUNCTION ARGS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'f() { echo "[$1]"; }; f "hello world"' 2>&1)
+if [ "$result" = "[hello world]" ]; then
+    pass "Quoted arg to function"
+else
+    fail "Quoted arg to function" "[hello world]" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { echo $#; }; f "a b" "c d"' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "Quoted args count in function"
+else
+    fail "Quoted args count in function" "2" "$result"
+fi
+
+# =====================================
+section "475. DOLLAR IN QUOTES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "\$HOME"' 2>&1)
+if [ "$result" = '$HOME' ]; then
+    pass "Escaped dollar in double quotes"
+else
+    fail "Escaped dollar in double quotes" "\$HOME" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo '\$HOME'" 2>&1)
+if [ "$result" = '$HOME' ]; then
+    pass "Dollar in single quotes"
+else
+    fail "Dollar in single quotes" "\$HOME" "$result"
+fi
+
+# =====================================
+section "476. BACKSLASH IN QUOTES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "\\"' 2>&1)
+if [ "$result" = '\' ]; then
+    pass "Escaped backslash in double quotes"
+else
+    fail "Escaped backslash in double quotes" "\\" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo '\\'" 2>&1)
+if [ "$result" = '\' ]; then
+    pass "Backslash in single quotes"
+else
+    fail "Backslash in single quotes" "\\" "$result"
+fi
+
+# =====================================
+section "477. QUOTE REMOVAL"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo ""hello""' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "Empty quotes around word"
+else
+    fail "Empty quotes around word" "hello" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "a""b""c"' 2>&1)
+if [ "$result" = "abc" ]; then
+    pass "Adjacent quoted strings concatenate"
+else
+    fail "Adjacent quoted strings concatenate" "abc" "$result"
+fi
+
+# =====================================
+section "478. MIXED QUOTE STYLES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c "x=val; echo 'a'\"\$x\"'b'" 2>&1)
+if [ "$result" = "avalb" ]; then
+    pass "Mixed single and double quotes"
+else
+    fail "Mixed single and double quotes" "avalb" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo 'single'\"double\"'single'" 2>&1)
+if [ "$result" = "singledoublesingle" ]; then
+    pass "Alternating quote styles"
+else
+    fail "Alternating quote styles" "singledoublesingle" "$result"
+fi
+
+# =====================================
+section "479. QUOTING IN REDIRECTIONS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo test > "/tmp/quote space test.txt"; cat "/tmp/quote space test.txt"; rm "/tmp/quote space test.txt"' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Quoted filename with space in redirect"
+else
+    fail "Quoted filename with space in redirect" "test" "$result"
+fi
+
+# =====================================
+section "480. EMPTY QUOTES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo ""' 2>&1)
+if [ -z "$result" ]; then
+    pass "Empty double quotes produce empty output"
+else
+    fail "Empty double quotes produce empty output" "empty" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c "echo ''" 2>&1)
+if [ -z "$result" ]; then
+    pass "Empty single quotes produce empty output"
+else
+    fail "Empty single quotes produce empty output" "empty" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=""; echo "[$x]"' 2>&1)
+if [ "$result" = "[]" ]; then
+    pass "Empty var in quotes"
+else
+    fail "Empty var in quotes" "[]" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
