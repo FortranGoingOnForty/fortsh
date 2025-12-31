@@ -356,6 +356,115 @@ compare_posix_output "subshell isolation" 'X=1; (X=2; echo $X); echo $X'
 compare_posix_output "brace grouping" 'X=1; { X=2; echo $X; }; echo $X'
 compare_posix_output "subshell exit" '(exit 5); echo $?'
 
+section "51. GLOB PATTERN MATCHING"
+
+# Create temp dir for glob tests
+GLOB_DIR="/tmp/posix_glob_test_$$"
+mkdir -p "$GLOB_DIR"
+touch "$GLOB_DIR/file1.txt" "$GLOB_DIR/file2.txt" "$GLOB_DIR/file3.log"
+touch "$GLOB_DIR/abc" "$GLOB_DIR/abd" "$GLOB_DIR/acd"
+
+compare_posix_output "star matches multiple" 'cd '"$GLOB_DIR"' && echo file*.txt | tr " " "\n" | wc -l'
+compare_posix_output "question mark single char" 'cd '"$GLOB_DIR"' && echo ab? | tr " " "\n" | wc -l'
+compare_posix_output "bracket range" 'cd '"$GLOB_DIR"' && echo a[bc]d | tr " " "\n" | wc -l'
+compare_posix_output "no match literal" 'cd '"$GLOB_DIR"' && echo zzz*.xyz 2>/dev/null || echo "zzz*.xyz"'
+
+rm -rf "$GLOB_DIR"
+
+section "52. DOTFILE HANDLING"
+
+DOT_DIR="/tmp/posix_dot_test_$$"
+mkdir -p "$DOT_DIR"
+touch "$DOT_DIR/.hidden" "$DOT_DIR/visible"
+
+compare_posix_output "star no dotfiles" 'cd '"$DOT_DIR"' && echo * | grep -c hidden || echo 0'
+compare_posix_output "explicit dot matches" 'cd '"$DOT_DIR"' && ls -d .* 2>/dev/null | grep -c hidden'
+
+rm -rf "$DOT_DIR"
+
+section "53. QUOTING IN GLOB"
+
+QUOTE_DIR="/tmp/posix_quote_glob_$$"
+mkdir -p "$QUOTE_DIR"
+touch "$QUOTE_DIR/star"
+
+compare_posix_output "quoted star literal" 'cd '"$QUOTE_DIR"' && echo "*" | grep -c "\\*"'
+compare_posix_output "single quote prevents glob" "cd '$QUOTE_DIR' && echo '*' | grep -c '\\*'"
+
+rm -rf "$QUOTE_DIR"
+
+section "54. EMPTY AND NULL EXPANSION"
+
+compare_posix_output "unset var empty" 'unset X; echo "[$X]"'
+compare_posix_output "null var empty" 'X=""; echo "[$X]"'
+compare_posix_output "unset in arith" 'unset X; echo $((X + 1))'
+
+section "55. SPECIAL VARIABLES READONLY"
+
+compare_posix_output "cannot assign to ?" '(eval "?=5" 2>/dev/null); echo ok'
+compare_posix_output "cannot assign to $" '(eval "\$=5" 2>/dev/null); echo ok'
+
+section "56. COMPLEX COMMAND LISTS"
+
+compare_posix_output "and-or chain" 'true && echo yes || echo no'
+compare_posix_output "or-and chain" 'false || echo fallback && echo then'
+compare_posix_output "semicolon list" 'echo a; echo b; echo c'
+compare_posix_output "mixed operators" 'true && true && echo all || echo none'
+
+section "57. NESTED SUBSHELLS"
+
+compare_posix_output "double nesting" '( ( echo deep ) )'
+compare_posix_output "triple nesting" '( ( ( echo deeper ) ) )'
+compare_posix_output "nested with vars" 'X=1; ( X=2; ( X=3; echo $X ) ); echo $X'
+
+section "58. BRACE GROUP EDGE CASES"
+
+compare_posix_output "brace needs space" '{ echo test; }'
+compare_posix_output "brace with semicolon" '{ echo a; echo b; }'
+compare_posix_output "brace preserves vars" 'X=1; { X=2; }; echo $X'
+
+section "59. ARITHMETIC BASE LITERALS"
+
+compare_posix_output "octal 010" 'echo $((010))'
+compare_posix_output "hex 0x10" 'echo $((0x10))'
+compare_posix_output "hex 0xFF" 'echo $((0xFF))'
+compare_posix_output "mixed bases" 'echo $((010 + 0x10 + 10))'
+
+section "60. STRING LENGTH EDGE CASES"
+
+compare_posix_output "length empty" 'X=""; echo ${#X}'
+compare_posix_output "length one" 'X="a"; echo ${#X}'
+compare_posix_output "length with spaces" 'X="a b c"; echo ${#X}'
+compare_posix_output "length special chars" 'X="$@#"; echo ${#X}'
+
+section "61. DEFAULT VALUE EDGE CASES"
+
+compare_posix_output "default unset" 'unset X; echo ${X:-default}'
+compare_posix_output "default null" 'X=""; echo ${X:-default}'
+compare_posix_output "default set" 'X="value"; echo ${X:-default}'
+compare_posix_output "no-colon unset" 'unset X; echo ${X-default}'
+compare_posix_output "no-colon null" 'X=""; echo ${X-default}'
+
+section "62. PATTERN REMOVAL EDGE CASES"
+
+compare_posix_output "prefix no match" 'X="hello"; echo ${X#xyz}'
+compare_posix_output "suffix no match" 'X="hello"; echo ${X%xyz}'
+compare_posix_output "prefix full match" 'X="aaa"; echo ${X##a*}'
+compare_posix_output "suffix full match" 'X="aaa"; echo ${X%%*a}'
+
+section "63. POSITIONAL PARAMS EDGE CASES"
+
+compare_posix_output "set clears all" 'set -- a b c; set --; echo $#'
+compare_posix_output "set replaces" 'set -- a b; set -- x y z; echo $#'
+compare_posix_output "shift all" 'set -- a b c; shift 3; echo $#'
+
+section "64. EXIT STATUS PROPAGATION"
+
+compare_posix_output "pipeline exit" 'true | true | false; echo $?'
+compare_posix_output "subshell exit" '(exit 42); echo $?'
+compare_posix_output "brace exit" '{ exit 7; }; echo $?'
+compare_posix_output "command sub exit" 'X=$(exit 5); echo $?'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
