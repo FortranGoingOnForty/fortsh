@@ -484,6 +484,293 @@ else
 fi
 
 # =====================================
+section "369. $$ IN SUBSHELLS"
+# =====================================
+
+# $$ in subshell should return parent shell PID per POSIX
+parent_pid=$("$FORTSH_BIN" -c 'echo $$' 2>&1)
+subshell_pid=$("$FORTSH_BIN" -c '(echo $$)' 2>&1)
+if [ "$parent_pid" = "$subshell_pid" ]; then
+    pass "\$\$ in subshell returns parent shell PID"
+else
+    fail "\$\$ in subshell returns parent shell PID" "$parent_pid" "$subshell_pid"
+fi
+
+# $$ in command substitution
+result=$("$FORTSH_BIN" -c 'echo $$ $(echo $$)' 2>&1)
+# Both should be the same PID
+pid1=$(echo "$result" | awk '{print $1}')
+pid2=$(echo "$result" | awk '{print $2}')
+if [ "$pid1" = "$pid2" ]; then
+    pass "\$\$ in command substitution matches parent"
+else
+    fail "\$\$ in command substitution matches parent" "same" "$result"
+fi
+
+# $$ is numeric
+result=$("$FORTSH_BIN" -c 'echo $$' 2>&1)
+if [ "$result" -gt 0 ] 2>/dev/null; then
+    pass "\$\$ is positive integer"
+else
+    fail "\$\$ is positive integer" ">0" "$result"
+fi
+
+# =====================================
+section "370. \$@ VS \$* DIFFERENCES"
+# =====================================
+
+# $@ preserves separate arguments
+result=$("$FORTSH_BIN" -c 'set -- "a b" "c d"; for x in "$@"; do echo "[$x]"; done' 2>&1)
+expected=$(printf "[a b]\n[c d]")
+if [ "$result" = "$expected" ]; then
+    pass '"\$@" preserves argument boundaries'
+else
+    fail '"\$@" preserves argument boundaries' "$expected" "$result"
+fi
+
+# $* joins with IFS
+result=$("$FORTSH_BIN" -c 'IFS=":"; set -- a b c; echo "$*"' 2>&1)
+if [ "$result" = "a:b:c" ]; then
+    pass '"\$*" joins with first char of IFS'
+else
+    fail '"\$*" joins with first char of IFS' "a:b:c" "$result"
+fi
+
+# $@ unquoted splits
+result=$("$FORTSH_BIN" -c 'set -- "a b" "c d"; for x in $@; do echo "[$x]"; done' 2>&1)
+# Should split into 4 words: a, b, c, d
+expected=$(printf "[a]\n[b]\n[c]\n[d]")
+if [ "$result" = "$expected" ]; then
+    pass 'Unquoted $@ splits on whitespace'
+else
+    fail 'Unquoted $@ splits on whitespace' "$expected" "$result"
+fi
+
+# Empty $@ produces nothing
+result=$("$FORTSH_BIN" -c 'set --; for x in "$@"; do echo X; done; echo done' 2>&1)
+if [ "$result" = "done" ]; then
+    pass 'Empty "$@" produces no iterations'
+else
+    fail 'Empty "$@" produces no iterations' "done" "$result"
+fi
+
+# $# count
+result=$("$FORTSH_BIN" -c 'set -- a b c d e; echo $#' 2>&1)
+if [ "$result" = "5" ]; then
+    pass '$# counts positional parameters'
+else
+    fail '$# counts positional parameters' "5" "$result"
+fi
+
+# =====================================
+section "371. PWD AND OLDPWD"
+# =====================================
+
+# PWD is set
+result=$("$FORTSH_BIN" -c 'echo $PWD' 2>&1)
+if [ -n "$result" ] && [ -d "$result" ]; then
+    pass "PWD is set to valid directory"
+else
+    fail "PWD is set to valid directory" "directory path" "$result"
+fi
+
+# cd updates PWD
+result=$("$FORTSH_BIN" -c 'cd /tmp && echo $PWD' 2>&1)
+if echo "$result" | grep -q "tmp"; then
+    pass "cd updates PWD"
+else
+    fail "cd updates PWD" "/tmp" "$result"
+fi
+
+# cd updates OLDPWD
+result=$("$FORTSH_BIN" -c 'cd /; cd /tmp; echo $OLDPWD' 2>&1)
+if [ "$result" = "/" ]; then
+    pass "cd updates OLDPWD"
+else
+    fail "cd updates OLDPWD" "/" "$result"
+fi
+
+# cd - uses OLDPWD
+result=$("$FORTSH_BIN" -c 'cd /; cd /tmp; cd -' 2>&1)
+if echo "$result" | grep -q "/"; then
+    pass "cd - prints previous directory"
+else
+    fail "cd - prints previous directory" "/" "$result"
+fi
+
+# =====================================
+section "372. \$? EXIT STATUS"
+# =====================================
+
+# $? after successful command
+result=$("$FORTSH_BIN" -c 'true; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass '$? is 0 after true'
+else
+    fail '$? is 0 after true' "0" "$result"
+fi
+
+# $? after failed command
+result=$("$FORTSH_BIN" -c 'false; echo $?' 2>&1)
+if [ "$result" = "1" ]; then
+    pass '$? is 1 after false'
+else
+    fail '$? is 1 after false' "1" "$result"
+fi
+
+# $? after exit N
+result=$("$FORTSH_BIN" -c '(exit 42); echo $?' 2>&1)
+if [ "$result" = "42" ]; then
+    pass '$? captures exit code from subshell'
+else
+    fail '$? captures exit code from subshell' "42" "$result"
+fi
+
+# $? after signal (128+signal)
+result=$("$FORTSH_BIN" -c 'sh -c "kill -9 \$\$" 2>/dev/null; echo $?' 2>&1)
+if [ "$result" -ge 128 ] 2>/dev/null; then
+    pass '$? is 128+ after signal death'
+else
+    fail '$? is 128+ after signal death' ">=128" "$result"
+fi
+
+# $? after command not found
+result=$("$FORTSH_BIN" -c 'nonexistent_cmd_xyz_12345 2>/dev/null; echo $?' 2>&1)
+if [ "$result" = "127" ]; then
+    pass '$? is 127 for command not found'
+else
+    fail '$? is 127 for command not found' "127" "$result"
+fi
+
+# =====================================
+section "373. \$0 SCRIPT NAME"
+# =====================================
+
+# $0 in -c command
+result=$("$FORTSH_BIN" -c 'echo $0' 2>&1)
+if [ -n "$result" ]; then
+    pass '$0 is set in -c command'
+else
+    fail '$0 is set in -c command' "non-empty" "$result"
+fi
+
+# $0 can be set with -c
+result=$("$FORTSH_BIN" -c 'echo $0' myname 2>&1)
+if [ "$result" = "myname" ]; then
+    pass '$0 can be set via argument after -c'
+else
+    fail '$0 can be set via argument after -c' "myname" "$result"
+fi
+
+# =====================================
+section "374. SHIFT EDGE CASES"
+# =====================================
+
+# shift removes first positional param
+result=$("$FORTSH_BIN" -c 'set -- a b c; shift; echo $1' 2>&1)
+if [ "$result" = "b" ]; then
+    pass 'shift removes first parameter'
+else
+    fail 'shift removes first parameter' "b" "$result"
+fi
+
+# shift N removes N params
+result=$("$FORTSH_BIN" -c 'set -- a b c d e; shift 2; echo $1' 2>&1)
+if [ "$result" = "c" ]; then
+    pass 'shift N removes N parameters'
+else
+    fail 'shift N removes N parameters' "c" "$result"
+fi
+
+# shift updates $#
+result=$("$FORTSH_BIN" -c 'set -- a b c d e; shift 3; echo $#' 2>&1)
+if [ "$result" = "2" ]; then
+    pass 'shift updates $#'
+else
+    fail 'shift updates $#' "2" "$result"
+fi
+
+# shift more than $# fails
+result=$("$FORTSH_BIN" -c 'set -- a b; shift 5 2>/dev/null; echo $?' 2>&1)
+if [ "$result" != "0" ]; then
+    pass 'shift beyond $# returns non-zero'
+else
+    fail 'shift beyond $# returns non-zero' "non-zero" "$result"
+fi
+
+# =====================================
+section "375. ENVIRONMENT VARIABLES"
+# =====================================
+
+# HOME is set
+result=$("$FORTSH_BIN" -c 'echo $HOME' 2>&1)
+if [ -n "$result" ] && [ -d "$result" ]; then
+    pass "HOME is set to valid directory"
+else
+    fail "HOME is set to valid directory" "directory" "$result"
+fi
+
+# PATH is set
+result=$("$FORTSH_BIN" -c 'echo $PATH' 2>&1)
+if [ -n "$result" ]; then
+    pass "PATH is set"
+else
+    fail "PATH is set" "non-empty" "$result"
+fi
+
+# PATH affects command lookup
+result=$("$FORTSH_BIN" -c 'PATH=/bin:/usr/bin; ls / >/dev/null 2>&1; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "PATH affects command resolution"
+else
+    fail "PATH affects command resolution" "0" "$result"
+fi
+
+# Empty PATH means current directory only
+result=$("$FORTSH_BIN" -c 'PATH=""; ls / 2>/dev/null; echo $?' 2>&1)
+if [ "$result" != "0" ]; then
+    pass "Empty PATH prevents finding commands"
+else
+    fail "Empty PATH prevents finding commands" "non-zero" "$result"
+fi
+
+# =====================================
+section "376. EVAL SPECIAL CASES"
+# =====================================
+
+# eval with variable containing command
+result=$("$FORTSH_BIN" -c 'cmd="echo hello"; eval "$cmd"' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "eval executes command in variable"
+else
+    fail "eval executes command in variable" "hello" "$result"
+fi
+
+# eval with multiple arguments
+result=$("$FORTSH_BIN" -c 'eval echo hello world' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "eval concatenates arguments"
+else
+    fail "eval concatenates arguments" "hello world" "$result"
+fi
+
+# eval with variable expansion
+result=$("$FORTSH_BIN" -c 'x=y; y=z; eval echo \$$x' 2>&1)
+if [ "$result" = "z" ]; then
+    pass "eval performs double expansion"
+else
+    fail "eval performs double expansion" "z" "$result"
+fi
+
+# eval exit status
+result=$("$FORTSH_BIN" -c 'eval false; echo $?' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "eval returns command exit status"
+else
+    fail "eval returns command exit status" "1" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
