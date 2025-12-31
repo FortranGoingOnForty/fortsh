@@ -503,6 +503,79 @@ compare_posix_output "export with value" "export VAR=value; sh -c 'echo \$VAR'"
 compare_posix_output "export multiple" "export A=1 B=2; sh -c 'echo \$A \$B'"
 compare_posix_output "export readonly" "readonly X=ro; export X; sh -c 'echo \$X'"
 
+section "131. VARIABLE SCOPE EDGE CASES"
+
+compare_posix_output "var in subshell lost" 'X=1; (X=2); echo $X'
+compare_posix_output "var in brace group kept" 'X=1; { X=2; }; echo $X'
+compare_posix_output "env var in subshell" 'export X=1; (echo $X)'
+compare_posix_output "command prefix assignment" 'X=val sh -c "echo \$X"'
+
+section "132. FUNCTION VARIABLE SCOPE"
+
+compare_posix_output "global in function" 'X=global; f() { echo $X; }; f'
+compare_posix_output "function modifies global" 'X=1; f() { X=2; }; f; echo $X'
+compare_posix_output "local shadows global" 'X=1; f() { local X=2; echo $X; }; f; echo $X'
+
+section "133. ARITHMETIC EDGE CASES"
+
+compare_posix_output "arith with spaces" 'echo $(( 1 + 2 ))'
+compare_posix_output "arith nested parens" 'echo $(( (1 + 2) * 3 ))'
+compare_posix_output "arith division" 'echo $((10 / 3))'
+compare_posix_output "arith modulo" 'echo $((10 % 3))'
+compare_posix_output "arith negative" 'echo $((-5 + 3))'
+
+section "134. COMMAND SUBSTITUTION EDGE CASES"
+
+compare_posix_output "nested cmd sub" 'echo $(echo $(echo deep))'
+compare_posix_output "cmd sub with quotes" 'echo "$(echo "hello world")"'
+compare_posix_output "cmd sub trailing newline" 'x=$(printf "hi\n"); echo "[$x]"'
+compare_posix_output "backtick substitution" 'echo `echo hello`'
+
+section "135. REDIRECTION EDGE CASES"
+
+compare_posix_output "redirect in loop" 'for i in 1 2 3; do echo $i; done > /tmp/redir_test_$$; cat /tmp/redir_test_$$; rm /tmp/redir_test_$$'
+compare_posix_output "append multiple" 'echo a >> /tmp/app_test_$$; echo b >> /tmp/app_test_$$; cat /tmp/app_test_$$; rm /tmp/app_test_$$'
+compare_posix_output "stderr to file" 'ls /nonexistent 2>/tmp/err_test_$$ || cat /tmp/err_test_$$ | wc -l; rm -f /tmp/err_test_$$'
+
+section "136. HERE-DOC EDGE CASES"
+
+compare_posix_output "heredoc basic" 'cat <<EOF
+hello
+EOF'
+compare_posix_output "heredoc with var" 'X=world; cat <<EOF
+hello $X
+EOF'
+compare_posix_output "heredoc quoted delim" "cat <<'EOF'
+\$notvar
+EOF"
+
+section "137. WORD SPLITTING EDGE CASES"
+
+compare_posix_output "IFS colon split" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "IFS multiple chars" 'IFS=":;"; x="a:b;c"; set -- $x; echo $#'
+compare_posix_output "empty IFS no split" 'IFS=""; x="a b c"; set -- $x; echo $#'
+compare_posix_output "default IFS" 'unset IFS; x="a   b"; set -- $x; echo $#'
+
+section "138. GLOB EDGE CASES"
+
+compare_posix_output "glob no match" 'echo /nonexistent_dir_xyz_$$/* 2>/dev/null | grep -c nonexistent || echo "0 or pattern"'
+compare_posix_output "set -f disables glob" 'set -f; echo *; set +f'
+compare_posix_output "quoted glob literal" 'echo "*"'
+
+section "139. SIGNAL EDGE CASES"
+
+compare_posix_output "trap list" 'trap "echo x" INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap reset" 'trap "echo x" INT; trap - INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap EXIT runs" 'sh -c "trap echo_exit EXIT; exit 0" 2>/dev/null; echo done'
+
+section "140. MISCELLANEOUS EDGE CASES"
+
+compare_posix_output "empty for list" 'for x in; do echo x; done; echo done'
+compare_posix_output "case no match" 'case x in y) echo y;; esac; echo done'
+compare_posix_output "if false branch" 'if false; then echo yes; else echo no; fi'
+compare_posix_output "elif chain" 'if false; then echo 1; elif false; then echo 2; else echo 3; fi'
+compare_posix_output "nested if" 'if true; then if true; then echo nested; fi; fi'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
