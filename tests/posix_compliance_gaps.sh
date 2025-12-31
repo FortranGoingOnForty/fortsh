@@ -1134,6 +1134,256 @@ compare_posix_output "subshell nested" '((echo deep))'
 compare_posix_output "subshell pipe" '(echo test) | (cat)'
 compare_posix_output "subshell bg" '(sleep 0.01) & wait; echo done'
 
+section "191. BRACE GROUP BOUNDARY CASES"
+
+compare_posix_output "brace simple" '{ echo test; }'
+compare_posix_output "brace multi" '{ echo a; echo b; }'
+compare_posix_output "brace var" '{ X=val; }; echo $X'
+compare_posix_output "brace exit" '{ exit 0; }; echo $?'
+compare_posix_output "brace pipe" '{ echo test; } | cat'
+compare_posix_output "brace nested" '{ { echo deep; }; }'
+compare_posix_output "brace and sub" '{ (echo sub); echo brace; }'
+compare_posix_output "brace redirect" '{ echo test; } > /tmp/br_$$; cat /tmp/br_$$; rm /tmp/br_$$'
+
+section "192. COMMENT VARIATIONS"
+
+compare_posix_output "comment end" 'echo test # comment'
+compare_posix_output "comment only" '# just a comment
+echo ok'
+compare_posix_output "comment in quotes" 'echo "# not comment"'
+compare_posix_output "hash in var" 'X="#value"; echo $X'
+compare_posix_output "comment after semi" 'echo a; # comment
+echo b'
+
+section "193. LINE CONTINUATION"
+
+compare_posix_output "backslash newline" 'echo hel\
+lo'
+compare_posix_output "continuation in cmd" 'ec\
+ho test'
+compare_posix_output "continuation in arg" 'echo "hel\
+lo"'
+compare_posix_output "multi continuation" 'echo a\
+b\
+c'
+
+section "194. SEMICOLON VARIATIONS"
+
+compare_posix_output "semi two cmds" 'echo a; echo b'
+compare_posix_output "semi three cmds" 'echo a; echo b; echo c'
+compare_posix_output "semi with space" 'echo a ; echo b'
+compare_posix_output "semi end of line" 'echo test;'
+compare_posix_output "semi in quotes" 'echo "a;b"'
+compare_posix_output "semi empty" '; echo ok'
+
+section "195. NEWLINE AS SEPARATOR"
+
+compare_posix_output "newline sep" 'echo a
+echo b'
+compare_posix_output "newline in if" 'if true
+then
+echo yes
+fi'
+compare_posix_output "newline in for" 'for i in 1 2
+do
+echo $i
+done | wc -l'
+compare_posix_output "newline in case" 'case x in
+x) echo yes;;
+esac'
+
+section "196. AMPERSAND VARIATIONS"
+
+compare_posix_output "bg simple" 'sleep 0.01 &; wait'
+compare_posix_output "bg echo" 'echo test & wait'
+compare_posix_output "and simple" 'true && echo yes'
+compare_posix_output "and fail" 'false && echo no; echo done'
+compare_posix_output "and chain" 'true && true && echo yes'
+compare_posix_output "bg multiple" 'sleep 0.01 & sleep 0.01 & wait'
+
+section "197. PIPE VARIATIONS"
+
+compare_posix_output "or simple" 'false || echo yes'
+compare_posix_output "or pass" 'true || echo no; echo done'
+compare_posix_output "or chain" 'false || false || echo yes'
+compare_posix_output "pipe simple" 'echo test | cat'
+compare_posix_output "pipe chain" 'echo test | cat | cat'
+compare_posix_output "mixed or and" 'false || true && echo yes'
+
+section "198. PARENTHESES AND BRACES"
+
+compare_posix_output "paren group" '(echo a; echo b)'
+compare_posix_output "brace group" '{ echo a; echo b; }'
+compare_posix_output "paren in paren" '((echo deep))'
+compare_posix_output "brace in brace" '{ { echo deep; }; }'
+compare_posix_output "paren in brace" '{ (echo sub); }'
+compare_posix_output "brace in paren" '({ echo brace; })'
+
+section "199. RESERVED WORD POSITIONS"
+
+compare_posix_output "if as arg" 'echo if'
+compare_posix_output "then as arg" 'echo then'
+compare_posix_output "else as arg" 'echo else'
+compare_posix_output "fi as arg" 'echo fi'
+compare_posix_output "for as arg" 'echo for'
+compare_posix_output "while as arg" 'echo while'
+compare_posix_output "case as arg" 'echo case'
+compare_posix_output "do as arg" 'echo do'
+compare_posix_output "done as arg" 'echo done'
+
+section "200. ASSIGNMENT VARIATIONS"
+
+compare_posix_output "simple assign" 'X=val; echo $X'
+compare_posix_output "empty assign" 'X=; echo "[$X]"'
+compare_posix_output "quoted assign" 'X="val"; echo $X'
+compare_posix_output "single quote assign" "X='val'; echo \$X"
+compare_posix_output "cmd sub assign" 'X=$(echo val); echo $X'
+compare_posix_output "arith assign" 'X=$((1+1)); echo $X'
+compare_posix_output "multi assign" 'X=1 Y=2; echo $X $Y'
+compare_posix_output "prefix assign" 'X=val sh -c "echo \$X"'
+compare_posix_output "no space assign" 'X=nospace; echo $X'
+
+section "201. PARAMETER EXPANSION EDGE CASES"
+
+compare_posix_output "unset default" 'echo ${UNSET_VAR_XYZ:-default}'
+compare_posix_output "set default" 'X=val; echo ${X:-default}'
+compare_posix_output "empty default" 'X=; echo ${X:-default}'
+compare_posix_output "unset alt" 'echo ${UNSET_VAR_XYZ:+alt}'
+compare_posix_output "set alt" 'X=val; echo ${X:+alt}'
+compare_posix_output "empty alt" 'X=; echo ${X:+alt}'
+compare_posix_output "unset assign" 'echo ${UNSET_VAR_ABC:=assigned}; echo $UNSET_VAR_ABC'
+compare_posix_output "set no assign" 'X=val; echo ${X:=new}; echo $X'
+compare_posix_output "length zero" 'X=; echo ${#X}'
+compare_posix_output "length five" 'X=hello; echo ${#X}'
+
+section "202. PATTERN MATCHING IN EXPANSION"
+
+compare_posix_output "suffix percent" 'X=file.txt; echo ${X%.txt}'
+compare_posix_output "suffix double" 'X=a.b.c; echo ${X%%.*}'
+compare_posix_output "prefix hash" 'X=prefix_name; echo ${X#prefix_}'
+compare_posix_output "prefix double" 'X=a.b.c; echo ${X##*.}'
+compare_posix_output "no match suffix" 'X=file.txt; echo ${X%.jpg}'
+compare_posix_output "no match prefix" 'X=file.txt; echo ${X#img_}'
+compare_posix_output "star suffix" 'X=hello; echo ${X%l*}'
+compare_posix_output "star prefix" 'X=hello; echo ${X#*l}'
+compare_posix_output "question suffix" 'X=hello; echo ${X%?}'
+compare_posix_output "question prefix" 'X=hello; echo ${X#?}'
+
+section "203. ARITHMETIC OPERATORS"
+
+compare_posix_output "arith add" 'echo $((5 + 3))'
+compare_posix_output "arith sub" 'echo $((5 - 3))'
+compare_posix_output "arith mul" 'echo $((5 * 3))'
+compare_posix_output "arith div" 'echo $((15 / 3))'
+compare_posix_output "arith mod" 'echo $((17 % 5))'
+compare_posix_output "arith neg" 'echo $((-5))'
+compare_posix_output "arith paren" 'echo $(((2 + 3) * 4))'
+compare_posix_output "arith var" 'X=5; echo $((X + 1))'
+compare_posix_output "arith nested" 'echo $(($((1+1)) + $((2+2))))'
+compare_posix_output "arith zero div" 'echo $((0 / 1))'
+
+section "204. ARITHMETIC COMPARISONS"
+
+compare_posix_output "arith lt true" 'echo $((1 < 2))'
+compare_posix_output "arith lt false" 'echo $((2 < 1))'
+compare_posix_output "arith gt true" 'echo $((2 > 1))'
+compare_posix_output "arith gt false" 'echo $((1 > 2))'
+compare_posix_output "arith le true" 'echo $((1 <= 1))'
+compare_posix_output "arith ge true" 'echo $((1 >= 1))'
+compare_posix_output "arith eq true" 'echo $((5 == 5))'
+compare_posix_output "arith eq false" 'echo $((5 == 6))'
+compare_posix_output "arith ne true" 'echo $((5 != 6))'
+compare_posix_output "arith ne false" 'echo $((5 != 5))'
+
+section "205. ARITHMETIC LOGICAL"
+
+compare_posix_output "arith and true" 'echo $((1 && 1))'
+compare_posix_output "arith and false" 'echo $((1 && 0))'
+compare_posix_output "arith or true" 'echo $((0 || 1))'
+compare_posix_output "arith or false" 'echo $((0 || 0))'
+compare_posix_output "arith not true" 'echo $((!0))'
+compare_posix_output "arith not false" 'echo $((!1))'
+compare_posix_output "arith ternary t" 'echo $((1 ? 10 : 20))'
+compare_posix_output "arith ternary f" 'echo $((0 ? 10 : 20))'
+compare_posix_output "arith complex" 'echo $(((1 && 1) || 0))'
+compare_posix_output "arith nested log" 'echo $((!(0 || 0)))'
+
+section "206. TEST NUMERIC OPERATORS"
+
+compare_posix_output "test eq true" '[ 5 -eq 5 ]; echo $?'
+compare_posix_output "test eq false" '[ 5 -eq 6 ]; echo $?'
+compare_posix_output "test ne true" '[ 5 -ne 6 ]; echo $?'
+compare_posix_output "test ne false" '[ 5 -ne 5 ]; echo $?'
+compare_posix_output "test lt true" '[ 3 -lt 5 ]; echo $?'
+compare_posix_output "test lt false" '[ 5 -lt 3 ]; echo $?'
+compare_posix_output "test le true" '[ 5 -le 5 ]; echo $?'
+compare_posix_output "test gt true" '[ 5 -gt 3 ]; echo $?'
+compare_posix_output "test ge true" '[ 5 -ge 5 ]; echo $?'
+compare_posix_output "test zero" '[ 0 -eq 0 ]; echo $?'
+
+section "207. TEST STRING OPERATORS"
+
+compare_posix_output "test str eq true" '[ "abc" = "abc" ]; echo $?'
+compare_posix_output "test str eq false" '[ "abc" = "def" ]; echo $?'
+compare_posix_output "test str ne true" '[ "abc" != "def" ]; echo $?'
+compare_posix_output "test str ne false" '[ "abc" != "abc" ]; echo $?'
+compare_posix_output "test z true" '[ -z "" ]; echo $?'
+compare_posix_output "test z false" '[ -z "x" ]; echo $?'
+compare_posix_output "test n true" '[ -n "x" ]; echo $?'
+compare_posix_output "test n false" '[ -n "" ]; echo $?'
+compare_posix_output "test str space" '[ "a b" = "a b" ]; echo $?'
+compare_posix_output "test str empty" '[ "" = "" ]; echo $?'
+
+section "208. TEST FILE OPERATORS"
+
+compare_posix_output "test e exist" '[ -e /tmp ]; echo $?'
+compare_posix_output "test e noexist" '[ -e /nonexistent_xyz ]; echo $?'
+compare_posix_output "test f file" '[ -f /etc/passwd ]; echo $?'
+compare_posix_output "test f dir" '[ -f /tmp ]; echo $?'
+compare_posix_output "test d dir" '[ -d /tmp ]; echo $?'
+compare_posix_output "test d file" '[ -d /etc/passwd ]; echo $?'
+compare_posix_output "test r read" '[ -r /etc/passwd ]; echo $?'
+compare_posix_output "test w write" '[ -w /tmp ]; echo $?'
+compare_posix_output "test x exec" '[ -x /bin/sh ]; echo $?'
+compare_posix_output "test s size" '[ -s /etc/passwd ]; echo $?'
+
+section "209. TEST LOGICAL OPERATORS"
+
+compare_posix_output "test not true" '[ ! -f /nonexistent ]; echo $?'
+compare_posix_output "test not false" '[ ! -d /tmp ]; echo $?'
+compare_posix_output "test and true" '[ -d /tmp ] && [ -f /etc/passwd ]; echo $?'
+compare_posix_output "test and false" '[ -d /tmp ] && [ -f /nonexistent ]; echo $?'
+compare_posix_output "test or true" '[ -f /nonexistent ] || [ -d /tmp ]; echo $?'
+compare_posix_output "test or false" '[ -f /nonexistent ] || [ -d /nonexistent ]; echo $?'
+compare_posix_output "test complex" '[ -d /tmp ] && [ ! -f /nonexistent ]; echo $?'
+compare_posix_output "test chain" '[ 1 -eq 1 ] && [ 2 -eq 2 ] && [ 3 -eq 3 ]; echo $?'
+
+section "210. HEREDOC VARIATIONS"
+
+compare_posix_output "heredoc simple" 'cat <<EOF
+line
+EOF'
+compare_posix_output "heredoc multi" 'cat <<EOF
+one
+two
+three
+EOF'
+compare_posix_output "heredoc empty" 'cat <<EOF
+EOF
+echo done'
+compare_posix_output "heredoc expand" 'X=val; cat <<EOF
+$X
+EOF'
+compare_posix_output "heredoc no expand" "cat <<'EOF'
+\$X
+EOF"
+compare_posix_output "heredoc indent" 'cat <<-EOF
+	tab
+EOF'
+compare_posix_output "heredoc special" 'cat <<EOF
+* $ @ !
+EOF'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
