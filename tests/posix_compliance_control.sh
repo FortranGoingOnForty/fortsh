@@ -705,6 +705,264 @@ else
 fi
 
 # =====================================
+section "430. CASE STATEMENT PATTERNS"
+# =====================================
+
+# Simple exact match
+result=$("$FORTSH_BIN" -c 'case "hello" in hello) echo yes;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case exact match"
+else
+    fail "case exact match" "yes" "$result"
+fi
+
+# Glob pattern match
+result=$("$FORTSH_BIN" -c 'case "hello" in h*) echo yes;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case glob pattern"
+else
+    fail "case glob pattern" "yes" "$result"
+fi
+
+# Question mark match
+result=$("$FORTSH_BIN" -c 'case "cat" in c?t) echo yes;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case ? pattern"
+else
+    fail "case ? pattern" "yes" "$result"
+fi
+
+# Bracket pattern
+result=$("$FORTSH_BIN" -c 'case "b" in [abc]) echo yes;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case [abc] bracket pattern"
+else
+    fail "case [abc] bracket pattern" "yes" "$result"
+fi
+
+# Multiple patterns with |
+result=$("$FORTSH_BIN" -c 'case "two" in one|two|three) echo yes;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case multiple patterns with |"
+else
+    fail "case multiple patterns with |" "yes" "$result"
+fi
+
+# Default pattern *
+result=$("$FORTSH_BIN" -c 'case "xyz" in abc) echo no;; *) echo default;; esac' 2>&1)
+if [ "$result" = "default" ]; then
+    pass "case * default pattern"
+else
+    fail "case * default pattern" "default" "$result"
+fi
+
+# No match produces nothing
+result=$("$FORTSH_BIN" -c 'case "x" in y) echo no;; z) echo also no;; esac; echo done' 2>&1)
+if [ "$result" = "done" ]; then
+    pass "case no match produces empty"
+else
+    fail "case no match produces empty" "done" "$result"
+fi
+
+# Variable in word
+result=$("$FORTSH_BIN" -c 'x=hello; case "$x" in hello) echo yes;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case with variable in word"
+else
+    fail "case with variable in word" "yes" "$result"
+fi
+
+# Variable in pattern
+result=$("$FORTSH_BIN" -c 'pat="hel*"; case "hello" in $pat) echo yes;; *) echo no;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case with variable in pattern"
+else
+    fail "case with variable in pattern" "yes" "$result"
+fi
+
+# Quoted pattern (literal)
+result=$("$FORTSH_BIN" -c 'case "h*" in "h*") echo yes;; esac' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "case quoted pattern is literal"
+else
+    fail "case quoted pattern is literal" "yes" "$result"
+fi
+
+# =====================================
+section "431. NESTED CONTROL STRUCTURES"
+# =====================================
+
+# if inside for
+result=$("$FORTSH_BIN" -c 'for i in 1 2 3; do if [ $i -eq 2 ]; then echo found; fi; done' 2>&1)
+if [ "$result" = "found" ]; then
+    pass "if inside for loop"
+else
+    fail "if inside for loop" "found" "$result"
+fi
+
+# case inside while
+result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 3 ]; do case $i in 1) echo one;; esac; i=$((i+1)); done' 2>&1)
+if [ "$result" = "one" ]; then
+    pass "case inside while loop"
+else
+    fail "case inside while loop" "one" "$result"
+fi
+
+# for inside if
+result=$("$FORTSH_BIN" -c 'if true; then for i in a b; do echo $i; done; fi' 2>&1)
+expected=$(printf "a\nb")
+if [ "$result" = "$expected" ]; then
+    pass "for inside if"
+else
+    fail "for inside if" "$expected" "$result"
+fi
+
+# Deeply nested
+result=$("$FORTSH_BIN" -c '
+for i in 1; do
+    for j in 2; do
+        for k in 3; do
+            echo "$i$j$k"
+        done
+    done
+done' 2>&1)
+if [ "$result" = "123" ]; then
+    pass "Triple nested for loops"
+else
+    fail "Triple nested for loops" "123" "$result"
+fi
+
+# =====================================
+section "432. WHILE AND UNTIL LOOPS"
+# =====================================
+
+# while with counter
+result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done' 2>&1)
+expected=$(printf "0\n1\n2")
+if [ "$result" = "$expected" ]; then
+    pass "while loop with counter"
+else
+    fail "while loop with counter" "$expected" "$result"
+fi
+
+# until loop
+result=$("$FORTSH_BIN" -c 'i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done' 2>&1)
+expected=$(printf "0\n1\n2")
+if [ "$result" = "$expected" ]; then
+    pass "until loop"
+else
+    fail "until loop" "$expected" "$result"
+fi
+
+# while with compound condition
+result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 5 ] && [ $i -ne 3 ]; do echo $i; i=$((i+1)); done' 2>&1)
+expected=$(printf "0\n1\n2")
+if [ "$result" = "$expected" ]; then
+    pass "while with compound condition"
+else
+    fail "while with compound condition" "$expected" "$result"
+fi
+
+# Empty while body (using :)
+result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 3 ]; do : ; i=$((i+1)); done; echo $i' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "while with empty body (colon)"
+else
+    fail "while with empty body (colon)" "3" "$result"
+fi
+
+# =====================================
+section "433. BREAK AND CONTINUE"
+# =====================================
+
+# break in while
+result=$("$FORTSH_BIN" -c 'i=0; while true; do i=$((i+1)); [ $i -ge 3 ] && break; done; echo $i' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "break in while loop"
+else
+    fail "break in while loop" "3" "$result"
+fi
+
+# continue in for
+result=$("$FORTSH_BIN" -c 'for i in 1 2 3 4 5; do [ $i -eq 3 ] && continue; echo $i; done' 2>&1)
+expected=$(printf "1\n2\n4\n5")
+if [ "$result" = "$expected" ]; then
+    pass "continue in for loop"
+else
+    fail "continue in for loop" "$expected" "$result"
+fi
+
+# break N for nested loops
+result=$("$FORTSH_BIN" -c '
+for i in 1 2; do
+    for j in a b; do
+        echo "$i$j"
+        [ "$j" = "a" ] && break 2
+    done
+done
+echo done' 2>&1)
+expected=$(printf "1a\ndone")
+if [ "$result" = "$expected" ]; then
+    pass "break 2 exits outer loop"
+else
+    fail "break 2 exits outer loop" "$expected" "$result"
+fi
+
+# continue N for nested loops
+result=$("$FORTSH_BIN" -c '
+for i in 1 2; do
+    for j in a b; do
+        [ "$i$j" = "1a" ] && continue 2
+        echo "$i$j"
+    done
+done' 2>&1)
+expected=$(printf "2a\n2b")
+if [ "$result" = "$expected" ]; then
+    pass "continue 2 continues outer loop"
+else
+    fail "continue 2 continues outer loop" "$expected" "$result"
+fi
+
+# =====================================
+section "434. FOR LOOP VARIATIONS"
+# =====================================
+
+# for without in (uses positional params)
+result=$("$FORTSH_BIN" -c 'set -- a b c; for x; do echo $x; done' 2>&1)
+expected=$(printf "a\nb\nc")
+if [ "$result" = "$expected" ]; then
+    pass "for without 'in' uses \$@"
+else
+    fail "for without 'in' uses \$@" "$expected" "$result"
+fi
+
+# for with glob pattern
+# Create temp files for glob test
+result=$("$FORTSH_BIN" -c 'cd /tmp && touch _testglob_a _testglob_b && for f in _testglob_*; do echo $f; done | wc -l && rm -f _testglob_*' 2>&1 | head -1)
+if [ "$result" = "2" ]; then
+    pass "for with glob expansion"
+else
+    fail "for with glob expansion" "2" "$result"
+fi
+
+# for with command substitution
+result=$("$FORTSH_BIN" -c 'for x in $(echo a b c); do echo $x; done' 2>&1)
+expected=$(printf "a\nb\nc")
+if [ "$result" = "$expected" ]; then
+    pass "for with command substitution"
+else
+    fail "for with command substitution" "$expected" "$result"
+fi
+
+# for with quoted string (single iteration)
+result=$("$FORTSH_BIN" -c 'for x in "a b c"; do echo "[$x]"; done' 2>&1)
+if [ "$result" = "[a b c]" ]; then
+    pass "for with quoted string (single iteration)"
+else
+    fail "for with quoted string (single iteration)" "[a b c]" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
