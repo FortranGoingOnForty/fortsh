@@ -515,8 +515,127 @@ else
     fail "local visible in nested function" "1" "$result"
 fi
 
+result=$("$FORTSH_BIN" -c 'f() { local a=1 b=2; echo $a $b; }; f' 2>&1)
+if [ "$result" = "1 2" ]; then
+    pass "local multiple variables"
+else
+    fail "local multiple variables" "1 2" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { local x; x=set; echo $x; }; f' 2>&1)
+if [ "$result" = "set" ]; then
+    pass "local without initial value"
+else
+    fail "local without initial value" "set" "$result"
+fi
+
 # =====================================
-section "425. COLON BUILTIN"
+section "425. FUNCTION RECURSION"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '
+factorial() {
+    if [ $1 -le 1 ]; then
+        echo 1
+    else
+        prev=$(factorial $(($1 - 1)))
+        echo $(($1 * prev))
+    fi
+}
+factorial 5' 2>&1)
+if [ "$result" = "120" ]; then
+    pass "Recursive function (factorial)"
+else
+    fail "Recursive function (factorial)" "120" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '
+count=0
+recurse() {
+    count=$((count + 1))
+    if [ $count -lt 5 ]; then
+        recurse
+    fi
+    echo $count
+}
+recurse | tail -1' 2>&1)
+if [ "$result" = "5" ]; then
+    pass "Recursive function with global state"
+else
+    fail "Recursive function with global state" "5" "$result"
+fi
+
+# =====================================
+section "426. FUNCTION ARGUMENTS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'f() { echo $1 $2 $3; }; f a b c' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass "Function positional parameters"
+else
+    fail "Function positional parameters" "a b c" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { echo $#; }; f a b c d e' 2>&1)
+if [ "$result" = "5" ]; then
+    pass "Function \$# count"
+else
+    fail "Function \$# count" "5" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { echo "$@"; }; f "a b" c' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass "Function \$@ expansion"
+else
+    fail "Function \$@ expansion" "a b c" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { shift; echo $1; }; f a b c' 2>&1)
+if [ "$result" = "b" ]; then
+    pass "shift in function"
+else
+    fail "shift in function" "b" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { set -- x y z; echo $1; }; f a b; echo done' 2>&1)
+expected=$(printf "x\ndone")
+if [ "$result" = "$expected" ]; then
+    pass "set -- in function is local"
+else
+    fail "set -- in function is local" "$expected" "$result"
+fi
+
+# =====================================
+section "427. FUNCTION OVERRIDE"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'f() { echo first; }; f() { echo second; }; f' 2>&1)
+if [ "$result" = "second" ]; then
+    pass "Function redefinition"
+else
+    fail "Function redefinition" "second" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { echo orig; }; g() { f; }; f() { echo new; }; g' 2>&1)
+if [ "$result" = "new" ]; then
+    pass "Function sees redefined function"
+else
+    fail "Function sees redefined function" "new" "$result"
+fi
+
+# =====================================
+section "428. UNSET FUNCTION"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'f() { echo hi; }; unset -f f; f 2>/dev/null; echo $?' 2>&1)
+if echo "$result" | grep -qE "127|1"; then
+    pass "unset -f removes function"
+else
+    fail "unset -f removes function" "non-zero exit" "$result"
+fi
+
+# =====================================
+section "429. COLON BUILTIN"
 # =====================================
 
 result=$("$FORTSH_BIN" -c ':; echo $?' 2>&1)

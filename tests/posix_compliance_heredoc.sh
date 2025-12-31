@@ -486,6 +486,208 @@ else
     fail "\$((...)) with parentheses" "20" "$result"
 fi
 
+result=$("$FORTSH_BIN" -c 'echo $((-5 + 3))' 2>&1)
+if [ "$result" = "-2" ]; then
+    pass "\$((...)) negative numbers"
+else
+    fail "\$((...)) negative numbers" "-2" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 > 3))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) greater than comparison"
+else
+    fail "\$((...)) greater than comparison" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((3 > 5))' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "\$((...)) greater than false"
+else
+    fail "\$((...)) greater than false" "0" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 < 10))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) less than comparison"
+else
+    fail "\$((...)) less than comparison" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 == 5))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) equality"
+else
+    fail "\$((...)) equality" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 != 3))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) inequality"
+else
+    fail "\$((...)) inequality" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 >= 5))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) greater or equal"
+else
+    fail "\$((...)) greater or equal" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((3 <= 5))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) less or equal"
+else
+    fail "\$((...)) less or equal" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((1 && 1))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) logical AND"
+else
+    fail "\$((...)) logical AND" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((1 && 0))' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "\$((...)) logical AND false"
+else
+    fail "\$((...)) logical AND false" "0" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((0 || 1))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) logical OR"
+else
+    fail "\$((...)) logical OR" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((!0))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) logical NOT"
+else
+    fail "\$((...)) logical NOT" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 & 3))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "\$((...)) bitwise AND"
+else
+    fail "\$((...)) bitwise AND" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 | 3))' 2>&1)
+if [ "$result" = "7" ]; then
+    pass "\$((...)) bitwise OR"
+else
+    fail "\$((...)) bitwise OR" "7" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 ^ 3))' 2>&1)
+if [ "$result" = "6" ]; then
+    pass "\$((...)) bitwise XOR"
+else
+    fail "\$((...)) bitwise XOR" "6" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((1 << 4))' 2>&1)
+if [ "$result" = "16" ]; then
+    pass "\$((...)) left shift"
+else
+    fail "\$((...)) left shift" "16" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((16 >> 2))' 2>&1)
+if [ "$result" = "4" ]; then
+    pass "\$((...)) right shift"
+else
+    fail "\$((...)) right shift" "4" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 > 3 ? 10 : 20))' 2>&1)
+if [ "$result" = "10" ]; then
+    pass "\$((...)) ternary true"
+else
+    fail "\$((...)) ternary true" "10" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((5 < 3 ? 10 : 20))' 2>&1)
+if [ "$result" = "20" ]; then
+    pass "\$((...)) ternary false"
+else
+    fail "\$((...)) ternary false" "20" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=5; echo $((x += 3)); echo $x' 2>&1)
+expected=$(printf "8\n8")
+if [ "$result" = "$expected" ]; then
+    pass "\$((...)) += assignment"
+else
+    fail "\$((...)) += assignment" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=10; echo $((x -= 3)); echo $x' 2>&1)
+expected=$(printf "7\n7")
+if [ "$result" = "$expected" ]; then
+    pass "\$((...)) -= assignment"
+else
+    fail "\$((...)) -= assignment" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=5; echo $((x *= 3))' 2>&1)
+if [ "$result" = "15" ]; then
+    pass "\$((...)) *= assignment"
+else
+    fail "\$((...)) *= assignment" "15" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=5; echo $((++x)); echo $x' 2>&1)
+expected=$(printf "6\n6")
+if [ "$result" = "$expected" ]; then
+    pass "\$((...)) pre-increment"
+else
+    fail "\$((...)) pre-increment" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=5; echo $((x++)); echo $x' 2>&1)
+expected=$(printf "5\n6")
+if [ "$result" = "$expected" ]; then
+    pass "\$((...)) post-increment"
+else
+    fail "\$((...)) post-increment" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=5; echo $((--x)); echo $x' 2>&1)
+expected=$(printf "4\n4")
+if [ "$result" = "$expected" ]; then
+    pass "\$((...)) pre-decrement"
+else
+    fail "\$((...)) pre-decrement" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=5; echo $((x--)); echo $x' 2>&1)
+expected=$(printf "5\n4")
+if [ "$result" = "$expected" ]; then
+    pass "\$((...)) post-decrement"
+else
+    fail "\$((...)) post-decrement" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $(( 2 + 3 * 4 ))' 2>&1)
+if [ "$result" = "14" ]; then
+    pass "\$((...)) operator precedence"
+else
+    fail "\$((...)) operator precedence" "14" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'a=2; b=3; echo $(( a * b + a ))' 2>&1)
+if [ "$result" = "8" ]; then
+    pass "\$((...)) multiple variables"
+else
+    fail "\$((...)) multiple variables" "8" "$result"
+fi
+
 # =====================================
 section "410. TILDE EXPANSION"
 # =====================================

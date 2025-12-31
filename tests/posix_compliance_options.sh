@@ -449,6 +449,174 @@ else
 fi
 
 # =====================================
+section "396. IFS WORD SPLITTING"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x="a:b:c"; IFS=:; for w in $x; do echo "[$w]"; done' 2>&1)
+expected=$(printf "[a]\n[b]\n[c]")
+if [ "$result" = "$expected" ]; then
+    pass "IFS changes word splitting"
+else
+    fail "IFS changes word splitting" "$expected" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x="a::c"; IFS=:; set -- $x; echo $#' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "IFS empty fields create arguments"
+else
+    fail "IFS empty fields create arguments" "3" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'IFS=:; x="a:b:c"; echo $x' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass "IFS affects echo output"
+else
+    fail "IFS affects echo output" "a b c" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'IFS=""; x="a b c"; for w in $x; do echo "[$w]"; done' 2>&1)
+if [ "$result" = "[a b c]" ]; then
+    pass "Empty IFS prevents splitting"
+else
+    fail "Empty IFS prevents splitting" "[a b c]" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'unset IFS; x="a  b"; echo $x' 2>&1)
+if [ "$result" = "a b" ]; then
+    pass "unset IFS uses default"
+else
+    fail "unset IFS uses default" "a b" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'IFS=",;"; x="a,b;c"; set -- $x; echo $1 $2 $3' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass "IFS with multiple characters"
+else
+    fail "IFS with multiple characters" "a b c" "$result"
+fi
+
+# =====================================
+section "397. ALIAS BUILTIN"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'alias ll="ls -la"; alias ll' 2>&1)
+if echo "$result" | grep -q "ls -la\|ll="; then
+    pass "alias defines and shows alias"
+else
+    fail "alias defines and shows alias" "ls -la" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'alias greeting="echo hello"; greeting' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "alias expands in command"
+else
+    fail "alias expands in command" "hello" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'alias x="echo a"; alias y="echo b"; alias | wc -l' 2>&1)
+if [ "$result" -ge 2 ] 2>/dev/null; then
+    pass "alias lists all aliases"
+else
+    fail "alias lists all aliases" "at least 2" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'alias greet="echo hi"; unalias greet; greet 2>/dev/null; echo $?' 2>&1)
+if echo "$result" | grep -qE "127|1"; then
+    pass "unalias removes alias"
+else
+    fail "unalias removes alias" "non-zero exit" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'alias foo="echo one"; alias foo="echo two"; foo' 2>&1)
+if [ "$result" = "two" ]; then
+    pass "alias can be redefined"
+else
+    fail "alias can be redefined" "two" "$result"
+fi
+
+# =====================================
+section "398. EXPORT BUILTIN"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'export TESTVAR=hello; echo $TESTVAR' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "export sets and exports variable"
+else
+    fail "export sets and exports variable" "hello" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'MYVAR=world; export MYVAR; echo $MYVAR' 2>&1)
+if [ "$result" = "world" ]; then
+    pass "export existing variable"
+else
+    fail "export existing variable" "world" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'export X=1 Y=2 Z=3; echo $X $Y $Z' 2>&1)
+if [ "$result" = "1 2 3" ]; then
+    pass "export multiple variables"
+else
+    fail "export multiple variables" "1 2 3" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'export SUBTEST=value; sh -c "echo \$SUBTEST"' 2>&1)
+if [ "$result" = "value" ]; then
+    pass "exported var visible in subshell"
+else
+    fail "exported var visible in subshell" "value" "$result"
+fi
+
+# =====================================
+section "399. READONLY BUILTIN"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'readonly CONST=42; echo $CONST' 2>&1)
+if [ "$result" = "42" ]; then
+    pass "readonly sets variable"
+else
+    fail "readonly sets variable" "42" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'readonly RO=1; RO=2 2>&1; echo $RO' 2>&1)
+if echo "$result" | grep -q "1"; then
+    pass "readonly prevents modification"
+else
+    fail "readonly prevents modification" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'readonly A=1 B=2; echo $A $B' 2>&1)
+if [ "$result" = "1 2" ]; then
+    pass "readonly multiple variables"
+else
+    fail "readonly multiple variables" "1 2" "$result"
+fi
+
+# =====================================
+section "400. UNSET BUILTIN"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'x=hello; unset x; echo "${x:-unset}"' 2>&1)
+if [ "$result" = "unset" ]; then
+    pass "unset removes variable"
+else
+    fail "unset removes variable" "unset" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'x=1; y=2; unset x y; echo "${x:-a} ${y:-b}"' 2>&1)
+if [ "$result" = "a b" ]; then
+    pass "unset multiple variables"
+else
+    fail "unset multiple variables" "a b" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'f() { echo hi; }; unset -f f; type f 2>/dev/null; echo $?' 2>&1)
+if echo "$result" | grep -qE "1|127"; then
+    pass "unset -f removes function"
+else
+    fail "unset -f removes function" "non-zero exit" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
