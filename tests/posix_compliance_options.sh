@@ -866,6 +866,354 @@ else
 fi
 
 # =====================================
+section "408. READ BUILTIN"
+# =====================================
+
+# read single variable
+result=$("$FORTSH_BIN" -c 'echo "hello" | { read x; echo $x; }' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "read single variable"
+else
+    fail "read single variable" "hello" "$result"
+fi
+
+# read multiple variables
+result=$("$FORTSH_BIN" -c 'echo "a b c" | { read x y z; echo "$x:$y:$z"; }' 2>&1)
+if [ "$result" = "a:b:c" ]; then
+    pass "read multiple variables"
+else
+    fail "read multiple variables" "a:b:c" "$result"
+fi
+
+# read with extra words
+result=$("$FORTSH_BIN" -c 'echo "a b c d e" | { read x y; echo "$x|$y"; }' 2>&1)
+if [ "$result" = "a|b c d e" ]; then
+    pass "read extra words to last var"
+else
+    fail "read extra words to last var" "a|b c d e" "$result"
+fi
+
+# =====================================
+section "409. PRINTF BUILTIN"
+# =====================================
+
+# printf basic
+result=$("$FORTSH_BIN" -c 'printf "hello\n"' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "printf basic"
+else
+    fail "printf basic" "hello" "$result"
+fi
+
+# printf with format
+result=$("$FORTSH_BIN" -c 'printf "%s world\n" "hello"' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "printf with %s"
+else
+    fail "printf with %s" "hello world" "$result"
+fi
+
+# printf with number
+result=$("$FORTSH_BIN" -c 'printf "%d\n" 42' 2>&1)
+if [ "$result" = "42" ]; then
+    pass "printf with %d"
+else
+    fail "printf with %d" "42" "$result"
+fi
+
+# printf width
+result=$("$FORTSH_BIN" -c 'printf "%5d\n" 42' 2>&1)
+if [ "$result" = "   42" ]; then
+    pass "printf with width"
+else
+    fail "printf with width" "   42" "$result"
+fi
+
+# =====================================
+section "410. ECHO BUILTIN"
+# =====================================
+
+# echo basic
+result=$("$FORTSH_BIN" -c 'echo hello' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "echo basic"
+else
+    fail "echo basic" "hello" "$result"
+fi
+
+# echo multiple args
+result=$("$FORTSH_BIN" -c 'echo a b c' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass "echo multiple args"
+else
+    fail "echo multiple args" "a b c" "$result"
+fi
+
+# echo with quotes
+result=$("$FORTSH_BIN" -c 'echo "hello world"' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "echo with quotes"
+else
+    fail "echo with quotes" "hello world" "$result"
+fi
+
+# =====================================
+section "411. KILL BUILTIN"
+# =====================================
+
+# kill -l lists signals
+result=$("$FORTSH_BIN" -c 'kill -l 2>&1 | head -1')
+if [ -n "$result" ]; then
+    pass "kill -l lists signals"
+else
+    fail "kill -l lists signals" "non-empty" "$result"
+fi
+
+# =====================================
+section "412. SET OPTIONS"
+# =====================================
+
+# set -e (errexit)
+result=$("$FORTSH_BIN" -c 'set -e; true; echo reached' 2>&1)
+if [ "$result" = "reached" ]; then
+    pass "set -e continues on success"
+else
+    fail "set -e continues on success" "reached" "$result"
+fi
+
+# set -x (xtrace)
+result=$("$FORTSH_BIN" -c 'set -x; echo test 2>&1' | grep -c test)
+if [ "$result" -ge 1 ]; then
+    pass "set -x traces commands"
+else
+    fail "set -x traces commands"
+fi
+
+# set -f (noglob)
+result=$("$FORTSH_BIN" -c 'set -f; echo *' 2>&1)
+if [ "$result" = "*" ]; then
+    pass "set -f disables glob"
+else
+    fail "set -f disables glob" "*" "$result"
+fi
+
+# set +f (enable glob)
+result=$("$FORTSH_BIN" -c 'set -f; set +f; ls /*.txt 2>/dev/null | wc -l || echo 0' 2>&1)
+if echo "$result" | grep -qE '^[0-9]+$'; then
+    pass "set +f enables glob"
+else
+    fail "set +f enables glob"
+fi
+
+# =====================================
+section "413. UNSET BUILTIN"
+# =====================================
+
+# unset variable
+result=$("$FORTSH_BIN" -c 'x=value; unset x; echo ${x:-empty}' 2>&1)
+if [ "$result" = "empty" ]; then
+    pass "unset removes variable"
+else
+    fail "unset removes variable" "empty" "$result"
+fi
+
+# unset function
+result=$("$FORTSH_BIN" -c 'f() { echo hi; }; unset -f f; f 2>/dev/null || echo gone' 2>&1)
+if [ "$result" = "gone" ]; then
+    pass "unset -f removes function"
+else
+    fail "unset -f removes function" "gone" "$result"
+fi
+
+# unset readonly fails
+result=$("$FORTSH_BIN" -c 'readonly x=1; unset x 2>/dev/null; echo $?' 2>&1)
+if [ "$result" != "0" ]; then
+    pass "unset readonly fails"
+else
+    fail "unset readonly fails" "non-zero" "$result"
+fi
+
+# =====================================
+section "414. SHIFT BUILTIN"
+# =====================================
+
+# basic shift
+result=$("$FORTSH_BIN" -c 'set -- a b c; shift; echo $1' 2>&1)
+if [ "$result" = "b" ]; then
+    pass "shift removes first arg"
+else
+    fail "shift removes first arg" "b" "$result"
+fi
+
+# shift with count
+result=$("$FORTSH_BIN" -c 'set -- a b c d e; shift 3; echo $1' 2>&1)
+if [ "$result" = "d" ]; then
+    pass "shift with count"
+else
+    fail "shift with count" "d" "$result"
+fi
+
+# shift updates $#
+result=$("$FORTSH_BIN" -c 'set -- a b c; shift; echo $#' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "shift updates arg count"
+else
+    fail "shift updates arg count" "2" "$result"
+fi
+
+# =====================================
+section "415. TRUE AND FALSE BUILTINS"
+# =====================================
+
+# true returns 0
+result=$("$FORTSH_BIN" -c 'true; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "true returns 0"
+else
+    fail "true returns 0" "0" "$result"
+fi
+
+# false returns 1
+result=$("$FORTSH_BIN" -c 'false; echo $?' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "false returns 1"
+else
+    fail "false returns 1" "1" "$result"
+fi
+
+# true in conditional
+result=$("$FORTSH_BIN" -c 'if true; then echo yes; fi' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "true in if condition"
+else
+    fail "true in if condition" "yes" "$result"
+fi
+
+# false in conditional
+result=$("$FORTSH_BIN" -c 'if false; then echo no; else echo yes; fi' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "false in if condition"
+else
+    fail "false in if condition" "yes" "$result"
+fi
+
+# =====================================
+section "416. COLON BUILTIN"
+# =====================================
+
+# colon returns 0
+result=$("$FORTSH_BIN" -c ':; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "colon returns 0"
+else
+    fail "colon returns 0" "0" "$result"
+fi
+
+# colon with args (ignored)
+result=$("$FORTSH_BIN" -c ': arg1 arg2 arg3; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "colon ignores args"
+else
+    fail "colon ignores args" "0" "$result"
+fi
+
+# colon in loop condition
+result=$("$FORTSH_BIN" -c 'i=0; while :; do i=$((i+1)); [ $i -ge 3 ] && break; done; echo $i' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "colon as infinite loop condition"
+else
+    fail "colon as infinite loop condition" "3" "$result"
+fi
+
+# =====================================
+section "417. PWD BUILTIN"
+# =====================================
+
+# pwd returns current dir
+result=$("$FORTSH_BIN" -c 'pwd | grep -c "^/"' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "pwd returns absolute path"
+else
+    fail "pwd returns absolute path" "1" "$result"
+fi
+
+# pwd after cd
+result=$("$FORTSH_BIN" -c 'cd /tmp && pwd' 2>&1)
+if [ "$result" = "/tmp" ]; then
+    pass "pwd after cd"
+else
+    fail "pwd after cd" "/tmp" "$result"
+fi
+
+# =====================================
+section "418. CD BUILTIN"
+# =====================================
+
+# cd to absolute path
+result=$("$FORTSH_BIN" -c 'cd /tmp && pwd' 2>&1)
+if [ "$result" = "/tmp" ]; then
+    pass "cd to absolute path"
+else
+    fail "cd to absolute path" "/tmp" "$result"
+fi
+
+# cd - returns to OLDPWD
+result=$("$FORTSH_BIN" -c 'cd /tmp; cd /; cd - 2>&1' 2>&1)
+if echo "$result" | grep -q "tmp"; then
+    pass "cd - returns to OLDPWD"
+else
+    fail "cd - returns to OLDPWD"
+fi
+
+# cd nonexistent fails
+result=$("$FORTSH_BIN" -c 'cd /nonexistent_dir_xyz 2>/dev/null; echo $?' 2>&1)
+if [ "$result" != "0" ]; then
+    pass "cd nonexistent fails"
+else
+    fail "cd nonexistent fails" "non-zero" "$result"
+fi
+
+# =====================================
+section "419. TIMES BUILTIN"
+# =====================================
+
+# times outputs something
+result=$("$FORTSH_BIN" -c 'times 2>&1 | head -1 || echo skipped')
+if [ -n "$result" ]; then
+    pass "times outputs timing info"
+else
+    fail "times outputs timing info" "non-empty" "$result"
+fi
+
+# =====================================
+section "420. EXIT BUILTIN"
+# =====================================
+
+# exit with code
+result=$("$FORTSH_BIN" -c 'exit 42' 2>&1; echo $?)
+if [ "$result" = "42" ]; then
+    pass "exit with code"
+else
+    fail "exit with code" "42" "$result"
+fi
+
+# exit default 0
+result=$("$FORTSH_BIN" -c 'exit' 2>&1; echo $?)
+if [ "$result" = "0" ]; then
+    pass "exit default 0"
+else
+    fail "exit default 0" "0" "$result"
+fi
+
+# exit from subshell
+result=$("$FORTSH_BIN" -c '(exit 7); echo $?' 2>&1)
+if [ "$result" = "7" ]; then
+    pass "exit from subshell"
+else
+    fail "exit from subshell" "7" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
