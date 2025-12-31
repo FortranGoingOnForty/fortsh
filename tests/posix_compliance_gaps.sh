@@ -855,6 +855,285 @@ compare_posix_output "unquote allows split" 'x="a b c"; set -- $x; echo $#'
 compare_posix_output "nested expansion" 'x=y; y=val; eval echo \$$x'
 compare_posix_output "complex chain" 'x=$(echo $((1+2))); echo $x'
 
+section "161. BUILTIN COMMAND VARIATIONS"
+
+compare_posix_output "echo no newline" 'echo -n test; echo done'
+compare_posix_output "echo escape e" 'echo -e "a\tb"'
+compare_posix_output "printf string" 'printf "%s\n" hello'
+compare_posix_output "printf number" 'printf "%d\n" 42'
+compare_posix_output "printf hex" 'printf "%x\n" 255'
+compare_posix_output "printf octal" 'printf "%o\n" 64'
+compare_posix_output "printf width" 'printf "%5d\n" 42'
+compare_posix_output "printf zero pad" 'printf "%05d\n" 42'
+compare_posix_output "printf left align" 'printf "%-5d|\n" 42'
+compare_posix_output "printf multiple" 'printf "%s %s\n" a b'
+
+section "162. READ BUILTIN VARIATIONS"
+
+compare_posix_output "read single" 'echo hello | { read x; echo $x; }'
+compare_posix_output "read multiple" 'echo "a b c" | { read x y z; echo "$x:$y:$z"; }'
+compare_posix_output "read extra" 'echo "a b c d" | { read x y; echo "$x:$y"; }'
+compare_posix_output "read fewer" 'echo "a" | { read x y; echo "x=$x y=${y:-empty}"; }'
+compare_posix_output "read ifs colon" 'echo "a:b:c" | { IFS=: read x y z; echo "$x $y $z"; }'
+compare_posix_output "read empty ifs" 'echo "a b c" | { IFS= read x; echo "$x"; }'
+compare_posix_output "read backslash" 'printf "a\\\\b\n" | { read x; echo "$x"; }'
+compare_posix_output "read raw" 'printf "a\\\\b\n" | { read -r x; echo "$x"; }'
+
+section "163. SET BUILTIN VARIATIONS"
+
+compare_posix_output "set positional" 'set -- a b c; echo $1 $2 $3'
+compare_posix_output "set clear" 'set -- a b; set --; echo ${1:-none}'
+compare_posix_output "set e exit" 'set -e; true; echo ok'
+compare_posix_output "set u unset" 'set +u; echo ${undefined_var:-default}'
+compare_posix_output "set f noglob" 'set -f; echo *; set +f'
+compare_posix_output "set minus" 'echo $-'
+compare_posix_output "set show" 'X=1; set | grep -c "^X=" || echo 0'
+compare_posix_output "shift once" 'set -- a b c; shift; echo $1'
+compare_posix_output "shift twice" 'set -- a b c; shift 2; echo $1'
+compare_posix_output "shift all" 'set -- a b; shift 2; echo ${1:-empty}'
+
+section "164. EXPORT AND ENV"
+
+compare_posix_output "export simple" 'export X=val; echo $X'
+compare_posix_output "export existing" 'X=val; export X; echo $X'
+compare_posix_output "export list" 'export X=1 Y=2; echo $X $Y'
+compare_posix_output "export subshell" 'export X=val; (echo $X)'
+compare_posix_output "env prefix" 'X=override sh -c "echo \$X"'
+compare_posix_output "env clear" 'X=val; unset X; echo ${X:-unset}'
+compare_posix_output "readonly var" 'readonly X=const; echo $X'
+compare_posix_output "unset normal" 'X=val; unset X; echo ${X:-gone}'
+
+section "165. TRAP VARIATIONS"
+
+compare_posix_output "trap list empty" 'trap | wc -l'
+compare_posix_output "trap set list" 'trap "echo x" INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap reset" 'trap "echo x" INT; trap - INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap exit" 'sh -c "trap \"echo exit\" EXIT" 2>/dev/null || echo done'
+compare_posix_output "trap ignore" 'trap "" INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap in func" 'f() { trap "echo trap" EXIT; }; f 2>/dev/null; echo done'
+
+section "166. EVAL AND EXEC"
+
+compare_posix_output "eval simple" 'eval echo hello'
+compare_posix_output "eval var" 'X=world; eval echo hello $X'
+compare_posix_output "eval cmd" 'eval "echo test"'
+compare_posix_output "eval multi" 'eval "echo a; echo b"'
+compare_posix_output "eval indirect" 'X=Y; Y=val; eval echo \$$X'
+compare_posix_output "exec redirect" 'exec 3>&1; echo test >&3'
+compare_posix_output "exec close" 'exec 3>&1; exec 3>&-; echo ok'
+
+section "167. DOT AND SOURCE"
+
+compare_posix_output "dot inline" 'echo "X=sourced" > /tmp/src_$$; . /tmp/src_$$; echo $X; rm /tmp/src_$$'
+compare_posix_output "dot func" 'echo "f() { echo func; }" > /tmp/src_$$; . /tmp/src_$$; f; rm /tmp/src_$$'
+compare_posix_output "dot var persist" 'echo "Y=persist" > /tmp/src_$$; . /tmp/src_$$; echo $Y; rm /tmp/src_$$'
+
+section "168. COMMAND AND TYPE"
+
+compare_posix_output "command echo" 'command echo hello'
+compare_posix_output "command builtin" 'command true; echo $?'
+compare_posix_output "command v" 'command -v echo | grep -c echo'
+compare_posix_output "type builtin" 'type echo 2>/dev/null | grep -c echo || echo 1'
+compare_posix_output "type not found" 'type nonexistent_cmd_xyz 2>&1 | grep -c "not found" || echo 0'
+
+section "169. GETOPTS VARIATIONS"
+
+compare_posix_output "getopts simple" 'set -- -a; getopts a opt; echo $opt'
+compare_posix_output "getopts arg" 'set -- -a val; getopts a: opt; echo $opt $OPTARG'
+compare_posix_output "getopts multi" 'set -- -a -b; getopts ab opt && echo $opt'
+compare_posix_output "getopts unknown" 'set -- -x; getopts a opt 2>/dev/null; echo ${opt:-?}'
+compare_posix_output "getopts optind" 'set -- -a arg; getopts a opt; echo $OPTIND'
+
+section "170. COLON AND TRUE/FALSE"
+
+compare_posix_output "colon noop" ':; echo $?'
+compare_posix_output "colon with args" ': arg1 arg2; echo $?'
+compare_posix_output "true exit" 'true; echo $?'
+compare_posix_output "false exit" 'false; echo $?'
+compare_posix_output "colon in if" 'if :; then echo yes; fi'
+compare_posix_output "colon in while" 'n=0; while :; do n=$((n+1)); [ $n -ge 3 ] && break; done; echo $n'
+
+section "171. PWD AND CD"
+
+compare_posix_output "pwd basic" 'pwd | grep -c "/"'
+compare_posix_output "cd tmp" 'cd /tmp && pwd'
+compare_posix_output "cd home" 'cd ~ && pwd | grep -c "/"'
+compare_posix_output "cd dash" 'cd /tmp; cd /; cd -'
+compare_posix_output "cd dotdot" 'cd /tmp; cd ..; pwd'
+compare_posix_output "cd subshell" '(cd /tmp; pwd); pwd | grep -v "/tmp" | wc -l'
+compare_posix_output "OLDPWD" 'cd /tmp; cd /; echo $OLDPWD'
+
+section "172. UMASK VARIATIONS"
+
+compare_posix_output "umask get" 'umask | grep -c "[0-7]"'
+compare_posix_output "umask symbolic" 'umask -S | grep -c "u="'
+
+section "173. TIMES BUILTIN"
+
+compare_posix_output "times format" 'times 2>&1 | head -1 | grep -c "[0-9]" || echo 0'
+
+section "174. HASH BUILTIN"
+
+compare_posix_output "hash list" 'hash 2>/dev/null; echo $?'
+compare_posix_output "hash r clear" 'hash -r 2>/dev/null; echo $?'
+
+section "175. ALIAS VARIATIONS"
+
+compare_posix_output "alias set" 'alias x=echo 2>/dev/null; echo ok'
+compare_posix_output "alias list" 'alias 2>/dev/null; echo $?'
+compare_posix_output "unalias" 'alias x=echo 2>/dev/null; unalias x 2>/dev/null; echo $?'
+
+section "176. WAIT BUILTIN"
+
+compare_posix_output "wait all" 'sleep 0.01 & wait; echo $?'
+compare_posix_output "wait pid" 'sleep 0.01 & p=$!; wait $p; echo $?'
+compare_posix_output "wait none" 'wait; echo $?'
+
+section "177. JOBS AND BG/FG"
+
+compare_posix_output "jobs empty" 'jobs 2>/dev/null; echo $?'
+compare_posix_output "bg pid" 'sleep 0.01 & echo bg'
+
+section "178. ULIMIT VARIATIONS"
+
+compare_posix_output "ulimit soft" 'ulimit -S -n 2>/dev/null | grep -c "[0-9]" || echo 1'
+compare_posix_output "ulimit hard" 'ulimit -H -n 2>/dev/null | grep -c "[0-9]" || echo 1'
+compare_posix_output "ulimit all" 'ulimit -a 2>/dev/null | wc -l'
+
+section "179. SPECIAL EXPANSIONS"
+
+compare_posix_output "length special" 'set -- a b c; echo ${#@}'
+compare_posix_output "length star" 'set -- a b c; echo ${#*}'
+compare_posix_output "at in quotes" 'set -- a b c; for x in "$@"; do echo $x; done | wc -l'
+compare_posix_output "star in quotes" 'set -- a b c; echo "$*" | wc -w'
+compare_posix_output "hash positional" 'set -- a b c d e; echo $#'
+compare_posix_output "shift and hash" 'set -- a b c; shift; echo $#'
+compare_posix_output "at unquoted" 'set -- a b c; for x in $@; do echo $x; done | wc -l'
+compare_posix_output "star unquoted" 'set -- a b c; for x in $*; do echo $x; done | wc -l'
+
+section "180. COMPLEX PATTERNS"
+
+compare_posix_output "nested cmd sub" 'echo $(echo $(echo $(echo deep)))'
+compare_posix_output "nested arith" 'echo $(( $(( $(( 1+1 )) + 1 )) + 1 ))'
+compare_posix_output "mixed nesting" 'echo $(( $(echo 5) + $(echo 3) ))'
+compare_posix_output "pipeline chain" 'echo test | cat | cat | cat | cat'
+compare_posix_output "long and chain" 'true && true && true && true && echo yes'
+compare_posix_output "long or chain" 'false || false || false || true && echo yes'
+compare_posix_output "mixed logic" 'true && false || true && echo yes'
+compare_posix_output "nested subshell" '((((echo deep))))'
+compare_posix_output "nested brace" '{ { { echo deep; }; }; }'
+compare_posix_output "func chain" 'f() { echo $1; }; g() { f hello; }; g'
+
+section "181. WORD BOUNDARY CASES"
+
+compare_posix_output "empty word" 'echo "" | cat'
+compare_posix_output "space word" 'echo " " | cat'
+compare_posix_output "tab word" 'echo "	" | cat'
+compare_posix_output "newline word" 'echo "
+" | wc -l'
+compare_posix_output "mixed whitespace" 'echo " 	 " | cat'
+compare_posix_output "leading space" 'echo " test" | cat'
+compare_posix_output "trailing space" 'echo "test " | cat'
+compare_posix_output "multiple spaces" 'echo "a    b" | cat'
+
+section "182. NUMERIC EDGE CASES"
+
+compare_posix_output "zero" 'echo $((0))'
+compare_posix_output "negative one" 'echo $((-1))'
+compare_posix_output "large number" 'echo $((999999))'
+compare_posix_output "add negative" 'echo $((5 + -3))'
+compare_posix_output "sub negative" 'echo $((5 - -3))'
+compare_posix_output "mult negative" 'echo $((5 * -3))'
+compare_posix_output "div negative" 'echo $((-15 / 3))'
+compare_posix_output "mod negative" 'echo $((-7 % 3))'
+compare_posix_output "compare negative" 'echo $((-1 < 0))'
+compare_posix_output "zero compare" 'echo $((0 == 0))'
+
+section "183. STRING BOUNDARY CASES"
+
+compare_posix_output "empty length" 'x=""; echo ${#x}'
+compare_posix_output "single char" 'x="a"; echo ${#x}'
+compare_posix_output "special chars" 'x="!@#"; echo ${#x}'
+compare_posix_output "spaces length" 'x="a b c"; echo ${#x}'
+compare_posix_output "suffix on empty" 'x=""; echo ${x%.txt}'
+compare_posix_output "prefix on empty" 'x=""; echo ${x#pre}'
+compare_posix_output "default on set" 'x="val"; echo ${x:-def}'
+compare_posix_output "alt on unset" 'unset x; echo ${x:+alt}'
+compare_posix_output "alt on set" 'x="val"; echo ${x:+alt}'
+compare_posix_output "assign on set" 'x="val"; echo ${x:=new}; echo $x'
+
+section "184. GLOB BOUNDARY CASES"
+
+compare_posix_output "star only" 'echo "*"'
+compare_posix_output "question only" 'echo "?"'
+compare_posix_output "bracket only" 'echo "[a]"'
+compare_posix_output "glob in quotes" 'echo "*.txt"'
+compare_posix_output "glob escaped" 'echo \*'
+compare_posix_output "noglob star" 'set -f; echo *; set +f'
+compare_posix_output "noglob question" 'set -f; echo ?; set +f'
+compare_posix_output "noglob bracket" 'set -f; echo [a]; set +f'
+
+section "185. REDIRECTION BOUNDARY CASES"
+
+compare_posix_output "redir empty file" 'echo -n > /tmp/empty_$$; wc -c < /tmp/empty_$$; rm /tmp/empty_$$'
+compare_posix_output "append to new" 'rm -f /tmp/new_$$; echo test >> /tmp/new_$$; cat /tmp/new_$$; rm /tmp/new_$$'
+compare_posix_output "input from empty" 'echo -n > /tmp/empty_$$; cat < /tmp/empty_$$; echo done; rm /tmp/empty_$$'
+compare_posix_output "stderr only" 'echo err >&2 2>&1 | cat'
+compare_posix_output "stdout to null" 'echo test > /dev/null; echo $?'
+compare_posix_output "stderr to null" 'echo err >&2 2>/dev/null; echo done'
+
+section "186. PIPELINE BOUNDARY CASES"
+
+compare_posix_output "empty input pipe" 'echo -n | cat'
+compare_posix_output "single char pipe" 'echo a | cat'
+compare_posix_output "large pipe" 'seq 1 100 | wc -l'
+compare_posix_output "pipe to head 1" 'seq 1 10 | head -1'
+compare_posix_output "pipe to tail 1" 'seq 1 10 | tail -1'
+compare_posix_output "multi filter" 'seq 1 10 | head -5 | tail -1'
+
+section "187. LOOP BOUNDARY CASES"
+
+compare_posix_output "for single item" 'for i in x; do echo $i; done'
+compare_posix_output "for no items" 'for i in; do echo $i; done; echo done'
+compare_posix_output "while never" 'while false; do echo no; done; echo done'
+compare_posix_output "until immediate" 'until true; do echo no; done; echo done'
+compare_posix_output "break immediate" 'for i in 1 2 3; do break; echo $i; done; echo done'
+compare_posix_output "continue all" 'for i in 1 2 3; do continue; echo $i; done; echo done'
+compare_posix_output "nested break" 'for i in 1 2; do for j in a b; do break; done; echo $i; done'
+compare_posix_output "break 2" 'for i in 1 2; do for j in a b; do break 2; done; done; echo done'
+
+section "188. FUNCTION BOUNDARY CASES"
+
+compare_posix_output "func no args" 'f() { echo ${1:-none}; }; f'
+compare_posix_output "func many args" 'f() { echo $#; }; f a b c d e f g h i j'
+compare_posix_output "func return max" 'f() { return 255; }; f; echo $?'
+compare_posix_output "func return zero" 'f() { return 0; }; f; echo $?'
+compare_posix_output "func empty" 'f() { :; }; f; echo $?'
+compare_posix_output "func redefine" 'f() { echo one; }; f() { echo two; }; f'
+compare_posix_output "func recursive depth" 'f() { [ $1 -eq 0 ] && echo done || f $(($1-1)); }; f 5'
+
+section "189. CASE BOUNDARY CASES"
+
+compare_posix_output "case empty string" 'case "" in "") echo empty;; esac'
+compare_posix_output "case single char" 'case "x" in x) echo x;; esac'
+compare_posix_output "case no patterns" 'case x in esac; echo done'
+compare_posix_output "case all patterns" 'case x in a|b|c|x|y) echo match;; esac'
+compare_posix_output "case star first" 'case x in *) echo star;; x) echo x;; esac'
+compare_posix_output "case question" 'case ab in ??) echo two;; esac'
+compare_posix_output "case bracket range" 'case m in [a-z]) echo lower;; esac'
+compare_posix_output "case bracket neg" 'case 5 in [!a-z]) echo notlower;; esac'
+
+section "190. SUBSHELL BOUNDARY CASES"
+
+compare_posix_output "subshell empty" '(); echo $?'
+compare_posix_output "subshell exit 0" '(exit 0); echo $?'
+compare_posix_output "subshell exit 1" '(exit 1); echo $?'
+compare_posix_output "subshell var" '(X=inner; echo $X)'
+compare_posix_output "subshell no leak" 'X=outer; (X=inner); echo $X'
+compare_posix_output "subshell nested" '((echo deep))'
+compare_posix_output "subshell pipe" '(echo test) | (cat)'
+compare_posix_output "subshell bg" '(sleep 0.01) & wait; echo done'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
