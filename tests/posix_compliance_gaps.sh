@@ -576,6 +576,18 @@ compare_posix_output "if false branch" 'if false; then echo yes; else echo no; f
 compare_posix_output "elif chain" 'if false; then echo 1; elif false; then echo 2; else echo 3; fi'
 compare_posix_output "nested if" 'if true; then if true; then echo nested; fi; fi'
 
+section "141. ADDITIONAL EDGE CASES"
+
+compare_posix_output "while zero iterations" 'while false; do echo never; done; echo done'
+compare_posix_output "until zero iterations" 'until true; do echo never; done; echo done'
+compare_posix_output "function empty body" 'f() { :; }; f; echo $?'
+compare_posix_output "pipeline single" 'echo test | cat'
+compare_posix_output "assignment no space" 'x=value; echo $x'
+compare_posix_output "comment mid-line" 'echo visible # hidden'
+compare_posix_output "newline continuation" 'echo hel\
+lo'
+compare_posix_output "mixed operators" 'true && false || echo fallback'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
