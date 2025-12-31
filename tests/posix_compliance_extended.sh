@@ -570,6 +570,86 @@ compare_posix_output "unset variable" 'X=test; unset X; echo ${X:-empty}'
 compare_posix_output "unset function" 'f() { echo hi; }; unset -f f; f 2>/dev/null || echo gone'
 compare_posix_output "unset nonexistent" 'unset NONEXISTENT_VAR_XYZ; echo $?'
 
+section "81. POSIX STRING OPERATIONS"
+
+compare_posix_output "string concat" 'A=hello; B=world; echo $A$B'
+compare_posix_output "string in quotes" 'A="hello world"; echo "$A"'
+compare_posix_output "string length indirect" 'A=test; echo ${#A}'
+compare_posix_output "empty string" 'A=""; echo "[$A]"'
+compare_posix_output "string with newline" 'A="line1
+line2"; echo "$A" | wc -l'
+
+section "82. POSIX NUMERIC OPERATIONS"
+
+compare_posix_output "add subtract" 'echo $((10 - 3 + 5))'
+compare_posix_output "multiply divide" 'echo $((20 / 4 * 2))'
+compare_posix_output "parentheses" 'echo $(((2 + 3) * (4 + 1)))'
+compare_posix_output "comparison chain" 'echo $((5 > 3 && 3 > 1))'
+compare_posix_output "ternary simulation" 'X=5; [ $X -gt 3 ] && echo big || echo small'
+
+section "83. POSIX ARRAY SIMULATION"
+
+compare_posix_output "positional as array" 'set -- a b c d e; echo $3'
+compare_posix_output "array length" 'set -- a b c d e; echo $#'
+compare_posix_output "array slice" 'set -- a b c d e; shift 2; echo $1'
+compare_posix_output "array all" 'set -- a b c; echo "$@"'
+compare_posix_output "array iterate" 'set -- a b c; for x in "$@"; do echo $x; done'
+
+section "84. POSIX PATTERN MATCHING"
+
+compare_posix_output "glob question" 'touch /tmp/pat_a /tmp/pat_b 2>/dev/null; ls /tmp/pat_? 2>/dev/null | wc -l; rm -f /tmp/pat_a /tmp/pat_b'
+compare_posix_output "glob star" 'touch /tmp/patstar_1 /tmp/patstar_2 2>/dev/null; ls /tmp/patstar_* 2>/dev/null | wc -l; rm -f /tmp/patstar_*'
+compare_posix_output "glob bracket" 'touch /tmp/patbr_a /tmp/patbr_b 2>/dev/null; ls /tmp/patbr_[ab] 2>/dev/null | wc -l; rm -f /tmp/patbr_*'
+compare_posix_output "case pattern star" 'x=hello; case $x in h*) echo yes;; esac'
+compare_posix_output "case pattern question" 'x=ab; case $x in ??) echo two;; esac'
+
+section "85. POSIX ENVIRONMENT"
+
+compare_posix_output "HOME exists" 'echo $HOME | grep -c "^/"'
+compare_posix_output "PATH exists" 'echo $PATH | grep -c ":"'
+compare_posix_output "PWD exists" 'echo $PWD | grep -c "^/"'
+compare_posix_output "export visible" 'export X=val; sh -c "echo \$X"'
+compare_posix_output "env assignment" 'X=test sh -c "echo \$X"'
+
+section "86. POSIX SPECIAL EXPANSIONS"
+
+compare_posix_output "dollar dollar" 'echo $$ | grep -E "^[0-9]+$" | wc -l'
+compare_posix_output "dollar question" 'true; echo $?'
+compare_posix_output "dollar bang" 'sleep 0.01 & echo $! | grep -E "^[0-9]+$" | wc -l; wait'
+compare_posix_output "dollar hash" 'set -- a b c; echo $#'
+compare_posix_output "dollar zero" 'echo $0 | wc -c | xargs test 0 -lt && echo yes'
+
+section "87. POSIX ERROR HANDLING"
+
+compare_posix_output "command not found" 'nonexistent_cmd_xyz 2>/dev/null; echo $?'
+compare_posix_output "file not found" 'cat /nonexistent_file_xyz 2>/dev/null; echo $?'
+compare_posix_output "permission denied sim" 'test -r /etc/shadow 2>/dev/null; echo done'
+compare_posix_output "syntax error handled" 'eval "if" 2>/dev/null; echo recovered'
+
+section "88. POSIX CONDITIONAL CHAINS"
+
+compare_posix_output "if and" 'if true && true; then echo yes; fi'
+compare_posix_output "if or" 'if false || true; then echo yes; fi'
+compare_posix_output "if not" 'if ! false; then echo yes; fi'
+compare_posix_output "complex condition" 'X=5; if [ $X -gt 3 ] && [ $X -lt 10 ]; then echo range; fi'
+compare_posix_output "elif chain long" 'X=4; if [ $X -eq 1 ]; then echo 1; elif [ $X -eq 2 ]; then echo 2; elif [ $X -eq 3 ]; then echo 3; elif [ $X -eq 4 ]; then echo 4; fi'
+
+section "89. POSIX INPUT PROCESSING"
+
+compare_posix_output "read line" 'echo "hello" | { read x; echo $x; }'
+compare_posix_output "read words" 'echo "a b c" | { read x y z; echo $y; }'
+compare_posix_output "read with IFS" 'echo "a:b:c" | { IFS=: read x y z; echo $y; }'
+compare_posix_output "cat file" 'echo "test" > /tmp/read_test_$$; cat /tmp/read_test_$$; rm /tmp/read_test_$$'
+
+section "90. POSIX OUTPUT FORMATTING"
+
+compare_posix_output "printf string" 'printf "%s\n" "hello"'
+compare_posix_output "printf number" 'printf "%d\n" 42'
+compare_posix_output "printf hex" 'printf "%x\n" 255'
+compare_posix_output "printf octal" 'printf "%o\n" 64'
+compare_posix_output "printf char" 'printf "%c\n" A'
+compare_posix_output "echo no newline" 'printf "no newline"'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
