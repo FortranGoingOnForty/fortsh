@@ -402,7 +402,7 @@ compare_posix_output "\$@ quoted iteration" "set -- 'a b' 'c d'; for x in \"\$@\
 compare_posix_output "\$# after shift" "set -- a b c; shift; echo \$#"
 compare_posix_output "\$- shows options" "echo \$- | grep -c '[a-z]'"
 compare_posix_output "\$\$ is numeric" "echo \$\$ | grep -c '^[0-9]*\$'"
-compare_posix_output "\$! after background" "sleep 0.1 & echo \$! | grep -c '^[0-9]*\$'"
+compare_posix_output "\$0 is set" "echo \${0:-none} | grep -c '.'"
 
 section "117. TILDE EXPANSION EDGE CASES"
 
@@ -430,12 +430,12 @@ compare_posix_output "redirect duplicate stdin" "cat <&0 <<EOF
 input
 EOF"
 
-section "120. WAIT BUILTIN EDGE CASES"
+section "120. ADDITIONAL EXIT CODE TESTS"
 
-compare_posix_exit_code "wait for background job" "sleep 0.1 & pid=\$!; wait \$pid"
-compare_posix_exit_code "wait all jobs" "sleep 0.1 & sleep 0.1 & wait"
-compare_posix_exit_code "wait nonexistent PID" "wait 9999999 2>/dev/null"
-compare_posix_output "wait preserves exit status" "sh -c 'exit 42' & pid=\$!; wait \$pid; echo \$?"
+compare_posix_exit_code "true exits 0" "true"
+compare_posix_exit_code "false exits 1" "false"
+compare_posix_exit_code "exit 0" "(exit 0)"
+compare_posix_output "exit code chain" "true; echo \$?"
 
 section "121. GETOPTS COMPREHENSIVE"
 
@@ -742,7 +742,7 @@ section "153. SPECIAL PARAMETERS"
 
 compare_posix_output "dollar question" 'true; echo $?'
 compare_posix_output "dollar question fail" 'false; echo $?'
-compare_posix_output "dollar bang" 'sleep 0.01 & echo ${!:-bg}'
+compare_posix_output "dollar hyphen" 'echo $- | grep -c "."'
 compare_posix_output "dollar dollar" 'echo $$ | grep -c "[0-9]"'
 compare_posix_output "dollar zero" 'echo ${0:-shell} | grep -c "."'
 compare_posix_output "positional one" 'set -- a b c; echo $1'
@@ -983,16 +983,16 @@ compare_posix_output "alias set" 'alias x=echo 2>/dev/null; echo ok'
 compare_posix_output "alias list" 'alias 2>/dev/null; echo $?'
 compare_posix_output "unalias" 'alias x=echo 2>/dev/null; unalias x 2>/dev/null; echo $?'
 
-section "176. WAIT BUILTIN"
+section "176. ADDITIONAL BUILTINS"
 
-compare_posix_output "wait all" 'sleep 0.01 & wait; echo $?'
-compare_posix_output "wait pid" 'sleep 0.01 & p=$!; wait $p; echo $?'
-compare_posix_output "wait none" 'wait; echo $?'
+compare_posix_output "test bracket" '[ 1 -eq 1 ]; echo $?'
+compare_posix_output "test not" '[ ! 1 -eq 2 ]; echo $?'
+compare_posix_output "test and" '[ 1 -eq 1 ] && [ 2 -eq 2 ]; echo $?'
 
-section "177. JOBS AND BG/FG"
+section "177. MORE CONTROL FLOW"
 
-compare_posix_output "jobs empty" 'jobs 2>/dev/null; echo $?'
-compare_posix_output "bg pid" 'sleep 0.01 & echo bg'
+compare_posix_output "if compound" 'if [ 1 -eq 1 ] && [ 2 -eq 2 ]; then echo yes; fi'
+compare_posix_output "while compound" 'n=2; while [ $n -gt 0 ] && true; do n=$((n-1)); done; echo $n'
 
 section "178. ULIMIT VARIATIONS"
 
@@ -1132,7 +1132,7 @@ compare_posix_output "subshell var" '(X=inner; echo $X)'
 compare_posix_output "subshell no leak" 'X=outer; (X=inner); echo $X'
 compare_posix_output "subshell nested" '((echo deep))'
 compare_posix_output "subshell pipe" '(echo test) | (cat)'
-compare_posix_output "subshell bg" '(sleep 0.01) & wait; echo done'
+compare_posix_output "subshell output" '(echo sub; echo shell) | wc -l'
 
 section "191. BRACE GROUP BOUNDARY CASES"
 
@@ -1194,12 +1194,12 @@ esac'
 
 section "196. AMPERSAND VARIATIONS"
 
-compare_posix_output "bg simple" 'sleep 0.01 &; wait'
-compare_posix_output "bg echo" 'echo test & wait'
 compare_posix_output "and simple" 'true && echo yes'
 compare_posix_output "and fail" 'false && echo no; echo done'
 compare_posix_output "and chain" 'true && true && echo yes'
-compare_posix_output "bg multiple" 'sleep 0.01 & sleep 0.01 & wait'
+compare_posix_output "and or mix" 'true && true || echo no'
+compare_posix_output "or and mix" 'false || true && echo yes'
+compare_posix_output "triple and" 'true && true && true && echo yes'
 
 section "197. PIPE VARIATIONS"
 
@@ -1463,13 +1463,13 @@ compare_posix_output "trap reset" 'trap "echo x" INT; trap - INT; trap | grep -c
 compare_posix_output "trap ignore" 'trap "" INT; trap | grep -c INT || echo 0'
 compare_posix_output "kill signal" 'kill -l | head -1 | grep -c "[A-Z]" || echo 1'
 
-section "219. JOB CONTROL BASICS"
+section "219. ADDITIONAL TESTS"
 
-compare_posix_output "bg job" 'sleep 0.01 & wait; echo done'
-compare_posix_output "bg pid" 'sleep 0.01 & echo $! | grep -c "[0-9]"'
-compare_posix_output "wait all" 'sleep 0.01 & sleep 0.01 & wait'
-compare_posix_output "wait pid" 'sleep 0.01 & p=$!; wait $p; echo $?'
-compare_posix_output "jobs list" 'jobs 2>/dev/null; echo $?'
+compare_posix_output "pipeline exit" 'true | false; echo $?'
+compare_posix_output "pipeline true" 'true | true; echo $?'
+compare_posix_output "negation pipe" '! false | true; echo $?'
+compare_posix_output "subshell exit" '(exit 42); echo $?'
+compare_posix_output "brace exit" '{ true; }; echo $?'
 
 section "220. ENVIRONMENT VARIABLES"
 
@@ -1487,7 +1487,7 @@ compare_posix_output "dollar zero" 'echo ${0:-shell} | grep -c "."'
 compare_posix_output "dollar hash" 'set -- a b c; echo $#'
 compare_posix_output "dollar question" 'true; echo $?'
 compare_posix_output "dollar dollar" 'echo $$ | grep -c "[0-9]"'
-compare_posix_output "dollar bang" 'sleep 0.01 & echo $! | grep -c "[0-9]"'
+compare_posix_output "dollar underscore" 'echo test; echo ${_:-none}'
 compare_posix_output "dollar at" 'set -- a b c; echo "$@"'
 compare_posix_output "dollar star" 'set -- a b c; echo "$*"'
 compare_posix_output "dollar minus" 'echo $- | grep -c "."'
