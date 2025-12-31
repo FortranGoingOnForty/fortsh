@@ -1,0 +1,339 @@
+# Vi Mode Tests for fortsh
+# Tests vi-style line editing commands
+
+metadata:
+  category: "Vi Mode"
+  description: "Tests for vi-style command line editing"
+  phase: 3
+
+tests:
+  # =============================================================
+  # MODE SWITCHING
+  # =============================================================
+  - name: "Enable vi mode with set -o vi"
+    steps:
+      - send_line: "set -o vi"
+      - send_line: "echo vi_enabled"
+    expect_output: "vi_enabled"
+    match_type: "contains"
+
+  - name: "Escape enters command mode"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo hello"
+      - send_key: "Escape"
+      - send: "0"
+      - send: "dw"
+      - send: "i"
+      - send: "echo goodbye"
+      - send_key: "Enter"
+    expect_output: "goodbye"
+    match_type: "contains"
+
+  # =============================================================
+  # MOVEMENT COMMANDS (in command mode)
+  # =============================================================
+  - name: "h moves cursor left"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "hhi"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "teXst"
+    match_type: "contains"
+
+  - name: "l moves cursor right"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "0lli"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "ecXho test"
+    match_type: "contains"
+
+  - name: "0 moves to beginning of line"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "0i"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "Xecho test"
+    match_type: "contains"
+
+  - name: "$ moves to end of line"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "0$a"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "echo testX"
+    match_type: "contains"
+
+  - name: "w moves forward one word"
+    steps:
+      - send_line: "set -o vi"
+      - send: "one two three"
+      - send_key: "Escape"
+      - send: "0wi"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "one Xtwo three"
+    match_type: "contains"
+
+  - name: "b moves backward one word"
+    steps:
+      - send_line: "set -o vi"
+      - send: "one two three"
+      - send_key: "Escape"
+      - send: "bi"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "one two Xthree"
+    match_type: "contains"
+
+  - name: "e moves to end of word"
+    steps:
+      - send_line: "set -o vi"
+      - send: "one two three"
+      - send_key: "Escape"
+      - send: "0ea"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "oneX two three"
+    match_type: "contains"
+
+  # =============================================================
+  # INSERT MODE COMMANDS
+  # =============================================================
+  - name: "i enters insert mode before cursor"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "0i"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "Xecho test"
+    match_type: "contains"
+
+  - name: "a enters insert mode after cursor"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "0a"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "eXcho test"
+    match_type: "contains"
+
+  - name: "I enters insert mode at beginning"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "I"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "Xecho test"
+    match_type: "contains"
+
+  - name: "A enters insert mode at end"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "A"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "echo testX"
+    match_type: "contains"
+
+  # =============================================================
+  # DELETION COMMANDS
+  # =============================================================
+  - name: "x deletes character under cursor"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "0x"
+      - send: "i"
+      - send_key: "Enter"
+    expect_output: "cho test"
+    match_type: "contains"
+
+  - name: "X deletes character before cursor"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "X"
+      - send: "a"
+      - send_key: "Enter"
+    expect_output: "echo tes"
+    match_type: "contains"
+
+  - name: "dw deletes word"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo hello world"
+      - send_key: "Escape"
+      - send: "0dw"
+      - send: "i"
+      - send_key: "Enter"
+    expect_output: "hello world"
+    match_type: "contains"
+
+  - name: "dd clears entire line"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "dd"
+      - send: "i"
+      - send: "echo cleared"
+      - send_key: "Enter"
+    expect_output: "cleared"
+    match_type: "contains"
+
+  - name: "D deletes to end of line"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo hello world"
+      - send_key: "Escape"
+      - send: "0wD"
+      - send: "a"
+      - send_key: "Enter"
+    expect_output: "echo"
+    match_type: "contains"
+
+  # =============================================================
+  # CHANGE COMMANDS
+  # =============================================================
+  - name: "cw changes word"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo hello world"
+      - send_key: "Escape"
+      - send: "0wcw"
+      - send: "goodbye"
+      - send_key: "Enter"
+    expect_output: "echo goodbye world"
+    match_type: "contains"
+
+  - name: "cc changes entire line"
+    steps:
+      - send_line: "set -o vi"
+      - send: "old command"
+      - send_key: "Escape"
+      - send: "cc"
+      - send: "echo new"
+      - send_key: "Enter"
+    expect_output: "new"
+    match_type: "contains"
+
+  - name: "C changes to end of line"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo hello world"
+      - send_key: "Escape"
+      - send: "0wC"
+      - send: "changed"
+      - send_key: "Enter"
+    expect_output: "echo changed"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY NAVIGATION (in command mode)
+  # =============================================================
+  - name: "k moves to previous history"
+    steps:
+      - send_line: "set -o vi"
+      - send_line: "echo first"
+      - send_line: "echo second"
+      - send_key: "Escape"
+      - send: "k"
+      - send_key: "Enter"
+    expect_output: "second"
+    match_type: "contains"
+
+  - name: "j moves to next history"
+    steps:
+      - send_line: "set -o vi"
+      - send_line: "echo first"
+      - send_line: "echo second"
+      - send_key: "Escape"
+      - send: "kk"
+      - send: "j"
+      - send_key: "Enter"
+    expect_output: "second"
+    match_type: "contains"
+
+  # =============================================================
+  # UNDO
+  # =============================================================
+  - name: "u undoes last change"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "0dw"
+      - send: "u"
+      - send: "i"
+      - send_key: "Enter"
+    expect_output: "echo test"
+    match_type: "contains"
+
+  # =============================================================
+  # REPEAT AND COUNT
+  # =============================================================
+  - name: "2x deletes two characters"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo abcd"
+      - send_key: "Escape"
+      - send: "02x"
+      - send: "i"
+      - send_key: "Enter"
+    expect_output: "ho abcd"
+    match_type: "contains"
+
+  - name: "3l moves 3 characters right"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo test"
+      - send_key: "Escape"
+      - send: "03li"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "echXo test"
+    match_type: "contains"
+
+  # =============================================================
+  # RETURN TO EMACS MODE
+  # =============================================================
+  - name: "set -o emacs returns to emacs mode"
+    steps:
+      - send_line: "set -o vi"
+      - send_line: "set -o emacs"
+      - send: "echo hello"
+      - send_key: "C-a"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "Xecho hello"
+    match_type: "contains"
