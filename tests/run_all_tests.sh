@@ -121,6 +121,7 @@ posix_compliance_charclass.sh
 posix_compliance_special.sh
 posix_compliance_printf.sh
 posix_compliance_filetest.sh
+posix_compliance_options.sh
 "
 
 POSIX_SLOW_TESTS="
