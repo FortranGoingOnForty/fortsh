@@ -1584,6 +1584,408 @@ compare_posix_output "func in for" 'f() { echo $1; }; for i in a b c; do f $i; d
 compare_posix_output "pipe to sort" 'printf "c\na\nb\n" | sort | head -1'
 compare_posix_output "nested subshell" '((echo deep))'
 
+section "231. EXPR COMMAND"
+
+compare_posix_output "expr add" 'expr 5 + 3'
+compare_posix_output "expr sub" 'expr 10 - 3'
+compare_posix_output "expr mul" 'expr 4 \* 5'
+compare_posix_output "expr div" 'expr 20 / 4'
+compare_posix_output "expr mod" 'expr 17 % 5'
+compare_posix_output "expr compare lt" 'expr 3 \< 5'
+compare_posix_output "expr compare gt" 'expr 5 \> 3'
+compare_posix_output "expr compare eq" 'expr 5 = 5'
+compare_posix_output "expr string" 'expr length hello'
+compare_posix_output "expr substr" 'expr substr hello 2 3'
+
+section "232. BASENAME AND DIRNAME"
+
+compare_posix_output "basename simple" 'basename /path/to/file'
+compare_posix_output "basename suffix" 'basename /path/to/file.txt .txt'
+compare_posix_output "basename no path" 'basename file.txt'
+compare_posix_output "dirname simple" 'dirname /path/to/file'
+compare_posix_output "dirname root" 'dirname /file'
+compare_posix_output "dirname relative" 'dirname file'
+compare_posix_output "dirname dot" 'dirname ./file'
+compare_posix_output "dirname trailing" 'dirname /path/to/'
+
+section "233. CUT COMMAND"
+
+compare_posix_output "cut field" 'echo "a:b:c" | cut -d: -f2'
+compare_posix_output "cut fields" 'echo "a:b:c" | cut -d: -f1,3'
+compare_posix_output "cut chars" 'echo "hello" | cut -c1-3'
+compare_posix_output "cut char single" 'echo "hello" | cut -c2'
+compare_posix_output "cut range" 'echo "a:b:c:d" | cut -d: -f2-3'
+
+section "234. TR COMMAND"
+
+compare_posix_output "tr simple" 'echo abc | tr a-z A-Z'
+compare_posix_output "tr delete" 'echo "a1b2c3" | tr -d 0-9'
+compare_posix_output "tr squeeze" 'echo "aabbcc" | tr -s a-z'
+compare_posix_output "tr single" 'echo abc | tr a x'
+compare_posix_output "tr complement" 'echo "a1b2" | tr -cd a-z'
+
+section "235. SORT COMMAND"
+
+compare_posix_output "sort lines" 'printf "c\na\nb\n" | sort'
+compare_posix_output "sort reverse" 'printf "a\nb\nc\n" | sort -r'
+compare_posix_output "sort numeric" 'printf "10\n2\n1\n" | sort -n'
+compare_posix_output "sort unique" 'printf "a\na\nb\n" | sort -u'
+compare_posix_output "sort first" 'printf "c\na\nb\n" | sort | head -1'
+
+section "236. UNIQ COMMAND"
+
+compare_posix_output "uniq simple" 'printf "a\na\nb\n" | uniq'
+compare_posix_output "uniq count" 'printf "a\na\nb\n" | uniq -c | wc -l'
+compare_posix_output "uniq duplicate" 'printf "a\na\nb\n" | uniq -d'
+compare_posix_output "uniq unique" 'printf "a\na\nb\n" | uniq -u'
+
+section "237. WC COMMAND"
+
+compare_posix_output "wc lines" 'printf "a\nb\nc\n" | wc -l'
+compare_posix_output "wc words" 'echo "one two three" | wc -w'
+compare_posix_output "wc chars" 'echo "hello" | wc -c'
+compare_posix_output "wc empty" 'echo "" | wc -l'
+
+section "238. HEAD AND TAIL"
+
+compare_posix_output "head default" 'seq 1 20 | head | wc -l'
+compare_posix_output "head n" 'seq 1 10 | head -3'
+compare_posix_output "tail default" 'seq 1 20 | tail | wc -l'
+compare_posix_output "tail n" 'seq 1 10 | tail -3'
+compare_posix_output "head tail combo" 'seq 1 10 | head -5 | tail -1'
+
+section "239. GREP PATTERNS"
+
+compare_posix_output "grep simple" 'echo hello | grep hello'
+compare_posix_output "grep no match" 'echo hello | grep xyz; echo $?'
+compare_posix_output "grep count" 'printf "a\nb\na\n" | grep -c a'
+compare_posix_output "grep ignore case" 'echo HELLO | grep -i hello'
+compare_posix_output "grep invert" 'printf "a\nb\n" | grep -v a'
+compare_posix_output "grep line" 'printf "abc\ndef\n" | grep -n abc'
+
+section "240. SED BASICS"
+
+compare_posix_output "sed substitute" 'echo hello | sed "s/hello/world/"'
+compare_posix_output "sed global" 'echo "aaa" | sed "s/a/b/g"'
+compare_posix_output "sed delete" 'printf "a\nb\nc\n" | sed "1d" | wc -l'
+compare_posix_output "sed print" 'printf "a\nb\n" | sed -n "1p"'
+compare_posix_output "sed range" 'printf "a\nb\nc\n" | sed "1,2d"'
+
+section "241. AWK BASICS"
+
+compare_posix_output "awk print" 'echo "a b c" | awk "{print \$2}"'
+compare_posix_output "awk field" 'echo "a:b:c" | awk -F: "{print \$2}"'
+compare_posix_output "awk NF" 'echo "a b c" | awk "{print NF}"'
+compare_posix_output "awk NR" 'printf "a\nb\n" | awk "{print NR}"'
+compare_posix_output "awk math" 'echo "5 3" | awk "{print \$1 + \$2}"'
+
+section "242. TEE COMMAND"
+
+compare_posix_output "tee output" 'echo test | tee /dev/null'
+compare_posix_output "tee passthrough" 'echo hello | tee /dev/null | cat'
+
+section "243. XARGS BASICS"
+
+compare_posix_output "xargs echo" 'echo "a b c" | xargs echo'
+compare_posix_output "xargs n1" 'printf "a\nb\nc\n" | xargs -n1 echo | wc -l'
+
+section "244. FIND BASICS"
+
+compare_posix_output "find type d" 'find /tmp -maxdepth 1 -type d 2>/dev/null | head -1 | grep -c "/"'
+compare_posix_output "find name" 'find /etc -maxdepth 1 -name "passwd" 2>/dev/null | grep -c passwd || echo 0'
+
+section "245. TEST COMMAND FORMS"
+
+compare_posix_output "test bracket" '[ 1 -eq 1 ]; echo $?'
+compare_posix_output "test keyword" 'test 1 -eq 1; echo $?'
+compare_posix_output "test string" '[ "a" = "a" ]; echo $?'
+compare_posix_output "test empty" '[ -z "" ]; echo $?'
+compare_posix_output "test nonempty" '[ -n "x" ]; echo $?'
+compare_posix_output "test not" '[ ! 1 -eq 2 ]; echo $?'
+compare_posix_output "test and ext" '[ 1 -eq 1 -a 2 -eq 2 ]; echo $?'
+compare_posix_output "test or ext" '[ 1 -eq 2 -o 2 -eq 2 ]; echo $?'
+
+section "246. ARITHMETIC BITWISE"
+
+compare_posix_output "arith and" 'echo $((5 & 3))'
+compare_posix_output "arith or" 'echo $((5 | 3))'
+compare_posix_output "arith xor" 'echo $((5 ^ 3))'
+compare_posix_output "arith not" 'echo $((~0))'
+compare_posix_output "arith lshift" 'echo $((1 << 4))'
+compare_posix_output "arith rshift" 'echo $((16 >> 2))'
+
+section "247. COMPLEX CASE PATTERNS"
+
+compare_posix_output "case or pattern" 'case abc in a*|b*) echo match;; esac'
+compare_posix_output "case bracket" 'case a in [abc]) echo match;; esac'
+compare_posix_output "case negbracket" 'case d in [!abc]) echo match;; esac'
+compare_posix_output "case question" 'case ab in ??) echo two;; esac'
+compare_posix_output "case star" 'case anything in *) echo match;; esac'
+compare_posix_output "case empty" 'case "" in "") echo empty;; esac'
+compare_posix_output "case number" 'case 42 in [0-9]*) echo num;; esac'
+
+section "248. COMPLEX FOR LOOPS"
+
+compare_posix_output "for glob safe" 'set -f; for i in *; do echo "$i"; done; set +f'
+compare_posix_output "for break early" 'for i in 1 2 3 4 5; do echo $i; [ $i -eq 3 ] && break; done | wc -l'
+compare_posix_output "for continue skip" 'for i in 1 2 3; do [ $i -eq 2 ] && continue; echo $i; done | wc -l'
+compare_posix_output "for nested count" 'for i in 1 2; do for j in a b c; do echo x; done; done | wc -l'
+compare_posix_output "for empty list" 'for i in; do echo never; done; echo done'
+compare_posix_output "for single" 'for i in only; do echo $i; done'
+
+section "249. COMPLEX WHILE LOOPS"
+
+compare_posix_output "while decrement" 'n=5; while [ $n -gt 0 ]; do n=$((n-1)); done; echo $n'
+compare_posix_output "while false" 'while false; do echo never; done; echo done'
+compare_posix_output "while break" 'n=0; while true; do n=$((n+1)); [ $n -ge 3 ] && break; done; echo $n'
+compare_posix_output "while nested" 'i=2; while [ $i -gt 0 ]; do j=2; while [ $j -gt 0 ]; do echo x; j=$((j-1)); done; i=$((i-1)); done | wc -l'
+compare_posix_output "until true" 'until true; do echo never; done; echo done'
+compare_posix_output "until count" 'n=0; until [ $n -ge 3 ]; do n=$((n+1)); done; echo $n'
+
+section "250. COMPLEX FUNCTIONS"
+
+compare_posix_output "func args count" 'f() { echo $#; }; f a b c d e'
+compare_posix_output "func all args" 'f() { echo "$@"; }; f a b c'
+compare_posix_output "func star args" 'f() { echo "$*"; }; f a b c'
+compare_posix_output "func return val" 'f() { return 42; }; f; echo $?'
+compare_posix_output "func modify global" 'x=old; f() { x=new; }; f; echo $x'
+compare_posix_output "func recursive" 'f() { [ $1 -le 1 ] && echo 1 || echo $(($(f $(($1-1))) + $(f $(($1-2))))); }; f 5'
+compare_posix_output "func in subshell" 'f() { echo inner; }; (f)'
+compare_posix_output "func pipe" 'f() { echo test; }; f | cat'
+compare_posix_output "func empty" 'f() { :; }; f; echo $?'
+compare_posix_output "func chain" 'f() { echo $1; }; g() { f hello; }; g'
+
+section "251. SHELL ARITHMETIC EDGE CASES"
+
+compare_posix_output "arith octal" 'echo $((010))'
+compare_posix_output "arith hex" 'echo $((0x10))'
+compare_posix_output "arith unary plus" 'echo $((+5))'
+compare_posix_output "arith unary minus" 'echo $((-5))'
+compare_posix_output "arith double neg" 'echo $((--5))'
+compare_posix_output "arith complex" 'echo $(((1+2)*(3+4)))'
+compare_posix_output "arith assign" 'x=5; echo $((x=x+1)); echo $x'
+compare_posix_output "arith incr" 'x=5; echo $((x+=1))'
+compare_posix_output "arith decr" 'x=5; echo $((x-=1))'
+
+section "252. VARIABLE EDGE CASES"
+
+compare_posix_output "var underscore" '_x=val; echo $_x'
+compare_posix_output "var number suffix" 'x1=val; echo $x1'
+compare_posix_output "var long name" 'very_long_variable_name_here=val; echo $very_long_variable_name_here'
+compare_posix_output "var empty val" 'x=; echo "[$x]"'
+compare_posix_output "var space val" 'x="a b"; echo "$x"'
+compare_posix_output "var newline val" 'x="a
+b"; echo "$x" | wc -l'
+compare_posix_output "var special chars" 'x="!@#"; echo "$x"'
+compare_posix_output "var equals in val" 'x="a=b"; echo "$x"'
+
+section "253. QUOTING EDGE CASES"
+
+compare_posix_output "quote empty" 'echo ""'
+compare_posix_output "quote space" 'echo " "'
+compare_posix_output "quote tab" 'echo "	"'
+compare_posix_output "quote newline" 'echo "
+"'
+compare_posix_output "quote dollar" 'echo "\$"'
+compare_posix_output "quote backslash" 'echo "\\"'
+compare_posix_output "quote backtick" 'echo "\`"'
+compare_posix_output "quote double" 'echo "\""'
+compare_posix_output "single in double" 'echo "'"'"'"'
+compare_posix_output "double in single" "echo '\"'"
+
+section "254. PARAMETER EXPANSION COMPREHENSIVE"
+
+compare_posix_output "param default unset" 'echo ${undef:-default}'
+compare_posix_output "param default empty" 'x=; echo ${x:-default}'
+compare_posix_output "param default set" 'x=val; echo ${x:-default}'
+compare_posix_output "param alt unset" 'echo ${undef:+alt}'
+compare_posix_output "param alt empty" 'x=; echo ${x:+alt}'
+compare_posix_output "param alt set" 'x=val; echo ${x:+alt}'
+compare_posix_output "param assign unset" 'unset y; echo ${y:=assigned}; echo $y'
+compare_posix_output "param length" 'x=hello; echo ${#x}'
+compare_posix_output "param suffix" 'x=file.txt; echo ${x%.txt}'
+compare_posix_output "param prefix" 'x=prefix_name; echo ${x#prefix_}'
+
+section "255. REDIRECTION COMPREHENSIVE"
+
+compare_posix_output "redir stdout" 'echo test > /tmp/r$$; cat /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir append" 'echo a > /tmp/r$$; echo b >> /tmp/r$$; cat /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir stdin" 'echo test > /tmp/r$$; cat < /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir stderr" 'echo err >&2 2>/dev/null; echo ok'
+compare_posix_output "redir fd dup" 'echo test 2>&1 | cat'
+compare_posix_output "redir devnull" 'echo test > /dev/null; echo $?'
+compare_posix_output "redir clobber" 'echo a > /tmp/r$$; echo b > /tmp/r$$; cat /tmp/r$$; rm /tmp/r$$'
+
+section "256. HEREDOC COMPREHENSIVE"
+
+compare_posix_output "heredoc basic" 'cat <<EOF
+line
+EOF'
+compare_posix_output "heredoc multi" 'cat <<EOF
+one
+two
+EOF'
+compare_posix_output "heredoc var" 'x=val; cat <<EOF
+$x
+EOF'
+compare_posix_output "heredoc quoted" "cat <<'EOF'
+\$x
+EOF"
+compare_posix_output "heredoc tab strip" 'cat <<-EOF
+	indented
+EOF'
+
+section "257. PIPELINE COMPREHENSIVE"
+
+compare_posix_output "pipe two" 'echo test | cat'
+compare_posix_output "pipe three" 'echo test | cat | cat'
+compare_posix_output "pipe four" 'echo test | cat | cat | cat'
+compare_posix_output "pipe filter" 'echo hello | grep h'
+compare_posix_output "pipe transform" 'echo abc | tr a-z A-Z'
+compare_posix_output "pipe count" 'printf "a\nb\nc\n" | wc -l'
+compare_posix_output "pipe subshell" '(echo test) | cat'
+compare_posix_output "pipe brace" '{ echo test; } | cat'
+
+section "258. LOGICAL OPERATORS COMPREHENSIVE"
+
+compare_posix_output "and tt" 'true && true; echo $?'
+compare_posix_output "and tf" 'true && false; echo $?'
+compare_posix_output "and ft" 'false && true; echo $?'
+compare_posix_output "and ff" 'false && false; echo $?'
+compare_posix_output "or tt" 'true || true; echo $?'
+compare_posix_output "or tf" 'true || false; echo $?'
+compare_posix_output "or ft" 'false || true; echo $?'
+compare_posix_output "or ff" 'false || false; echo $?'
+compare_posix_output "not t" '! true; echo $?'
+compare_posix_output "not f" '! false; echo $?'
+compare_posix_output "mixed 1" 'true && false || echo fallback'
+compare_posix_output "mixed 2" 'false || true && echo success'
+
+section "259. SUBSHELL COMPREHENSIVE"
+
+compare_posix_output "sub echo" '(echo sub)'
+compare_posix_output "sub var" '(x=inner; echo $x)'
+compare_posix_output "sub no leak" 'x=outer; (x=inner); echo $x'
+compare_posix_output "sub exit" '(exit 5); echo $?'
+compare_posix_output "sub cd" '(cd /tmp; pwd)'
+compare_posix_output "sub pipe" '(echo a; echo b) | wc -l'
+compare_posix_output "sub nested" '((echo deep))'
+compare_posix_output "sub multi" '(echo a); (echo b)'
+
+section "260. BRACE GROUP COMPREHENSIVE"
+
+compare_posix_output "brace echo" '{ echo brace; }'
+compare_posix_output "brace multi" '{ echo a; echo b; }'
+compare_posix_output "brace var" '{ x=val; }; echo $x'
+compare_posix_output "brace pipe" '{ echo test; } | cat'
+compare_posix_output "brace redir" '{ echo test; } > /tmp/b$$; cat /tmp/b$$; rm /tmp/b$$'
+compare_posix_output "brace nested" '{ { echo deep; }; }'
+compare_posix_output "brace and sub" '{ (echo sub); }'
+
+section "261. SPECIAL CHARACTERS"
+
+compare_posix_output "char star" 'echo "*"'
+compare_posix_output "char question" 'echo "?"'
+compare_posix_output "char bracket" 'echo "[]"'
+compare_posix_output "char brace" 'echo "{}"'
+compare_posix_output "char paren" 'echo "()"'
+compare_posix_output "char pipe" 'echo "|"'
+compare_posix_output "char amp" 'echo "&"'
+compare_posix_output "char semi" 'echo ";"'
+compare_posix_output "char dollar" 'echo "\$"'
+compare_posix_output "char hash" 'echo "#"'
+
+section "262. COMMAND LINE PARSING"
+
+compare_posix_output "parse simple" 'echo hello'
+compare_posix_output "parse multi arg" 'echo a b c'
+compare_posix_output "parse quoted arg" 'echo "a b c"'
+compare_posix_output "parse mixed" 'echo a "b c" d'
+compare_posix_output "parse empty arg" 'echo "" x'
+compare_posix_output "parse escape" 'echo a\ b'
+compare_posix_output "parse continued" 'echo hel\
+lo'
+
+section "263. EXECUTION CONTEXT"
+
+compare_posix_output "exec subshell" '(echo sub)'
+compare_posix_output "exec pipeline" 'echo test | cat'
+compare_posix_output "exec background" 'true & echo fg'
+compare_posix_output "exec compound" '{ echo a; echo b; }'
+compare_posix_output "exec function" 'f() { echo func; }; f'
+compare_posix_output "exec builtin" 'echo hello'
+compare_posix_output "exec external" '/bin/echo hello'
+
+section "264. STRING COMPARISON"
+
+compare_posix_output "str eq" '[ "a" = "a" ]; echo $?'
+compare_posix_output "str ne" '[ "a" != "b" ]; echo $?'
+compare_posix_output "str lt" '[ "a" \< "b" ]; echo $?'
+compare_posix_output "str gt" '[ "b" \> "a" ]; echo $?'
+compare_posix_output "str empty" '[ -z "" ]; echo $?'
+compare_posix_output "str nonempty" '[ -n "x" ]; echo $?'
+compare_posix_output "str space" '[ "a b" = "a b" ]; echo $?'
+
+section "265. NUMERIC COMPARISON"
+
+compare_posix_output "num eq" '[ 5 -eq 5 ]; echo $?'
+compare_posix_output "num ne" '[ 5 -ne 6 ]; echo $?'
+compare_posix_output "num lt" '[ 3 -lt 5 ]; echo $?'
+compare_posix_output "num gt" '[ 5 -gt 3 ]; echo $?'
+compare_posix_output "num le" '[ 5 -le 5 ]; echo $?'
+compare_posix_output "num ge" '[ 5 -ge 5 ]; echo $?'
+compare_posix_output "num zero" '[ 0 -eq 0 ]; echo $?'
+compare_posix_output "num neg" '[ -1 -lt 0 ]; echo $?'
+
+section "266. FILE TESTS COMPREHENSIVE"
+
+compare_posix_output "file e" '[ -e /tmp ]; echo $?'
+compare_posix_output "file f" '[ -f /etc/passwd ]; echo $?'
+compare_posix_output "file d" '[ -d /tmp ]; echo $?'
+compare_posix_output "file r" '[ -r /etc/passwd ]; echo $?'
+compare_posix_output "file w" '[ -w /tmp ]; echo $?'
+compare_posix_output "file x" '[ -x /bin/sh ]; echo $?'
+compare_posix_output "file s" '[ -s /etc/passwd ]; echo $?'
+compare_posix_output "file L" '[ -L /dev/stdin ] 2>/dev/null; echo $?'
+
+section "267. PRINTF FORMAT SPECIFIERS"
+
+compare_posix_output "printf s" 'printf "%s\n" hello'
+compare_posix_output "printf d" 'printf "%d\n" 42'
+compare_posix_output "printf i" 'printf "%i\n" 42'
+compare_posix_output "printf o" 'printf "%o\n" 8'
+compare_posix_output "printf x" 'printf "%x\n" 255'
+compare_posix_output "printf X" 'printf "%X\n" 255'
+compare_posix_output "printf c" 'printf "%c\n" A'
+compare_posix_output "printf percent" 'printf "%%\n"'
+
+section "268. PRINTF WIDTH AND PRECISION"
+
+compare_posix_output "printf width" 'printf "%5d\n" 42'
+compare_posix_output "printf zero" 'printf "%05d\n" 42'
+compare_posix_output "printf left" 'printf "%-5d|\n" 42'
+compare_posix_output "printf prec" 'printf "%.3s\n" hello'
+compare_posix_output "printf both" 'printf "%8.3s\n" hello'
+
+section "269. ECHO OPTIONS"
+
+compare_posix_output "echo simple" 'echo hello'
+compare_posix_output "echo multi" 'echo a b c'
+compare_posix_output "echo n" 'echo -n test; echo done'
+compare_posix_output "echo e tab" 'echo -e "a\tb"'
+compare_posix_output "echo e nl" 'echo -e "a\nb" | wc -l'
+
+section "270. ENVIRONMENT MANIPULATION"
+
+compare_posix_output "env set" 'X=val; echo $X'
+compare_posix_output "env export" 'export X=val; echo $X'
+compare_posix_output "env unset" 'X=val; unset X; echo ${X:-unset}'
+compare_posix_output "env prefix" 'X=val sh -c "echo \$X"'
+compare_posix_output "env readonly" 'readonly X=const; echo $X'
+compare_posix_output "env home" 'echo ${HOME:-none} | grep -c "/"'
+compare_posix_output "env path" 'echo ${PATH:-none} | grep -c ":"'
+compare_posix_output "env pwd" 'echo ${PWD:-none} | grep -c "/"'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
