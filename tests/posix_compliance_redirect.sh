@@ -410,6 +410,198 @@ else
 fi
 
 # =====================================
+section "446. PIPELINE EXIT STATUS"
+# =====================================
+
+# Last command determines exit status
+result=$("$FORTSH_BIN" -c 'false | true; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "Pipeline exit is last command (false|true=0)"
+else
+    fail "Pipeline exit is last command (false|true=0)" "0" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'true | false; echo $?' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "Pipeline exit is last command (true|false=1)"
+else
+    fail "Pipeline exit is last command (true|false=1)" "1" "$result"
+fi
+
+# Multi-stage pipeline
+result=$("$FORTSH_BIN" -c 'echo a | cat | cat | cat; echo $?' 2>&1)
+if echo "$result" | grep -q "0"; then
+    pass "Multi-stage pipeline success"
+else
+    fail "Multi-stage pipeline success" "0" "$result"
+fi
+
+# Pipeline with negation
+result=$("$FORTSH_BIN" -c '! false | true; echo $?' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "! negates pipeline exit"
+else
+    fail "! negates pipeline exit" "1" "$result"
+fi
+
+# =====================================
+section "447. EXEC REDIRECTIONS"
+# =====================================
+
+# exec without command modifies shell FDs
+result=$("$FORTSH_BIN" -c '
+exec 3>"'"$TEST_DIR"'/exec_fd3.txt"
+echo "fd3 data" >&3
+exec 3>&-
+cat "'"$TEST_DIR"'/exec_fd3.txt"
+' 2>&1)
+if [ "$result" = "fd3 data" ]; then
+    pass "exec opens FD 3 for writing"
+else
+    fail "exec opens FD 3 for writing" "fd3 data" "$result"
+fi
+
+# exec read/write mode
+result=$("$FORTSH_BIN" -c '
+echo "initial" > "'"$TEST_DIR"'/rw_test.txt"
+exec 4<>"'"$TEST_DIR"'/rw_test.txt"
+read line <&4
+echo "read: $line"
+exec 4>&-
+' 2>&1)
+if [ "$result" = "read: initial" ]; then
+    pass "exec <> opens read-write"
+else
+    fail "exec <> opens read-write" "read: initial" "$result"
+fi
+
+# =====================================
+section "448. COMPOUND REDIRECTIONS"
+# =====================================
+
+# Redirect entire loop
+result=$("$FORTSH_BIN" -c '
+for i in 1 2 3; do
+    echo $i
+done > "'"$TEST_DIR"'/loop_out.txt"
+cat "'"$TEST_DIR"'/loop_out.txt"
+' 2>&1)
+expected=$(printf "1\n2\n3")
+if [ "$result" = "$expected" ]; then
+    pass "Redirect entire for loop"
+else
+    fail "Redirect entire for loop" "$expected" "$result"
+fi
+
+# Redirect if statement
+result=$("$FORTSH_BIN" -c '
+if true; then
+    echo inside
+fi > "'"$TEST_DIR"'/if_out.txt"
+cat "'"$TEST_DIR"'/if_out.txt"
+' 2>&1)
+if [ "$result" = "inside" ]; then
+    pass "Redirect entire if statement"
+else
+    fail "Redirect entire if statement" "inside" "$result"
+fi
+
+# Redirect case statement
+result=$("$FORTSH_BIN" -c '
+case "x" in
+    x) echo matched;;
+esac > "'"$TEST_DIR"'/case_out.txt"
+cat "'"$TEST_DIR"'/case_out.txt"
+' 2>&1)
+if [ "$result" = "matched" ]; then
+    pass "Redirect entire case statement"
+else
+    fail "Redirect entire case statement" "matched" "$result"
+fi
+
+# =====================================
+section "449. INPUT REDIRECTION VARIATIONS"
+# =====================================
+
+# cat multiple files
+echo "file1" > "$TEST_DIR/cat1.txt"
+echo "file2" > "$TEST_DIR/cat2.txt"
+result=$("$FORTSH_BIN" -c 'cat "'"$TEST_DIR"'/cat1.txt" "'"$TEST_DIR"'/cat2.txt"' 2>&1)
+expected=$(printf "file1\nfile2")
+if [ "$result" = "$expected" ]; then
+    pass "cat multiple files"
+else
+    fail "cat multiple files" "$expected" "$result"
+fi
+
+# Input from file
+echo "from file" > "$TEST_DIR/input.txt"
+result=$("$FORTSH_BIN" -c 'cat < "'"$TEST_DIR"'/input.txt"' 2>&1)
+if [ "$result" = "from file" ]; then
+    pass "< redirects stdin from file"
+else
+    fail "< redirects stdin from file" "from file" "$result"
+fi
+
+# =====================================
+section "450. OUTPUT APPEND BEHAVIOR"
+# =====================================
+
+# >> creates file if not exists
+rm -f "$TEST_DIR/append_new.txt"
+result=$("$FORTSH_BIN" -c 'echo first >> "'"$TEST_DIR"'/append_new.txt"; cat "'"$TEST_DIR"'/append_new.txt"' 2>&1)
+if [ "$result" = "first" ]; then
+    pass ">> creates file if not exists"
+else
+    fail ">> creates file if not exists" "first" "$result"
+fi
+
+# >> appends to existing
+echo "line1" > "$TEST_DIR/append_exist.txt"
+result=$("$FORTSH_BIN" -c 'echo line2 >> "'"$TEST_DIR"'/append_exist.txt"; cat "'"$TEST_DIR"'/append_exist.txt"' 2>&1)
+expected=$(printf "line1\nline2")
+if [ "$result" = "$expected" ]; then
+    pass ">> appends to existing file"
+else
+    fail ">> appends to existing file" "$expected" "$result"
+fi
+
+# Multiple appends
+rm -f "$TEST_DIR/multi_append.txt"
+result=$("$FORTSH_BIN" -c '
+echo a >> "'"$TEST_DIR"'/multi_append.txt"
+echo b >> "'"$TEST_DIR"'/multi_append.txt"
+echo c >> "'"$TEST_DIR"'/multi_append.txt"
+cat "'"$TEST_DIR"'/multi_append.txt"
+' 2>&1)
+expected=$(printf "a\nb\nc")
+if [ "$result" = "$expected" ]; then
+    pass "Multiple sequential appends"
+else
+    fail "Multiple sequential appends" "$expected" "$result"
+fi
+
+# =====================================
+section "451. REDIRECT WITH ASSIGNMENTS"
+# =====================================
+
+# Assignment with redirect
+result=$("$FORTSH_BIN" -c 'x=$(cat < /dev/null); echo "empty:[$x]"' 2>&1)
+if [ "$result" = "empty:[]" ]; then
+    pass "Assignment from empty file"
+else
+    fail "Assignment from empty file" "empty:[]" "$result"
+fi
+
+# Assignment captures command output despite redirects
+result=$("$FORTSH_BIN" -c 'x=$(echo hello 2>/dev/null); echo $x' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "Assignment captures stdout"
+else
+    fail "Assignment captures stdout" "hello" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
