@@ -1119,6 +1119,258 @@ else
 fi
 
 # =====================================
+section "391. EXPR COMMAND"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'expr 5 + 3' 2>&1)
+if [ "$result" = "8" ]; then
+    pass "expr addition"
+else
+    fail "expr addition" "8" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'expr 10 - 4' 2>&1)
+if [ "$result" = "6" ]; then
+    pass "expr subtraction"
+else
+    fail "expr subtraction" "6" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'expr 6 \* 7' 2>&1)
+if [ "$result" = "42" ]; then
+    pass "expr multiplication"
+else
+    fail "expr multiplication" "42" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'expr 20 / 4' 2>&1)
+if [ "$result" = "5" ]; then
+    pass "expr division"
+else
+    fail "expr division" "5" "$result"
+fi
+
+# =====================================
+section "392. TEST COMMAND VARIATIONS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'test -f /etc/passwd && echo yes' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "test -f regular file"
+else
+    fail "test -f regular file" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'test -d /tmp && echo yes' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "test -d directory"
+else
+    fail "test -d directory" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'test 5 -eq 5 && echo yes' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "test numeric equal"
+else
+    fail "test numeric equal" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'test "abc" = "abc" && echo yes' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "test string equal"
+else
+    fail "test string equal" "yes" "$result"
+fi
+
+# =====================================
+section "393. BASENAME AND DIRNAME SIMULATION"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'X=/path/to/file.txt; echo ${X##*/}' 2>&1)
+if [ "$result" = "file.txt" ]; then
+    pass "basename via parameter expansion"
+else
+    fail "basename via parameter expansion" "file.txt" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'X=/path/to/file.txt; echo ${X%/*}' 2>&1)
+if [ "$result" = "/path/to" ]; then
+    pass "dirname via parameter expansion"
+else
+    fail "dirname via parameter expansion" "/path/to" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'X=file.tar.gz; echo ${X%.gz}' 2>&1)
+if [ "$result" = "file.tar" ]; then
+    pass "remove extension"
+else
+    fail "remove extension" "file.tar" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'X=file.tar.gz; echo ${X%%.*}' 2>&1)
+if [ "$result" = "file" ]; then
+    pass "remove all extensions"
+else
+    fail "remove all extensions" "file" "$result"
+fi
+
+# =====================================
+section "394. COMPLEX PIPELINES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo "hello world" | tr " " "\n" | wc -l' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "pipeline with tr and wc"
+else
+    fail "pipeline with tr and wc" "2" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'printf "c\na\nb\n" | sort | head -1' 2>&1)
+if [ "$result" = "a" ]; then
+    pass "pipeline sort and head"
+else
+    fail "pipeline sort and head" "a" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo "test" | cat | cat | cat' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "triple cat pipeline"
+else
+    fail "triple cat pipeline" "test" "$result"
+fi
+
+# =====================================
+section "395. COMMAND GROUPING"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '{ echo a; echo b; echo c; } | wc -l' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "brace group to pipeline"
+else
+    fail "brace group to pipeline" "3" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '(echo x; echo y) | wc -l' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "subshell to pipeline"
+else
+    fail "subshell to pipeline" "2" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'X=1; { X=2; echo $X; }; echo $X' 2>&1)
+expected=$(printf "2\n2")
+if [ "$result" = "$expected" ]; then
+    pass "brace group modifies parent var"
+else
+    fail "brace group modifies parent var"
+fi
+
+# =====================================
+section "396. WORD EXPANSION ORDER"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'X="a b c"; echo $X' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass "unquoted var word splits"
+else
+    fail "unquoted var word splits" "a b c" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'X="a b c"; echo "$X"' 2>&1)
+if [ "$result" = "a b c" ]; then
+    pass "quoted var preserves spaces"
+else
+    fail "quoted var preserves spaces" "a b c" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo ~ | grep -c "^/"' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "tilde expands to home"
+else
+    fail "tilde expands to home" "1" "$result"
+fi
+
+# =====================================
+section "397. SIGNAL NAMES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'kill -l | grep -c HUP' 2>&1)
+if [ "$result" -ge 1 ]; then
+    pass "kill -l shows HUP"
+else
+    fail "kill -l shows HUP"
+fi
+
+result=$("$FORTSH_BIN" -c 'kill -l | grep -c INT' 2>&1)
+if [ "$result" -ge 1 ]; then
+    pass "kill -l shows INT"
+else
+    fail "kill -l shows INT"
+fi
+
+result=$("$FORTSH_BIN" -c 'kill -l | grep -c TERM' 2>&1)
+if [ "$result" -ge 1 ]; then
+    pass "kill -l shows TERM"
+else
+    fail "kill -l shows TERM"
+fi
+
+# =====================================
+section "398. EXEC WITH FD"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'exec 3>&1; echo test >&3; exec 3>&-' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "exec fd redirect"
+else
+    fail "exec fd redirect" "test" "$result"
+fi
+
+# =====================================
+section "399. COMPLEX FUNCTIONS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'max() { [ $1 -gt $2 ] && echo $1 || echo $2; }; max 5 3' 2>&1)
+if [ "$result" = "5" ]; then
+    pass "function max returns larger"
+else
+    fail "function max returns larger" "5" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'sum() { echo $(($1 + $2)); }; sum 10 20' 2>&1)
+if [ "$result" = "30" ]; then
+    pass "function sum"
+else
+    fail "function sum" "30" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'greet() { echo "Hello, $1!"; }; greet World' 2>&1)
+if [ "$result" = "Hello, World!" ]; then
+    pass "function with string interpolation"
+else
+    fail "function with string interpolation" "Hello, World!" "$result"
+fi
+
+# =====================================
+section "400. ADVANCED REDIRECTIONS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'echo out; echo err >&2' 2>&1)
+expected=$(printf "out\nerr")
+if [ "$result" = "$expected" ]; then
+    pass "stdout and stderr"
+else
+    fail "stdout and stderr"
+fi
+
+result=$("$FORTSH_BIN" -c '{ echo a; echo b >&2; } 2>&1 | wc -l' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "redirect stderr to stdout in pipeline"
+else
+    fail "redirect stderr to stdout in pipeline" "2" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"

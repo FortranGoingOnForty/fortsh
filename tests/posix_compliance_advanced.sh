@@ -500,6 +500,93 @@ compare_posix_output "printf left align" 'printf "%-10s|\n" "hi"'
 compare_posix_output "printf zero pad" 'printf "%05d\n" 42'
 compare_posix_output "printf multiple" 'printf "%s %d\n" "val" 123'
 
+section "106. POSIX ARITHMETIC EDGE CASES"
+
+compare_posix_output "unary minus" 'echo $((-5))'
+compare_posix_output "unary plus" 'echo $((+5))'
+compare_posix_output "double negative" 'echo $((--5))'
+compare_posix_output "zero division check" 'echo $((5 / 1))'
+compare_posix_output "modulo zero check" 'echo $((5 % 1))'
+compare_posix_output "large number" 'echo $((1000000 * 1000))'
+compare_posix_output "negative modulo" 'echo $((-7 % 3))'
+compare_posix_output "chained ops" 'echo $((1 + 2 + 3 + 4 + 5))'
+
+section "107. POSIX VARIABLE EDGE CASES"
+
+compare_posix_output "underscore var" 'X_Y_Z=test; echo $X_Y_Z'
+compare_posix_output "numeric suffix var" 'VAR1=a; VAR2=b; echo $VAR1$VAR2'
+compare_posix_output "long var name" 'VERY_LONG_VARIABLE_NAME_HERE=val; echo $VERY_LONG_VARIABLE_NAME_HERE'
+compare_posix_output "var with digits" 'A1B2C3=mix; echo $A1B2C3'
+compare_posix_output "reassignment" 'X=1; X=2; X=3; echo $X'
+compare_posix_output "self reference" 'X=a; X=${X}b; echo $X'
+
+section "108. POSIX FUNCTION EDGE CASES"
+
+compare_posix_output "function redefine" 'f() { echo first; }; f() { echo second; }; f'
+compare_posix_output "function in pipeline" 'f() { echo test; }; f | cat'
+compare_posix_output "function with subshell" 'f() { (echo sub); }; f'
+compare_posix_output "function return in if" 'f() { if true; then return 0; fi; return 1; }; f; echo $?'
+compare_posix_output "function shift" 'f() { shift; echo $1; }; f a b c'
+compare_posix_output "function all args" 'f() { echo "$@"; }; f one two three'
+
+section "109. POSIX LOOP EDGE CASES"
+
+compare_posix_output "for single item" 'for i in single; do echo $i; done'
+compare_posix_output "for many items" 'for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done | wc -l'
+compare_posix_output "nested for" 'for i in a b; do for j in 1 2; do echo $i$j; done; done'
+compare_posix_output "while nested" 'i=0; while [ $i -lt 2 ]; do j=0; while [ $j -lt 2 ]; do echo $i$j; j=$((j+1)); done; i=$((i+1)); done'
+compare_posix_output "for with continue" 'for i in 1 2 3; do [ $i -eq 2 ] && continue; echo $i; done'
+
+section "110. POSIX CASE EDGE CASES"
+
+compare_posix_output "case empty pattern" 'x=; case "$x" in "") echo empty;; esac'
+compare_posix_output "case glob star" 'x=anything; case $x in *) echo matched;; esac'
+compare_posix_output "case multiple star" 'x=test; case $x in a*) echo a;; t*) echo t;; esac'
+compare_posix_output "case bracket range" 'x=5; case $x in [0-9]) echo digit;; esac'
+compare_posix_output "case no default" 'x=z; case $x in a) echo a;; b) echo b;; esac; echo done'
+
+section "111. POSIX REDIRECTION EDGE CASES"
+
+compare_posix_output "append create" 'rm -f /tmp/append_test_$$; echo first >> /tmp/append_test_$$; cat /tmp/append_test_$$; rm /tmp/append_test_$$'
+compare_posix_output "redirect in loop" 'for i in 1 2 3; do echo $i; done > /tmp/loop_redir_$$; wc -l < /tmp/loop_redir_$$; rm /tmp/loop_redir_$$'
+compare_posix_output "redirect in func" 'f() { echo test; }; f > /tmp/func_redir_$$; cat /tmp/func_redir_$$; rm /tmp/func_redir_$$'
+compare_posix_output "multiple output" 'echo a > /tmp/multi1_$$; echo b > /tmp/multi2_$$; cat /tmp/multi1_$$ /tmp/multi2_$$; rm /tmp/multi1_$$ /tmp/multi2_$$'
+
+section "112. POSIX PIPELINE EDGE CASES"
+
+compare_posix_output "five stage pipe" 'echo test | cat | cat | cat | cat | cat'
+compare_posix_output "pipe with grep" 'printf "a\nb\nc\n" | grep b'
+compare_posix_output "pipe with wc" 'printf "a\nb\nc\n" | wc -l'
+compare_posix_output "pipe with sort" 'printf "c\na\nb\n" | sort'
+compare_posix_output "pipe with uniq" 'printf "a\na\nb\n" | uniq'
+compare_posix_output "pipe with tr" 'echo abc | tr a-z A-Z'
+
+section "113. POSIX SUBSHELL EDGE CASES"
+
+compare_posix_output "subshell pwd" '(cd /tmp; pwd)'
+compare_posix_output "subshell var" 'X=outer; (X=inner); echo $X'
+compare_posix_output "subshell function" 'f() { echo hi; }; (f)'
+compare_posix_output "subshell pipeline" '(echo a; echo b) | wc -l'
+compare_posix_output "nested subshell 3" '(((echo deep)))'
+compare_posix_output "subshell arithmetic" '(echo $((2+2)))'
+
+section "114. POSIX BRACE GROUP EDGE CASES"
+
+compare_posix_output "brace simple" '{ echo test; }'
+compare_posix_output "brace multi" '{ echo a; echo b; echo c; }'
+compare_posix_output "brace var" 'X=1; { X=2; }; echo $X'
+compare_posix_output "brace redirect" '{ echo test; } > /tmp/brace_$$; cat /tmp/brace_$$; rm /tmp/brace_$$'
+compare_posix_output "brace in pipe" '{ echo a; echo b; } | wc -l'
+
+section "115. POSIX SPECIAL CHAR EDGE CASES"
+
+compare_posix_output "semicolon list" 'echo a; echo b; echo c'
+compare_posix_output "ampersand bg" 'sleep 0.01 & wait; echo done'
+compare_posix_output "double ampersand" 'true && echo yes'
+compare_posix_output "double pipe" 'false || echo fallback'
+compare_posix_output "mixed logic" 'true && true && echo all_true'
+compare_posix_output "negation" '! false && echo negated'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
