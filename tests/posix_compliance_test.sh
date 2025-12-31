@@ -315,6 +315,99 @@ section "25. POSIX READONLY"
 
 compare_posix_exit_code "readonly assignment" "readonly VAR=test; VAR=new 2>/dev/null"
 
+section "26. POSIX UNSET"
+
+compare_posix_output "unset variable" "VAR=test; unset VAR; echo \${VAR:-empty}"
+compare_posix_output "unset nonexistent" "unset NONEXISTENT_VAR; echo ok"
+compare_posix_exit_code "unset readonly fails" "readonly X=1; unset X 2>/dev/null"
+compare_posix_output "unset function" "f() { echo hi; }; unset -f f; f 2>/dev/null || echo gone"
+
+section "27. POSIX EVAL"
+
+compare_posix_output "eval simple" "eval 'echo hello'"
+compare_posix_output "eval variable" "CMD='echo test'; eval \$CMD"
+compare_posix_output "eval assignment" "eval 'X=5'; echo \$X"
+compare_posix_output "eval command subst" "eval 'echo \$(echo nested)'"
+compare_posix_output "eval with semicolon" "eval 'echo a; echo b'"
+
+section "28. POSIX EXEC"
+
+compare_posix_output "exec replaces shell" "exec echo done"
+compare_posix_exit_code "exec nonexistent" "exec /nonexistent/command 2>/dev/null"
+
+section "29. POSIX COLON BUILTIN"
+
+compare_posix_output "colon no-op" ": ; echo ok"
+compare_posix_exit_code "colon exit status" ":"
+compare_posix_output "colon with args" ": arg1 arg2; echo ok"
+compare_posix_output "colon in if" "if :; then echo yes; fi"
+
+section "30. POSIX DOT/SOURCE"
+
+# Create temp script
+echo 'SOURCED_VAR=from_source' > /tmp/posix_test_source.sh
+compare_posix_output "dot source script" ". /tmp/posix_test_source.sh; echo \$SOURCED_VAR"
+compare_posix_exit_code "dot nonexistent" ". /nonexistent_file 2>/dev/null"
+
+section "31. POSIX CD AND PWD"
+
+compare_posix_output "cd and pwd" "cd /tmp && pwd"
+compare_posix_output "cd - returns to OLDPWD" "cd /tmp; cd /; cd -"
+compare_posix_exit_code "cd nonexistent" "cd /nonexistent_dir 2>/dev/null"
+compare_posix_output "pwd builtin" "pwd | grep -c /"
+
+section "32. POSIX UMASK"
+
+compare_posix_output "umask display" "umask | grep -E '^[0-9]{3,4}\$'"
+compare_posix_output "umask set and restore" "OLD=\$(umask); umask 077; umask \$OLD"
+
+section "33. POSIX WAIT"
+
+compare_posix_output "wait for background" "sleep 0.1 & wait; echo done"
+compare_posix_exit_code "wait no jobs" "wait"
+
+section "34. POSIX TIMES"
+
+# times is optional but common
+compare_posix_output "times output exists" "times 2>/dev/null | head -1 || echo skipped"
+
+section "35. POSIX BREAK AND CONTINUE"
+
+compare_posix_output "break in for" "for i in 1 2 3 4 5; do [ \$i -eq 3 ] && break; echo \$i; done"
+compare_posix_output "continue in for" "for i in 1 2 3 4 5; do [ \$i -eq 3 ] && continue; echo \$i; done"
+compare_posix_output "break in while" "i=0; while [ \$i -lt 10 ]; do i=\$((i+1)); [ \$i -eq 3 ] && break; echo \$i; done"
+compare_posix_output "break 2 nested" "for i in a b; do for j in 1 2 3; do [ \$j -eq 2 ] && break 2; echo \$i\$j; done; done"
+compare_posix_output "continue 2 nested" "for i in a b; do for j in 1 2 3; do [ \$j -eq 2 ] && continue 2; echo \$i\$j; done; done"
+
+section "36. POSIX SIGNAL HANDLING"
+
+compare_posix_output "trap list" "trap 2>/dev/null; echo ok"
+compare_posix_output "trap on exit" "trap 'echo exiting' EXIT; exit 0"
+compare_posix_exit_code "trap reset" "trap - INT"
+
+section "37. POSIX BACKGROUND AND JOBS"
+
+compare_posix_output "background job" "sleep 0.1 & echo started; wait"
+compare_posix_output "\$! last background pid" "sleep 0.1 & echo \$! | grep -E '^[0-9]+\$'"
+
+section "38. POSIX ALIAS"
+
+compare_posix_output "alias definition" "alias ll='ls -l'; alias | grep ll"
+compare_posix_output "unalias" "alias x='echo test'; unalias x; alias | grep -c 'x=' || echo 0"
+
+section "39. POSIX COMMAND SEARCH"
+
+compare_posix_output "type builtin" "type echo | grep -c builtin"
+compare_posix_output "command -v" "command -v echo | grep -c echo"
+compare_posix_exit_code "command not found" "command -v nonexistent_xyz 2>/dev/null"
+
+section "40. POSIX COMPLEX EXPANSIONS"
+
+compare_posix_output "nested parameter expansion" 'A=hello; B=A; eval "echo \$$B"'
+compare_posix_output "expansion in assignment" 'X=$(echo test); echo $X'
+compare_posix_output "arithmetic in expansion" 'echo $((2 + 3 * 4))'
+compare_posix_output "multiple substitutions" 'A=1; B=2; echo $(echo $A) $(echo $B)'
+
 # Summary
 printf "\n"
 printf "==========================================\n"

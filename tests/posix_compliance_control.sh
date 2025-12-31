@@ -963,6 +963,342 @@ else
 fi
 
 # =====================================
+section "435. WHILE LOOP VARIATIONS"
+# =====================================
+
+# while with pipeline
+result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done | wc -l' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "while loop with pipeline"
+else
+    fail "while loop with pipeline" "3" "$result"
+fi
+
+# while with command substitution condition
+result=$("$FORTSH_BIN" -c 'X=yes; while [ "$X" = "yes" ]; do echo once; X=no; done' 2>&1)
+if [ "$result" = "once" ]; then
+    pass "while with variable condition"
+else
+    fail "while with variable condition" "once" "$result"
+fi
+
+# infinite while with break
+result=$("$FORTSH_BIN" -c 'i=0; while true; do i=$((i+1)); [ $i -ge 5 ] && break; done; echo $i' 2>&1)
+if [ "$result" = "5" ]; then
+    pass "infinite while with break"
+else
+    fail "infinite while with break" "5" "$result"
+fi
+
+# =====================================
+section "436. UNTIL LOOP VARIATIONS"
+# =====================================
+
+# until basic
+result=$("$FORTSH_BIN" -c 'i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done' 2>&1)
+expected=$(printf "0\n1\n2")
+if [ "$result" = "$expected" ]; then
+    pass "until loop basic"
+else
+    fail "until loop basic"
+fi
+
+# until with break
+result=$("$FORTSH_BIN" -c 'i=0; until false; do i=$((i+1)); [ $i -ge 3 ] && break; done; echo $i' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "until with break"
+else
+    fail "until with break" "3" "$result"
+fi
+
+# =====================================
+section "437. IF STATEMENT VARIATIONS"
+# =====================================
+
+# if with command
+result=$("$FORTSH_BIN" -c 'if true; then echo yes; fi' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "if with true command"
+else
+    fail "if with true command" "yes" "$result"
+fi
+
+# if with test
+result=$("$FORTSH_BIN" -c 'X=5; if [ $X -gt 3 ]; then echo big; fi' 2>&1)
+if [ "$result" = "big" ]; then
+    pass "if with test condition"
+else
+    fail "if with test condition" "big" "$result"
+fi
+
+# if-else
+result=$("$FORTSH_BIN" -c 'if false; then echo no; else echo yes; fi' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "if-else statement"
+else
+    fail "if-else statement" "yes" "$result"
+fi
+
+# if-elif-else
+result=$("$FORTSH_BIN" -c 'X=2; if [ $X -eq 1 ]; then echo one; elif [ $X -eq 2 ]; then echo two; else echo other; fi' 2>&1)
+if [ "$result" = "two" ]; then
+    pass "if-elif-else statement"
+else
+    fail "if-elif-else statement" "two" "$result"
+fi
+
+# nested if
+result=$("$FORTSH_BIN" -c 'X=1; Y=2; if [ $X -eq 1 ]; then if [ $Y -eq 2 ]; then echo both; fi; fi' 2>&1)
+if [ "$result" = "both" ]; then
+    pass "nested if statement"
+else
+    fail "nested if statement" "both" "$result"
+fi
+
+# =====================================
+section "438. CASE STATEMENT VARIATIONS"
+# =====================================
+
+# case with character class
+result=$("$FORTSH_BIN" -c 'x=5; case $x in [0-9]) echo digit;; esac' 2>&1)
+if [ "$result" = "digit" ]; then
+    pass "case with character class"
+else
+    fail "case with character class" "digit" "$result"
+fi
+
+# case with negation
+result=$("$FORTSH_BIN" -c 'x=x; case $x in [!0-9]) echo not_digit;; esac' 2>&1)
+if [ "$result" = "not_digit" ]; then
+    pass "case with negation"
+else
+    fail "case with negation" "not_digit" "$result"
+fi
+
+# case with question mark
+result=$("$FORTSH_BIN" -c 'x=ab; case $x in ??) echo two_chars;; esac' 2>&1)
+if [ "$result" = "two_chars" ]; then
+    pass "case with question mark pattern"
+else
+    fail "case with question mark pattern" "two_chars" "$result"
+fi
+
+# case fall-through (first match wins)
+result=$("$FORTSH_BIN" -c 'x=a; case $x in a) echo first;; a) echo second;; esac' 2>&1)
+if [ "$result" = "first" ]; then
+    pass "case first match wins"
+else
+    fail "case first match wins" "first" "$result"
+fi
+
+# =====================================
+section "439. BRACE GROUP VARIATIONS"
+# =====================================
+
+# brace group in pipeline
+result=$("$FORTSH_BIN" -c '{ echo a; echo b; } | wc -l' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "brace group in pipeline"
+else
+    fail "brace group in pipeline" "2" "$result"
+fi
+
+# brace group with redirection
+result=$("$FORTSH_BIN" -c '{ echo test; } > /tmp/brace_test_$$; cat /tmp/brace_test_$$; rm /tmp/brace_test_$$' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "brace group with redirection"
+else
+    fail "brace group with redirection" "test" "$result"
+fi
+
+# brace group preserves variables
+result=$("$FORTSH_BIN" -c 'X=1; { X=2; }; echo $X' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "brace group preserves variable changes"
+else
+    fail "brace group preserves variable changes" "2" "$result"
+fi
+
+# =====================================
+section "440. SUBSHELL VARIATIONS"
+# =====================================
+
+# subshell in pipeline
+result=$("$FORTSH_BIN" -c '(echo a; echo b) | wc -l' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "subshell in pipeline"
+else
+    fail "subshell in pipeline" "2" "$result"
+fi
+
+# subshell isolates variables
+result=$("$FORTSH_BIN" -c 'X=1; (X=2); echo $X' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "subshell isolates variable changes"
+else
+    fail "subshell isolates variable changes" "1" "$result"
+fi
+
+# nested subshells
+result=$("$FORTSH_BIN" -c '((echo deep))' 2>&1)
+if [ "$result" = "deep" ]; then
+    pass "nested subshells"
+else
+    fail "nested subshells" "deep" "$result"
+fi
+
+# =====================================
+section "441. COMPOUND LIST VARIATIONS"
+# =====================================
+
+# semicolon separated
+result=$("$FORTSH_BIN" -c 'echo a; echo b; echo c' 2>&1)
+expected=$(printf "a\nb\nc")
+if [ "$result" = "$expected" ]; then
+    pass "semicolon separated commands"
+else
+    fail "semicolon separated commands"
+fi
+
+# newline separated
+result=$("$FORTSH_BIN" -c 'echo a
+echo b
+echo c' 2>&1)
+expected=$(printf "a\nb\nc")
+if [ "$result" = "$expected" ]; then
+    pass "newline separated commands"
+else
+    fail "newline separated commands"
+fi
+
+# =====================================
+section "442. LOGICAL OPERATORS VARIATIONS"
+# =====================================
+
+# && chain
+result=$("$FORTSH_BIN" -c 'true && true && echo success' 2>&1)
+if [ "$result" = "success" ]; then
+    pass "&& chain all true"
+else
+    fail "&& chain all true" "success" "$result"
+fi
+
+# && short-circuit
+result=$("$FORTSH_BIN" -c 'false && echo never' 2>&1)
+if [ -z "$result" ]; then
+    pass "&& short-circuits on false"
+else
+    fail "&& short-circuits on false" "empty" "$result"
+fi
+
+# || chain
+result=$("$FORTSH_BIN" -c 'false || false || echo fallback' 2>&1)
+if [ "$result" = "fallback" ]; then
+    pass "|| chain with fallback"
+else
+    fail "|| chain with fallback" "fallback" "$result"
+fi
+
+# || short-circuit
+result=$("$FORTSH_BIN" -c 'true || echo never' 2>&1)
+if [ -z "$result" ]; then
+    pass "|| short-circuits on true"
+else
+    fail "|| short-circuits on true" "empty" "$result"
+fi
+
+# mixed && and ||
+result=$("$FORTSH_BIN" -c 'false && echo no || echo yes' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "mixed && and ||"
+else
+    fail "mixed && and ||" "yes" "$result"
+fi
+
+# =====================================
+section "443. NEGATION WITH !"
+# =====================================
+
+# ! negates exit status
+result=$("$FORTSH_BIN" -c '! false && echo success' 2>&1)
+if [ "$result" = "success" ]; then
+    pass "! negates false to true"
+else
+    fail "! negates false to true" "success" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '! true || echo failed' 2>&1)
+if [ "$result" = "failed" ]; then
+    pass "! negates true to false"
+else
+    fail "! negates true to false" "failed" "$result"
+fi
+
+# ! with pipeline
+result=$("$FORTSH_BIN" -c '! echo test | grep -q nomatch && echo ok' 2>&1)
+if [ "$result" = "ok" ]; then
+    pass "! with pipeline"
+else
+    fail "! with pipeline" "ok" "$result"
+fi
+
+# =====================================
+section "444. FUNCTION DEFINITIONS"
+# =====================================
+
+# function with return
+result=$("$FORTSH_BIN" -c 'f() { return 42; }; f; echo $?' 2>&1)
+if [ "$result" = "42" ]; then
+    pass "function with return value"
+else
+    fail "function with return value" "42" "$result"
+fi
+
+# function with arguments
+result=$("$FORTSH_BIN" -c 'greet() { echo "Hello, $1"; }; greet World' 2>&1)
+if [ "$result" = "Hello, World" ]; then
+    pass "function with arguments"
+else
+    fail "function with arguments" "Hello, World" "$result"
+fi
+
+# function calling function
+result=$("$FORTSH_BIN" -c 'a() { b; }; b() { echo called; }; a' 2>&1)
+if [ "$result" = "called" ]; then
+    pass "function calling function"
+else
+    fail "function calling function" "called" "$result"
+fi
+
+# =====================================
+section "445. EXIT AND RETURN"
+# =====================================
+
+# exit from subshell
+result=$("$FORTSH_BIN" -c '(exit 7); echo $?' 2>&1)
+if [ "$result" = "7" ]; then
+    pass "exit from subshell"
+else
+    fail "exit from subshell" "7" "$result"
+fi
+
+# return from function
+result=$("$FORTSH_BIN" -c 'f() { echo before; return; echo after; }; f' 2>&1)
+if [ "$result" = "before" ]; then
+    pass "return stops function execution"
+else
+    fail "return stops function execution" "before" "$result"
+fi
+
+# return default value
+result=$("$FORTSH_BIN" -c 'f() { true; return; }; f; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "return with no value uses last exit status"
+else
+    fail "return with no value uses last exit status" "0" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"

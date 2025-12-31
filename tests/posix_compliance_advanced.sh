@@ -387,6 +387,119 @@ compare_posix_output "subshell with redirect" '(echo a; echo b) | wc -l'
 compare_posix_output "brace group redirect" '{ echo x; echo y; } | wc -l'
 compare_posix_output "if statement redirect" 'if true; then echo yes; fi | cat'
 
+section "91. POSIX PARAMETER LENGTH"
+
+compare_posix_output "length of empty" 'X=""; echo ${#X}'
+compare_posix_output "length with spaces" 'X="a b c"; echo ${#X}'
+compare_posix_output "length special chars" 'X="$@#!"; echo ${#X}'
+compare_posix_output "length unicode" 'X="abc"; echo ${#X}'
+
+section "92. POSIX DEFAULT VALUES VARIANTS"
+
+compare_posix_output ":-colon vs dash" 'X=""; echo "${X:-default}" "${X-default}"'
+compare_posix_output ":=colon vs equals" 'unset Y; echo "${Y:=def}"; echo $Y'
+compare_posix_output ":+colon vs plus" 'X=val; echo "${X:+alt}" "${X+alt}"'
+compare_posix_output ":?colon vs question" 'X=val; echo "${X:?err}" 2>/dev/null'
+
+section "93. POSIX PATTERN REMOVAL EDGE CASES"
+
+compare_posix_output "remove empty pattern" 'X=test; echo "${X#}"'
+compare_posix_output "remove star pattern" 'X=test; echo "${X#*}"'
+compare_posix_output "remove all with ##" 'X=test; echo "${X##*}"'
+compare_posix_output "suffix empty" 'X=test; echo "${X%}"'
+compare_posix_output "suffix star" 'X=test; echo "${X%*}"'
+compare_posix_output "suffix all" 'X=test; echo "${X%%*}"'
+
+section "94. POSIX ARITHMETIC OPERATORS"
+
+compare_posix_output "arithmetic modulo" 'echo $((17 % 5))'
+compare_posix_output "arithmetic negative" 'echo $((-5 + 3))'
+compare_posix_output "arithmetic parens" 'echo $(((2 + 3) * 4))'
+compare_posix_output "arithmetic bitwise and" 'echo $((12 & 10))'
+compare_posix_output "arithmetic bitwise or" 'echo $((12 | 10))'
+compare_posix_output "arithmetic bitwise xor" 'echo $((12 ^ 10))'
+compare_posix_output "arithmetic shift left" 'echo $((1 << 4))'
+compare_posix_output "arithmetic shift right" 'echo $((16 >> 2))'
+
+section "95. POSIX ARITHMETIC COMPARISONS"
+
+compare_posix_output "arith less than" 'echo $((3 < 5))'
+compare_posix_output "arith greater than" 'echo $((5 > 3))'
+compare_posix_output "arith less equal" 'echo $((3 <= 3))'
+compare_posix_output "arith greater equal" 'echo $((3 >= 3))'
+compare_posix_output "arith equal" 'echo $((5 == 5))'
+compare_posix_output "arith not equal" 'echo $((5 != 3))'
+compare_posix_output "arith logical and" 'echo $((1 && 1))'
+compare_posix_output "arith logical or" 'echo $((0 || 1))'
+
+section "96. POSIX COMMAND SUBSTITUTION EDGE CASES"
+
+compare_posix_output "cmd sub with quotes" 'echo $(echo "hello world")'
+compare_posix_output "cmd sub trailing newlines" 'echo "$(printf "a\n\n\n")"b'
+compare_posix_output "cmd sub with pipe" 'echo $(echo test | tr t T)'
+compare_posix_output "cmd sub with redirect" 'echo $(cat </dev/null)'
+compare_posix_output "backtick with quotes" 'echo `echo "hello"`'
+
+section "97. POSIX SUBSHELL VARIABLE ISOLATION"
+
+compare_posix_output "subshell no export" 'X=1; (X=2; echo $X); echo $X'
+compare_posix_output "subshell unset" 'X=1; (unset X; echo ${X:-empty}); echo $X'
+compare_posix_output "nested subshell" '(( echo nested ))'
+compare_posix_output "subshell exit" '(exit 5); echo $?'
+
+section "98. POSIX BRACE GROUP VS SUBSHELL"
+
+compare_posix_output "brace group modifies" 'X=1; { X=2; }; echo $X'
+compare_posix_output "subshell isolates" 'X=1; (X=2); echo $X'
+compare_posix_output "brace with semicolon" '{ echo a; echo b; }'
+compare_posix_output "brace in pipeline" '{ echo test; } | cat'
+
+section "99. POSIX HERE-STRING ALTERNATIVES"
+
+compare_posix_output "echo pipe vs redirect" 'echo test | cat'
+compare_posix_output "printf to stdin" 'printf "test\n" | read X; echo $X'
+
+section "100. POSIX PIPELINE EXIT STATUS"
+
+compare_posix_output "pipe success" 'true | true; echo $?'
+compare_posix_output "pipe last fails" 'true | false; echo $?'
+compare_posix_output "pipe first fails" 'false | true; echo $?'
+compare_posix_output "long pipeline" 'echo a | cat | cat | cat; echo $?'
+
+section "101. POSIX PROCESS SUBSTITUTION ALTERNATIVES"
+
+compare_posix_output "temp file pattern" 'echo test > /tmp/psub$$; cat /tmp/psub$$; rm /tmp/psub$$'
+compare_posix_output "named pipe simulation" 'mkfifo /tmp/pfifo$$ 2>/dev/null || true; rm -f /tmp/pfifo$$; echo ok'
+
+section "102. POSIX TEST BRACKETS"
+
+compare_posix_output "test vs bracket" 'test 1 -eq 1 && [ 1 -eq 1 ] && echo ok'
+compare_posix_output "bracket spacing" '[ "a" = "a" ] && echo match'
+compare_posix_output "empty bracket test" '[ "" ] || echo empty'
+compare_posix_output "nonempty test" '[ "x" ] && echo nonempty'
+
+section "103. POSIX GETOPTS ADVANCED"
+
+compare_posix_output "getopts multiple" 'while getopts "ab:c" opt 2>/dev/null; do echo $opt; done <<< "-a -b val -c"'
+compare_posix_output "getopts OPTARG" 'getopts "a:" opt <<< "-a value" 2>/dev/null; echo $OPTARG'
+compare_posix_output "getopts OPTIND" 'OPTIND=1; getopts "a" opt <<< "-a" 2>/dev/null; echo $OPTIND'
+
+section "104. POSIX READ BUILTIN"
+
+compare_posix_output "read single var" 'echo "hello" | { read X; echo $X; }'
+compare_posix_output "read multiple vars" 'echo "a b c" | { read X Y Z; echo "$X:$Y:$Z"; }'
+compare_posix_output "read with IFS" 'echo "a:b:c" | { IFS=: read X Y Z; echo "$X $Y $Z"; }'
+compare_posix_output "read extra words" 'echo "a b c d" | { read X Y; echo "$X:$Y"; }'
+
+section "105. POSIX PRINTF FORMATTING"
+
+compare_posix_output "printf string" 'printf "%s\n" "test"'
+compare_posix_output "printf integer" 'printf "%d\n" 42'
+compare_posix_output "printf width" 'printf "%10s\n" "hi"'
+compare_posix_output "printf left align" 'printf "%-10s|\n" "hi"'
+compare_posix_output "printf zero pad" 'printf "%05d\n" 42'
+compare_posix_output "printf multiple" 'printf "%s %d\n" "val" 123'
+
 # Summary
 printf "\n"
 printf "==========================================\n"

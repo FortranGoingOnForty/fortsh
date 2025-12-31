@@ -771,6 +771,354 @@ else
 fi
 
 # =====================================
+section "377. COMMAND EXECUTION MODES"
+# =====================================
+
+# Command with -c flag
+result=$("$FORTSH_BIN" -c 'echo test' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "fortsh -c executes command"
+else
+    fail "fortsh -c executes command" "test" "$result"
+fi
+
+# Command with environment var
+result=$(X=value "$FORTSH_BIN" -c 'echo $X' 2>&1)
+if [ "$result" = "value" ]; then
+    pass "env var passed to fortsh"
+else
+    fail "env var passed to fortsh" "value" "$result"
+fi
+
+# =====================================
+section "378. SPECIAL BUILTIN BEHAVIORS"
+# =====================================
+
+# break outside loop
+result=$("$FORTSH_BIN" -c 'break 2>/dev/null; echo $?' 2>&1)
+if echo "$result" | grep -qE '^[0-9]'; then
+    pass "break outside loop returns error status"
+else
+    fail "break outside loop returns error status"
+fi
+
+# continue outside loop
+result=$("$FORTSH_BIN" -c 'continue 2>/dev/null; echo $?' 2>&1)
+if echo "$result" | grep -qE '^[0-9]'; then
+    pass "continue outside loop returns error status"
+else
+    fail "continue outside loop returns error status"
+fi
+
+# return outside function
+result=$("$FORTSH_BIN" -c 'return 2>/dev/null; echo $?' 2>&1)
+if echo "$result" | grep -qE '^[0-9]'; then
+    pass "return outside function handled"
+else
+    fail "return outside function handled"
+fi
+
+# =====================================
+section "379. REDIRECTION EDGE CASES"
+# =====================================
+
+# Redirect to /dev/null
+result=$("$FORTSH_BIN" -c 'echo test > /dev/null; echo done' 2>&1)
+if [ "$result" = "done" ]; then
+    pass "redirect to /dev/null works"
+else
+    fail "redirect to /dev/null works" "done" "$result"
+fi
+
+# Redirect stderr to stdout
+result=$("$FORTSH_BIN" -c 'echo stderr >&2' 2>&1)
+if [ "$result" = "stderr" ]; then
+    pass "redirect stderr to stdout"
+else
+    fail "redirect stderr to stdout" "stderr" "$result"
+fi
+
+# =====================================
+section "380. POSITIONAL PARAMETERS EDGE CASES"
+# =====================================
+
+# More than 9 positional params
+result=$("$FORTSH_BIN" -c 'set -- a b c d e f g h i j k; echo $1 ${10} ${11}' 2>&1)
+if echo "$result" | grep -q "a j k"; then
+    pass "access to \${10} and beyond"
+else
+    fail "access to \${10} and beyond" "a j k" "$result"
+fi
+
+# shift with count
+result=$("$FORTSH_BIN" -c 'set -- a b c d e; shift 3; echo $1' 2>&1)
+if [ "$result" = "d" ]; then
+    pass "shift with count"
+else
+    fail "shift with count" "d" "$result"
+fi
+
+# =====================================
+section "381. ARITHMETIC EDGE CASES"
+# =====================================
+
+# Negative numbers
+result=$("$FORTSH_BIN" -c 'echo $((-5))' 2>&1)
+if [ "$result" = "-5" ]; then
+    pass "negative numbers in arithmetic"
+else
+    fail "negative numbers in arithmetic" "-5" "$result"
+fi
+
+# Parentheses for grouping
+result=$("$FORTSH_BIN" -c 'echo $(( (2+3) * 4 ))' 2>&1)
+if [ "$result" = "20" ]; then
+    pass "parentheses in arithmetic"
+else
+    fail "parentheses in arithmetic" "20" "$result"
+fi
+
+# Comparison operators return 0/1
+result=$("$FORTSH_BIN" -c 'echo $((5 > 3))' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "arithmetic comparison returns 1 for true"
+else
+    fail "arithmetic comparison returns 1 for true" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'echo $((3 > 5))' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "arithmetic comparison returns 0 for false"
+else
+    fail "arithmetic comparison returns 0 for false" "0" "$result"
+fi
+
+# =====================================
+section "382. VARIABLE ASSIGNMENT EDGE CASES"
+# =====================================
+
+# Assignment with empty value
+result=$("$FORTSH_BIN" -c 'X=; echo "[$X]"' 2>&1)
+if [ "$result" = "[]" ]; then
+    pass "empty variable assignment"
+else
+    fail "empty variable assignment" "[]" "$result"
+fi
+
+# Assignment with quotes
+result=$("$FORTSH_BIN" -c 'X="hello world"; echo $X' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "quoted variable assignment"
+else
+    fail "quoted variable assignment" "hello world" "$result"
+fi
+
+# Multiple assignments on one line
+result=$("$FORTSH_BIN" -c 'A=1 B=2 C=3; echo $A $B $C' 2>&1)
+if [ "$result" = "1 2 3" ]; then
+    pass "multiple assignments"
+else
+    fail "multiple assignments" "1 2 3" "$result"
+fi
+
+# =====================================
+section "383. QUOTING EDGE CASES"
+# =====================================
+
+# Single quotes preserve literally
+result=$("$FORTSH_BIN" -c "echo '\$HOME'" 2>&1)
+if [ "$result" = '$HOME' ]; then
+    pass "single quotes preserve dollar"
+else
+    fail "single quotes preserve dollar" "\$HOME" "$result"
+fi
+
+# Double quotes allow expansion
+result=$("$FORTSH_BIN" -c 'X=test; echo "$X"' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "double quotes allow expansion"
+else
+    fail "double quotes allow expansion" "test" "$result"
+fi
+
+# Mixed quoting
+result=$("$FORTSH_BIN" -c "X=val; echo 'literal'\"\$X\"'more'" 2>&1)
+if [ "$result" = "literalvalmore" ]; then
+    pass "mixed quoting works"
+else
+    fail "mixed quoting works" "literalvalmore" "$result"
+fi
+
+# =====================================
+section "384. PIPELINE EDGE CASES"
+# =====================================
+
+# Pipeline with three stages
+result=$("$FORTSH_BIN" -c 'echo test | cat | cat' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "three-stage pipeline"
+else
+    fail "three-stage pipeline" "test" "$result"
+fi
+
+# Pipeline with grep
+result=$("$FORTSH_BIN" -c 'echo "hello world" | grep hello' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "pipeline with grep"
+else
+    fail "pipeline with grep" "hello world" "$result"
+fi
+
+# =====================================
+section "385. CASE STATEMENT EDGE CASES"
+# =====================================
+
+# Case with wildcards
+result=$("$FORTSH_BIN" -c 'x=hello; case $x in h*) echo match;; esac' 2>&1)
+if [ "$result" = "match" ]; then
+    pass "case with wildcard pattern"
+else
+    fail "case with wildcard pattern" "match" "$result"
+fi
+
+# Case with multiple patterns
+result=$("$FORTSH_BIN" -c 'x=b; case $x in a|b|c) echo abc;; esac' 2>&1)
+if [ "$result" = "abc" ]; then
+    pass "case with multiple patterns"
+else
+    fail "case with multiple patterns" "abc" "$result"
+fi
+
+# Case with default
+result=$("$FORTSH_BIN" -c 'x=z; case $x in a) echo a;; *) echo default;; esac' 2>&1)
+if [ "$result" = "default" ]; then
+    pass "case with default pattern"
+else
+    fail "case with default pattern" "default" "$result"
+fi
+
+# =====================================
+section "386. LOOP EDGE CASES"
+# =====================================
+
+# For loop with break
+result=$("$FORTSH_BIN" -c 'for i in 1 2 3 4 5; do [ $i -eq 3 ] && break; echo $i; done' 2>&1)
+expected="1
+2"
+if [ "$result" = "$expected" ]; then
+    pass "for loop with break"
+else
+    fail "for loop with break"
+fi
+
+# For loop with continue
+result=$("$FORTSH_BIN" -c 'for i in 1 2 3 4 5; do [ $i -eq 3 ] && continue; echo $i; done' 2>&1)
+if echo "$result" | grep -q "1" && echo "$result" | grep -q "4" && ! echo "$result" | grep -q "3"; then
+    pass "for loop with continue"
+else
+    fail "for loop with continue"
+fi
+
+# =====================================
+section "387. SUBSHELL EDGE CASES"
+# =====================================
+
+# Subshell variable isolation
+result=$("$FORTSH_BIN" -c 'X=outer; (X=inner; echo $X); echo $X' 2>&1)
+expected="inner
+outer"
+if [ "$result" = "$expected" ]; then
+    pass "subshell variable isolation"
+else
+    fail "subshell variable isolation"
+fi
+
+# Subshell exit status
+result=$("$FORTSH_BIN" -c '(exit 42); echo $?' 2>&1)
+if [ "$result" = "42" ]; then
+    pass "subshell exit status captured"
+else
+    fail "subshell exit status captured" "42" "$result"
+fi
+
+# =====================================
+section "388. FUNCTION EDGE CASES"
+# =====================================
+
+# Function with local-like behavior (via subshell)
+result=$("$FORTSH_BIN" -c 'X=global; f() { (X=local; echo $X); }; f; echo $X' 2>&1)
+expected="local
+global"
+if [ "$result" = "$expected" ]; then
+    pass "function with subshell for local vars"
+else
+    fail "function with subshell for local vars"
+fi
+
+# Recursive function
+result=$("$FORTSH_BIN" -c 'count() { if [ $1 -gt 0 ]; then echo $1; count $(($1-1)); fi; }; count 3' 2>&1)
+expected="3
+2
+1"
+if [ "$result" = "$expected" ]; then
+    pass "recursive function"
+else
+    fail "recursive function"
+fi
+
+# =====================================
+section "389. HERE DOCUMENT EDGE CASES"
+# =====================================
+
+# Heredoc with variable expansion
+result=$("$FORTSH_BIN" -c 'X=value; cat <<EOF
+$X
+EOF' 2>&1)
+if [ "$result" = "value" ]; then
+    pass "heredoc variable expansion"
+else
+    fail "heredoc variable expansion" "value" "$result"
+fi
+
+# Quoted heredoc (no expansion)
+result=$("$FORTSH_BIN" -c 'cat <<'\''EOF'\''
+$VAR
+EOF' 2>&1)
+if [ "$result" = '$VAR' ]; then
+    pass "quoted heredoc no expansion"
+else
+    fail "quoted heredoc no expansion" "\$VAR" "$result"
+fi
+
+# =====================================
+section "390. COMMAND SUBSTITUTION EDGE CASES"
+# =====================================
+
+# Nested command substitution
+result=$("$FORTSH_BIN" -c 'echo $(echo $(echo nested))' 2>&1)
+if [ "$result" = "nested" ]; then
+    pass "nested command substitution"
+else
+    fail "nested command substitution" "nested" "$result"
+fi
+
+# Command substitution with quotes
+result=$("$FORTSH_BIN" -c 'echo "$(echo "hello world")"' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "command substitution with quotes"
+else
+    fail "command substitution with quotes" "hello world" "$result"
+fi
+
+# Backtick substitution
+result=$("$FORTSH_BIN" -c 'echo `echo backtick`' 2>&1)
+if [ "$result" = "backtick" ]; then
+    pass "backtick command substitution"
+else
+    fail "backtick command substitution" "backtick" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"

@@ -602,6 +602,327 @@ else
 fi
 
 # =====================================
+section "452. HEREDOC VARIATIONS"
+# =====================================
+
+# Basic heredoc
+result=$("$FORTSH_BIN" -c 'cat <<END
+hello
+END' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "Basic heredoc"
+else
+    fail "Basic heredoc" "hello" "$result"
+fi
+
+# Heredoc with variable expansion
+result=$("$FORTSH_BIN" -c 'X=world; cat <<END
+hello $X
+END' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "Heredoc with variable expansion"
+else
+    fail "Heredoc with variable expansion" "hello world" "$result"
+fi
+
+# Quoted heredoc prevents expansion
+result=$("$FORTSH_BIN" -c 'cat <<'\''END'\''
+$VAR
+END' 2>&1)
+if [ "$result" = '$VAR' ]; then
+    pass "Quoted heredoc prevents expansion"
+else
+    fail "Quoted heredoc prevents expansion" "\$VAR" "$result"
+fi
+
+# =====================================
+section "453. PIPELINE VARIATIONS"
+# =====================================
+
+# Long pipeline
+result=$("$FORTSH_BIN" -c 'echo test | cat | cat | cat | cat' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Long pipeline with multiple cats"
+else
+    fail "Long pipeline with multiple cats" "test" "$result"
+fi
+
+# Pipeline with head
+result=$("$FORTSH_BIN" -c 'printf "a\nb\nc\n" | head -1' 2>&1)
+if [ "$result" = "a" ]; then
+    pass "Pipeline with head"
+else
+    fail "Pipeline with head" "a" "$result"
+fi
+
+# Pipeline with tail
+result=$("$FORTSH_BIN" -c 'printf "a\nb\nc\n" | tail -1' 2>&1)
+if [ "$result" = "c" ]; then
+    pass "Pipeline with tail"
+else
+    fail "Pipeline with tail" "c" "$result"
+fi
+
+# Pipeline with sort
+result=$("$FORTSH_BIN" -c 'printf "c\na\nb\n" | sort | head -1' 2>&1)
+if [ "$result" = "a" ]; then
+    pass "Pipeline with sort"
+else
+    fail "Pipeline with sort" "a" "$result"
+fi
+
+# =====================================
+section "454. FILE DESCRIPTOR OPERATIONS"
+# =====================================
+
+# Dup stdout to stderr
+result=$("$FORTSH_BIN" -c 'echo test >&2' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Redirect stdout to stderr"
+else
+    fail "Redirect stdout to stderr" "test" "$result"
+fi
+
+# Close stdout (write to stderr)
+result=$("$FORTSH_BIN" -c 'echo test >&2 1>&-' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Close stdout, write to stderr"
+else
+    fail "Close stdout, write to stderr" "test" "$result"
+fi
+
+# =====================================
+section "455. INPUT REDIRECTION VARIATIONS"
+# =====================================
+
+# Input from file
+echo "content" > "$TEST_DIR/input_test.txt"
+result=$("$FORTSH_BIN" -c 'cat < "'"$TEST_DIR"'/input_test.txt"' 2>&1)
+if [ "$result" = "content" ]; then
+    pass "Input redirection from file"
+else
+    fail "Input redirection from file" "content" "$result"
+fi
+
+# Input from /dev/null
+result=$("$FORTSH_BIN" -c 'cat < /dev/null | wc -c' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "Input from /dev/null is empty"
+else
+    fail "Input from /dev/null is empty" "0" "$result"
+fi
+
+# =====================================
+section "456. OUTPUT TO /dev/null"
+# =====================================
+
+# Stdout to /dev/null
+result=$("$FORTSH_BIN" -c 'echo hidden > /dev/null; echo visible' 2>&1)
+if [ "$result" = "visible" ]; then
+    pass "Stdout to /dev/null suppresses output"
+else
+    fail "Stdout to /dev/null suppresses output" "visible" "$result"
+fi
+
+# Stderr to /dev/null
+result=$("$FORTSH_BIN" -c 'ls /nonexistent 2>/dev/null; echo done' 2>&1)
+if [ "$result" = "done" ]; then
+    pass "Stderr to /dev/null suppresses errors"
+else
+    fail "Stderr to /dev/null suppresses errors" "done" "$result"
+fi
+
+# Both to /dev/null
+result=$("$FORTSH_BIN" -c 'ls /nonexistent >/dev/null 2>&1; echo status=$?' 2>&1)
+if echo "$result" | grep -q "status="; then
+    pass "Both stdout and stderr to /dev/null"
+else
+    fail "Both stdout and stderr to /dev/null"
+fi
+
+# =====================================
+section "457. NOCLOBBER BEHAVIOR"
+# =====================================
+
+# Normal overwrite
+echo "old" > "$TEST_DIR/clobber_test.txt"
+result=$("$FORTSH_BIN" -c 'echo new > "'"$TEST_DIR"'/clobber_test.txt"; cat "'"$TEST_DIR"'/clobber_test.txt"' 2>&1)
+if [ "$result" = "new" ]; then
+    pass "Normal > overwrites file"
+else
+    fail "Normal > overwrites file" "new" "$result"
+fi
+
+# =====================================
+section "458. COMPOUND REDIRECTIONS"
+# =====================================
+
+# Redirect in if statement
+result=$("$FORTSH_BIN" -c 'if true; then echo yes; fi > "'"$TEST_DIR"'/if_redir.txt"; cat "'"$TEST_DIR"'/if_redir.txt"' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "Redirect if statement output"
+else
+    fail "Redirect if statement output" "yes" "$result"
+fi
+
+# Redirect in while loop
+result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done > "'"$TEST_DIR"'/while_redir.txt"; wc -l < "'"$TEST_DIR"'/while_redir.txt"' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "Redirect while loop output"
+else
+    fail "Redirect while loop output" "3" "$result"
+fi
+
+# Redirect in for loop
+result=$("$FORTSH_BIN" -c 'for x in a b c; do echo $x; done > "'"$TEST_DIR"'/for_redir.txt"; wc -l < "'"$TEST_DIR"'/for_redir.txt"' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "Redirect for loop output"
+else
+    fail "Redirect for loop output" "3" "$result"
+fi
+
+# =====================================
+section "459. PIPELINE EXIT STATUS"
+# =====================================
+
+# Last command determines exit
+result=$("$FORTSH_BIN" -c 'true | false; echo $?' 2>&1)
+if [ "$result" = "1" ]; then
+    pass "Pipeline exit from last command (false)"
+else
+    fail "Pipeline exit from last command (false)" "1" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'false | true; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "Pipeline exit from last command (true)"
+else
+    fail "Pipeline exit from last command (true)" "0" "$result"
+fi
+
+# =====================================
+section "460. MULTIPLE REDIRECTIONS"
+# =====================================
+
+# Both input and output
+echo "input" > "$TEST_DIR/multi_in.txt"
+result=$("$FORTSH_BIN" -c 'cat < "'"$TEST_DIR"'/multi_in.txt" > "'"$TEST_DIR"'/multi_out.txt"; cat "'"$TEST_DIR"'/multi_out.txt"' 2>&1)
+if [ "$result" = "input" ]; then
+    pass "Both input and output redirect"
+else
+    fail "Both input and output redirect" "input" "$result"
+fi
+
+# Order of redirections
+result=$("$FORTSH_BIN" -c 'echo test > "'"$TEST_DIR"'/order1.txt" 2>&1; cat "'"$TEST_DIR"'/order1.txt"' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Redirect order: > then 2>&1"
+else
+    fail "Redirect order: > then 2>&1" "test" "$result"
+fi
+
+# =====================================
+section "461. PIPELINE WITH SUBSHELL"
+# =====================================
+
+# Subshell in pipeline
+result=$("$FORTSH_BIN" -c '(echo a; echo b) | wc -l' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "Subshell in pipeline"
+else
+    fail "Subshell in pipeline" "2" "$result"
+fi
+
+# Brace group in pipeline
+result=$("$FORTSH_BIN" -c '{ echo x; echo y; } | wc -l' 2>&1)
+if [ "$result" = "2" ]; then
+    pass "Brace group in pipeline"
+else
+    fail "Brace group in pipeline" "2" "$result"
+fi
+
+# =====================================
+section "462. REDIRECT AND PIPELINE COMBO"
+# =====================================
+
+# Pipeline with final redirect
+result=$("$FORTSH_BIN" -c 'echo test | cat > "'"$TEST_DIR"'/pipe_redir.txt"; cat "'"$TEST_DIR"'/pipe_redir.txt"' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Pipeline with final redirect"
+else
+    fail "Pipeline with final redirect" "test" "$result"
+fi
+
+# Redirect within pipeline
+result=$("$FORTSH_BIN" -c 'echo test 2>/dev/null | cat' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Redirect within pipeline stage"
+else
+    fail "Redirect within pipeline stage" "test" "$result"
+fi
+
+# =====================================
+section "463. HERE STRING ALTERNATIVES"
+# =====================================
+
+# Echo pipe as here-string alternative
+result=$("$FORTSH_BIN" -c 'echo "test" | cat' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Echo pipe as here-string alternative"
+else
+    fail "Echo pipe as here-string alternative" "test" "$result"
+fi
+
+# Printf pipe
+result=$("$FORTSH_BIN" -c 'printf "%s" "test" | cat' 2>&1)
+if [ "$result" = "test" ]; then
+    pass "Printf pipe"
+else
+    fail "Printf pipe" "test" "$result"
+fi
+
+# =====================================
+section "464. REDIRECTION EDGE CASES"
+# =====================================
+
+# Redirect to same file
+result=$("$FORTSH_BIN" -c 'echo original > "'"$TEST_DIR"'/same.txt"; echo new > "'"$TEST_DIR"'/same.txt"; cat "'"$TEST_DIR"'/same.txt"' 2>&1)
+if [ "$result" = "new" ]; then
+    pass "Multiple redirects to same file"
+else
+    fail "Multiple redirects to same file" "new" "$result"
+fi
+
+# Empty redirect (creates empty file)
+rm -f "$TEST_DIR/empty_redir.txt"
+result=$("$FORTSH_BIN" -c '> "'"$TEST_DIR"'/empty_redir.txt"; [ -f "'"$TEST_DIR"'/empty_redir.txt" ] && echo exists' 2>&1)
+if [ "$result" = "exists" ]; then
+    pass "Empty redirect creates file"
+else
+    fail "Empty redirect creates file" "exists" "$result"
+fi
+
+# =====================================
+section "465. TPYE WITH REDIRECTION"
+# =====================================
+
+# Pipeline preserves data integrity
+result=$("$FORTSH_BIN" -c 'echo "hello world" | cat | cat | cat' 2>&1)
+if [ "$result" = "hello world" ]; then
+    pass "Pipeline preserves data integrity"
+else
+    fail "Pipeline preserves data integrity" "hello world" "$result"
+fi
+
+# Multiple pipes with tr
+result=$("$FORTSH_BIN" -c 'echo abc | tr a X | tr b Y | tr c Z' 2>&1)
+if [ "$result" = "XYZ" ]; then
+    pass "Multiple pipes with tr"
+else
+    fail "Multiple pipes with tr" "XYZ" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
