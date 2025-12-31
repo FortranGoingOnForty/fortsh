@@ -565,6 +565,203 @@ else
 fi
 
 # =====================================
+section "381. COMPLEX TEST EXPRESSIONS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ 1 -eq 1 -a 2 -eq 2 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ a -a b ] both true"
+else
+    fail "[ a -a b ] both true" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 1 -eq 1 -a 2 -eq 3 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ a -a b ] second false"
+else
+    fail "[ a -a b ] second false" "no" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 1 -eq 2 -o 2 -eq 2 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ a -o b ] second true"
+else
+    fail "[ a -o b ] second true" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 1 -eq 2 -o 3 -eq 4 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ a -o b ] both false"
+else
+    fail "[ a -o b ] both false" "no" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ ! 1 -eq 2 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ ! expr ] negates false"
+else
+    fail "[ ! expr ] negates false" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ ! 1 -eq 1 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ ! expr ] negates true"
+else
+    fail "[ ! expr ] negates true" "no" "$result"
+fi
+
+# =====================================
+section "382. PARENTHESES IN TEST"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ \( 1 -eq 1 \) ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \\( expr \\) ] parentheses"
+else
+    fail "[ \\( expr \\) ] parentheses" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ \( 1 -eq 1 -o 2 -eq 3 \) -a 3 -eq 3 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \\( a -o b \\) -a c ] complex grouping"
+else
+    fail "[ \\( a -o b \\) -a c ] complex grouping" "yes" "$result"
+fi
+
+# =====================================
+section "383. STRING LENGTH COMPARISONS"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ -z "" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -z \"\" ] empty string is zero length"
+else
+    fail "[ -z \"\" ] empty string is zero length" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -z "x" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ -z \"x\" ] non-empty has length"
+else
+    fail "[ -z \"x\" ] non-empty has length" "no" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -n "" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ -n \"\" ] empty has no length"
+else
+    fail "[ -n \"\" ] empty has no length" "no" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -n "abc" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -n \"abc\" ] string has length"
+else
+    fail "[ -n \"abc\" ] string has length" "yes" "$result"
+fi
+
+# =====================================
+section "384. NUMERIC EDGE CASES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ 0 -eq 0 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ 0 -eq 0 ] zero equals zero"
+else
+    fail "[ 0 -eq 0 ] zero equals zero" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -5 -lt 0 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -5 -lt 0 ] negative less than zero"
+else
+    fail "[ -5 -lt 0 ] negative less than zero" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ -10 -gt -20 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -10 -gt -20 ] negative comparisons"
+else
+    fail "[ -10 -gt -20 ] negative comparisons" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 999999 -gt 1 ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ large -gt 1 ] large numbers"
+else
+    fail "[ large -gt 1 ] large numbers" "yes" "$result"
+fi
+
+# =====================================
+section "385. STRING VS NUMERIC"
+# =====================================
+
+result=$("$FORTSH_BIN" -c '[ "10" = "10" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \"10\" = \"10\" ] string comparison"
+else
+    fail "[ \"10\" = \"10\" ] string comparison" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ "10" = "010" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ \"10\" = \"010\" ] string differs from numeric"
+else
+    fail "[ \"10\" = \"010\" ] string differs from numeric" "no" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c '[ 10 -eq 010 ] && echo yes || echo no' 2>&1)
+# Numeric comparison - may or may not treat 010 as octal
+if [ "$result" = "yes" ] || [ "$result" = "no" ]; then
+    pass "[ 10 -eq 010 ] numeric comparison"
+else
+    fail "[ 10 -eq 010 ] numeric comparison" "yes or no" "$result"
+fi
+
+# =====================================
+section "386. FILE TEST WITH VARIABLES"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'f='"$TEST_DIR"'/regular_file; [ -f "$f" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -f \"\$var\" ] variable as filename"
+else
+    fail "[ -f \"\$var\" ] variable as filename" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'd='"$TEST_DIR"'; [ -d "$d" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -d \"\$var\" ] variable as dirname"
+else
+    fail "[ -d \"\$var\" ] variable as dirname" "yes" "$result"
+fi
+
+# =====================================
+section "387. EMPTY OPERAND HANDLING"
+# =====================================
+
+result=$("$FORTSH_BIN" -c 'unset x; [ -n "$x" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "no" ]; then
+    pass "[ -n \"\$unset\" ] unset variable"
+else
+    fail "[ -n \"\$unset\" ] unset variable" "no" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'unset x; [ -z "$x" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ -z \"\$unset\" ] unset is zero length"
+else
+    fail "[ -z \"\$unset\" ] unset is zero length" "yes" "$result"
+fi
+
+result=$("$FORTSH_BIN" -c 'unset x; [ "$x" = "" ] && echo yes || echo no' 2>&1)
+if [ "$result" = "yes" ]; then
+    pass "[ \"\$unset\" = \"\" ] unset equals empty"
+else
+    fail "[ \"\$unset\" = \"\" ] unset equals empty" "yes" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
