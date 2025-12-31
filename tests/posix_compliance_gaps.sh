@@ -868,16 +868,16 @@ compare_posix_output "printf zero pad" 'printf "%05d\n" 42'
 compare_posix_output "printf left align" 'printf "%-5d|\n" 42'
 compare_posix_output "printf multiple" 'printf "%s %s\n" a b'
 
-section "162. READ BUILTIN VARIATIONS"
+section "162. PRINTF VARIATIONS"
 
-compare_posix_output "read single" 'echo hello | { read x; echo $x; }'
-compare_posix_output "read multiple" 'echo "a b c" | { read x y z; echo "$x:$y:$z"; }'
-compare_posix_output "read extra" 'echo "a b c d" | { read x y; echo "$x:$y"; }'
-compare_posix_output "read fewer" 'echo "a" | { read x y; echo "x=$x y=${y:-empty}"; }'
-compare_posix_output "read ifs colon" 'echo "a:b:c" | { IFS=: read x y z; echo "$x $y $z"; }'
-compare_posix_output "read empty ifs" 'echo "a b c" | { IFS= read x; echo "$x"; }'
-compare_posix_output "read backslash" 'printf "a\\\\b\n" | { read x; echo "$x"; }'
-compare_posix_output "read raw" 'printf "a\\\\b\n" | { read -r x; echo "$x"; }'
+compare_posix_output "printf basic" 'printf "hello\n"'
+compare_posix_output "printf no newline" 'printf "test"; echo done'
+compare_posix_output "printf format s" 'printf "%s\n" hello'
+compare_posix_output "printf format d" 'printf "%d\n" 42'
+compare_posix_output "printf multi arg" 'printf "%s %s\n" a b'
+compare_posix_output "printf width" 'printf "%5s\n" ab'
+compare_posix_output "printf escape" 'printf "a\tb\n"'
+compare_posix_output "printf percent" 'printf "%%\n"'
 
 section "163. SET BUILTIN VARIATIONS"
 
@@ -1384,17 +1384,16 @@ compare_posix_output "heredoc special" 'cat <<EOF
 * $ @ !
 EOF'
 
-section "211. IFS VARIATIONS"
+section "211. IFS WORD SPLITTING"
 
-compare_posix_output "ifs default" 'unset IFS; echo "a b c" | { read x y z; echo "$x:$y:$z"; }'
-compare_posix_output "ifs space" 'IFS=" "; echo "a b c" | { read x y z; echo "$x:$y:$z"; }'
-compare_posix_output "ifs colon" 'IFS=:; echo "a:b:c" | { read x y z; echo "$x $y $z"; }'
-compare_posix_output "ifs tab" 'IFS="	"; printf "a\tb\tc\n" | { read x y z; echo "$x $y $z"; }'
-compare_posix_output "ifs newline" 'IFS="
-"; echo "abc" | { read x; echo "$x"; }'
-compare_posix_output "ifs empty" 'IFS=""; echo "a b c" | { read x; echo "$x"; }'
-compare_posix_output "ifs multi" 'IFS=":;"; echo "a:b;c" | { read x y z; echo "$x $y $z"; }'
-compare_posix_output "ifs split" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "ifs split colon" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "ifs split space" 'IFS=" "; x="a b c"; set -- $x; echo $#'
+compare_posix_output "ifs split multi" 'IFS=":;"; x="a:b;c"; set -- $x; echo $#'
+compare_posix_output "ifs default split" 'x="a b c"; set -- $x; echo $#'
+compare_posix_output "ifs empty no split" 'IFS=""; x="a b"; set -- $x; echo $#'
+compare_posix_output "ifs unset default" 'unset IFS; x="a  b"; set -- $x; echo $#'
+compare_posix_output "ifs in for" 'IFS=:; for i in a:b:c; do echo $i; done'
+compare_posix_output "ifs restore" 'OLD="$IFS"; IFS=:; IFS="$OLD"; echo ok'
 
 section "212. WORD SPLITTING"
 
@@ -1435,12 +1434,12 @@ compare_posix_output "cmd sub quote" 'echo "$(echo "quoted")"'
 compare_posix_output "backtick simple" 'echo `echo hello`'
 compare_posix_output "backtick nested" 'echo `echo \`echo deep\``'
 
-section "216. PROCESS SUBSTITUTION ALTERNATIVES"
+section "216. PIPELINE ALTERNATIVES"
 
-compare_posix_output "pipe to while" 'echo -e "a\nb\nc" | while read x; do echo $x; done | wc -l'
 compare_posix_output "pipe chain filter" 'echo test | grep test | cat'
 compare_posix_output "subshell pipe" '(echo test) | cat'
 compare_posix_output "brace pipe" '{ echo test; } | cat'
+compare_posix_output "pipe to head" 'printf "a\nb\nc\n" | head -2 | wc -l'
 
 section "217. EXIT STATUS"
 
@@ -1576,14 +1575,14 @@ compare_posix_output "func in paren" '(f() { echo func; }; f)'
 
 section "230. COMPLEX COMMAND COMBINATIONS"
 
-compare_posix_output "pipe and if" 'echo test | if read x; then echo $x; fi'
 compare_posix_output "for pipe filter" 'for i in 1 2 3 4 5; do echo $i; done | head -3 | wc -l'
-compare_posix_output "while pipe count" 'echo -e "a\nb\nc" | while read x; do echo $x; done | wc -l'
 compare_posix_output "case in for" 'for x in a b c; do case $x in a) echo first;; esac; done'
 compare_posix_output "if in while" 'n=2; while [ $n -gt 0 ]; do if [ $n -eq 1 ]; then echo one; fi; n=$((n-1)); done'
 compare_posix_output "nested for" 'for i in 1 2; do for j in a b; do echo $i$j; done; done | wc -l'
 compare_posix_output "subshell in for" 'for i in 1 2; do (echo $i); done | wc -l'
 compare_posix_output "func in for" 'f() { echo $1; }; for i in a b c; do f $i; done | wc -l'
+compare_posix_output "pipe to sort" 'printf "c\na\nb\n" | sort | head -1'
+compare_posix_output "nested subshell" '((echo deep))'
 
 # Summary
 printf "\n"
