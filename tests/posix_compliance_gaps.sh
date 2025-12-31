@@ -1384,6 +1384,207 @@ compare_posix_output "heredoc special" 'cat <<EOF
 * $ @ !
 EOF'
 
+section "211. IFS VARIATIONS"
+
+compare_posix_output "ifs default" 'unset IFS; echo "a b c" | { read x y z; echo "$x:$y:$z"; }'
+compare_posix_output "ifs space" 'IFS=" "; echo "a b c" | { read x y z; echo "$x:$y:$z"; }'
+compare_posix_output "ifs colon" 'IFS=:; echo "a:b:c" | { read x y z; echo "$x $y $z"; }'
+compare_posix_output "ifs tab" 'IFS="	"; printf "a\tb\tc\n" | { read x y z; echo "$x $y $z"; }'
+compare_posix_output "ifs newline" 'IFS="
+"; echo "abc" | { read x; echo "$x"; }'
+compare_posix_output "ifs empty" 'IFS=""; echo "a b c" | { read x; echo "$x"; }'
+compare_posix_output "ifs multi" 'IFS=":;"; echo "a:b;c" | { read x y z; echo "$x $y $z"; }'
+compare_posix_output "ifs split" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+
+section "212. WORD SPLITTING"
+
+compare_posix_output "split unquoted" 'x="a b c"; set -- $x; echo $#'
+compare_posix_output "split quoted" 'x="a b c"; set -- "$x"; echo $#'
+compare_posix_output "split ifs" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "split empty" 'x=""; set -- $x; echo $#'
+compare_posix_output "split whitespace" 'x="  a  b  "; set -- $x; echo $#'
+compare_posix_output "split preserve" 'x="a  b"; echo "$x"'
+compare_posix_output "split multiple" 'x="a b" y="c d"; set -- $x $y; echo $#'
+
+section "213. PATHNAME EXPANSION"
+
+compare_posix_output "glob star" 'set -f; echo *; set +f'
+compare_posix_output "glob question" 'set -f; echo ?; set +f'
+compare_posix_output "glob bracket" 'set -f; echo [abc]; set +f'
+compare_posix_output "glob quoted" 'echo "*"'
+compare_posix_output "glob escaped" 'echo \*'
+compare_posix_output "glob noglob" 'set -f; echo *.txt; set +f'
+compare_posix_output "glob in var" 'x="*"; echo "$x"'
+
+section "214. TILDE EXPANSION"
+
+compare_posix_output "tilde alone" 'echo ~ | grep -c "/"'
+compare_posix_output "tilde slash" 'echo ~/ | grep -c "/"'
+compare_posix_output "tilde quoted" 'echo "~"'
+compare_posix_output "tilde in var" 'x=~; echo $x | grep -c "/"'
+compare_posix_output "tilde assign" 'HOME=/tmp; echo ~ | grep -c "/"'
+
+section "215. COMMAND SUBSTITUTION NESTING"
+
+compare_posix_output "cmd sub simple" 'echo $(echo hello)'
+compare_posix_output "cmd sub nested" 'echo $(echo $(echo deep))'
+compare_posix_output "cmd sub triple" 'echo $(echo $(echo $(echo triple)))'
+compare_posix_output "cmd sub arith" 'echo $(echo $((1+1)))'
+compare_posix_output "cmd sub var" 'X=val; echo $(echo $X)'
+compare_posix_output "cmd sub quote" 'echo "$(echo "quoted")"'
+compare_posix_output "backtick simple" 'echo `echo hello`'
+compare_posix_output "backtick nested" 'echo `echo \`echo deep\``'
+
+section "216. PROCESS SUBSTITUTION ALTERNATIVES"
+
+compare_posix_output "pipe to while" 'echo -e "a\nb\nc" | while read x; do echo $x; done | wc -l'
+compare_posix_output "pipe chain filter" 'echo test | grep test | cat'
+compare_posix_output "subshell pipe" '(echo test) | cat'
+compare_posix_output "brace pipe" '{ echo test; } | cat'
+
+section "217. EXIT STATUS"
+
+compare_posix_output "exit 0" 'exit 0'
+compare_posix_output "exit 1" '(exit 1); echo $?'
+compare_posix_output "exit 255" '(exit 255); echo $?'
+compare_posix_output "true status" 'true; echo $?'
+compare_posix_output "false status" 'false; echo $?'
+compare_posix_output "cmd not found" 'nonexistent_cmd_xyz 2>/dev/null; echo $?'
+compare_posix_output "pipe status" 'false | true; echo $?'
+compare_posix_output "and status" 'true && true; echo $?'
+compare_posix_output "or status" 'false || true; echo $?'
+compare_posix_output "not status" '! false; echo $?'
+
+section "218. SIGNAL HANDLING"
+
+compare_posix_output "trap list" 'trap 2>/dev/null; echo $?'
+compare_posix_output "trap set" 'trap "echo caught" INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap reset" 'trap "echo x" INT; trap - INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap ignore" 'trap "" INT; trap | grep -c INT || echo 0'
+compare_posix_output "kill signal" 'kill -l | head -1 | grep -c "[A-Z]" || echo 1'
+
+section "219. JOB CONTROL BASICS"
+
+compare_posix_output "bg job" 'sleep 0.01 & wait; echo done'
+compare_posix_output "bg pid" 'sleep 0.01 & echo $! | grep -c "[0-9]"'
+compare_posix_output "wait all" 'sleep 0.01 & sleep 0.01 & wait'
+compare_posix_output "wait pid" 'sleep 0.01 & p=$!; wait $p; echo $?'
+compare_posix_output "jobs list" 'jobs 2>/dev/null; echo $?'
+
+section "220. ENVIRONMENT VARIABLES"
+
+compare_posix_output "env home" 'echo ${HOME:-unset} | grep -c "/"'
+compare_posix_output "env path" 'echo ${PATH:-unset} | grep -c ":"'
+compare_posix_output "env pwd" 'echo ${PWD:-unset} | grep -c "/"'
+compare_posix_output "env shell" 'echo ${SHELL:-unset} | grep -c "/" || echo 1'
+compare_posix_output "export var" 'export X=val; sh -c "echo \$X"'
+compare_posix_output "prefix assign" 'X=val sh -c "echo \$X"'
+compare_posix_output "unset env" 'export X=val; unset X; echo ${X:-unset}'
+
+section "221. SPECIAL VARIABLES"
+
+compare_posix_output "dollar zero" 'echo ${0:-shell} | grep -c "."'
+compare_posix_output "dollar hash" 'set -- a b c; echo $#'
+compare_posix_output "dollar question" 'true; echo $?'
+compare_posix_output "dollar dollar" 'echo $$ | grep -c "[0-9]"'
+compare_posix_output "dollar bang" 'sleep 0.01 & echo $! | grep -c "[0-9]"'
+compare_posix_output "dollar at" 'set -- a b c; echo "$@"'
+compare_posix_output "dollar star" 'set -- a b c; echo "$*"'
+compare_posix_output "dollar minus" 'echo $- | grep -c "."'
+
+section "222. POSITIONAL PARAMETERS"
+
+compare_posix_output "pos one" 'set -- a b c; echo $1'
+compare_posix_output "pos two" 'set -- a b c; echo $2'
+compare_posix_output "pos three" 'set -- a b c; echo $3'
+compare_posix_output "pos shift" 'set -- a b c; shift; echo $1'
+compare_posix_output "pos shift n" 'set -- a b c d e; shift 3; echo $1'
+compare_posix_output "pos set" 'set -- x y z; echo $1 $2 $3'
+compare_posix_output "pos clear" 'set -- a b c; set --; echo ${1:-empty}'
+compare_posix_output "pos count" 'set -- a b c d e; echo $#'
+compare_posix_output "pos all at" 'set -- a b c; for x in "$@"; do echo $x; done | wc -l'
+compare_posix_output "pos all star" 'set -- a b c; echo "$*" | wc -w'
+
+section "223. FUNCTION DEFINITION STYLES"
+
+compare_posix_output "func keyword" 'f() { echo hello; }; f'
+compare_posix_output "func oneline" 'f() { echo one; }; f'
+compare_posix_output "func multiline" 'f() {
+echo multi
+}; f'
+compare_posix_output "func with args" 'f() { echo $1 $2; }; f a b'
+compare_posix_output "func return" 'f() { return 5; }; f; echo $?'
+compare_posix_output "func local var" 'X=outer; f() { X=inner; }; f; echo $X'
+compare_posix_output "func recursive" 'f() { [ $1 -eq 0 ] && echo done || f $(($1-1)); }; f 3'
+
+section "224. FUNCTION SCOPE"
+
+compare_posix_output "func global var" 'X=global; f() { echo $X; }; f'
+compare_posix_output "func modify var" 'X=old; f() { X=new; }; f; echo $X'
+compare_posix_output "func args" 'f() { echo $#; }; f a b c'
+compare_posix_output "func positional" 'f() { echo $1; }; set -- x; f a; echo $1'
+compare_posix_output "func in subshell" 'f() { echo func; }; (f)'
+compare_posix_output "func in pipeline" 'f() { echo test; }; f | cat'
+compare_posix_output "func redefine" 'f() { echo one; }; f; f() { echo two; }; f'
+
+section "225. ALIAS BASICS"
+
+compare_posix_output "alias define" 'alias x=echo 2>/dev/null; echo ok'
+compare_posix_output "alias list" 'alias 2>/dev/null; echo $?'
+compare_posix_output "unalias" 'alias x=echo 2>/dev/null; unalias x 2>/dev/null; echo $?'
+compare_posix_output "unalias all" 'unalias -a 2>/dev/null; echo $?'
+
+section "226. CONTROL STRUCTURES COMPREHENSIVE"
+
+compare_posix_output "if basic" 'if true; then echo yes; fi'
+compare_posix_output "if else" 'if false; then echo no; else echo yes; fi'
+compare_posix_output "if elif" 'if false; then echo 1; elif true; then echo 2; fi'
+compare_posix_output "if nested" 'if true; then if true; then echo deep; fi; fi'
+compare_posix_output "for basic" 'for i in 1 2 3; do echo $i; done | wc -l'
+compare_posix_output "for empty" 'for i in; do echo $i; done; echo done'
+compare_posix_output "while basic" 'n=3; while [ $n -gt 0 ]; do echo $n; n=$((n-1)); done | wc -l'
+compare_posix_output "until basic" 'n=0; until [ $n -eq 3 ]; do n=$((n+1)); done; echo $n'
+compare_posix_output "case basic" 'case x in x) echo yes;; esac'
+compare_posix_output "case default" 'case x in y) echo no;; *) echo default;; esac'
+
+section "227. BREAK AND CONTINUE"
+
+compare_posix_output "break simple" 'for i in 1 2 3; do [ $i -eq 2 ] && break; echo $i; done'
+compare_posix_output "continue simple" 'for i in 1 2 3; do [ $i -eq 2 ] && continue; echo $i; done'
+compare_posix_output "break nested" 'for i in 1 2; do for j in a b; do break; done; echo $i; done'
+compare_posix_output "break 2" 'for i in 1 2; do for j in a b; do break 2; done; done; echo done'
+compare_posix_output "continue nested" 'for i in 1 2; do for j in a b; do continue 2; done; echo no; done; echo done'
+
+section "228. RETURN AND EXIT"
+
+compare_posix_output "return 0" 'f() { return 0; }; f; echo $?'
+compare_posix_output "return 1" 'f() { return 1; }; f; echo $?'
+compare_posix_output "return 255" 'f() { return 255; }; f; echo $?'
+compare_posix_output "exit subshell" '(exit 5); echo $?'
+compare_posix_output "exit brace" '{ exit 0; }; echo unreached'
+compare_posix_output "return implicit" 'f() { true; }; f; echo $?'
+
+section "229. COMPOUND COMMANDS"
+
+compare_posix_output "paren list" '(echo a; echo b) | wc -l'
+compare_posix_output "brace list" '{ echo a; echo b; } | wc -l'
+compare_posix_output "if in paren" '(if true; then echo yes; fi)'
+compare_posix_output "for in brace" '{ for i in 1 2; do echo $i; done; } | wc -l'
+compare_posix_output "while in paren" '(n=2; while [ $n -gt 0 ]; do echo $n; n=$((n-1)); done) | wc -l'
+compare_posix_output "case in brace" '{ case x in x) echo yes;; esac; }'
+compare_posix_output "func in paren" '(f() { echo func; }; f)'
+
+section "230. COMPLEX COMMAND COMBINATIONS"
+
+compare_posix_output "pipe and if" 'echo test | if read x; then echo $x; fi'
+compare_posix_output "for pipe filter" 'for i in 1 2 3 4 5; do echo $i; done | head -3 | wc -l'
+compare_posix_output "while pipe count" 'echo -e "a\nb\nc" | while read x; do echo $x; done | wc -l'
+compare_posix_output "case in for" 'for x in a b c; do case $x in a) echo first;; esac; done'
+compare_posix_output "if in while" 'n=2; while [ $n -gt 0 ]; do if [ $n -eq 1 ]; then echo one; fi; n=$((n-1)); done'
+compare_posix_output "nested for" 'for i in 1 2; do for j in a b; do echo $i$j; done; done | wc -l'
+compare_posix_output "subshell in for" 'for i in 1 2; do (echo $i); done | wc -l'
+compare_posix_output "func in for" 'f() { echo $1; }; for i in a b c; do f $i; done | wc -l'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
