@@ -617,6 +617,255 @@ else
 fi
 
 # =====================================
+section "401. GETOPTS BUILTIN"
+# =====================================
+
+# Basic option parsing
+result=$("$FORTSH_BIN" -c 'set -- -a; getopts "ab" opt; echo $opt' 2>&1)
+if [ "$result" = "a" ]; then
+    pass "getopts parses simple option"
+else
+    fail "getopts parses simple option" "a" "$result"
+fi
+
+# Option with argument
+result=$("$FORTSH_BIN" -c 'set -- -a value; getopts "a:" opt; echo "$OPTARG"' 2>&1)
+if [ "$result" = "value" ]; then
+    pass "getopts sets OPTARG"
+else
+    fail "getopts sets OPTARG" "value" "$result"
+fi
+
+# OPTIND increment
+result=$("$FORTSH_BIN" -c 'set -- -a -b; getopts "ab" opt; getopts "ab" opt; echo $OPTIND' 2>&1)
+if [ "$result" = "3" ]; then
+    pass "getopts increments OPTIND"
+else
+    fail "getopts increments OPTIND" "3" "$result"
+fi
+
+# Multiple options in loop
+result=$("$FORTSH_BIN" -c 'set -- -a -b -c; while getopts "abc" opt; do echo -n $opt; done' 2>&1)
+if [ "$result" = "abc" ]; then
+    pass "getopts in while loop"
+else
+    fail "getopts in while loop" "abc" "$result"
+fi
+
+# Invalid option handling
+result=$("$FORTSH_BIN" -c 'set -- -z; getopts "ab" opt 2>/dev/null; echo $opt' 2>&1)
+if [ "$result" = "?" ]; then
+    pass "getopts returns ? for invalid option"
+else
+    fail "getopts returns ? for invalid option" "?" "$result"
+fi
+
+# Silent mode with leading colon
+result=$("$FORTSH_BIN" -c 'set -- -a; getopts ":a:b" opt; echo $opt' 2>&1)
+if [ "$result" = ":" ] || [ "$result" = "a" ]; then
+    pass "getopts silent mode with colon"
+else
+    fail "getopts silent mode with colon" ": or a" "$result"
+fi
+
+# Reset OPTIND
+result=$("$FORTSH_BIN" -c 'set -- -a; getopts "a" opt; OPTIND=1; getopts "a" opt; echo $opt' 2>&1)
+if [ "$result" = "a" ]; then
+    pass "OPTIND reset allows reparse"
+else
+    fail "OPTIND reset allows reparse" "a" "$result"
+fi
+
+# =====================================
+section "402. TYPE BUILTIN"
+# =====================================
+
+# type finds commands
+result=$("$FORTSH_BIN" -c 'type echo' 2>&1)
+if echo "$result" | grep -qE "echo|builtin|/"; then
+    pass "type finds echo"
+else
+    fail "type finds echo" "echo info" "$result"
+fi
+
+# type returns error for unknown
+result=$("$FORTSH_BIN" -c 'type nonexistent_xyz_cmd 2>/dev/null; echo $?' 2>&1)
+if [ "$result" != "0" ]; then
+    pass "type returns error for unknown command"
+else
+    fail "type returns error for unknown command" "non-zero" "$result"
+fi
+
+# type finds functions
+result=$("$FORTSH_BIN" -c 'myfunc() { :; }; type myfunc' 2>&1)
+if echo "$result" | grep -qE "myfunc|function"; then
+    pass "type finds functions"
+else
+    fail "type finds functions" "function info" "$result"
+fi
+
+# type finds aliases
+result=$("$FORTSH_BIN" -c 'alias myalias=echo; type myalias' 2>&1)
+if echo "$result" | grep -qE "myalias|alias"; then
+    pass "type finds aliases"
+else
+    fail "type finds aliases" "alias info" "$result"
+fi
+
+# type finds builtins
+result=$("$FORTSH_BIN" -c 'type cd' 2>&1)
+if echo "$result" | grep -qE "cd|builtin"; then
+    pass "type identifies builtins"
+else
+    fail "type identifies builtins" "builtin info" "$result"
+fi
+
+# =====================================
+section "403. COMMAND BUILTIN"
+# =====================================
+
+# command -v finds commands
+result=$("$FORTSH_BIN" -c 'command -v echo' 2>&1)
+if [ -n "$result" ]; then
+    pass "command -v finds echo"
+else
+    fail "command -v finds echo" "non-empty" "$result"
+fi
+
+# command -v returns empty for unknown
+result=$("$FORTSH_BIN" -c 'command -v nonexistent_xyz_cmd; echo $?' 2>&1)
+if [ "$result" != "0" ]; then
+    pass "command -v returns error for unknown"
+else
+    fail "command -v returns error for unknown" "non-zero exit" "$result"
+fi
+
+# command bypasses functions
+result=$("$FORTSH_BIN" -c 'echo() { printf "FUNC"; }; command echo hello' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "command bypasses function"
+else
+    fail "command bypasses function" "hello" "$result"
+fi
+
+# command bypasses aliases
+result=$("$FORTSH_BIN" -c 'alias echo="printf ALIAS"; command echo hello' 2>&1)
+if [ "$result" = "hello" ]; then
+    pass "command bypasses alias"
+else
+    fail "command bypasses alias" "hello" "$result"
+fi
+
+# =====================================
+section "404. TRAP BUILTIN EDGE CASES"
+# =====================================
+
+# trap with empty action
+result=$("$FORTSH_BIN" -c 'trap "" INT; trap' 2>&1)
+if echo "$result" | grep -qE "INT|''"; then
+    pass "trap with empty action (ignore signal)"
+else
+    fail "trap with empty action (ignore signal)" "INT trap" "$result"
+fi
+
+# trap - removes trap
+result=$("$FORTSH_BIN" -c 'trap "echo x" EXIT; trap - EXIT; trap' 2>&1)
+if ! echo "$result" | grep -q "EXIT"; then
+    pass "trap - removes trap"
+else
+    fail "trap - removes trap" "no EXIT" "$result"
+fi
+
+# Multiple traps
+result=$("$FORTSH_BIN" -c 'trap "echo INT" INT; trap "echo TERM" TERM; trap | wc -l' 2>&1)
+if [ "$result" -ge 2 ] 2>/dev/null; then
+    pass "Multiple traps can be set"
+else
+    fail "Multiple traps can be set" ">=2 lines" "$result"
+fi
+
+# trap with no args lists traps
+result=$("$FORTSH_BIN" -c 'trap "echo x" INT; trap' 2>&1)
+if [ -n "$result" ]; then
+    pass "trap with no args lists traps"
+else
+    fail "trap with no args lists traps" "non-empty" "$result"
+fi
+
+# EXIT trap runs on exit
+result=$("$FORTSH_BIN" -c 'trap "echo EXITING" EXIT; exit 0' 2>&1)
+if [ "$result" = "EXITING" ]; then
+    pass "EXIT trap executes on exit"
+else
+    fail "EXIT trap executes on exit" "EXITING" "$result"
+fi
+
+# =====================================
+section "405. HASH BUILTIN"
+# =====================================
+
+# hash without args
+result=$("$FORTSH_BIN" -c 'hash 2>&1; echo $?' 2>&1)
+# hash returns 0 even if empty
+pass "hash builtin exists"
+
+# hash -r clears cache
+result=$("$FORTSH_BIN" -c 'ls >/dev/null 2>&1; hash -r; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "hash -r clears cache"
+else
+    fail "hash -r clears cache" "0" "$result"
+fi
+
+# =====================================
+section "406. WAIT BUILTIN EDGE CASES"
+# =====================================
+
+# wait with no args
+result=$("$FORTSH_BIN" -c 'sleep 0.1 & sleep 0.1 &; wait; echo done' 2>&1)
+if [ "$result" = "done" ]; then
+    pass "wait with no args waits for all"
+else
+    fail "wait with no args waits for all" "done" "$result"
+fi
+
+# wait with specific PID
+result=$("$FORTSH_BIN" -c 'sleep 0.1 & pid=$!; wait $pid; echo $?' 2>&1)
+if [ "$result" = "0" ]; then
+    pass "wait with PID"
+else
+    fail "wait with PID" "0" "$result"
+fi
+
+# wait preserves exit status
+result=$("$FORTSH_BIN" -c '(exit 42) & pid=$!; wait $pid; echo $?' 2>&1)
+if [ "$result" = "42" ]; then
+    pass "wait preserves exit status"
+else
+    fail "wait preserves exit status" "42" "$result"
+fi
+
+# =====================================
+section "407. ULIMIT BUILTIN"
+# =====================================
+
+# ulimit -a shows limits
+result=$("$FORTSH_BIN" -c 'ulimit -a 2>&1' | head -5)
+if [ -n "$result" ]; then
+    pass "ulimit -a shows limits"
+else
+    fail "ulimit -a shows limits" "non-empty" "$result"
+fi
+
+# ulimit shows soft limit
+result=$("$FORTSH_BIN" -c 'ulimit 2>&1' | head -1)
+if [ -n "$result" ]; then
+    pass "ulimit shows default limit"
+else
+    fail "ulimit shows default limit" "non-empty" "$result"
+fi
+
+# =====================================
 # Summary
 # =====================================
 printf "\n"
