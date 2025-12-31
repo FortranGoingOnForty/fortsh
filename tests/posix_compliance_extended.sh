@@ -465,6 +465,111 @@ compare_posix_output "subshell exit" '(exit 42); echo $?'
 compare_posix_output "brace exit" '{ exit 7; }; echo $?'
 compare_posix_output "command sub exit" 'X=$(exit 5); echo $?'
 
+section "65. WORD SPLITTING IFS VARIANTS"
+
+compare_posix_output "IFS empty no split" 'IFS=""; X="a b c"; set -- $X; echo $#'
+compare_posix_output "IFS colon" 'IFS=":"; X="a:b:c"; set -- $X; echo $#'
+compare_posix_output "IFS multiple" 'IFS=":;"; X="a:b;c"; set -- $X; echo $#'
+compare_posix_output "IFS whitespace" 'IFS=" "; X="a  b  c"; set -- $X; echo $#'
+compare_posix_output "IFS default" 'X="a   b   c"; set -- $X; echo $#'
+
+section "66. PATHNAME EXPANSION DISABLING"
+
+compare_posix_output "noglob off" 'touch /tmp/glob_test_a.x /tmp/glob_test_b.x 2>/dev/null; ls /tmp/glob_test_*.x 2>/dev/null | wc -l'
+compare_posix_output "noglob on" 'set -f; echo /tmp/glob_test_*.x; set +f'
+
+section "67. TILDE EXPANSION CONTEXTS"
+
+compare_posix_output "tilde alone" 'echo ~ | grep -c "^/"'
+compare_posix_output "tilde in var" 'X=~; echo $X | grep -c "^/"'
+compare_posix_output "tilde quoted" 'echo "~" | grep -c "~"'
+compare_posix_output "tilde in path" 'echo ~/. | grep -c "^/"'
+
+section "68. ASSIGNMENT CONTEXTS"
+
+compare_posix_output "simple assign" 'X=hello; echo $X'
+compare_posix_output "assign with cmd sub" 'X=$(echo test); echo $X'
+compare_posix_output "assign with arith" 'X=$((5+3)); echo $X'
+compare_posix_output "multiple assign" 'X=1 Y=2 Z=3; echo $X $Y $Z'
+compare_posix_output "assign before cmd" 'X=val sh -c "echo \$X"'
+
+section "69. SPECIAL CHARACTER HANDLING"
+
+compare_posix_output "escaped newline" 'echo a\
+b'
+compare_posix_output "escaped dollar" 'echo \$VAR'
+compare_posix_output "escaped backslash" 'echo \\\\'
+compare_posix_output "escaped quote" 'echo \"quoted\"'
+
+section "70. WHILE LOOP VARIATIONS"
+
+compare_posix_output "while with pipe" 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done | wc -l'
+compare_posix_output "while false" 'while false; do echo never; done; echo done'
+compare_posix_output "while break" 'i=0; while true; do i=$((i+1)); [ $i -ge 3 ] && break; done; echo $i'
+compare_posix_output "while continue" 'i=0; while [ $i -lt 5 ]; do i=$((i+1)); [ $i -eq 3 ] && continue; echo $i; done'
+
+section "71. UNTIL LOOP VARIATIONS"
+
+compare_posix_output "until basic" 'i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done'
+compare_posix_output "until true" 'until true; do echo never; done; echo done'
+compare_posix_output "until with break" 'i=0; until false; do i=$((i+1)); [ $i -ge 3 ] && break; done; echo $i'
+
+section "72. FOR LOOP WORD LIST"
+
+compare_posix_output "for with glob" 'touch /tmp/for_test_1.z /tmp/for_test_2.z 2>/dev/null; for f in /tmp/for_test_*.z; do echo found; done | wc -l'
+compare_posix_output "for empty" 'for x in; do echo never; done; echo done'
+compare_posix_output "for with expansion" 'X="a b c"; for i in $X; do echo $i; done | wc -l'
+compare_posix_output "for quoted" 'for i in "a b" "c d"; do echo "[$i]"; done'
+
+section "73. FUNCTION ARGUMENT HANDLING"
+
+compare_posix_output "func args count" 'f() { echo $#; }; f a b c'
+compare_posix_output "func args values" 'f() { echo $1 $2 $3; }; f x y z'
+compare_posix_output "func args shift" 'f() { shift; echo $1; }; f a b c'
+compare_posix_output "func args all" 'f() { echo $@; }; f 1 2 3'
+compare_posix_output "func nested call" 'a() { b; }; b() { echo hello; }; a'
+
+section "74. RETURN AND EXIT"
+
+compare_posix_output "return value" 'f() { return 42; }; f; echo $?'
+compare_posix_output "return default" 'f() { true; return; }; f; echo $?'
+compare_posix_output "exit in subshell" '(exit 5); echo $?'
+compare_posix_output "exit from func" 'f() { exit 7; }; f; echo never'
+
+section "75. EVAL COMPLEX"
+
+compare_posix_output "eval variable expansion" 'X=VAR; VAR=value; eval echo \$$X'
+compare_posix_output "eval multiple" 'eval "A=1; B=2"; echo $A $B'
+compare_posix_output "eval with special" 'eval "echo hello world"'
+compare_posix_output "eval nested" 'eval eval echo test'
+
+section "76. EXEC REDIRECTIONS"
+
+compare_posix_output "exec redirect stdout" 'exec >/tmp/exec_test_$$; echo test; exec >&-; cat /tmp/exec_test_$$; rm /tmp/exec_test_$$'
+
+section "77. TRAP IN SUBSHELL"
+
+compare_posix_output "trap inherited" '(trap "echo trapped" EXIT; exit 0) 2>/dev/null'
+compare_posix_output "trap reset in subshell" 'trap "echo outer" EXIT; (trap - EXIT; echo inner) 2>/dev/null; trap - EXIT'
+
+section "78. COLON COMMAND"
+
+compare_posix_output "colon returns 0" ':; echo $?'
+compare_posix_output "colon with args" ': arg1 arg2 arg3; echo $?'
+compare_posix_output "colon with expansion" 'X=test; : $X; echo $?'
+compare_posix_output "colon in if" 'if :; then echo yes; fi'
+
+section "79. DOT SOURCE"
+
+compare_posix_output "dot sources" 'echo "X=sourced" > /tmp/dot_test_$$; . /tmp/dot_test_$$; echo $X; rm /tmp/dot_test_$$'
+compare_posix_output "dot with args" 'echo "echo \$1" > /tmp/dot_arg_$$; . /tmp/dot_arg_$$ hello; rm /tmp/dot_arg_$$'
+
+section "80. UNSET BEHAVIOR"
+
+compare_posix_output "unset variable" 'X=test; unset X; echo ${X:-empty}'
+compare_posix_output "unset function" 'f() { echo hi; }; unset -f f; f 2>/dev/null || echo gone'
+compare_posix_output "unset nonexistent" 'unset NONEXISTENT_VAR_XYZ; echo $?'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
