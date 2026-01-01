@@ -3415,6 +3415,243 @@ compare_posix_output "tilde plus" 'echo ~+ | grep -c /'
 compare_posix_output "tilde in assign" 'x=~/test; echo $x | grep -c /'
 compare_posix_output "tilde quoted" 'echo "~"'
 
+# ============================================================================
+# SECTION 451-460: BUILTINS EDGE CASES
+# ============================================================================
+
+section "451. CD BUILTIN"
+
+compare_posix_output "cd tmp" 'cd /tmp; pwd'
+compare_posix_output "cd home" 'cd ~; pwd | grep -c /'
+compare_posix_output "cd dash" 'cd /tmp; cd /; cd -'
+compare_posix_output "cd dotdot" 'cd /tmp; cd ..; pwd'
+
+section "452. PWD BUILTIN"
+
+compare_posix_output "pwd basic" 'pwd | grep -c /'
+compare_posix_output "pwd P" 'pwd -P | grep -c /'
+compare_posix_output "pwd L" 'pwd -L | grep -c /'
+
+section "453. ECHO BUILTIN"
+
+compare_posix_output "echo basic" 'echo hello'
+compare_posix_output "echo multi" 'echo hello world'
+compare_posix_output "echo empty" 'echo ""'
+compare_posix_output "echo n" 'echo -n hello; echo world'
+compare_posix_output "echo special" 'echo "a\tb"'
+
+section "454. PRINTF BUILTIN"
+
+compare_posix_output "printf s" 'printf "%s\n" hello'
+compare_posix_output "printf d" 'printf "%d\n" 42'
+compare_posix_output "printf x" 'printf "%x\n" 255'
+compare_posix_output "printf o" 'printf "%o\n" 8'
+compare_posix_output "printf width" 'printf "%5d\n" 42'
+compare_posix_output "printf left" 'printf "%-5d|\n" 42'
+compare_posix_output "printf zero" 'printf "%05d\n" 42'
+
+section "455. TEST BUILTIN OPERATORS"
+
+compare_posix_output "test eq" '[ 5 -eq 5 ]; echo $?'
+compare_posix_output "test ne" '[ 5 -ne 3 ]; echo $?'
+compare_posix_output "test lt" '[ 3 -lt 5 ]; echo $?'
+compare_posix_output "test gt" '[ 5 -gt 3 ]; echo $?'
+compare_posix_output "test le" '[ 5 -le 5 ]; echo $?'
+compare_posix_output "test ge" '[ 5 -ge 5 ]; echo $?'
+
+section "456. TEST BUILTIN STRINGS"
+
+compare_posix_output "test z empty" '[ -z "" ]; echo $?'
+compare_posix_output "test z nonempty" '[ -z "x" ]; echo $?'
+compare_posix_output "test n empty" '[ -n "" ]; echo $?'
+compare_posix_output "test n nonempty" '[ -n "x" ]; echo $?'
+compare_posix_output "test str eq" '[ "a" = "a" ]; echo $?'
+compare_posix_output "test str ne" '[ "a" != "b" ]; echo $?'
+
+section "457. TEST BUILTIN FILES"
+
+compare_posix_output "test f" '[ -f /etc/passwd ]; echo $?'
+compare_posix_output "test d" '[ -d /tmp ]; echo $?'
+compare_posix_output "test e" '[ -e /tmp ]; echo $?'
+compare_posix_output "test r" '[ -r /etc/passwd ]; echo $?'
+compare_posix_output "test x" '[ -x /bin/sh ]; echo $?'
+compare_posix_output "test s" 'echo x > /tmp/ts$$; [ -s /tmp/ts$$ ]; echo $?; rm /tmp/ts$$'
+
+section "458. TEST BUILTIN COMPOUND"
+
+compare_posix_output "test and" '[ -d /tmp -a -f /etc/passwd ]; echo $?'
+compare_posix_output "test or" '[ -d /nonexistent -o -f /etc/passwd ]; echo $?'
+compare_posix_output "test not" '[ ! -d /nonexistent ]; echo $?'
+compare_posix_output "test paren" '[ \( -d /tmp \) ]; echo $?'
+
+section "459. TYPE BUILTIN"
+
+compare_posix_output "type echo" 'type echo 2>/dev/null | grep -c echo'
+compare_posix_output "type cd" 'type cd 2>/dev/null | grep -c cd'
+
+section "460. COMMAND BUILTIN"
+
+compare_posix_output "command v" 'command -v echo | grep -c echo'
+compare_posix_output "command V" 'command -V echo 2>/dev/null | grep -c echo'
+compare_posix_output "command p" 'command -p echo test'
+
+# ============================================================================
+# SECTION 461-470: CONTROL FLOW COMPREHENSIVE
+# ============================================================================
+
+section "461. IF STATEMENT"
+
+compare_posix_output "if basic" 'if true; then echo yes; fi'
+compare_posix_output "if else" 'if false; then echo no; else echo yes; fi'
+compare_posix_output "if elif" 'if false; then echo 1; elif true; then echo 2; fi'
+compare_posix_output "if elif else" 'if false; then echo 1; elif false; then echo 2; else echo 3; fi'
+compare_posix_output "if nested" 'if true; then if true; then echo deep; fi; fi'
+
+section "462. FOR LOOP"
+
+compare_posix_output "for basic" 'for i in 1 2 3; do echo $i; done'
+compare_posix_output "for words" 'for w in a b c; do echo $w; done'
+compare_posix_output "for empty" 'for i in; do echo $i; done; echo done'
+compare_posix_output "for break" 'for i in 1 2 3; do echo $i; break; done'
+compare_posix_output "for continue" 'for i in 1 2 3; do if [ $i = 2 ]; then continue; fi; echo $i; done'
+
+section "463. WHILE LOOP"
+
+compare_posix_output "while basic" 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done'
+compare_posix_output "while false" 'while false; do echo no; done; echo done'
+compare_posix_output "while break" 'while true; do echo once; break; done'
+
+section "464. UNTIL LOOP"
+
+compare_posix_output "until basic" 'i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done'
+compare_posix_output "until true" 'until true; do echo no; done; echo done'
+
+section "465. CASE STATEMENT"
+
+compare_posix_output "case basic" 'case x in x) echo yes;; esac'
+compare_posix_output "case default" 'case y in x) echo no;; *) echo yes;; esac'
+compare_posix_output "case multi" 'case b in a|b|c) echo abc;; esac'
+compare_posix_output "case glob" 'case abc in a*) echo yes;; esac'
+compare_posix_output "case nested" 'case x in x) case y in y) echo deep;; esac;; esac'
+
+section "466. FUNCTION DEFINITION"
+
+compare_posix_output "func basic" 'f() { echo hello; }; f'
+compare_posix_output "func args" 'f() { echo $1 $2; }; f a b'
+compare_posix_output "func return" 'f() { return 5; }; f; echo $?'
+compare_posix_output "func positional" 'f() { echo $# $@; }; f a b c'
+
+section "467. SUBSHELL AND BRACE"
+
+compare_posix_output "subshell basic" '(echo hello)'
+compare_posix_output "subshell var" 'x=1; (x=2); echo $x'
+compare_posix_output "subshell exit" '(exit 5); echo $?'
+compare_posix_output "brace basic" '{ echo hello; }'
+compare_posix_output "brace var" 'x=1; { x=2; }; echo $x'
+compare_posix_output "brace redir" '{ echo a; echo b; } > /tmp/b$$; wc -l < /tmp/b$$; rm /tmp/b$$'
+
+section "468. BREAK AND CONTINUE"
+
+compare_posix_output "break simple" 'for i in 1 2 3; do echo $i; break; done'
+compare_posix_output "break nested" 'for i in 1 2; do for j in a b; do echo $i$j; break; done; done'
+compare_posix_output "break 2" 'for i in 1 2; do for j in a b; do echo $i$j; break 2; done; done'
+compare_posix_output "continue simple" 'for i in 1 2 3; do if [ $i = 2 ]; then continue; fi; echo $i; done'
+compare_posix_output "continue 2" 'for i in 1 2; do for j in a b; do if [ $j = a ]; then continue 2; fi; echo $i$j; done; done'
+
+section "469. RETURN AND EXIT"
+
+compare_posix_output "return basic" 'f() { return; }; f; echo $?'
+compare_posix_output "return code" 'f() { return 5; }; f; echo $?'
+compare_posix_output "exit subshell" '(exit 5); echo $?'
+compare_posix_output "exit code" '(exit 42); echo $?'
+
+section "470. LOGICAL OPERATORS"
+
+compare_posix_output "and both true" 'true && echo yes'
+compare_posix_output "and first false" 'false && echo no; echo done'
+compare_posix_output "or first true" 'true || echo no; echo done'
+compare_posix_output "or first false" 'false || echo yes'
+compare_posix_output "not true" '! true; echo $?'
+compare_posix_output "not false" '! false; echo $?'
+
+# ============================================================================
+# SECTION 471-480: VARIABLE OPERATIONS
+# ============================================================================
+
+section "471. VARIABLE ASSIGNMENT"
+
+compare_posix_output "var simple" 'x=5; echo $x'
+compare_posix_output "var empty" 'x=; echo "[$x]"'
+compare_posix_output "var quoted" 'x="a b"; echo "$x"'
+compare_posix_output "var concat" 'x=hel; y=lo; echo $x$y'
+compare_posix_output "var braces" 'x=val; echo ${x}'
+
+section "472. EXPORT AND READONLY"
+
+compare_posix_output "export basic" 'export X=5; sh -c "echo \$X"'
+compare_posix_output "export list" 'export | grep -c ='
+compare_posix_output "readonly basic" 'readonly Y=5; echo $Y'
+compare_posix_output "readonly list" 'readonly | grep -c .'
+
+section "473. UNSET"
+
+compare_posix_output "unset var" 'x=5; unset x; echo ${x:-unset}'
+compare_posix_output "unset func" 'f() { echo f; }; unset -f f; f 2>/dev/null || echo unset'
+compare_posix_output "unset v flag" 'x=5; unset -v x; echo ${x:-unset}'
+
+section "474. SHIFT"
+
+compare_posix_output "shift basic" 'set -- a b c; shift; echo $1'
+compare_posix_output "shift count" 'set -- a b c; shift; echo $#'
+compare_posix_output "shift 2" 'set -- a b c d; shift 2; echo $1'
+
+section "475. SET POSITIONAL"
+
+compare_posix_output "set args" 'set -- a b c; echo $1 $2 $3'
+compare_posix_output "set count" 'set -- a b c d e; echo $#'
+compare_posix_output "set all" 'set -- x y z; echo "$@"'
+compare_posix_output "set star" 'set -- x y z; echo "$*"'
+
+section "476. LOCAL SCOPE IN FUNCTIONS"
+
+compare_posix_output "func global" 'x=global; f() { x=func; }; f; echo $x'
+compare_posix_output "func params" 'f() { echo $# $1 $2; }; f a b c'
+compare_posix_output "func shift" 'f() { shift; echo $1; }; f a b c'
+
+section "477. SPECIAL PARAMETERS"
+
+compare_posix_output "dollar at" 'set -- a b c; echo "$@"'
+compare_posix_output "dollar star" 'set -- a b c; echo "$*"'
+compare_posix_output "dollar hash" 'set -- a b c; echo $#'
+compare_posix_output "dollar question" 'true; echo $?'
+compare_posix_output "dollar pid" 'echo $$ | grep -cE "^[0-9]+$"'
+compare_posix_output "dollar zero" 'echo $0 | grep -c .'
+
+section "478. PARAMETER EXPANSION"
+
+compare_posix_output "pe default" 'unset x; echo ${x:-default}'
+compare_posix_output "pe assign" 'unset x; echo ${x:=assigned}; echo $x'
+compare_posix_output "pe error" '(unset x; echo ${x:?msg}) 2>/dev/null; echo $?'
+compare_posix_output "pe alt" 'x=val; echo ${x:+alt}'
+compare_posix_output "pe length" 'x=hello; echo ${#x}'
+compare_posix_output "pe suffix" 'x=file.txt; echo ${x%.txt}'
+compare_posix_output "pe prefix" 'x=/path/file; echo ${x##*/}'
+
+section "479. IFS SPLITTING"
+
+compare_posix_output "ifs default" 'x="a b c"; set -- $x; echo $#'
+compare_posix_output "ifs colon" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "ifs empty" 'IFS=""; x="abc"; set -- $x; echo $#'
+compare_posix_output "ifs star" 'IFS=:; set -- a b c; echo "$*"'
+
+section "480. COMMAND SUBSTITUTION"
+
+compare_posix_output "cmdsub basic" 'echo $(echo hello)'
+compare_posix_output "cmdsub backtick" 'echo `echo hello`'
+compare_posix_output "cmdsub nested" 'echo $(echo $(echo deep))'
+compare_posix_output "cmdsub quoted" 'echo "$(echo hello world)"'
+compare_posix_output "cmdsub multi" 'echo $(echo a; echo b)'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
