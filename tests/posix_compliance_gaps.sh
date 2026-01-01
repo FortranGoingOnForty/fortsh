@@ -2952,6 +2952,229 @@ compare_posix_output "order param cmd" 'x=$(echo val); echo $x'
 compare_posix_output "order arith param" 'x=5; echo $((x+1))'
 compare_posix_output "order split glob" 'mkdir -p /tmp/eo$$; touch /tmp/eo$$/f1; x="/tmp/eo$$/f*"; echo $x | grep -c f; rm -rf /tmp/eo$$'
 
+# ============================================================================
+# SECTION 386-400: POSIX CHARACTER CLASSES (basedefs/V1_chap09)
+# ============================================================================
+
+section "386. CHARACTER CLASS ALNUM"
+
+compare_posix_output "alnum a" 'case a in [[:alnum:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "alnum Z" 'case Z in [[:alnum:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "alnum 5" 'case 5 in [[:alnum:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "alnum excl" 'case "!" in [[:alnum:]]) echo yes;; *) echo no;; esac'
+
+section "387. CHARACTER CLASS ALPHA"
+
+compare_posix_output "alpha a" 'case a in [[:alpha:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "alpha Z" 'case Z in [[:alpha:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "alpha 5" 'case 5 in [[:alpha:]]) echo yes;; *) echo no;; esac'
+
+section "388. CHARACTER CLASS DIGIT"
+
+compare_posix_output "digit 0" 'case 0 in [[:digit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "digit 9" 'case 9 in [[:digit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "digit a" 'case a in [[:digit:]]) echo yes;; *) echo no;; esac'
+
+section "389. CHARACTER CLASS LOWER"
+
+compare_posix_output "lower a" 'case a in [[:lower:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "lower z" 'case z in [[:lower:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "lower A" 'case A in [[:lower:]]) echo yes;; *) echo no;; esac'
+
+section "390. CHARACTER CLASS UPPER"
+
+compare_posix_output "upper A" 'case A in [[:upper:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "upper Z" 'case Z in [[:upper:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "upper a" 'case a in [[:upper:]]) echo yes;; *) echo no;; esac'
+
+section "391. CHARACTER CLASS SPACE"
+
+compare_posix_output "space sp" 'case " " in [[:space:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "space tab" 'case "	" in [[:space:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "space a" 'case a in [[:space:]]) echo yes;; *) echo no;; esac'
+
+section "392. CHARACTER CLASS BLANK"
+
+compare_posix_output "blank sp" 'case " " in [[:blank:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "blank tab" 'case "	" in [[:blank:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "blank a" 'case a in [[:blank:]]) echo yes;; *) echo no;; esac'
+
+section "393. CHARACTER CLASS PUNCT"
+
+compare_posix_output "punct dot" 'case "." in [[:punct:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "punct excl" 'case "!" in [[:punct:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "punct a" 'case a in [[:punct:]]) echo yes;; *) echo no;; esac'
+
+section "394. CHARACTER CLASS XDIGIT"
+
+compare_posix_output "xdigit 0" 'case 0 in [[:xdigit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "xdigit a" 'case a in [[:xdigit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "xdigit F" 'case F in [[:xdigit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "xdigit g" 'case g in [[:xdigit:]]) echo yes;; *) echo no;; esac'
+
+section "395. CHARACTER CLASS PRINT GRAPH"
+
+compare_posix_output "print a" 'case a in [[:print:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "print sp" 'case " " in [[:print:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "graph a" 'case a in [[:graph:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "graph sp" 'case " " in [[:graph:]]) echo yes;; *) echo no;; esac'
+
+section "396. CHARACTER CLASS CNTRL"
+
+compare_posix_output "cntrl a" 'case a in [[:cntrl:]]) echo yes;; *) echo no;; esac'
+
+section "397. COMBINED CHARACTER CLASSES"
+
+compare_posix_output "combo alpha digit a" 'case a in [[:alpha:][:digit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "combo alpha digit 5" 'case 5 in [[:alpha:][:digit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "combo alpha digit excl" 'case "!" in [[:alpha:][:digit:]]) echo yes;; *) echo no;; esac'
+
+section "398. NEGATED CHARACTER CLASSES"
+
+compare_posix_output "not digit a" 'case a in [^[:digit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "not digit 5" 'case 5 in [^[:digit:]]) echo yes;; *) echo no;; esac'
+compare_posix_output "not alpha bang" 'case a in [![:alpha:]]) echo yes;; *) echo no;; esac'
+
+section "399. RANGE EXPRESSIONS"
+
+compare_posix_output "range a-z m" 'case m in [a-z]) echo yes;; *) echo no;; esac'
+compare_posix_output "range A-Z M" 'case M in [A-Z]) echo yes;; *) echo no;; esac'
+compare_posix_output "range 0-9 5" 'case 5 in [0-9]) echo yes;; *) echo no;; esac'
+compare_posix_output "range combo" 'case M in [a-zA-Z]) echo yes;; *) echo no;; esac'
+
+section "400. BRACKET EDGE CASES"
+
+compare_posix_output "literal hyphen start" 'case "-" in [-abc]) echo yes;; *) echo no;; esac'
+compare_posix_output "literal hyphen end" 'case "-" in [abc-]) echo yes;; *) echo no;; esac'
+compare_posix_output "literal caret" 'case "^" in [a^b]) echo yes;; *) echo no;; esac'
+compare_posix_output "literal rbracket" 'case "]" in []abc]) echo yes;; *) echo no;; esac'
+
+# ============================================================================
+# SECTION 401-410: ADDITIONAL SPECIAL VARIABLE TESTS
+# ============================================================================
+
+section "401. IFS EDGE CASES"
+
+compare_posix_output "ifs default split" 'x="a b c"; set -- $x; echo $#'
+compare_posix_output "ifs null no split" 'IFS=""; x="abc"; set -- $x; echo $#'
+compare_posix_output "ifs custom colon" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "ifs whitespace" 'IFS=" "; x="a  b"; set -- $x; echo $#'
+
+section "402. HOME VARIABLE"
+
+compare_posix_output "home set" 'echo ${HOME:-unset} | grep -c /'
+compare_posix_output "home in tilde" 'test ~ = "$HOME"; echo $?'
+
+section "403. PATH VARIABLE"
+
+compare_posix_output "path set" 'echo ${PATH:-unset} | grep -c :'
+compare_posix_output "path search" 'PATH=/bin:/usr/bin; command -v ls | grep -c /'
+
+section "404. SHELL OPTION FLAGS"
+
+compare_posix_output "set f noglob" 'set -f; echo *; set +f'
+compare_posix_output "set u nounset" '(set -u; echo ${x:-default})'
+compare_posix_output "set e errexit" '(set -e; true; echo ok)'
+compare_posix_output "set x xtrace" '(set -x; echo test) 2>&1 | grep -c test'
+
+section "405. EXIT STATUS PROPAGATION"
+
+compare_posix_output "exit from pipe" 'true | false; echo $?'
+compare_posix_output "exit from and" 'true && true; echo $?'
+compare_posix_output "exit from or" 'false || true; echo $?'
+compare_posix_output "exit from not" '! false; echo $?'
+
+section "406. SUBSHELL ISOLATION"
+
+compare_posix_output "subshell var" 'x=1; (x=2); echo $x'
+compare_posix_output "subshell cd" 'cd /tmp; (cd /); pwd | grep -c tmp'
+compare_posix_output "subshell exit" '(exit 5); echo $?'
+
+section "407. BRACE GROUP SEMANTICS"
+
+compare_posix_output "brace var" 'x=1; { x=2; }; echo $x'
+compare_posix_output "brace redir" '{ echo a; echo b; } > /tmp/bg$$; wc -l < /tmp/bg$$; rm /tmp/bg$$'
+
+section "408. FUNCTION SEMANTICS"
+
+compare_posix_output "func scope" 'x=1; f() { x=2; }; f; echo $x'
+compare_posix_output "func params" 'f() { echo $1 $2 $#; }; f a b c'
+compare_posix_output "func return" 'f() { return 42; }; f; echo $?'
+
+section "409. ALIAS EXPANSION"
+
+compare_posix_output "alias define" 'alias x="echo test" 2>/dev/null; echo $?'
+compare_posix_output "unalias" 'alias x="echo test" 2>/dev/null; unalias x 2>/dev/null; echo $?'
+
+section "410. COMPOUND ASSIGNMENT"
+
+compare_posix_output "assign simple" 'x=5; echo $x'
+compare_posix_output "assign expand" 'x=$(echo val); echo $x'
+compare_posix_output "assign arith" 'x=$((2+3)); echo $x'
+compare_posix_output "assign concat" 'x=hel; x=${x}lo; echo $x'
+
+# ============================================================================
+# SECTION 411-420: COMPLEX PATTERNS
+# ============================================================================
+
+section "411. CASE PATTERN MATCHING"
+
+compare_posix_output "case star" 'case abc in a*) echo yes;; esac'
+compare_posix_output "case question" 'case ab in a?) echo yes;; esac'
+compare_posix_output "case bracket" 'case a in [abc]) echo yes;; esac'
+compare_posix_output "case or" 'case b in a|b|c) echo yes;; esac'
+compare_posix_output "case default" 'case x in a) echo a;; *) echo default;; esac'
+
+section "412. GLOB PATTERNS IN EXPANSION"
+
+compare_posix_output "glob files" 'mkdir -p /tmp/gt$$; touch /tmp/gt$$/a /tmp/gt$$/b; ls /tmp/gt$$/* | wc -l; rm -rf /tmp/gt$$'
+compare_posix_output "glob question" 'mkdir -p /tmp/gt$$; touch /tmp/gt$$/ab; echo /tmp/gt$$/a? | grep -c ab; rm -rf /tmp/gt$$'
+compare_posix_output "glob no match" 'echo /nonexistent_$$/*'
+
+section "413. SUFFIX REMOVAL PATTERNS"
+
+compare_posix_output "suffix short" 'x=file.txt; echo ${x%.txt}'
+compare_posix_output "suffix long" 'x=file.tar.gz; echo ${x%%.*}'
+compare_posix_output "suffix star" 'x=path/to/file; echo ${x%/*}'
+
+section "414. PREFIX REMOVAL PATTERNS"
+
+compare_posix_output "prefix short" 'x=file.txt; echo ${x#*.}'
+compare_posix_output "prefix long" 'x=file.tar.gz; echo ${x##*.}'
+compare_posix_output "prefix path" 'x=/path/to/file; echo ${x##*/}'
+
+section "415. LENGTH OPERATOR"
+
+compare_posix_output "length string" 'x=hello; echo ${#x}'
+compare_posix_output "length empty" 'x=""; echo ${#x}'
+compare_posix_output "length positional" 'set -- a b c; echo $#'
+
+section "416. CONDITIONAL DEFAULTS"
+
+compare_posix_output "default unset" 'unset x; echo ${x:-default}'
+compare_posix_output "default empty" 'x=""; echo ${x:-default}'
+compare_posix_output "default set" 'x=val; echo ${x:-default}'
+
+section "417. CONDITIONAL ASSIGN"
+
+compare_posix_output "assign unset" 'unset x; echo ${x:=assigned}; echo $x'
+compare_posix_output "assign empty" 'x=""; echo ${x:=assigned}; echo $x'
+
+section "418. CONDITIONAL ERROR"
+
+compare_posix_output "error unset" '(unset x; echo ${x:?msg}) 2>/dev/null; echo $?'
+compare_posix_output "error set" 'x=val; echo ${x:?msg}'
+
+section "419. CONDITIONAL ALT"
+
+compare_posix_output "alt unset" 'unset x; echo "[${x:+alt}]"'
+compare_posix_output "alt set" 'x=val; echo "[${x:+alt}]"'
+
+section "420. NESTED PARAMETER"
+
+compare_posix_output "nested default" 'y=inner; echo ${x:-${y:-outer}}'
+compare_posix_output "nested length" 'x=hello; echo $((${#x} + 1))'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
