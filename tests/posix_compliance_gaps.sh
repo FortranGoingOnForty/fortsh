@@ -2270,6 +2270,188 @@ compare_posix_output "param minus" 'echo $- | grep -c "."'
 compare_posix_output "param at loop" 'set -- a b c; for x in "$@"; do echo $x; done | wc -l'
 compare_posix_output "param star loop" 'set -- a b c; for x in "$*"; do echo $x; done | wc -l'
 
+section "306. CONTROL FLOW EDGE CASES"
+
+compare_posix_output "if true simple" 'if true; then echo yes; fi'
+compare_posix_output "if false simple" 'if false; then echo no; fi; echo done'
+compare_posix_output "if else" 'if false; then echo no; else echo yes; fi'
+compare_posix_output "if elif" 'if false; then echo 1; elif true; then echo 2; fi'
+compare_posix_output "if nested" 'if true; then if true; then echo deep; fi; fi'
+compare_posix_output "if compound" 'if true && true; then echo yes; fi'
+compare_posix_output "if pipeline" 'if echo test | grep -q test; then echo yes; fi'
+compare_posix_output "if negation" 'if ! false; then echo yes; fi'
+
+section "307. FOR LOOP EDGE CASES"
+
+compare_posix_output "for basic" 'for i in a b c; do echo $i; done | wc -l'
+compare_posix_output "for single" 'for i in only; do echo $i; done'
+compare_posix_output "for empty" 'for i in; do echo $i; done; echo done'
+compare_posix_output "for numbers" 'for i in 1 2 3 4 5; do echo $i; done | wc -l'
+compare_posix_output "for var" 'list="a b c"; for i in $list; do echo $i; done | wc -l'
+compare_posix_output "for quoted" 'for i in "a b" "c d"; do echo "$i"; done | wc -l'
+compare_posix_output "for break" 'for i in 1 2 3; do [ $i -eq 2 ] && break; echo $i; done'
+compare_posix_output "for continue" 'for i in 1 2 3; do [ $i -eq 2 ] && continue; echo $i; done'
+
+section "308. WHILE LOOP EDGE CASES"
+
+compare_posix_output "while count" 'n=3; while [ $n -gt 0 ]; do echo $n; n=$((n-1)); done | wc -l'
+compare_posix_output "while false" 'while false; do echo never; done; echo done'
+compare_posix_output "while true break" 'n=0; while true; do n=$((n+1)); [ $n -ge 3 ] && break; done; echo $n'
+compare_posix_output "while compound" 'n=2; while [ $n -gt 0 ] && true; do n=$((n-1)); done; echo $n'
+compare_posix_output "while pipeline" 'echo ok | while true; do echo yes; break; done'
+
+section "309. UNTIL LOOP EDGE CASES"
+
+compare_posix_output "until count" 'n=0; until [ $n -ge 3 ]; do n=$((n+1)); done; echo $n'
+compare_posix_output "until true" 'until true; do echo never; done; echo done'
+compare_posix_output "until false" 'n=0; until false; do n=$((n+1)); [ $n -ge 2 ] && break; done; echo $n'
+
+section "310. CASE EDGE CASES"
+
+compare_posix_output "case simple" 'case x in x) echo yes;; esac'
+compare_posix_output "case default" 'case x in y) echo no;; *) echo default;; esac'
+compare_posix_output "case multi" 'case a in a|b|c) echo match;; esac'
+compare_posix_output "case glob" 'case hello in h*) echo match;; esac'
+compare_posix_output "case question" 'case ab in ??) echo two;; esac'
+compare_posix_output "case bracket" 'case a in [abc]) echo match;; esac'
+compare_posix_output "case empty" 'case "" in "") echo empty;; esac'
+compare_posix_output "case var" 'x=test; case $x in test) echo yes;; esac'
+compare_posix_output "case quoted" 'case "a b" in "a b") echo space;; esac'
+compare_posix_output "case no match" 'case x in y) echo no;; esac; echo done'
+
+section "311. FUNCTION EDGE CASES"
+
+compare_posix_output "func simple" 'f() { echo hello; }; f'
+compare_posix_output "func args" 'f() { echo $1 $2; }; f a b'
+compare_posix_output "func return" 'f() { return 42; }; f; echo $?'
+compare_posix_output "func local" 'x=outer; f() { x=inner; }; f; echo $x'
+compare_posix_output "func recursive" 'f() { [ $1 -le 0 ] && echo done || f $(($1-1)); }; f 3'
+compare_posix_output "func in func" 'f() { g() { echo inner; }; g; }; f'
+compare_posix_output "func pipe" 'f() { echo test; }; f | cat'
+compare_posix_output "func subshell" 'f() { echo func; }; (f)'
+compare_posix_output "func all args" 'f() { echo $@; }; f a b c'
+compare_posix_output "func count" 'f() { echo $#; }; f a b c d e'
+
+section "312. REDIRECTION EDGE CASES"
+
+compare_posix_output "redir out" 'echo test > /tmp/r$$; cat /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir append" 'echo a > /tmp/r$$; echo b >> /tmp/r$$; wc -l < /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir in" 'echo test > /tmp/r$$; cat < /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir err" 'echo err >&2 2>/dev/null; echo ok'
+compare_posix_output "redir fd" 'echo test 2>&1 | cat'
+compare_posix_output "redir null" 'echo test > /dev/null; echo $?'
+compare_posix_output "redir here" 'cat <<EOF
+test
+EOF'
+compare_posix_output "redir here var" 'x=val; cat <<EOF
+$x
+EOF'
+
+section "313. PIPELINE EDGE CASES"
+
+compare_posix_output "pipe simple" 'echo test | cat'
+compare_posix_output "pipe chain" 'echo test | cat | cat | cat'
+compare_posix_output "pipe grep" 'echo hello | grep h'
+compare_posix_output "pipe wc" 'printf "a\nb\nc\n" | wc -l'
+compare_posix_output "pipe head" 'seq 1 10 | head -3'
+compare_posix_output "pipe tail" 'seq 1 10 | tail -3'
+compare_posix_output "pipe sort" 'printf "c\na\nb\n" | sort'
+compare_posix_output "pipe subshell" '(echo test) | cat'
+compare_posix_output "pipe brace" '{ echo test; } | cat'
+compare_posix_output "pipe status" 'true | false; echo $?'
+
+section "314. SUBSHELL EDGE CASES"
+
+compare_posix_output "sub simple" '(echo sub)'
+compare_posix_output "sub var" '(x=inner; echo $x)'
+compare_posix_output "sub no leak" 'x=outer; (x=inner); echo $x'
+compare_posix_output "sub exit" '(exit 42); echo $?'
+compare_posix_output "sub cd" '(cd /tmp; pwd)'
+compare_posix_output "sub nested" '((echo deep))'
+compare_posix_output "sub pipe" '(echo a; echo b) | wc -l'
+compare_posix_output "sub multi" '(echo a); (echo b)'
+compare_posix_output "sub compound" '(echo a; echo b; echo c) | wc -l'
+
+section "315. BRACE GROUP EDGE CASES"
+
+compare_posix_output "brace simple" '{ echo test; }'
+compare_posix_output "brace multi" '{ echo a; echo b; }'
+compare_posix_output "brace var" '{ x=val; }; echo $x'
+compare_posix_output "brace pipe" '{ echo test; } | cat'
+compare_posix_output "brace nested" '{ { echo deep; }; }'
+compare_posix_output "brace and sub" '{ (echo sub); }'
+compare_posix_output "brace redir" '{ echo test; } > /tmp/b$$; cat /tmp/b$$; rm /tmp/b$$'
+
+section "316. LOGICAL OPERATOR EDGE CASES"
+
+compare_posix_output "and both true" 'true && true; echo $?'
+compare_posix_output "and first false" 'false && echo never; echo $?'
+compare_posix_output "and second false" 'true && false; echo $?'
+compare_posix_output "or both false" 'false || false; echo $?'
+compare_posix_output "or first true" 'true || echo never; echo $?'
+compare_posix_output "or second true" 'false || true; echo $?'
+compare_posix_output "not true" '! true; echo $?'
+compare_posix_output "not false" '! false; echo $?'
+compare_posix_output "chain and" 'true && true && true; echo $?'
+compare_posix_output "chain or" 'false || false || true; echo $?'
+compare_posix_output "mixed" 'true && false || echo fallback'
+
+section "317. QUOTING COMPREHENSIVE"
+
+compare_posix_output "quote single" "echo 'hello'"
+compare_posix_output "quote double" 'echo "hello"'
+compare_posix_output "quote escape" 'echo hello\ world'
+compare_posix_output "quote mixed" "echo 'a'\"b\"c"
+compare_posix_output "quote empty single" "echo ''"
+compare_posix_output "quote empty double" 'echo ""'
+compare_posix_output "quote dollar" 'echo "\$x"'
+compare_posix_output "quote backtick" 'echo "\`"'
+compare_posix_output "quote backslash" 'echo "\\"'
+compare_posix_output "quote newline" 'echo "a
+b" | wc -l'
+
+section "318. VARIABLE COMPREHENSIVE"
+
+compare_posix_output "var simple" 'x=val; echo $x'
+compare_posix_output "var empty" 'x=; echo "[$x]"'
+compare_posix_output "var quoted" 'x="a b"; echo "$x"'
+compare_posix_output "var concat" 'x=hel; y=lo; echo $x$y'
+compare_posix_output "var braces" 'x=val; echo ${x}'
+compare_posix_output "var default" 'echo ${undef:-default}'
+compare_posix_output "var alt" 'x=val; echo ${x:+alt}'
+compare_posix_output "var length" 'x=hello; echo ${#x}'
+compare_posix_output "var suffix" 'x=file.txt; echo ${x%.txt}'
+compare_posix_output "var prefix" 'x=pre_name; echo ${x#pre_}'
+
+section "319. ARITHMETIC COMPREHENSIVE"
+
+compare_posix_output "arith add" 'echo $((5+3))'
+compare_posix_output "arith sub" 'echo $((5-3))'
+compare_posix_output "arith mul" 'echo $((5*3))'
+compare_posix_output "arith div" 'echo $((15/3))'
+compare_posix_output "arith mod" 'echo $((17%5))'
+compare_posix_output "arith paren" 'echo $(((1+2)*3))'
+compare_posix_output "arith var" 'x=5; echo $((x+1))'
+compare_posix_output "arith neg" 'echo $((-5))'
+compare_posix_output "arith cmp" 'echo $((5>3))'
+compare_posix_output "arith log" 'echo $((1&&1))'
+
+section "320. TEST COMPREHENSIVE"
+
+compare_posix_output "test eq" '[ 5 -eq 5 ]; echo $?'
+compare_posix_output "test ne" '[ 5 -ne 6 ]; echo $?'
+compare_posix_output "test lt" '[ 3 -lt 5 ]; echo $?'
+compare_posix_output "test gt" '[ 5 -gt 3 ]; echo $?'
+compare_posix_output "test le" '[ 5 -le 5 ]; echo $?'
+compare_posix_output "test ge" '[ 5 -ge 5 ]; echo $?'
+compare_posix_output "test str eq" '[ "a" = "a" ]; echo $?'
+compare_posix_output "test str ne" '[ "a" != "b" ]; echo $?'
+compare_posix_output "test z" '[ -z "" ]; echo $?'
+compare_posix_output "test n" '[ -n "x" ]; echo $?'
+compare_posix_output "test f" '[ -f /etc/passwd ]; echo $?'
+compare_posix_output "test d" '[ -d /tmp ]; echo $?'
+compare_posix_output "test not" '[ ! 1 -eq 2 ]; echo $?'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
