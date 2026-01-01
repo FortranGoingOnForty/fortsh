@@ -126,6 +126,14 @@ posix_compliance_heredoc.sh
 posix_compliance_control.sh
 posix_compliance_redirect.sh
 posix_compliance_quoting.sh
+posix_gaps_charclass.sh
+posix_gaps_arithmetic.sh
+posix_gaps_heredoc.sh
+posix_gaps_quoting.sh
+posix_gaps_control.sh
+posix_gaps_builtins.sh
+posix_gaps_special.sh
+posix_gaps_redirect.sh
 "
 
 POSIX_SLOW_TESTS="
