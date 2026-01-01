@@ -2452,6 +2452,506 @@ compare_posix_output "test f" '[ -f /etc/passwd ]; echo $?'
 compare_posix_output "test d" '[ -d /tmp ]; echo $?'
 compare_posix_output "test not" '[ ! 1 -eq 2 ]; echo $?'
 
+# ============================================================================
+# SECTION 321-340: PARAMETER EXPANSION WITHOUT COLON (POSIX 2.6.2)
+# These test unset-only behavior vs null-or-unset behavior
+# ============================================================================
+
+section "321. USE DEFAULT WITHOUT COLON"
+
+# ${parameter-word} - substitute word only if parameter is UNSET (not for null)
+compare_posix_output "default unset only" 'unset x; echo ${x-default}'
+compare_posix_output "default set empty" 'x=""; echo "[${x-default}]"'
+compare_posix_output "default set value" 'x=val; echo ${x-default}'
+compare_posix_output "colon default unset" 'unset x; echo ${x:-default}'
+compare_posix_output "colon default empty" 'x=""; echo "[${x:-default}]"'
+compare_posix_output "colon default value" 'x=val; echo ${x:-default}'
+
+section "322. ASSIGN DEFAULT WITHOUT COLON"
+
+# ${parameter=word} - assign only if UNSET
+compare_posix_output "assign unset only" 'unset x; echo ${x=assigned}; echo $x'
+compare_posix_output "assign set empty" 'x=""; echo "[${x=assigned}]"; echo "[$x]"'
+compare_posix_output "colon assign unset" 'unset x; echo ${x:=assigned}; echo $x'
+compare_posix_output "colon assign empty" 'x=""; echo "[${x:=assigned}]"; echo "[$x]"'
+
+section "323. ERROR IF UNSET WITHOUT COLON"
+
+# ${parameter?word} - error only if UNSET
+compare_posix_output "error unset only" '(unset x; echo ${x?errmsg}) 2>/dev/null; echo $?'
+compare_posix_output "error set empty" 'x=""; echo "[${x?errmsg}]"'
+compare_posix_output "colon error unset" '(unset x; echo ${x:?errmsg}) 2>/dev/null; echo $?'
+compare_posix_output "colon error empty" '(x=""; echo ${x:?errmsg}) 2>/dev/null; echo $?'
+
+section "324. ALT VALUE WITHOUT COLON"
+
+# ${parameter+word} - substitute word if parameter is SET (even if null)
+compare_posix_output "alt unset" 'unset x; echo "[${x+alt}]"'
+compare_posix_output "alt empty" 'x=""; echo "[${x+alt}]"'
+compare_posix_output "alt value" 'x=val; echo "[${x+alt}]"'
+compare_posix_output "colon alt unset" 'unset x; echo "[${x:+alt}]"'
+compare_posix_output "colon alt empty" 'x=""; echo "[${x:+alt}]"'
+compare_posix_output "colon alt value" 'x=val; echo "[${x:+alt}]"'
+
+# ============================================================================
+# SECTION 325-335: SPECIAL PARAMETERS (POSIX 2.5.2)
+# ============================================================================
+
+section "325. DOLLAR AT VS DOLLAR STAR"
+
+compare_posix_output "at basic" 'set -- a b c; echo "$@"'
+compare_posix_output "star basic" 'set -- a b c; echo "$*"'
+compare_posix_output "at count" 'set -- a b c; for x in "$@"; do echo $x; done | wc -l'
+compare_posix_output "star count" 'set -- a b c; for x in "$*"; do echo $x; done | wc -l'
+compare_posix_output "at with spaces" 'set -- "a b" "c d"; for x in "$@"; do echo "[$x]"; done'
+compare_posix_output "star with spaces" 'set -- "a b" "c d"; for x in "$*"; do echo "[$x]"; done'
+
+section "326. IFS AFFECTS DOLLAR STAR"
+
+compare_posix_output "star ifs colon" 'IFS=:; set -- a b c; echo "$*"'
+compare_posix_output "star ifs comma" 'IFS=,; set -- x y z; echo "$*"'
+compare_posix_output "star ifs empty" 'IFS=""; set -- a b c; echo "$*"'
+compare_posix_output "at ifs colon" 'IFS=:; set -- a b c; echo "$@"'
+
+section "327. DOLLAR HASH"
+
+compare_posix_output "hash zero" 'set --; echo $#'
+compare_posix_output "hash one" 'set -- a; echo $#'
+compare_posix_output "hash five" 'set -- a b c d e; echo $#'
+compare_posix_output "hash after shift" 'set -- a b c; shift; echo $#'
+
+section "328. DOLLAR QUESTION"
+
+compare_posix_output "question success" 'true; echo $?'
+compare_posix_output "question fail" 'false; echo $?'
+compare_posix_output "question exit" '(exit 42); echo $?'
+compare_posix_output "question pipe" 'true | false; echo $?'
+
+section "329. DOLLAR HYPHEN"
+
+compare_posix_output "hyphen basic" 'echo $- | grep -c .'
+compare_posix_output "hyphen after set" 'set -f; case "$-" in *f*) echo yes;; esac; set +f'
+compare_posix_output "hyphen in subsh" '(echo $-) | grep -c .'
+
+section "330. DOLLAR DOLLAR"
+
+compare_posix_output "pid numeric" 'echo $$ | grep -cE "^[0-9]+$"'
+compare_posix_output "pid same subsh" 'x=$$; (echo $(( $$ == x ? 1 : 0 )))'
+compare_posix_output "pid consistent" 'x=$$; echo $(( $$ == x ))'
+
+section "331. DOLLAR ZERO"
+
+compare_posix_output "zero set" 'echo $0 | grep -c .'
+compare_posix_output "zero in func" 'f() { echo $0 | grep -c .; }; f'
+
+section "332. LINENO VARIABLE"
+
+compare_posix_output "lineno set" 'echo $LINENO | grep -cE "^[0-9]+$"'
+compare_posix_output "lineno in script" 'echo "echo \$LINENO" > /tmp/ln$$; sh /tmp/ln$$; rm /tmp/ln$$'
+
+section "333. PPID VARIABLE"
+
+compare_posix_output "ppid set" 'echo $PPID | grep -cE "^[0-9]+$"'
+compare_posix_output "ppid same subsh" '(echo $PPID) | grep -cE "^[0-9]+$"'
+compare_posix_output "ppid not self" 'test $PPID -ne $$; echo $?'
+
+section "334. PWD AND OLDPWD"
+
+compare_posix_output "pwd set" 'echo $PWD | grep -c /'
+compare_posix_output "pwd equals pwd" 'test "$PWD" = "$(pwd)"; echo $?'
+compare_posix_output "oldpwd after cd" 'cd /tmp; cd /; echo $OLDPWD | grep -c tmp'
+
+section "335. PS VARIABLES"
+
+compare_posix_output "ps1 set" 'echo ${PS1:-unset} | grep -c .'
+compare_posix_output "ps2 set" 'echo ${PS2:-unset} | grep -c .'
+compare_posix_output "ps4 default" 'echo ${PS4:-unset} | grep -c .'
+
+# ============================================================================
+# SECTION 336-345: ADDITIONAL FILE TEST OPERATORS (POSIX test utility)
+# ============================================================================
+
+section "336. TEST TERMINAL FD"
+
+compare_posix_output "test t stdin" '[ -t 0 ] </dev/null; echo $?'
+compare_posix_output "test t stdout" '[ -t 1 ] >/dev/null; echo $?'
+compare_posix_output "test t invalid" '[ -t 999 ]; echo $?'
+
+section "337. TEST SETUID SETGID"
+
+compare_posix_output "test u nofile" '[ -u /etc/passwd ]; echo $?'
+compare_posix_output "test g nofile" '[ -g /etc/passwd ]; echo $?'
+
+section "338. TEST SPECIAL FILES"
+
+compare_posix_output "test b regular" '[ -b /etc/passwd ]; echo $?'
+compare_posix_output "test c regular" '[ -c /etc/passwd ]; echo $?'
+compare_posix_output "test c tty" '[ -c /dev/tty ] 2>/dev/null; echo $?'
+compare_posix_output "test p regular" '[ -p /etc/passwd ]; echo $?'
+compare_posix_output "test S regular" '[ -S /etc/passwd ]; echo $?'
+
+section "339. TEST FILE PERMS"
+
+compare_posix_output "test r readable" '[ -r /etc/passwd ]; echo $?'
+compare_posix_output "test w writable" 'touch /tmp/tw$$; [ -w /tmp/tw$$ ]; echo $?; rm /tmp/tw$$'
+compare_posix_output "test x dir" '[ -x /tmp ]; echo $?'
+compare_posix_output "test r nonexist" '[ -r /nonexistent$$ ]; echo $?'
+
+section "340. TEST STRING PRIMARIES"
+
+compare_posix_output "test str alone" '[ "nonempty" ]; echo $?'
+compare_posix_output "test str empty" '[ "" ]; echo $?'
+compare_posix_output "test str n" '[ -n "abc" ]; echo $?'
+compare_posix_output "test str n empty" '[ -n "" ]; echo $?'
+compare_posix_output "test str z" '[ -z "" ]; echo $?'
+compare_posix_output "test str z non" '[ -z "abc" ]; echo $?'
+
+section "341. TEST STRING COMPARE"
+
+compare_posix_output "test str eq" '[ "abc" = "abc" ]; echo $?'
+compare_posix_output "test str ne" '[ "abc" = "def" ]; echo $?'
+compare_posix_output "test str neq" '[ "abc" != "def" ]; echo $?'
+compare_posix_output "test str neq same" '[ "abc" != "abc" ]; echo $?'
+
+section "342. TEST NUMERIC COMPARE"
+
+compare_posix_output "test num eq" '[ 5 -eq 5 ]; echo $?'
+compare_posix_output "test num ne" '[ 5 -ne 3 ]; echo $?'
+compare_posix_output "test num lt" '[ 3 -lt 5 ]; echo $?'
+compare_posix_output "test num le" '[ 5 -le 5 ]; echo $?'
+compare_posix_output "test num gt" '[ 5 -gt 3 ]; echo $?'
+compare_posix_output "test num ge" '[ 5 -ge 5 ]; echo $?'
+compare_posix_output "test num neg" '[ -5 -lt 0 ]; echo $?'
+
+section "343. TEST COMPOUND"
+
+compare_posix_output "test not" '[ ! -d /tmp ]; echo $?'
+compare_posix_output "test not false" '[ ! -d /nonexistent ]; echo $?'
+compare_posix_output "test and" '[ -d /tmp -a -f /etc/passwd ]; echo $?'
+compare_posix_output "test or" '[ -d /nonexistent -o -f /etc/passwd ]; echo $?'
+compare_posix_output "test parens" '[ \( -d /tmp \) ]; echo $?'
+
+section "344. TEST EDGE CASES"
+
+compare_posix_output "test no args" '[ ]; echo $?'
+compare_posix_output "test one arg" '[ x ]; echo $?'
+compare_posix_output "test empty arg" '[ "" ]; echo $?'
+compare_posix_output "test dash arg" '[ "-n" = "-n" ]; echo $?'
+
+section "345. TEST BUILTIN BRACKET"
+
+compare_posix_output "bracket basic" '[ 1 -eq 1 ]; echo $?'
+compare_posix_output "bracket string" '[ "a" = "a" ]; echo $?'
+compare_posix_output "bracket file" '[ -f /etc/passwd ]; echo $?'
+compare_posix_output "bracket missing bracket" '[ 1 -eq 1 2>/dev/null; echo $?'
+
+# ============================================================================
+# SECTION 346-355: REDIRECTION (POSIX 2.7)
+# ============================================================================
+
+section "346. INPUT REDIRECTION"
+
+compare_posix_output "redir input" 'echo test > /tmp/ri$$; cat < /tmp/ri$$; rm /tmp/ri$$'
+compare_posix_output "redir input fd" 'echo test > /tmp/ri$$; cat 0< /tmp/ri$$; rm /tmp/ri$$'
+
+section "347. OUTPUT REDIRECTION"
+
+compare_posix_output "redir output" 'echo test > /tmp/ro$$; cat /tmp/ro$$; rm /tmp/ro$$'
+compare_posix_output "redir output fd" 'echo test 1> /tmp/ro$$; cat /tmp/ro$$; rm /tmp/ro$$'
+compare_posix_output "redir clobber" 'echo a > /tmp/ro$$; echo b > /tmp/ro$$; cat /tmp/ro$$; rm /tmp/ro$$'
+
+section "348. APPEND REDIRECTION"
+
+compare_posix_output "redir append" 'echo a > /tmp/ra$$; echo b >> /tmp/ra$$; cat /tmp/ra$$; rm /tmp/ra$$'
+compare_posix_output "redir append new" 'rm -f /tmp/ra$$; echo x >> /tmp/ra$$; cat /tmp/ra$$; rm /tmp/ra$$'
+
+section "349. STDERR REDIRECTION"
+
+compare_posix_output "redir stderr" 'ls /nonexistent$$ 2>/dev/null; echo done'
+compare_posix_output "redir stderr to file" 'ls /nonexistent$$ 2>/tmp/re$$; cat /tmp/re$$ | grep -c .; rm /tmp/re$$'
+compare_posix_output "redir both" '{ echo out; ls /nonexistent$$; } >/tmp/re$$ 2>&1; grep -c . /tmp/re$$; rm /tmp/re$$'
+
+section "350. FD DUPLICATION"
+
+compare_posix_output "dup stdout to stderr" 'echo test >&2 2>/tmp/rd$$; cat /tmp/rd$$; rm /tmp/rd$$'
+compare_posix_output "dup stderr to stdout" '{ ls /nonexistent$$; } 2>&1 | grep -c .'
+compare_posix_output "dup close" 'exec 3>/tmp/rd$$; echo test >&3; exec 3>&-; cat /tmp/rd$$; rm /tmp/rd$$'
+
+section "351. READ WRITE REDIRECTION"
+
+compare_posix_output "redir rw" 'echo test > /tmp/rw$$; exec 3<>/tmp/rw$$; cat <&3; exec 3>&-; rm /tmp/rw$$'
+
+section "352. HEREDOC BASIC"
+
+compare_posix_output "heredoc simple" 'cat <<EOF
+hello
+EOF'
+compare_posix_output "heredoc multi" 'cat <<EOF
+line1
+line2
+line3
+EOF'
+
+section "353. HEREDOC EXPANSION"
+
+compare_posix_output "heredoc var" 'x=value; cat <<EOF
+$x
+EOF'
+compare_posix_output "heredoc cmd" 'cat <<EOF
+$(echo hello)
+EOF'
+compare_posix_output "heredoc arith" 'cat <<EOF
+$((1+2))
+EOF'
+
+section "354. HEREDOC QUOTED DELIM"
+
+compare_posix_output "heredoc no expand" "cat <<'EOF'
+\$x
+EOF"
+compare_posix_output "heredoc quote double" 'cat <<"EOF"
+$x
+EOF'
+
+section "355. HEREDOC TAB STRIP"
+
+compare_posix_output "heredoc dash" 'cat <<-EOF
+	hello
+	EOF'
+
+# ============================================================================
+# SECTION 356-365: SPECIAL BUILTINS ERROR HANDLING (POSIX 2.14)
+# ============================================================================
+
+section "356. BREAK CONTINUE"
+
+compare_posix_output "break basic" 'for i in 1 2 3; do echo $i; break; done'
+compare_posix_output "break nested" 'for i in 1 2; do for j in a b; do echo $i$j; break; done; done'
+compare_posix_output "break 2" 'for i in 1 2; do for j in a b; do echo $i$j; break 2; done; done'
+compare_posix_output "continue basic" 'for i in 1 2 3; do if [ $i = 2 ]; then continue; fi; echo $i; done'
+compare_posix_output "continue 2" 'for i in 1 2 3; do for j in a b; do if [ $j = a ]; then continue 2; fi; echo $i$j; done; done'
+
+section "357. COLON COMMAND"
+
+compare_posix_output "colon return" ': ; echo $?'
+compare_posix_output "colon with args" ': arg1 arg2 arg3; echo $?'
+compare_posix_output "colon expansion" 'unset x; : ${x:=default}; echo $x'
+
+section "358. DOT COMMAND"
+
+compare_posix_output "dot source" 'echo "x=sourced" > /tmp/ds$$; . /tmp/ds$$; echo $x; rm /tmp/ds$$'
+compare_posix_output "dot with args" 'echo "echo \$1 \$2" > /tmp/ds$$; . /tmp/ds$$ arg1 arg2; rm /tmp/ds$$'
+compare_posix_output "dot function" 'echo "f() { echo func; }" > /tmp/ds$$; . /tmp/ds$$; f; rm /tmp/ds$$'
+
+section "359. EVAL COMMAND"
+
+compare_posix_output "eval basic" 'eval echo hello'
+compare_posix_output "eval var" 'x=echo; eval $x world'
+compare_posix_output "eval multi" 'eval "echo one; echo two"'
+compare_posix_output "eval indirect" 'x=y; y=value; eval echo \$$x'
+compare_posix_output "eval quote" 'eval "echo \"quoted\""'
+
+section "360. EXEC COMMAND"
+
+compare_posix_output "exec redirect" 'exec 3>/tmp/ex$$; echo test >&3; exec 3>&-; cat /tmp/ex$$; rm /tmp/ex$$'
+compare_posix_output "exec input" 'echo test > /tmp/ex$$; exec 4</tmp/ex$$; cat <&4; exec 4<&-; rm /tmp/ex$$'
+
+section "361. EXIT COMMAND"
+
+compare_posix_output "exit basic" '(exit); echo $?'
+compare_posix_output "exit code" '(exit 5); echo $?'
+compare_posix_output "exit 0" '(exit 0); echo $?'
+compare_posix_output "exit 255" '(exit 255); echo $?'
+
+section "362. EXPORT COMMAND"
+
+compare_posix_output "export basic" 'export X=5; sh -c "echo \$X"'
+compare_posix_output "export separate" 'Y=6; export Y; sh -c "echo \$Y"'
+compare_posix_output "export list" 'export | grep -c ='
+compare_posix_output "export unset" 'export Z=7; unset Z; sh -c "echo \${Z:-unset}"'
+
+section "363. READONLY COMMAND"
+
+compare_posix_output "readonly basic" 'readonly X=5; echo $X'
+compare_posix_output "readonly list" 'readonly | grep -c .'
+compare_posix_output "readonly modify" '(readonly Y=1; Y=2) 2>/dev/null; echo $?'
+
+section "364. RETURN COMMAND"
+
+compare_posix_output "return basic" 'f() { return; }; f; echo $?'
+compare_posix_output "return code" 'f() { return 5; }; f; echo $?'
+compare_posix_output "return from func" 'f() { echo before; return 3; echo after; }; f; echo $?'
+
+section "365. SET COMMAND"
+
+compare_posix_output "set args" 'set -- a b c; echo $1 $2 $3'
+compare_posix_output "set count" 'set -- a b c d e; echo $#'
+compare_posix_output "set clear" 'set -- a b; set --; echo $#'
+compare_posix_output "set option f" 'set -f; echo $- | grep -c f; set +f'
+compare_posix_output "set minus" 'set -x; set +x; echo ok'
+
+# ============================================================================
+# SECTION 366-375: MORE SPECIAL BUILTINS
+# ============================================================================
+
+section "366. SHIFT COMMAND"
+
+compare_posix_output "shift basic" 'set -- a b c; shift; echo $1'
+compare_posix_output "shift count" 'set -- a b c; shift; echo $#'
+compare_posix_output "shift 2" 'set -- a b c d; shift 2; echo $1'
+compare_posix_output "shift all" 'set -- a b; shift 2; echo $#'
+
+section "367. TIMES COMMAND"
+
+compare_posix_output "times output" 'times 2>/dev/null | wc -l | xargs test 0 -lt && echo ok || echo ok'
+
+section "368. TRAP COMMAND"
+
+compare_posix_output "trap list" 'trap 2>/dev/null; echo $?'
+compare_posix_output "trap exit" 'trap "echo trapped" EXIT; exit 0'
+compare_posix_output "trap reset" 'trap "" INT; trap - INT; echo ok'
+
+section "369. UNSET COMMAND"
+
+compare_posix_output "unset var" 'x=5; unset x; echo ${x:-unset}'
+compare_posix_output "unset func" 'f() { echo func; }; unset -f f; f 2>/dev/null || echo unset'
+compare_posix_output "unset v flag" 'x=5; unset -v x; echo ${x:-unset}'
+
+section "370. ALIAS COMMAND"
+
+compare_posix_output "alias set" 'alias ll="ls -l" 2>/dev/null; alias ll 2>/dev/null | grep -c ll || echo 0'
+compare_posix_output "alias list" 'alias 2>/dev/null; echo $?'
+compare_posix_output "unalias" 'alias xx="echo xx" 2>/dev/null; unalias xx 2>/dev/null; echo $?'
+
+section "371. COMMAND BUILTIN"
+
+compare_posix_output "command v" 'command -v echo | grep -c echo'
+compare_posix_output "command V" 'command -V echo 2>/dev/null | grep -c echo'
+compare_posix_output "command p" 'command -p echo test'
+compare_posix_output "command bypass" 'echo() { printf "func\n"; }; command echo real; unset -f echo'
+
+section "372. GETOPTS COMMAND"
+
+compare_posix_output "getopts basic" 'set -- -a; getopts a opt; echo $opt'
+compare_posix_output "getopts optarg" 'set -- -b val; getopts b: opt; echo $opt $OPTARG'
+compare_posix_output "getopts optind" 'set -- -a arg; getopts a opt; echo $OPTIND'
+
+section "373. READ COMMAND OPTIONS"
+
+compare_posix_output "read r flag" 'echo "a\\b" > /tmp/rr$$; read -r x < /tmp/rr$$; echo $x; rm /tmp/rr$$'
+compare_posix_output "read multiple" 'echo "a b c" > /tmp/rm$$; read x y z < /tmp/rm$$; echo "$x:$y:$z"; rm /tmp/rm$$'
+compare_posix_output "read extra" 'echo "a b c d" > /tmp/re$$; read x y < /tmp/re$$; echo "$x:$y"; rm /tmp/re$$'
+
+section "374. PRINTF COMMAND"
+
+compare_posix_output "printf basic" 'printf "hello\n"'
+compare_posix_output "printf format s" 'printf "%s\n" world'
+compare_posix_output "printf format d" 'printf "%d\n" 42'
+compare_posix_output "printf format x" 'printf "%x\n" 255'
+compare_posix_output "printf format o" 'printf "%o\n" 8'
+compare_posix_output "printf width" 'printf "%5d\n" 42'
+compare_posix_output "printf left" 'printf "%-5d|\n" 42'
+compare_posix_output "printf zero" 'printf "%05d\n" 42'
+compare_posix_output "printf multi" 'printf "%s %s\n" hello world'
+
+section "375. ECHO COMMAND"
+
+compare_posix_output "echo basic" 'echo hello'
+compare_posix_output "echo multi" 'echo hello world'
+compare_posix_output "echo empty" 'echo ""'
+compare_posix_output "echo n flag" 'echo -n hello; echo world'
+compare_posix_output "echo escapes" 'echo "a\tb"'
+
+# ============================================================================
+# SECTION 376-385: WORD EXPANSION EDGE CASES
+# ============================================================================
+
+section "376. TILDE EXPANSION"
+
+compare_posix_output "tilde home" 'echo ~ | grep -c /'
+compare_posix_output "tilde slash" 'echo ~/ | grep -c /'
+compare_posix_output "tilde plus" 'echo ~+ | grep -c /'
+compare_posix_output "tilde minus" 'OLDPWD=/tmp; echo ~-'
+compare_posix_output "tilde quoted" 'echo "~"'
+compare_posix_output "tilde mid word" 'echo a~b'
+compare_posix_output "tilde in assign" 'x=~/test; echo $x | grep -c /'
+
+section "377. PATHNAME EXPANSION"
+
+compare_posix_output "glob star" 'mkdir -p /tmp/pg$$; touch /tmp/pg$$/a /tmp/pg$$/b; echo /tmp/pg$$/* | grep -c pg; rm -rf /tmp/pg$$'
+compare_posix_output "glob question" 'mkdir -p /tmp/pg$$; touch /tmp/pg$$/ab; echo /tmp/pg$$/a? | grep -c ab; rm -rf /tmp/pg$$'
+compare_posix_output "glob bracket" 'mkdir -p /tmp/pg$$; touch /tmp/pg$$/a1 /tmp/pg$$/a2; ls /tmp/pg$$/a[12] | wc -l; rm -rf /tmp/pg$$'
+compare_posix_output "glob negate" 'mkdir -p /tmp/pg$$; touch /tmp/pg$$/a1 /tmp/pg$$/b1; ls /tmp/pg$$/[!a]1 | wc -l; rm -rf /tmp/pg$$'
+compare_posix_output "glob range" 'mkdir -p /tmp/pg$$; touch /tmp/pg$$/a1 /tmp/pg$$/b1 /tmp/pg$$/c1; ls /tmp/pg$$/[a-c]1 | wc -l; rm -rf /tmp/pg$$'
+compare_posix_output "glob no match" 'echo /nonexistent$$/*'
+
+section "378. FIELD SPLITTING"
+
+compare_posix_output "split default" 'x="a b c"; set -- $x; echo $#'
+compare_posix_output "split tab" 'x="a	b	c"; set -- $x; echo $#'
+compare_posix_output "split newline" 'x="a
+b
+c"; set -- $x; echo $#'
+compare_posix_output "split ifs colon" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "split ifs multi" 'IFS=":;"; x="a:b;c"; set -- $x; echo $#'
+compare_posix_output "split no split" 'x="a b c"; set -- "$x"; echo $#'
+
+section "379. QUOTE REMOVAL"
+
+compare_posix_output "quote remove single" "echo 'hello'"
+compare_posix_output "quote remove double" 'echo "hello"'
+compare_posix_output "quote remove escape" 'echo hello\ world'
+compare_posix_output "quote remove mixed" "echo 'a'b'c'"
+compare_posix_output "quote remove empty" "echo ''"
+compare_posix_output "quote preserve space" 'echo "a   b"'
+
+section "380. COMMAND SUBSTITUTION"
+
+compare_posix_output "cmd sub basic" 'echo $(echo hello)'
+compare_posix_output "cmd sub backtick" 'echo `echo hello`'
+compare_posix_output "cmd sub nested" 'echo $(echo $(echo deep))'
+compare_posix_output "cmd sub quote" 'echo "$(echo "hello world")"'
+compare_posix_output "cmd sub multi" 'echo $(echo a; echo b)'
+compare_posix_output "cmd sub exit" 'echo $(exit 5); echo $?'
+
+section "381. ARITHMETIC EXPANSION"
+
+compare_posix_output "arith basic" 'echo $((1+2))'
+compare_posix_output "arith var" 'x=5; echo $((x*2))'
+compare_posix_output "arith nested" 'echo $(( $((1+2)) + 3 ))'
+compare_posix_output "arith in string" 'echo "result: $((3*4))"'
+compare_posix_output "arith negative" 'echo $((-5))'
+
+section "382. PARAMETER LENGTH"
+
+compare_posix_output "length basic" 'x=hello; echo ${#x}'
+compare_posix_output "length empty" 'x=""; echo ${#x}'
+compare_posix_output "length special" 'set -- a b c; echo ${#@}'
+compare_posix_output "length star" 'set -- a b c; echo ${#*}'
+
+section "383. PATTERN SUFFIX REMOVAL"
+
+compare_posix_output "suffix short" 'x=file.txt; echo ${x%.txt}'
+compare_posix_output "suffix long" 'x=file.tar.gz; echo ${x%%.*}'
+compare_posix_output "suffix star" 'x=abcabc; echo ${x%abc}'
+compare_posix_output "suffix star long" 'x=abcabc; echo ${x%%a*}'
+compare_posix_output "suffix no match" 'x=hello; echo ${x%.xyz}'
+
+section "384. PATTERN PREFIX REMOVAL"
+
+compare_posix_output "prefix short" 'x=prefix_name; echo ${x#prefix_}'
+compare_posix_output "prefix long" 'x=/usr/local/bin; echo ${x##*/}'
+compare_posix_output "prefix star" 'x=abcabc; echo ${x#abc}'
+compare_posix_output "prefix star long" 'x=abcabc; echo ${x##*a}'
+compare_posix_output "prefix no match" 'x=hello; echo ${x#xyz}'
+
+section "385. EXPANSION ORDER"
+
+compare_posix_output "order brace tilde" 'echo ~/{a,b} | grep -c /'
+compare_posix_output "order param cmd" 'x=$(echo val); echo $x'
+compare_posix_output "order arith param" 'x=5; echo $((x+1))'
+compare_posix_output "order split glob" 'mkdir -p /tmp/eo$$; touch /tmp/eo$$/f1; x="/tmp/eo$$/f*"; echo $x | grep -c f; rm -rf /tmp/eo$$'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
