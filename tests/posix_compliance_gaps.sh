@@ -1986,6 +1986,290 @@ compare_posix_output "env home" 'echo ${HOME:-none} | grep -c "/"'
 compare_posix_output "env path" 'echo ${PATH:-none} | grep -c ":"'
 compare_posix_output "env pwd" 'echo ${PWD:-none} | grep -c "/"'
 
+section "271. GETOPTS COMPREHENSIVE"
+
+compare_posix_output "getopts single" 'set -- -a; getopts a opt; echo $opt'
+compare_posix_output "getopts value" 'set -- -a val; getopts a: opt; echo $opt $OPTARG'
+compare_posix_output "getopts multi" 'set -- -ab; getopts ab opt; echo $opt'
+compare_posix_output "getopts optind" 'set -- -a -b; OPTIND=1; getopts ab opt; echo $OPTIND'
+compare_posix_output "getopts unknown" 'set -- -x; getopts a opt 2>/dev/null; echo $?'
+compare_posix_output "getopts missing" 'set -- -a; getopts a: opt 2>/dev/null; echo $?'
+
+section "272. TRAP COMPREHENSIVE"
+
+compare_posix_output "trap list" 'trap 2>/dev/null; echo done'
+compare_posix_output "trap set" 'trap "echo trapped" INT; trap | grep -c INT || echo 0'
+compare_posix_output "trap reset" 'trap "echo x" INT; trap - INT; echo done'
+compare_posix_output "trap ignore" 'trap "" INT; echo done'
+compare_posix_output "trap exit" 'sh -c "trap \"echo bye\" EXIT; exit 0" 2>/dev/null || echo done'
+
+section "273. EVAL COMPREHENSIVE"
+
+compare_posix_output "eval simple" 'eval echo hello'
+compare_posix_output "eval var" 'x=world; eval echo $x'
+compare_posix_output "eval quoted" 'eval "echo test"'
+compare_posix_output "eval multi" 'eval "echo a; echo b" | wc -l'
+compare_posix_output "eval indirect" 'x=y; y=val; eval echo \$$x'
+compare_posix_output "eval assign" 'eval "x=test"; echo $x'
+compare_posix_output "eval complex" 'x="echo hello"; eval $x'
+
+section "274. EXEC COMPREHENSIVE"
+
+compare_posix_output "exec fd open" 'exec 3>&1; echo test >&3; exec 3>&-'
+compare_posix_output "exec fd close" 'exec 3>&1; exec 3>&-; echo ok'
+compare_posix_output "exec redir" 'exec 3>/tmp/e$$; echo test >&3; exec 3>&-; cat /tmp/e$$; rm /tmp/e$$'
+
+section "275. DOT SOURCE COMPREHENSIVE"
+
+compare_posix_output "dot var" 'echo "X=sourced" > /tmp/s$$; . /tmp/s$$; echo $X; rm /tmp/s$$'
+compare_posix_output "dot func" 'echo "f() { echo func; }" > /tmp/s$$; . /tmp/s$$; f; rm /tmp/s$$'
+compare_posix_output "dot persist" 'echo "Y=persist" > /tmp/s$$; . /tmp/s$$; echo $Y; rm /tmp/s$$'
+
+section "276. COMMAND BUILTIN"
+
+compare_posix_output "command echo" 'command echo hello'
+compare_posix_output "command v" 'command -v echo | grep -c echo'
+compare_posix_output "command V" 'command -V echo 2>/dev/null | grep -c echo || echo 1'
+compare_posix_output "command p" 'command -p echo hello'
+compare_posix_output "command bypass" 'echo() { printf "func\n"; }; command echo builtin; unset -f echo'
+
+section "277. TYPE BUILTIN"
+
+compare_posix_output "type builtin" 'type echo 2>/dev/null | head -1 | grep -c echo || echo 1'
+compare_posix_output "type external" 'type cat 2>/dev/null | head -1 | grep -c cat || echo 1'
+compare_posix_output "type notfound" 'type nonexistent_xyz 2>&1 | grep -ci "not found" || echo 0'
+
+section "278. HASH BUILTIN"
+
+compare_posix_output "hash show" 'hash 2>/dev/null; echo $?'
+compare_posix_output "hash clear" 'hash -r 2>/dev/null; echo $?'
+
+section "279. ULIMIT BUILTIN"
+
+compare_posix_output "ulimit show" 'ulimit 2>/dev/null | grep -c "[0-9]" || echo 1'
+compare_posix_output "ulimit n" 'ulimit -n 2>/dev/null | grep -c "[0-9]" || echo 1'
+compare_posix_output "ulimit a" 'ulimit -a 2>/dev/null | wc -l'
+
+section "280. UMASK BUILTIN"
+
+compare_posix_output "umask show" 'umask | grep -c "[0-7]"'
+compare_posix_output "umask symbolic" 'umask -S | grep -c "u="'
+compare_posix_output "umask set" 'old=$(umask); umask 022; umask $old; echo done'
+
+section "281. TIMES BUILTIN"
+
+compare_posix_output "times output" 'times 2>&1 | head -1 | grep -c "[0-9]" || echo 0'
+
+section "282. KILL BUILTIN"
+
+compare_posix_output "kill list" 'kill -l | head -1 | grep -c "[A-Z]" || echo 1'
+compare_posix_output "kill l num" 'kill -l 1 2>/dev/null | grep -ci "hup\|term" || echo 0'
+
+section "283. CD COMPREHENSIVE"
+
+compare_posix_output "cd tmp" 'cd /tmp && pwd'
+compare_posix_output "cd home" 'cd ~ && pwd | grep -c "/"'
+compare_posix_output "cd dash" 'cd /tmp; cd /; cd - 2>/dev/null | grep -c "/" || pwd'
+compare_posix_output "cd dotdot" 'cd /tmp; cd ..; pwd | grep -v "^/tmp$" | grep -c "/"'
+compare_posix_output "cd absolute" 'cd /usr && pwd'
+compare_posix_output "cd relative" 'cd /; cd tmp && pwd'
+compare_posix_output "cd oldpwd" 'cd /tmp; cd /; echo $OLDPWD | grep -c tmp'
+
+section "284. PWD COMPREHENSIVE"
+
+compare_posix_output "pwd basic" 'pwd | grep -c "/"'
+compare_posix_output "pwd L" 'pwd -L 2>/dev/null | grep -c "/" || pwd | grep -c "/"'
+compare_posix_output "pwd P" 'pwd -P 2>/dev/null | grep -c "/" || pwd | grep -c "/"'
+compare_posix_output "pwd var" 'echo $PWD | grep -c "/"'
+
+section "285. COLON BUILTIN"
+
+compare_posix_output "colon simple" ':; echo $?'
+compare_posix_output "colon args" ': arg1 arg2; echo $?'
+compare_posix_output "colon in if" 'if :; then echo yes; fi'
+compare_posix_output "colon in while" 'n=0; while :; do n=$((n+1)); [ $n -ge 2 ] && break; done; echo $n'
+compare_posix_output "colon expansion" ': ${x:=default}; echo $x'
+
+section "286. TRUE FALSE BUILTINS"
+
+compare_posix_output "true exit" 'true; echo $?'
+compare_posix_output "false exit" 'false; echo $?'
+compare_posix_output "true in if" 'if true; then echo yes; fi'
+compare_posix_output "false in if" 'if false; then echo no; else echo yes; fi'
+compare_posix_output "true and" 'true && echo yes'
+compare_posix_output "false or" 'false || echo yes'
+
+section "287. RETURN BUILTIN"
+
+compare_posix_output "return 0" 'f() { return 0; }; f; echo $?'
+compare_posix_output "return 1" 'f() { return 1; }; f; echo $?'
+compare_posix_output "return 42" 'f() { return 42; }; f; echo $?'
+compare_posix_output "return 255" 'f() { return 255; }; f; echo $?'
+compare_posix_output "return implicit" 'f() { true; }; f; echo $?'
+compare_posix_output "return last" 'f() { false; }; f; echo $?'
+
+section "288. EXIT BUILTIN"
+
+compare_posix_output "exit 0" '(exit 0); echo $?'
+compare_posix_output "exit 1" '(exit 1); echo $?'
+compare_posix_output "exit 42" '(exit 42); echo $?'
+compare_posix_output "exit 255" '(exit 255); echo $?'
+compare_posix_output "exit implicit" '(true); echo $?'
+
+section "289. BREAK BUILTIN"
+
+compare_posix_output "break for" 'for i in 1 2 3; do [ $i -eq 2 ] && break; echo $i; done'
+compare_posix_output "break while" 'n=0; while true; do n=$((n+1)); [ $n -ge 2 ] && break; done; echo $n'
+compare_posix_output "break nested" 'for i in 1 2; do for j in a b; do break; done; echo $i; done'
+compare_posix_output "break 2" 'for i in 1 2; do for j in a b; do break 2; done; done; echo done'
+
+section "290. CONTINUE BUILTIN"
+
+compare_posix_output "continue for" 'for i in 1 2 3; do [ $i -eq 2 ] && continue; echo $i; done'
+compare_posix_output "continue while" 'n=0; while [ $n -lt 3 ]; do n=$((n+1)); [ $n -eq 2 ] && continue; echo $n; done'
+compare_posix_output "continue nested" 'for i in 1 2; do for j in a b; do continue; done; echo $i; done'
+compare_posix_output "continue 2" 'for i in 1 2; do for j in a b; do continue 2; done; echo never; done; echo done'
+
+section "291. SHIFT BUILTIN"
+
+compare_posix_output "shift once" 'set -- a b c; shift; echo $1'
+compare_posix_output "shift twice" 'set -- a b c; shift; shift; echo $1'
+compare_posix_output "shift n" 'set -- a b c d e; shift 3; echo $1'
+compare_posix_output "shift all" 'set -- a b; shift 2; echo ${1:-empty}'
+compare_posix_output "shift count" 'set -- a b c; shift; echo $#'
+
+section "292. SET BUILTIN COMPREHENSIVE"
+
+compare_posix_output "set args" 'set -- a b c; echo $1 $2 $3'
+compare_posix_output "set clear" 'set -- a b; set --; echo ${1:-none}'
+compare_posix_output "set e" 'set -e; true; echo ok'
+compare_posix_output "set f" 'set -f; echo *; set +f'
+compare_posix_output "set x" 'set +x; echo ok'
+compare_posix_output "set minus" 'echo $- | grep -c "."'
+compare_posix_output "set show" 'X=val; set | grep -c "^X=" || echo 0'
+
+section "293. UNSET BUILTIN"
+
+compare_posix_output "unset var" 'X=val; unset X; echo ${X:-gone}'
+compare_posix_output "unset func" 'f() { echo func; }; unset -f f 2>/dev/null; type f 2>&1 | grep -c "not found" || echo 0'
+compare_posix_output "unset v" 'X=val; unset -v X; echo ${X:-gone}'
+compare_posix_output "unset multi" 'X=1 Y=2; unset X Y; echo ${X:-a} ${Y:-b}'
+
+section "294. EXPORT BUILTIN"
+
+compare_posix_output "export simple" 'export X=val; echo $X'
+compare_posix_output "export existing" 'X=val; export X; echo $X'
+compare_posix_output "export multi" 'export X=1 Y=2; echo $X $Y'
+compare_posix_output "export child" 'export X=val; sh -c "echo \$X"'
+compare_posix_output "export list" 'export 2>/dev/null | head -1 | grep -c "=" || echo 0'
+
+section "295. READONLY BUILTIN"
+
+compare_posix_output "readonly simple" 'readonly X=val; echo $X'
+compare_posix_output "readonly existing" 'X=val; readonly X; echo $X'
+compare_posix_output "readonly list" 'readonly 2>/dev/null | wc -l'
+
+section "296. LOCAL SCOPE SIMULATION"
+
+compare_posix_output "scope global" 'X=global; f() { echo $X; }; f'
+compare_posix_output "scope modify" 'X=old; f() { X=new; }; f; echo $X'
+compare_posix_output "scope subshell" 'X=outer; (X=inner; echo $X); echo $X'
+compare_posix_output "scope func arg" 'f() { echo $1; }; f arg'
+compare_posix_output "scope nested" 'f() { g() { echo inner; }; g; }; f'
+
+section "297. GLOB PATTERNS COMPREHENSIVE"
+
+compare_posix_output "glob star" 'set -f; echo *; set +f'
+compare_posix_output "glob question" 'set -f; echo ?; set +f'
+compare_posix_output "glob bracket" 'set -f; echo [abc]; set +f'
+compare_posix_output "glob range" 'set -f; echo [a-z]; set +f'
+compare_posix_output "glob neg" 'set -f; echo [!abc]; set +f'
+compare_posix_output "glob quoted" 'echo "*"'
+compare_posix_output "glob escaped" 'echo \*'
+compare_posix_output "glob in var" 'x="*"; echo "$x"'
+
+section "298. TILDE EXPANSION COMPREHENSIVE"
+
+compare_posix_output "tilde home" 'echo ~ | grep -c "/"'
+compare_posix_output "tilde slash" 'echo ~/ | grep -c "/"'
+compare_posix_output "tilde quoted" 'echo "~"'
+compare_posix_output "tilde var" 'x=~; echo $x | grep -c "/"'
+compare_posix_output "tilde plus" 'cd /tmp; echo ~+ | grep -c "/"'
+compare_posix_output "tilde minus" 'cd /tmp; cd /; echo ~- | grep -c tmp'
+
+section "299. BRACE EXPANSION TESTS"
+
+compare_posix_output "brace literal" 'echo {a,b,c}'
+compare_posix_output "brace seq" 'echo {1..3} 2>/dev/null || echo "1 2 3"'
+compare_posix_output "brace prefix" 'echo pre{a,b} 2>/dev/null || echo "prea preb"'
+compare_posix_output "brace suffix" 'echo {a,b}suf 2>/dev/null || echo "asuf bsuf"'
+
+section "300. WORD SPLITTING COMPREHENSIVE"
+
+compare_posix_output "split default" 'x="a b c"; set -- $x; echo $#'
+compare_posix_output "split quoted" 'x="a b c"; set -- "$x"; echo $#'
+compare_posix_output "split ifs" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+compare_posix_output "split empty ifs" 'IFS=""; x="a b"; set -- $x; echo $#'
+compare_posix_output "split unset ifs" 'unset IFS; x="a  b"; set -- $x; echo $#'
+compare_posix_output "split whitespace" 'x="  a  b  "; set -- $x; echo $#'
+compare_posix_output "split preserve" 'x="a  b"; echo "$x" | grep -c "  "'
+compare_posix_output "split tab" 'x="a	b"; set -- $x; echo $#'
+
+section "301. FIELD SPLITTING EDGE CASES"
+
+compare_posix_output "field leading" 'IFS=:; x=":a:b"; set -- $x; echo $# $1'
+compare_posix_output "field trailing" 'IFS=:; x="a:b:"; set -- $x; echo $#'
+compare_posix_output "field empty" 'IFS=:; x="a::b"; set -- $x; echo $#'
+compare_posix_output "field multi ifs" 'IFS=":;"; x="a:b;c"; set -- $x; echo $#'
+
+section "302. COMMAND SUBSTITUTION COMPREHENSIVE"
+
+compare_posix_output "cmdsub simple" 'echo $(echo hello)'
+compare_posix_output "cmdsub nested" 'echo $(echo $(echo deep))'
+compare_posix_output "cmdsub backtick" 'echo `echo hello`'
+compare_posix_output "cmdsub var" 'x=$(echo val); echo $x'
+compare_posix_output "cmdsub arith" 'echo $(echo $((1+1)))'
+compare_posix_output "cmdsub pipe" 'echo $(echo test | cat)'
+compare_posix_output "cmdsub multiline" 'x=$(printf "a\nb"); echo "$x" | wc -l'
+compare_posix_output "cmdsub exit" '$(exit 5); echo $?'
+compare_posix_output "cmdsub empty" 'x=$(true); echo "[$x]"'
+
+section "303. ARITHMETIC EXPANSION COMPREHENSIVE"
+
+compare_posix_output "arith simple" 'echo $((1+1))'
+compare_posix_output "arith all ops" 'echo $((2+3-1*2/1%3))'
+compare_posix_output "arith paren" 'echo $(((1+2)*3))'
+compare_posix_output "arith var" 'x=5; echo $((x+1))'
+compare_posix_output "arith compare" 'echo $((5 > 3))'
+compare_posix_output "arith logical" 'echo $((1 && 1))'
+compare_posix_output "arith ternary" 'echo $((1 ? 10 : 20))'
+compare_posix_output "arith nested" 'echo $(($((1+1)) + 1))'
+compare_posix_output "arith negative" 'echo $((-5))'
+compare_posix_output "arith zero" 'echo $((0))'
+
+section "304. PATTERN MATCHING COMPREHENSIVE"
+
+compare_posix_output "pat suffix" 'x=file.txt; echo ${x%.txt}'
+compare_posix_output "pat suffix long" 'x=a.b.c; echo ${x%%.*}'
+compare_posix_output "pat prefix" 'x=prefix_name; echo ${x#prefix_}'
+compare_posix_output "pat prefix long" 'x=a.b.c; echo ${x##*.}'
+compare_posix_output "pat star" 'x=hello; echo ${x%l*}'
+compare_posix_output "pat question" 'x=hello; echo ${x%?}'
+compare_posix_output "pat no match" 'x=hello; echo ${x%.txt}'
+compare_posix_output "pat empty" 'x=; echo ${x%.txt}'
+
+section "305. SPECIAL PARAMETER COMPREHENSIVE"
+
+compare_posix_output "param zero" 'echo ${0:-shell} | grep -c "."'
+compare_posix_output "param hash" 'set -- a b c; echo $#'
+compare_posix_output "param question" 'true; echo $?'
+compare_posix_output "param dollar" 'echo $$ | grep -c "[0-9]"'
+compare_posix_output "param at" 'set -- a b c; echo "$@"'
+compare_posix_output "param star" 'set -- a b c; echo "$*"'
+compare_posix_output "param minus" 'echo $- | grep -c "."'
+compare_posix_output "param at loop" 'set -- a b c; for x in "$@"; do echo $x; done | wc -l'
+compare_posix_output "param star loop" 'set -- a b c; for x in "$*"; do echo $x; done | wc -l'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
