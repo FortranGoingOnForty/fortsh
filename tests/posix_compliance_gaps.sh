@@ -3175,6 +3175,246 @@ section "420. NESTED PARAMETER"
 compare_posix_output "nested default" 'y=inner; echo ${x:-${y:-outer}}'
 compare_posix_output "nested length" 'x=hello; echo $((${#x} + 1))'
 
+# ============================================================================
+# SECTION 421-430: HEREDOC VARIATIONS
+# ============================================================================
+
+section "421. HEREDOC BASIC"
+
+compare_posix_output "heredoc simple" 'cat <<EOF
+hello
+EOF'
+compare_posix_output "heredoc multi" 'cat <<EOF
+line1
+line2
+EOF'
+compare_posix_output "heredoc empty" 'cat <<EOF
+EOF'
+
+section "422. HEREDOC EXPANSION"
+
+compare_posix_output "heredoc var" 'x=value; cat <<EOF
+$x
+EOF'
+compare_posix_output "heredoc cmd" 'cat <<EOF
+$(echo hello)
+EOF'
+compare_posix_output "heredoc arith" 'cat <<EOF
+$((1+2))
+EOF'
+
+section "423. HEREDOC QUOTED DELIMITER"
+
+compare_posix_output "heredoc single quote" "cat <<'EOF'
+\$x \$(cmd)
+EOF"
+compare_posix_output "heredoc double quote" 'cat <<"EOF"
+$x $(cmd)
+EOF'
+
+section "424. HEREDOC TAB STRIP"
+
+compare_posix_output "heredoc dash" 'cat <<-EOF
+	tabbed
+	EOF'
+
+section "425. MULTIPLE HEREDOCS"
+
+compare_posix_output "double heredoc" 'cat <<EOF1; cat <<EOF2
+first
+EOF1
+second
+EOF2'
+
+# ============================================================================
+# SECTION 426-435: ADDITIONAL ARITHMETIC
+# ============================================================================
+
+section "426. ARITHMETIC OPERATORS"
+
+compare_posix_output "arith add" 'echo $((5+3))'
+compare_posix_output "arith sub" 'echo $((5-3))'
+compare_posix_output "arith mul" 'echo $((5*3))'
+compare_posix_output "arith div" 'echo $((15/3))'
+compare_posix_output "arith mod" 'echo $((17%5))'
+compare_posix_output "arith neg" 'echo $((-5))'
+
+section "427. ARITHMETIC COMPARISONS"
+
+compare_posix_output "arith lt" 'echo $((3<5))'
+compare_posix_output "arith gt" 'echo $((5>3))'
+compare_posix_output "arith le" 'echo $((5<=5))'
+compare_posix_output "arith ge" 'echo $((5>=5))'
+compare_posix_output "arith eq" 'echo $((5==5))'
+compare_posix_output "arith ne" 'echo $((5!=3))'
+
+section "428. ARITHMETIC LOGICAL"
+
+compare_posix_output "arith and" 'echo $((1&&1))'
+compare_posix_output "arith or" 'echo $((0||1))'
+compare_posix_output "arith not" 'echo $((!0))'
+
+section "429. ARITHMETIC BITWISE"
+
+compare_posix_output "arith band" 'echo $((12&10))'
+compare_posix_output "arith bor" 'echo $((12|10))'
+compare_posix_output "arith bxor" 'echo $((12^10))'
+compare_posix_output "arith lshift" 'echo $((1<<4))'
+compare_posix_output "arith rshift" 'echo $((16>>2))'
+
+section "430. ARITHMETIC TERNARY"
+
+compare_posix_output "arith ternary t" 'echo $((1?10:20))'
+compare_posix_output "arith ternary f" 'echo $((0?10:20))'
+compare_posix_output "arith ternary expr" 'echo $((5>3?1:0))'
+
+section "431. ARITHMETIC ASSIGNMENT"
+
+compare_posix_output "arith pluseq" 'x=5; echo $((x+=3))'
+compare_posix_output "arith minuseq" 'x=5; echo $((x-=3))'
+compare_posix_output "arith muleq" 'x=5; echo $((x*=3))'
+compare_posix_output "arith diveq" 'x=15; echo $((x/=3))'
+
+section "432. ARITHMETIC PRECEDENCE"
+
+compare_posix_output "arith prec 1" 'echo $((2+3*4))'
+compare_posix_output "arith prec 2" 'echo $(((2+3)*4))'
+compare_posix_output "arith prec 3" 'echo $((10/2+3))'
+
+section "433. ARITHMETIC WITH VARS"
+
+compare_posix_output "arith var simple" 'x=5; echo $((x))'
+compare_posix_output "arith var expr" 'a=3; b=4; echo $((a*a+b*b))'
+compare_posix_output "arith var unset" 'unset z; echo $((z))'
+
+section "434. ARITHMETIC BASE"
+
+compare_posix_output "arith octal" 'echo $((010))'
+compare_posix_output "arith hex" 'echo $((0x10))'
+compare_posix_output "arith hex lc" 'echo $((0xa))'
+
+section "435. ARITHMETIC INCREMENT"
+
+compare_posix_output "arith preinc" 'x=5; echo $((++x))'
+compare_posix_output "arith predec" 'x=5; echo $((--x))'
+compare_posix_output "arith postinc" 'x=5; echo $((x++))'
+compare_posix_output "arith postdec" 'x=5; echo $((x--))'
+
+# ============================================================================
+# SECTION 436-445: QUOTING EDGE CASES
+# ============================================================================
+
+section "436. SINGLE QUOTING"
+
+compare_posix_output "squote simple" "echo 'hello'"
+compare_posix_output "squote space" "echo 'hello world'"
+compare_posix_output "squote dollar" "echo '\$x'"
+compare_posix_output "squote backtick" "echo '\`cmd\`'"
+compare_posix_output "squote backslash" "echo '\\'"
+
+section "437. DOUBLE QUOTING"
+
+compare_posix_output "dquote simple" 'echo "hello"'
+compare_posix_output "dquote space" 'echo "hello world"'
+compare_posix_output "dquote expand" 'x=val; echo "$x"'
+compare_posix_output "dquote escaped dollar" 'echo "\$x"'
+compare_posix_output "dquote escaped quote" 'echo "hello\"world"'
+
+section "438. BACKSLASH ESCAPING"
+
+compare_posix_output "escape space" 'echo hello\ world'
+compare_posix_output "escape dollar" 'echo \$x'
+compare_posix_output "escape newline" 'echo hello\
+world'
+compare_posix_output "escape backslash" 'echo \\\\'
+
+section "439. MIXED QUOTING"
+
+compare_posix_output "mixed sd" 'echo "'"'"'"'
+compare_posix_output "mixed ds" "echo '\"'"
+compare_posix_output "mixed concat" "echo 'a'b'c'"
+compare_posix_output "mixed dquote" 'echo "a'"'"'b"'
+
+section "440. EMPTY QUOTES"
+
+compare_posix_output "empty single" "echo ''"
+compare_posix_output "empty double" 'echo ""'
+compare_posix_output "empty in string" 'echo a""b'
+compare_posix_output "empty as arg" 'set -- ""; echo $#'
+
+# ============================================================================
+# SECTION 441-450: COMMAND LINE SYNTAX
+# ============================================================================
+
+section "441. SIMPLE COMMANDS"
+
+compare_posix_output "simple echo" 'echo hello'
+compare_posix_output "simple true" 'true; echo $?'
+compare_posix_output "simple false" 'false; echo $?'
+compare_posix_output "simple colon" ': ; echo $?'
+
+section "442. PIPELINES"
+
+compare_posix_output "pipe simple" 'echo hello | cat'
+compare_posix_output "pipe multi" 'echo hello | cat | cat'
+compare_posix_output "pipe exit" 'true | false; echo $?'
+compare_posix_output "pipe negation" '! echo x | grep y 2>/dev/null; echo $?'
+
+section "443. LISTS"
+
+compare_posix_output "list semi" 'echo a; echo b'
+compare_posix_output "list newline" 'echo a
+echo b'
+compare_posix_output "list and" 'true && echo yes'
+compare_posix_output "list or" 'false || echo yes'
+
+section "444. COMPOUND COMMANDS"
+
+compare_posix_output "subshell" '(echo hello)'
+compare_posix_output "brace" '{ echo hello; }'
+compare_posix_output "if" 'if true; then echo yes; fi'
+compare_posix_output "for" 'for i in a b; do echo $i; done'
+compare_posix_output "case" 'case x in x) echo yes;; esac'
+
+section "445. REDIRECTIONS"
+
+compare_posix_output "redir out" 'echo test > /tmp/r$$; cat /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir in" 'echo test > /tmp/r$$; cat < /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir append" 'echo a > /tmp/r$$; echo b >> /tmp/r$$; cat /tmp/r$$; rm /tmp/r$$'
+compare_posix_output "redir stderr" 'ls /nonexistent$$ 2>/dev/null; echo done'
+
+section "446. COMMENTS"
+
+compare_posix_output "comment inline" 'echo yes # comment'
+compare_posix_output "comment in dquote" 'echo "not # comment"'
+compare_posix_output "comment in squote" "echo 'not # comment'"
+
+section "447. RESERVED WORDS"
+
+compare_posix_output "reserved if" 'if true; then echo 1; fi'
+compare_posix_output "reserved for" 'for x in a; do echo $x; done'
+compare_posix_output "reserved case" 'case a in a) echo yes;; esac'
+
+section "448. WORD SPLITTING"
+
+compare_posix_output "split default" 'x="a b c"; set -- $x; echo $#'
+compare_posix_output "split quoted" 'x="a b c"; set -- "$x"; echo $#'
+compare_posix_output "split ifs" 'IFS=:; x="a:b:c"; set -- $x; echo $#'
+
+section "449. GLOB EXPANSION"
+
+compare_posix_output "glob star" 'mkdir -p /tmp/g$$; touch /tmp/g$$/a; echo /tmp/g$$/* | grep -c g; rm -rf /tmp/g$$'
+compare_posix_output "glob question" 'mkdir -p /tmp/g$$; touch /tmp/g$$/ab; echo /tmp/g$$/a? | grep -c ab; rm -rf /tmp/g$$'
+compare_posix_output "glob bracket" 'mkdir -p /tmp/g$$; touch /tmp/g$$/a1; echo /tmp/g$$/a[12] | grep -c a1; rm -rf /tmp/g$$'
+compare_posix_output "glob nomatch" 'echo /nonexistent$$/*'
+
+section "450. TILDE EXPANSION"
+
+compare_posix_output "tilde home" 'echo ~ | grep -c /'
+compare_posix_output "tilde plus" 'echo ~+ | grep -c /'
+compare_posix_output "tilde in assign" 'x=~/test; echo $x | grep -c /'
+compare_posix_output "tilde quoted" 'echo "~"'
+
 # Summary
 printf "\n"
 printf "==========================================\n"
