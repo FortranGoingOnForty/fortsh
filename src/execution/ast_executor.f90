@@ -168,10 +168,27 @@ contains
             if (assign_eq_pos > 1) then
               assign_name = node%simple_cmd%assignments(assign_idx)(1:assign_eq_pos-1)
               assign_value = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:)
-              value_len = token_len - assign_eq_pos
-
-              ! Recalculate value_len from actual content (may include sentinels)
-              value_len = len_trim(assign_value)
+              ! Calculate value_len - normally use len_trim, but preserve
+              ! whitespace-only values (like IFS=" ")
+              if (len_trim(assign_value) > 0) then
+                ! Normal case: value has non-whitespace content
+                value_len = len_trim(assign_value)
+              else
+                ! Special case: value is empty or all whitespace
+                ! Use tracked length minus equals sign position
+                value_len = token_len - assign_eq_pos
+                ! Adjust for quotes if present in original
+                if (value_len >= 2) then
+                  block
+                    character(len=1) :: first_char
+                    first_char = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:assign_eq_pos+1)
+                    if (first_char == "'" .or. first_char == '"') then
+                      value_len = value_len - 2  ! Remove quote characters from length
+                    end if
+                  end block
+                end if
+                if (value_len <= 0) value_len = 0
+              end if
 
               ! Check if this is an array assignment: VAR=(...)
               if (value_len >= 2 .and. assign_value(1:1) == '(' .and. &
