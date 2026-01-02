@@ -7,7 +7,8 @@ module executor
   use builtin_interface
   use parser
   use job_control
-  use variables, only: var_set_shell_variable => set_shell_variable, set_array_variable, set_array_element
+  use variables, only: var_set_shell_variable => set_shell_variable, set_array_variable, set_array_element, &
+                       get_shell_variable
   use control_flow
   use error_handling
   use performance
@@ -753,18 +754,55 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     integer :: saved_stdout, saved_stdin, saved_stderr
-    integer :: fd, ret, flags
+    integer :: fd, ret, flags, i
+    integer, target :: pipefd(2)
+    integer(c_size_t) :: bytes_written
     character(len=256), target :: c_filename
-    logical :: has_redirects
+    character(kind=c_char), target :: c_content(MAX_HEREDOC_LEN)
+    character(len=:), allocatable :: content_to_write, expanded_content
+    logical :: has_redirects, has_heredoc
+    ! Prefix assignment handling
+    character(len=256) :: saved_var_names(10), saved_var_values(10)
+    integer :: num_saved_vars, eq_pos, j
+    character(len=256) :: var_name, var_value
+    logical :: var_was_set(10)
+
+    ! Apply prefix assignments to shell variables (save old values first)
+    num_saved_vars = 0
+    do j = 1, cmd%num_prefix_assignments
+      eq_pos = index(cmd%prefix_assignments(j), '=')
+      if (eq_pos > 1) then
+        num_saved_vars = num_saved_vars + 1
+        var_name = cmd%prefix_assignments(j)(:eq_pos-1)
+        var_value = cmd%prefix_assignments(j)(eq_pos+1:)
+        saved_var_names(num_saved_vars) = trim(var_name)
+        ! Save old value (empty string if not set)
+        saved_var_values(num_saved_vars) = get_shell_variable(shell, trim(var_name))
+        var_was_set(num_saved_vars) = (len_trim(saved_var_values(num_saved_vars)) > 0)
+        ! Set new value
+        call var_set_shell_variable(shell, trim(var_name), trim(var_value))
+      end if
+    end do
 
     ! Check if we have any redirections
     has_redirects = allocated(cmd%output_file) .or. allocated(cmd%input_file) .or. &
                     allocated(cmd%error_file) .or. cmd%redirect_stderr_to_stdout .or. &
                     cmd%redirect_stdout_to_stderr
+    has_heredoc = allocated(cmd%heredoc_content) .or. allocated(cmd%here_string)
 
-    if (.not. has_redirects) then
+    if (.not. has_redirects .and. .not. has_heredoc) then
       ! No redirections, just execute the builtin normally
       call execute_builtin(cmd, shell)
+      ! Restore prefix assignment variables
+      do j = 1, num_saved_vars
+        if (var_was_set(j)) then
+          call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+        else
+          ! Variable wasn't set before, we should unset it
+          ! For now, just set to empty (proper unset would need more work)
+          call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+        end if
+      end do
       return
     end if
 
@@ -773,7 +811,50 @@ contains
     saved_stdin = c_dup(STDIN_FD)
     saved_stderr = c_dup(STDERR_FD)
 
-    ! Handle input redirection
+    ! Handle heredoc/here-string input (redirects stdin)
+    if (has_heredoc) then
+      ! Prepare content to write
+      if (allocated(cmd%here_string)) then
+        content_to_write = cmd%here_string // char(10)  ! Add newline
+      else if (allocated(cmd%heredoc_content)) then
+        ! Check if we should expand variables (unquoted delimiter)
+        if (.not. cmd%heredoc_quoted) then
+          ! Expand variables in heredoc content
+          call expand_variables(cmd%heredoc_content, expanded_content, shell)
+          if (allocated(expanded_content)) then
+            content_to_write = expanded_content
+          else
+            content_to_write = cmd%heredoc_content
+          end if
+        else
+          ! Quoted delimiter - use content as-is
+          content_to_write = cmd%heredoc_content
+        end if
+      end if
+
+      ! Create pipe and redirect stdin
+      if (allocated(content_to_write)) then
+        ret = c_pipe(c_loc(pipefd))
+        if (ret == 0) then
+          ! Convert content to C string
+          do i = 1, min(len(content_to_write), MAX_HEREDOC_LEN-1)
+            c_content(i) = content_to_write(i:i)
+          end do
+          c_content(min(len(content_to_write), MAX_HEREDOC_LEN-1)+1) = c_null_char
+
+          ! Write content to pipe
+          bytes_written = c_write(pipefd(2), c_loc(c_content), &
+                                 int(min(len(content_to_write), MAX_HEREDOC_LEN-1), c_size_t))
+
+          ! Close write end and redirect stdin to read end
+          ret = c_close(pipefd(2))
+          ret = c_dup2(pipefd(1), STDIN_FD)
+          ret = c_close(pipefd(1))
+        end if
+      end if
+    end if
+
+    ! Handle input redirection (file)
     if (allocated(cmd%input_file)) then
       c_filename = trim(cmd%input_file)//c_null_char
       fd = c_open(c_loc(c_filename), O_RDONLY, 0)
@@ -783,6 +864,14 @@ contains
       else
         write(error_unit, '(3a)') 'fortsh: cannot open input file: ', trim(cmd%input_file)
         shell%last_exit_status = 1
+        ! Restore prefix assignment variables before returning
+        do j = 1, num_saved_vars
+          if (var_was_set(j)) then
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+          else
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+          end if
+        end do
         return
       end if
     end if
@@ -798,6 +887,14 @@ contains
           ! Restore stdin before returning
           ret = c_dup2(saved_stdin, STDIN_FD)
           ret = c_close(saved_stdin)
+          ! Restore prefix assignment variables before returning
+          do j = 1, num_saved_vars
+            if (var_was_set(j)) then
+              call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+            else
+              call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+            end if
+          end do
           return
         end if
       end if
@@ -819,6 +916,14 @@ contains
         ! Restore stdin before returning
         ret = c_dup2(saved_stdin, STDIN_FD)
         ret = c_close(saved_stdin)
+        ! Restore prefix assignment variables before returning
+        do j = 1, num_saved_vars
+          if (var_was_set(j)) then
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+          else
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+          end if
+        end do
         return
       end if
     end if
@@ -844,6 +949,14 @@ contains
         ret = c_dup2(saved_stdout, STDOUT_FD)
         ret = c_close(saved_stdin)
         ret = c_close(saved_stdout)
+        ! Restore prefix assignment variables before returning
+        do j = 1, num_saved_vars
+          if (var_was_set(j)) then
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+          else
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+          end if
+        end do
         return
       end if
     end if
@@ -867,6 +980,16 @@ contains
     ret = c_close(saved_stdout)
     ret = c_close(saved_stdin)
     ret = c_close(saved_stderr)
+
+    ! Restore prefix assignment variables
+    do j = 1, num_saved_vars
+      if (var_was_set(j)) then
+        call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+      else
+        ! Variable wasn't set before, set to empty
+        call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+      end if
+    end do
   end subroutine
 
   ! Execute ((expression)) arithmetic evaluation command
@@ -1273,6 +1396,23 @@ contains
     end if
 
     do i = 1, cmd%num_tokens
+      ! POSIX: Special handling for "$@" - expands to separate quoted arguments
+      ! When a double-quoted token is exactly $@ or just contains $@ as the whole expansion,
+      ! we need to add each positional parameter as a separate token
+      if (allocated(cmd%token_quote_type) .and. &
+          i <= size(cmd%token_quote_type) .and. &
+          cmd%token_quote_type(i) == QUOTE_DOUBLE .and. &
+          trim(cmd%tokens(i)) == '$@') then
+        ! "$@" - add each positional parameter as a separate quoted token
+        do j = 1, shell%num_positional
+          total_tokens = total_tokens + 1
+          if (total_tokens <= size(temp_tokens)) then
+            temp_tokens(total_tokens) = trim(shell%positional_params(j))
+          end if
+        end do
+        cycle  ! Skip normal token processing
+      end if
+
       ! Check if this token was single-quoted (no expansion)
       if (allocated(cmd%token_quote_type) .and. &
           i <= size(cmd%token_quote_type) .and. &
@@ -1285,7 +1425,13 @@ contains
         if (allocated(cmd%token_quote_type) .and. &
             i <= size(cmd%token_quote_type) .and. &
             cmd%token_quote_type(i) == QUOTE_DOUBLE) then
-          call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.true.)
+          ! For quoted tokens, use token_lengths to preserve trailing whitespace
+          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+              cmd%token_lengths(i) > 0) then
+            call expand_variables(cmd%tokens(i)(1:cmd%token_lengths(i)), expanded, shell, was_quoted_in=.true.)
+          else
+            call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.true.)
+          end if
         else
           call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.false.)
         end if

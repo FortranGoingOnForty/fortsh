@@ -1287,9 +1287,48 @@ contains
     result = ''
     i = 1
     j = 1
-    end_pos = len_trim(working_token)
+    ! For quoted tokens, use len(token) to preserve trailing whitespace
+    ! For unquoted tokens, use len_trim() to skip padding
+    if (is_quoted) then
+      end_pos = len(token)  ! Use actual passed token length, not buffer size
+    else
+      end_pos = len_trim(working_token)
+    end if
+
+    ! Track if we're inside single-quoted literal region (between char(2) markers)
+    block
+    logical :: in_single_quote_literal
+    in_single_quote_literal = .false.
 
     do while (i <= end_pos)
+      ! Check for single-quote literal START sentinel (char(2))
+      if (working_token(i:i) == char(2)) then
+        in_single_quote_literal = .true.
+        i = i + 1
+        cycle
+      end if
+
+      ! Check for single-quote literal END sentinel (char(3))
+      if (working_token(i:i) == char(3)) then
+        in_single_quote_literal = .false.
+        i = i + 1
+        cycle
+      end if
+
+      ! In single-quoted literal region, copy everything literally (no expansion)
+      if (in_single_quote_literal) then
+        result(j:j) = working_token(i:i)
+        i = i + 1
+        j = j + 1
+        cycle
+      end if
+
+      ! Check for double-quote boundary sentinel (char(1)) - skip it
+      if (working_token(i:i) == char(1)) then
+        i = i + 1
+        cycle
+      end if
+
       ! Check for backslash escape
       ! Handle \$ even outside quotes since lexer may have already removed quotes
       if (working_token(i:i) == '\' .and. i < end_pos) then
@@ -1329,7 +1368,8 @@ contains
           j = j + len_trim(pid_str)
           i = i + 1
         else if (working_token(i:i) == '$') then
-          write(pid_str, '(i15)') c_getpid()
+          ! Use shell%shell_pid (set at startup) so $$ returns same value in subshells
+          write(pid_str, '(i0)') shell%shell_pid
           pid_str = adjustl(pid_str)  ! Left-justify to remove leading spaces
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
@@ -1545,12 +1585,16 @@ contains
           result(j:j) = '`'
           j = j + 1
         end if
+      else if (working_token(i:i) == char(1)) then
+        ! Skip sentinel character (marks quote boundary from lexer)
+        i = i + 1
       else
         result(j:j) = working_token(i:i)
         i = i + 1
         j = j + 1
       end if
     end do
+    end block  ! End of in_single_quote_literal block
 
     ! POSIX: Quote removal does NOT apply to the results of parameter expansion
     ! Only apply quote removal to quotes that were literally in the command, not in variable values
@@ -1907,10 +1951,17 @@ contains
       original_tokens(i) = cmd%tokens(i)
     end do
 
-    ! Don't glob expand tokens that were escaped or have backslashes
+    ! Don't glob expand tokens that were quoted, escaped, or have backslashes
     ! Check metadata if available, otherwise fall back to checking for backslash
     has_expandable = .false.
     do i = 1, cmd%num_tokens
+      ! Skip if token was quoted (prevents glob expansion per POSIX)
+      if (allocated(cmd%token_quoted)) then
+        if (i <= size(cmd%token_quoted) .and. cmd%token_quoted(i)) then
+          cycle  ! Skip this token - it was quoted
+        end if
+      end if
+
       ! Skip if token was escaped (metadata available) or has backslash (fallback)
       if (allocated(cmd%token_escaped)) then
         ! Use metadata if available
@@ -1937,8 +1988,12 @@ contains
       return
     end if
 
-    ! Expand glob patterns
-    call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count)
+    ! Expand glob patterns (pass token_quoted to prevent glob expansion on quoted tokens)
+    if (allocated(cmd%token_quoted)) then
+      call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count, cmd%token_quoted)
+    else
+      call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count)
+    end if
     
     ! Replace command tokens with expanded ones
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
@@ -1987,6 +2042,53 @@ contains
           in_single_quote = .not. in_single_quote
         else if (input(i:i) == '"' .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
           in_double_quote = .not. in_double_quote
+        end if
+      end if
+
+      ! Inside backticks: handle escaped backticks as nested substitution delimiters
+      ! POSIX: \` inside backticks means start/end of nested command substitution
+      if (in_backticks .and. input(i:i) == backslash .and. i < len_trim(input)) then
+        if (input(i+1:i+1) == '`') then
+          ! Escaped backtick inside backticks = nested command substitution
+          ! Convert to $() for the nested level
+          temp_result(j:j+1) = '$('
+          j = j + 2
+          i = i + 2
+          ! Find the matching closing \` and convert it too
+          block
+            integer :: k, nest_level
+            nest_level = 1
+            k = i
+            do while (k <= len_trim(input) .and. nest_level > 0)
+              if (input(k:k) == backslash .and. k < len_trim(input) .and. input(k+1:k+1) == '`') then
+                nest_level = nest_level - 1
+                if (nest_level == 0) then
+                  ! Copy everything up to here, then add closing )
+                  do while (i < k)
+                    temp_result(j:j) = input(i:i)
+                    j = j + 1
+                    i = i + 1
+                  end do
+                  temp_result(j:j) = ')'
+                  j = j + 1
+                  i = k + 2  ! Skip the \`
+                  exit
+                else
+                  k = k + 2
+                end if
+              else
+                k = k + 1
+              end if
+            end do
+          end block
+          cycle
+        else if (input(i+1:i+1) == '$' .or. input(i+1:i+1) == backslash .or. &
+                 input(i+1:i+1) == char(10)) then
+          ! Other escapes: consume backslash, copy the character
+          temp_result(j:j) = input(i+1:i+1)
+          j = j + 1
+          i = i + 2
+          cycle
         end if
       end if
 

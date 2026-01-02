@@ -199,10 +199,11 @@ section "449. MIXED QUOTING"
 # =====================================
 
 result=$("$FORTSH_BIN" -c 'echo "hello"'\''world'\''' 2>&1)
-if [ "$result" = "hello'world'" ]; then
+# Adjacent quoted strings concatenate: "hello" + 'world' = helloworld
+if [ "$result" = "helloworld" ]; then
     pass "Adjacent double and single quotes"
 else
-    fail "Adjacent double and single quotes" "hello'world'" "$result"
+    fail "Adjacent double and single quotes" "helloworld" "$result"
 fi
 
 result=$("$FORTSH_BIN" -c 'x=val; echo "$x"'\''$x'\''' 2>&1)

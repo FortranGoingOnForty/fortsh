@@ -675,8 +675,21 @@ contains
     end do
 
     do i = start_token, cmd%num_tokens
-      ! POSIX: Skip empty tokens (unquoted empty variables disappear)
-      if (len_trim(cmd%tokens(i)) == 0) cycle
+      ! POSIX: Skip empty tokens ONLY if they were unquoted (empty variables disappear)
+      ! Quoted empty strings "" should produce an empty argument
+      if (len_trim(cmd%tokens(i)) == 0) then
+        if (allocated(cmd%token_quoted)) then
+          if (i <= size(cmd%token_quoted) .and. cmd%token_quoted(i)) then
+            ! Token was quoted - keep it as empty argument
+          else
+            ! Token was not quoted - skip it
+            cycle
+          end if
+        else
+          ! No quote info available - skip empty tokens (safer default)
+          cycle
+        end if
+      end if
 
       if (.not. first) then
         call write_stdout_nonl_checked(' ', write_ok)
@@ -686,6 +699,7 @@ contains
       ! Process escape sequences in token (only if interpret_escapes is true)
       token = cmd%tokens(i)
       len_token = len_trim(token)
+
       processed = ''
       j = 1
 
@@ -2393,6 +2407,7 @@ contains
   subroutine builtin_exec(cmd, shell)
     use command_builtin, only: find_command_full_path
     use fd_redirection, only: apply_single_redirection
+    use parser, only: expand_variables
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -2402,13 +2417,23 @@ contains
     integer :: i, ret
     character(len=MAX_PATH_LEN) :: prog_path
     logical :: redir_success
+    type(redirection_t) :: expanded_redir
+    character(len=:), allocatable :: expanded_filename
 
     ! exec without arguments but with redirections applies them to the current shell
     if (cmd%num_tokens < 2) then
       if (cmd%num_redirections > 0) then
-        ! Apply redirections to the current shell process
+        ! Apply redirections to the current shell process (permanent=.true. for exec)
         do i = 1, cmd%num_redirections
-          call apply_single_redirection(cmd%redirections(i), redir_success, shell%option_noclobber)
+          ! Make a copy of the redirection and expand the filename
+          expanded_redir = cmd%redirections(i)
+          if (allocated(cmd%redirections(i)%filename)) then
+            call expand_variables(trim(cmd%redirections(i)%filename), expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              expanded_redir%filename = expanded_filename
+            end if
+          end if
+          call apply_single_redirection(expanded_redir, redir_success, shell%option_noclobber, permanent=.true.)
           if (.not. redir_success) then
             shell%last_exit_status = 1
             return

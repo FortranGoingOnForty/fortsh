@@ -15,7 +15,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: name, value
     integer, intent(in), optional :: value_length
-    integer :: i, empty_slot, iostat, actual_len
+    integer :: i, empty_slot, iostat, actual_len, depth
 
 
     empty_slot = -1
@@ -25,6 +25,21 @@ contains
       actual_len = value_length
     else
       actual_len = len_trim(value)
+    end if
+
+    ! First check local variables - if variable exists in current function scope, update it there
+    if (shell%function_depth > 0) then
+      depth = shell%function_depth
+      if (depth <= size(shell%local_var_counts)) then
+        do i = 1, shell%local_var_counts(depth)
+          if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+            ! Found existing local variable - update it
+            shell%local_vars(depth, i)%value = value(1:actual_len)
+            shell%local_vars(depth, i)%value_len = actual_len
+            return
+          end if
+        end do
+      end if
     end if
 
     ! Handle special built-in variables
@@ -85,7 +100,8 @@ contains
       if (trim(shell%variables(i)%name) == trim(name)) then
         ! Check if variable is readonly
         if (shell%variables(i)%readonly) then
-          write(error_unit, '(a)') 'sh: ' // trim(name) // ': readonly variable'
+          write(error_unit, '(a,i0,a)') 'fortsh: line ', shell%current_line_number, ': ' // &
+                                        trim(name) // ': readonly variable'
           shell%last_exit_status = 1  ! POSIX: readonly assignment failure returns 1
           ! POSIX: In non-interactive shells, stop execution after readonly violation
           if (.not. shell%is_interactive) then
@@ -148,7 +164,7 @@ contains
     ! Handle special variables
     select case (trim(name))
       case ('$')
-        write(value, '(i15)') shell%shell_pid
+        write(value, '(i0)') shell%shell_pid
         return
       case ('!')
         write(value, '(i15)') shell%last_bg_pid
@@ -168,7 +184,7 @@ contains
         value = get_shell_option_flags(shell)
         return
       case ('PPID')
-        write(value, '(i15)') shell%parent_pid
+        write(value, '(i0)') int(shell%parent_pid)
         return
       case ('UID')
         write(value, '(i15)') shell%uid
@@ -191,7 +207,7 @@ contains
         call get_seconds_since_start(shell, value)
         return
       case ('LINENO')
-        write(value, '(i15)') shell%current_line_number
+        write(value, '(i0)') shell%current_line_number
         return
       case ('#')
         ! Number of positional parameters
@@ -383,8 +399,8 @@ contains
         var_len = len_trim(shell%shell_name)
         return
       case ('$')
-        write(temp_value, '(i15)') shell%shell_pid
-        var_len = len_trim(adjustl(temp_value))
+        write(temp_value, '(i0)') shell%shell_pid
+        var_len = len_trim(temp_value)
         return
       case ('PPID')
         write(temp_value, '(i15)') shell%parent_pid

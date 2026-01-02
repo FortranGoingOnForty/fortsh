@@ -44,19 +44,20 @@ contains
   end function
 
   ! Main glob expansion function
-  subroutine expand_glob_patterns(tokens, num_tokens, expanded_tokens, expanded_count)
+  subroutine expand_glob_patterns(tokens, num_tokens, expanded_tokens, expanded_count, token_quoted)
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
     character(len=MAX_TOKEN_LEN), allocatable, intent(out) :: expanded_tokens(:)
     integer, intent(out) :: expanded_count
+    logical, intent(in), optional :: token_quoted(:)
 
     ! Use allocatable arrays to avoid static storage
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     character(len=MAX_TOKEN_LEN), allocatable :: matches(:)
     integer :: i, j, match_count, total_count, current_size
-    logical :: has_glob_chars
+    logical :: has_glob_chars, is_quoted
     integer(int64) :: glob_start_time
-    
+
     ! Start performance timing
     call start_timer('glob_expansion', glob_start_time)
 
@@ -67,8 +68,20 @@ contains
     total_count = 0
 
     do i = 1, num_tokens
-      ! Check if token contains unescaped glob characters
-      has_glob_chars = has_unescaped_glob_chars(tokens(i))
+      ! Check if this token was quoted (skip glob expansion if so)
+      is_quoted = .false.
+      if (present(token_quoted)) then
+        if (i <= size(token_quoted)) then
+          is_quoted = token_quoted(i)
+        end if
+      end if
+
+      ! Check if token contains unescaped glob characters (skip if quoted)
+      if (is_quoted) then
+        has_glob_chars = .false.  ! Quoted tokens don't get glob expanded
+      else
+        has_glob_chars = has_unescaped_glob_chars(tokens(i))
+      end if
 
       if (has_glob_chars) then
         ! Expand the glob pattern
@@ -199,7 +212,7 @@ contains
     integer :: num_test_files, i
 
     match_count = 0
-    allocate(test_files(2000))  ! Increased to handle directories with many files
+    allocate(test_files(10000))  ! Increased to handle directories with many files
 
     ! For now, simulate some common files for testing
     ! In a real implementation, this would read the actual directory
@@ -248,7 +261,7 @@ contains
     integer, intent(out) :: count
 
     ! Increased buffer size to handle directories with many files (like /tmp)
-    integer, parameter :: BUFFER_SIZE = 65536  ! 64KB buffer
+    integer, parameter :: BUFFER_SIZE = 524288  ! 512KB buffer for large directories
 
     character(len=512) :: command
     integer(c_pid_t) :: pid
