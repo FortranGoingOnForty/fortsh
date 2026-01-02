@@ -473,7 +473,7 @@ contains
           ! FD must be a single digit (0-9) to avoid false positives like "/tmp"
           if (num_words > 0 .and. (trim(tok%value) == '>' .or. trim(tok%value) == '>&' .or. &
                                     trim(tok%value) == '<' .or. trim(tok%value) == '<&' .or. &
-                                    trim(tok%value) == '>>')) then
+                                    trim(tok%value) == '>>' .or. trim(tok%value) == '<>')) then
             ! Only treat as FD if it's exactly one digit character
             if (len_trim(words(num_words)) == 1 .and. &
                 index('0123456789', trim(words(num_words))) > 0) then
@@ -494,6 +494,8 @@ contains
                 redirects(num_redirects)%type = REDIR_FD_APPEND
               case('<')
                 redirects(num_redirects)%type = REDIR_FD_IN
+              case('<>')
+                redirects(num_redirects)%type = REDIR_READWRITE
               case default  ! '>'
                 redirects(num_redirects)%type = REDIR_FD_OUT
               end select
@@ -654,6 +656,25 @@ contains
           node%simple_cmd%assignments(i) = assignments(i)
           node%simple_cmd%assignment_lengths(i) = assignment_lens(i)
         end do
+      end if
+    else if (num_redirects > 0) then
+      ! POSIX: Null command with just redirects (e.g., "> file" creates empty file)
+      ! Create a simple command node with the colon (:) builtin as the command
+      words(1) = ':'
+      num_words = 1
+      node => create_simple_command(words, num_words)
+      if (associated(node%simple_cmd)) then
+        allocate(node%simple_cmd%word_was_quoted(1))
+        node%simple_cmd%word_was_quoted(1) = .false.
+        allocate(node%simple_cmd%word_was_escaped(1))
+        node%simple_cmd%word_was_escaped(1) = .false.
+        allocate(node%simple_cmd%word_quote_type(1))
+        node%simple_cmd%word_quote_type(1) = 0
+        allocate(node%simple_cmd%word_lengths(1))
+        node%simple_cmd%word_lengths(1) = 1
+        allocate(node%simple_cmd%redirects(num_redirects))
+        node%simple_cmd%num_redirects = num_redirects
+        node%simple_cmd%redirects(1:num_redirects) = redirects(1:num_redirects)
       end if
     end if
   end function

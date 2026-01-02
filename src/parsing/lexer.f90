@@ -210,9 +210,16 @@ contains
             ! Start a word token with the escaped character
             state = LEX_IN_WORD
             token_start = pos
-            token_len = 1
-            current_token = next_ch
             in_escape = .true.  ! Mark this token as escaped
+            ! For characters that would trigger expansion ($, `, etc), preserve backslash
+            ! so the expansion phase knows not to expand them
+            if (next_ch == '$' .or. next_ch == '`') then
+              token_len = 2
+              current_token(1:2) = '\' // next_ch
+            else
+              token_len = 1
+              current_token = next_ch
+            end if
             pos = pos + 2  ! Skip backslash and next char
             cycle
           end if
@@ -266,12 +273,22 @@ contains
       case(LEX_IN_SINGLE_QUOTE)
         if (ch == "'") then
           ! End of single-quoted string
+          ! Add sentinel char(3) to mark end of single-quoted literal
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(3)
+          end if
           pos = pos + 1  ! Move past closing quote
-          ! Check if next character continues the word (adjacent quote or word char)
+          ! Check if next character continues the word (adjacent quote, word char, or escape)
           if (pos <= input_len) then
             next_ch = input(pos:pos)
             if (next_ch == "'" .or. next_ch == '"') then
               ! Adjacent quote follows - continue building this token
+              state = LEX_IN_WORD
+              continuing_word = .false.
+              cycle
+            else if (next_ch == '\') then
+              ! Backslash escape follows - continue building this token
               state = LEX_IN_WORD
               continuing_word = .false.
               cycle
@@ -423,16 +440,36 @@ contains
         else if (ch == '"') then
           ! End of double-quoted string
           pos = pos + 1  ! Move past closing quote
-          ! Check if next character continues the word (adjacent quote or word char)
+          ! Check if next character continues the word (adjacent quote, word char, or escape)
           if (pos <= input_len) then
             next_ch = input(pos:pos)
             if (next_ch == "'" .or. next_ch == '"') then
               ! Adjacent quote follows - continue building this token
+              ! Add sentinel to mark quote boundary (so expansion knows where quoted part ends)
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = char(1)  ! ASCII SOH as sentinel
+              end if
+              state = LEX_IN_WORD
+              continuing_word = .false.
+              cycle
+            else if (next_ch == '\') then
+              ! Backslash escape follows - continue building this token
+              ! Add sentinel to mark quote boundary
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = char(1)  ! ASCII SOH as sentinel
+              end if
               state = LEX_IN_WORD
               continuing_word = .false.
               cycle
             else if (is_word_char(next_ch)) then
               ! Word character follows - continue building this token
+              ! Add sentinel to mark quote boundary (so expansion knows where quoted part ends)
+              if (token_len < MAX_TOKEN_LEN) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = char(1)  ! ASCII SOH as sentinel
+              end if
               state = LEX_IN_WORD
               continuing_word = .false.
               cycle
@@ -461,7 +498,8 @@ contains
       ! ============ WORD STATE ============
       case(LEX_IN_WORD)
         ! Check if we're inside $() - if so, keep EVERYTHING including spaces
-        if (index(current_token(1:token_len), '$(') > 0) then
+        ! IMPORTANT: Also check paren_depth > 0 to ensure we're actually inside the $()
+        if (index(current_token(1:token_len), '$(') > 0 .and. paren_depth > 0) then
           ! Inside command substitution - track paren depth
           if (ch == '(') then
             paren_depth = paren_depth + 1
@@ -495,7 +533,8 @@ contains
             pos = pos + 1
           end if
         ! Check if we're inside ${ - if so, keep EVERYTHING until closing }
-        else if (index(current_token(1:token_len), '${') > 0) then
+        ! IMPORTANT: Also check paren_depth > 0 to ensure we're actually inside the ${}
+        else if (index(current_token(1:token_len), '${') > 0 .and. paren_depth > 0) then
           ! Inside parameter expansion - track brace depth
           if (ch == '{') then
             paren_depth = paren_depth + 1
@@ -552,9 +591,19 @@ contains
           end if
         else if (ch == '\' .and. pos < input_len) then
           ! Backslash escape in word
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = next_ch
+          ! For expansion-triggering chars, preserve backslash
+          if (next_ch == '$' .or. next_ch == '`') then
+            if (token_len < MAX_TOKEN_LEN - 1) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = '\'
+              token_len = token_len + 1
+              current_token(token_len:token_len) = next_ch
+            end if
+          else
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = next_ch
+            end if
           end if
           pos = pos + 2
         else if (ch == "'" .or. ch == '"') then
@@ -564,6 +613,11 @@ contains
           token_has_quoted_part = .true.  ! Track that this word contains quoted content
           ! Transition to appropriate quote state
           if (ch == "'") then
+            ! Add sentinel char(2) to mark start of single-quoted literal (no expansion)
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(2)
+            end if
             state = LEX_IN_SINGLE_QUOTE
           else
             state = LEX_IN_DOUBLE_QUOTE

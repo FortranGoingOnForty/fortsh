@@ -282,9 +282,10 @@ contains
 
       case (REDIR_READWRITE)
         ! <> file (open for read/write, default fd=0)
+        ! POSIX: Create file if it doesn't exist
         if (allocated(redir%filename)) then
           filename_c = trim(redir%filename)//c_null_char
-          flags = FD_O_RDWR
+          flags = ior(FD_O_RDWR, FD_O_CREAT)
           file_fd = c_open(filename_c, flags, 420)  ! mode 0644
           if (file_fd < 0) then
             write(error_unit, '(3a)') 'fortsh: cannot open file: ', trim(redir%filename)
@@ -295,14 +296,23 @@ contains
               if (c_dup2(file_fd, FD_STDIN) < 0) then
                 success = .false.
               end if
+              ! Close original only if it's different from target
+              if (file_fd /= FD_STDIN) then
+                if (c_close(file_fd) < 0) then
+                  ! Error closing file descriptor
+                end if
+              end if
             else
               if (.not. is_permanent) call save_fd(redir%fd)
               if (c_dup2(file_fd, redir%fd) < 0) then
                 success = .false.
               end if
-            end if
-            if (c_close(file_fd) < 0) then
-              ! Error closing file descriptor
+              ! Close original only if it's different from target
+              if (file_fd /= redir%fd) then
+                if (c_close(file_fd) < 0) then
+                  ! Error closing file descriptor
+                end if
+              end if
             end if
           end if
         end if

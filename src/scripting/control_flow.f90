@@ -380,20 +380,23 @@ contains
       end if
     end if
 
-    ! Parse: for var in [word1 word2 word3]
-    ! Note: Empty list is allowed (e.g., "for x in; do")
-    if (cmd%num_tokens < 3 .or. trim(cmd%tokens(3)) /= 'in') then
-      write(error_unit, '(a)') 'for: syntax error, expected "for var in [list]"'
+    ! Parse: for var [in word1 word2 ...]
+    ! POSIX: If 'in' is omitted, iterate over positional parameters ($@)
+    if (cmd%num_tokens < 2) then
+      write(error_unit, '(a)') 'for: syntax error, expected "for var"'
       shell%last_exit_status = 1
       return
     end if
 
     var_name = trim(cmd%tokens(2))
 
-    ! If there are no items after "in", that's valid - just an empty loop
-    if (cmd%num_tokens < 4) then
-      final_count = 0
-    else
+    ! Check if 'in' is present
+    if (cmd%num_tokens >= 3 .and. trim(cmd%tokens(3)) == 'in') then
+      ! Standard form: for var in [items...]
+      ! If there are no items after "in", that's valid - just an empty loop
+      if (cmd%num_tokens < 4) then
+        final_count = 0
+      else
       ! Process each token as a separate item (they're already tokenized correctly)
       ! Expand braces and globs as needed
       final_count = 0
@@ -435,6 +438,13 @@ contains
             final_items(final_count) = trim(cmd%tokens(i))
           end if
         end if
+      end do
+      end if
+    else
+      ! No 'in' clause - POSIX: iterate over positional parameters ($@)
+      final_count = min(shell%num_positional, 100)
+      do i = 1, final_count
+        final_items(i) = trim(shell%positional_params(i))
       end do
     end if
 
