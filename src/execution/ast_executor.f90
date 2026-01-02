@@ -121,6 +121,7 @@ contains
   function execute_simple_command(node, shell) result(exit_status)
     use executor, only: execute_pipeline
     use fd_redirection, only: apply_single_redirection, restore_fds
+    use parser, only: expand_variables
     use iso_fortran_env, only: error_unit
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
@@ -130,6 +131,7 @@ contains
     type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
     character(len=1024), allocatable :: old_params(:)
+    character(len=:), allocatable :: expanded_filename
     logical :: redir_success
     logical :: has_redirects, is_pure_assignment
 
@@ -556,7 +558,13 @@ contains
         temp_redirect%fd = node%simple_cmd%redirects(i)%fd
         temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
         if (allocated(node%simple_cmd%redirects(i)%filename)) then
-          allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(i)%filename))
+          ! Expand variables in redirect filename (e.g., /tmp/file$$)
+          call expand_variables(trim(node%simple_cmd%redirects(i)%filename), expanded_filename, shell)
+          if (allocated(expanded_filename)) then
+            allocate(temp_redirect%filename, source=expanded_filename)
+          else
+            allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(i)%filename))
+          end if
         end if
         temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
 
