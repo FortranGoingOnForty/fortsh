@@ -1300,9 +1300,17 @@ contains
     end if
 
     ! Get IFS for word splitting
-    ifs_chars = get_shell_variable(shell, 'IFS')
-    if (.not. allocated(ifs_chars) .or. len_trim(ifs_chars) == 0) then
-      ifs_chars = ' ' // achar(9) // new_line('a')  ! Default: space, tab, newline
+    ! POSIX: Empty IFS (IFS="") means no field splitting
+    ! Unset IFS means use default (space, tab, newline)
+    if (shell%ifs_len == 0) then
+      ! IFS is set but empty - no splitting will occur
+      ifs_chars = ''
+    else if (shell%ifs_len > 0) then
+      ! IFS is set with content - use it
+      ifs_chars = shell%ifs(1:shell%ifs_len)
+    else
+      ! Default IFS
+      ifs_chars = ' ' // achar(9) // new_line('a')
     end if
 
     ! First, expand variables and split on IFS, then expand globs
@@ -1915,18 +1923,25 @@ contains
     character(len=*), intent(in) :: ifs_chars
     character(len=MAX_TOKEN_LEN), intent(out) :: words(MAX_TOKEN_LEN)
     integer, intent(out) :: word_count
-    integer :: i, start, str_len
+    integer :: i, str_len, word_pos
     logical :: in_word
     character(len=MAX_TOKEN_LEN) :: current_word
 
     word_count = 0
     current_word = ''
+    word_pos = 0
     in_word = .false.
-    start = 1
     str_len = len_trim(str)
 
     ! Handle empty string
     if (str_len == 0) then
+      return
+    end if
+
+    ! Special case: empty IFS means no splitting - return entire string as one word
+    if (len(ifs_chars) == 0) then
+      word_count = 1
+      words(1) = str(1:str_len)
       return
     end if
 
@@ -1936,14 +1951,16 @@ contains
         if (in_word) then
           word_count = word_count + 1
           if (word_count <= MAX_TOKEN_LEN) then
-            words(word_count) = current_word
+            words(word_count) = current_word(1:word_pos)
           end if
           current_word = ''
+          word_pos = 0
           in_word = .false.
         end if
       else
-        ! Non-IFS character - add to current word
-        current_word = trim(current_word) // str(i:i)
+        ! Non-IFS character - add to current word (preserve spaces!)
+        word_pos = word_pos + 1
+        current_word(word_pos:word_pos) = str(i:i)
         in_word = .true.
       end if
     end do
@@ -1952,7 +1969,7 @@ contains
     if (in_word) then
       word_count = word_count + 1
       if (word_count <= MAX_TOKEN_LEN) then
-        words(word_count) = current_word
+        words(word_count) = current_word(1:word_pos)
       end if
     end if
   end subroutine split_on_ifs
