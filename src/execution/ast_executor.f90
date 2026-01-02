@@ -1535,10 +1535,11 @@ contains
     end if
 
     ! Get the value to match (expand variables)
-    case_value = trim(node%case_stmt%word)
+    ! Note: Don't trim - the value might BE whitespace (e.g., " " in case " " in ...)
+    case_value = node%case_stmt%word
     ! If it starts with $, expand it
-    if (case_value(1:1) == '$') then
-      case_value = get_shell_variable(shell, case_value(2:))
+    if (len_trim(case_value) > 0 .and. case_value(1:1) == '$') then
+      case_value = get_shell_variable(shell, trim(case_value(2:)))
     end if
 
     ! Try to match against each case item
@@ -1553,7 +1554,8 @@ contains
         call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), trim(case_value))
+        ! Note: Don't trim case_value - it might BE whitespace
+        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), case_value)
 
         if (matched) exit
       end do

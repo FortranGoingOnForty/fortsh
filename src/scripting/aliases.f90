@@ -92,9 +92,10 @@ contains
       end if
     end do
     
-    if (count == 0) then
-      write(output_unit, '(a)') 'No aliases defined'
-    end if
+    ! POSIX: alias with no args and no aliases produces no output (bash behavior)
+    ! if (count == 0) then
+    !   write(output_unit, '(a)') 'No aliases defined'
+    ! end if
   end subroutine
 
   function expand_alias_with_params(shell, alias_name, args, num_args) result(expanded_command)

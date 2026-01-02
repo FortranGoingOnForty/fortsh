@@ -1368,7 +1368,8 @@ contains
     ! Use the pattern_matches_no_dotfile_check function from glob module
     ! This handles *, ?, [abc], [!abc], [[:class:]], etc. correctly
     ! without the dotfile exclusion (which shouldn't apply to case statements)
-    matches = pattern_matches_no_dotfile_check(trim(pattern), trim(value))
+    ! Note: Don't trim value - it might BE whitespace (e.g., matching " " against [[:space:]])
+    matches = pattern_matches_no_dotfile_check(trim(pattern), value)
   end function
 
   ! Check multi-pattern (e.g., a|b|c) - split on | and check each

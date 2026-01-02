@@ -1421,13 +1421,30 @@ contains
           end if
           i = i + 1
         else if (working_token(i:i) == '_') then
-          ! $_ - last argument of previous command
-          var_value = get_shell_variable(shell, '_')
-          if (len_trim(var_value) > 0) then
-            result(j:j+len_trim(var_value)-1) = trim(var_value)
-            j = j + len_trim(var_value)
+          ! Check if this is $_ alone or $_varname
+          if (i+1 <= len_trim(working_token) .and. &
+              (is_alnum(working_token(i+1:i+1)) .or. working_token(i+1:i+1) == '_')) then
+            ! $_varname - underscore-prefixed variable name
+            var_start = i
+            do while (i <= len_trim(working_token) .and. &
+                      (is_alnum(working_token(i:i)) .or. working_token(i:i) == '_'))
+              i = i + 1
+            end do
+            var_name = working_token(var_start:i-1)
+            var_value = get_shell_variable(shell, trim(var_name))
+            if (len_trim(var_value) > 0) then
+              result(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
+            end if
+          else
+            ! $_ - last argument of previous command
+            var_value = get_shell_variable(shell, '_')
+            if (len_trim(var_value) > 0) then
+              result(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
+            end if
+            i = i + 1
           end if
-          i = i + 1
         else if (working_token(i:i) >= '0' .and. working_token(i:i) <= '9') then
           ! $0, $1, $2, ... - positional parameters
           var_name = working_token(i:i)
