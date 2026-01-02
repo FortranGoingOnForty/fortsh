@@ -423,10 +423,26 @@ contains
     integer :: p_len, t_len, i, bracket_end
     character(len=1) :: p_char, t_char
     logical :: bracket_match
-    
+
     p_len = len_trim(pattern)
     t_len = len_trim(text)
-    
+
+    ! Special case: empty pattern should only match empty text
+    if (p_len == 0) then
+      matches = (t_len == 0)
+      return
+    end if
+
+    ! Handle whitespace-only text (e.g., " " should match [[:space:]])
+    ! len_trim returns 0 for whitespace, but we need to match it
+    ! Only do this if pattern is NOT empty (otherwise we'd match padding)
+    if (t_len == 0 .and. len(text) > 0) then
+      ! Check if first char is whitespace - if so, use length 1
+      if (text(1:1) == ' ' .or. ichar(text(1:1)) == 9) then
+        t_len = 1
+      end if
+    end if
+
     ! End conditions
     if (p_pos > p_len) then
       matches = (t_pos > t_len)
@@ -470,7 +486,17 @@ contains
       end if
       
       ! Find end of bracket expression (handling nested [:...:])
+      ! POSIX: ] is literal if it's first char after [ or [! or [^
       bracket_end = p_pos + 1
+      ! Skip negation marker if present
+      if (bracket_end <= p_len .and. &
+          (pattern(bracket_end:bracket_end) == '!' .or. pattern(bracket_end:bracket_end) == '^')) then
+        bracket_end = bracket_end + 1
+      end if
+      ! Skip ] if it's first (literal ])
+      if (bracket_end <= p_len .and. pattern(bracket_end:bracket_end) == ']') then
+        bracket_end = bracket_end + 1
+      end if
       do while (bracket_end <= p_len)
         ! Check for character class [:...:] and skip over it
         if (bracket_end + 1 <= p_len .and. pattern(bracket_end:bracket_end+1) == '[:') then
@@ -533,8 +559,8 @@ contains
       return
     end if
 
-    ! Check for negation
-    negated = (bracket_content(1:1) == '!')
+    ! Check for negation (POSIX uses ! but ^ is also common)
+    negated = (bracket_content(1:1) == '!' .or. bracket_content(1:1) == '^')
     i = 1
     if (negated) i = 2
 

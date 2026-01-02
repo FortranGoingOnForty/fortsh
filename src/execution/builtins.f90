@@ -1983,8 +1983,8 @@ contains
       else if (is_function(shell, command_name)) then
         write(output_unit, '(a)') trim(command_name) // ' is a function'
       else
-        ! Try to find in PATH
-        call find_command_in_path(shell, command_name, .false., .false.)
+        ! Try to find in PATH (use silent=true to avoid duplicate "not found" messages)
+        call find_command_in_path(shell, command_name, .false., .true.)
         if (shell%last_exit_status == 0) then
           write(output_unit, '(a)') trim(command_name) // ' is hashed'
         else
