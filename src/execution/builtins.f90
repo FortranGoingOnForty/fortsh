@@ -1467,9 +1467,15 @@ contains
         alias_name = full_arg(:eq_pos-1)
         alias_command = full_arg(eq_pos+1:)
 
-        ! Remove quotes if present
+        ! Remove quotes or quote sentinels if present
+        ! Lexer uses char(2)/char(3) for single-quote boundaries, char(1) for double-quote
         if (len_trim(alias_command) >= 2) then
-          if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
+          ! Check for single-quote sentinels (char(2) start, char(3) end)
+          if (alias_command(1:1) == char(2) .and. &
+              alias_command(len_trim(alias_command):len_trim(alias_command)) == char(3)) then
+            alias_command = alias_command(2:len_trim(alias_command)-1)
+          ! Check for actual quote characters (in case they weren't converted)
+          else if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
             alias_command = alias_command(2:len_trim(alias_command)-1)
           else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
             alias_command = alias_command(2:len_trim(alias_command)-1)
