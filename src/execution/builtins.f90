@@ -698,7 +698,13 @@ contains
 
       ! Process escape sequences in token (only if interpret_escapes is true)
       token = cmd%tokens(i)
-      len_token = len_trim(token)
+      ! Use token_lengths to preserve trailing spaces if available
+      if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+          cmd%token_lengths(i) > 0) then
+        len_token = cmd%token_lengths(i)
+      else
+        len_token = len_trim(token)
+      end if
 
       processed = ''
       j = 1

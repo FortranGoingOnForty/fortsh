@@ -542,6 +542,8 @@ contains
     if (.not. cmd%skip_expansion .and. &
         trim(cmd%tokens(1)) /= 'defun' .and. &
         .not. (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1)) then
+      ! Initialize token metadata if not set (for old parser path)
+      call init_token_metadata(cmd)
       call expand_tokens(cmd, shell)
     end if
 
@@ -1347,6 +1349,8 @@ contains
     integer :: i, j, total_tokens
     character(len=:), allocatable :: expanded
     character(len=1024), allocatable :: temp_tokens(:)  ! Increased to match split_words length
+    integer, allocatable :: temp_token_lengths(:)  ! Track actual lengths of expanded tokens
+    logical, allocatable :: temp_token_quoted(:)  ! Track if original token was quoted
     logical :: is_format_string
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
     character(len=1024) :: split_words(30)
@@ -1354,9 +1358,14 @@ contains
     integer :: word_count, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
     logical :: is_double_bracket_cmd
+    logical :: was_originally_quoted
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
+    allocate(temp_token_lengths(cmd%num_tokens * 10))
+    allocate(temp_token_quoted(cmd%num_tokens * 10))
+    temp_token_lengths = 0
+    temp_token_quoted = .false.
     total_tokens = 0
 
     ! Check if this is a [[ ]] command - word splitting is NOT performed in [[ ]]
@@ -1396,6 +1405,15 @@ contains
     end if
 
     do i = 1, cmd%num_tokens
+      ! Track if this token was originally quoted (for preserving trailing whitespace)
+      was_originally_quoted = .false.
+      if (allocated(cmd%token_quoted) .and. i <= size(cmd%token_quoted)) then
+        was_originally_quoted = cmd%token_quoted(i)
+      else if (allocated(cmd%token_quote_type) .and. i <= size(cmd%token_quote_type)) then
+        was_originally_quoted = (cmd%token_quote_type(i) == QUOTE_SINGLE .or. &
+                                 cmd%token_quote_type(i) == QUOTE_DOUBLE)
+      end if
+
       ! POSIX: Special handling for "$@" - expands to separate quoted arguments
       ! When a double-quoted token is exactly $@ or just contains $@ as the whole expansion,
       ! we need to add each positional parameter as a separate token
@@ -1408,6 +1426,7 @@ contains
           total_tokens = total_tokens + 1
           if (total_tokens <= size(temp_tokens)) then
             temp_tokens(total_tokens) = trim(shell%positional_params(j))
+            temp_token_quoted(total_tokens) = .true.  ! Positional params from "$@" are quoted
           end if
         end do
         cycle  ! Skip normal token processing
@@ -1417,16 +1436,35 @@ contains
       if (allocated(cmd%token_quote_type) .and. &
           i <= size(cmd%token_quote_type) .and. &
           cmd%token_quote_type(i) == QUOTE_SINGLE) then
-        ! Single quotes - no expansion, use literal value but strip sentinels
+        ! Single quotes - no expansion, use literal value but strip sentinels/quotes
         ! Lexer uses char(2) for start sentinel and char(3) for end sentinel
+        ! Old parser path uses actual quote characters
         block
           character(len=:), allocatable :: stripped
-          integer :: strip_j, strip_k, strip_len
-          strip_len = len_trim(cmd%tokens(i))
-          allocate(character(len=strip_len) :: stripped)
+          integer :: strip_j, strip_k, strip_len, start_pos, end_pos
+          ! Use token_lengths to preserve trailing spaces if available
+          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+              cmd%token_lengths(i) > 0) then
+            strip_len = cmd%token_lengths(i)
+          else
+            strip_len = len_trim(cmd%tokens(i))
+          end if
+
+          ! Determine start and end positions, skipping outer quotes if present
+          start_pos = 1
+          end_pos = strip_len
+          if (strip_len >= 2) then
+            ! Check for actual quote characters at start and end (old parser path)
+            if (cmd%tokens(i)(1:1) == "'" .and. cmd%tokens(i)(strip_len:strip_len) == "'") then
+              start_pos = 2
+              end_pos = strip_len - 1
+            end if
+          end if
+
+          allocate(character(len=end_pos - start_pos + 1) :: stripped)
           strip_k = 1
-          do strip_j = 1, strip_len
-            ! Skip single-quote sentinels
+          do strip_j = start_pos, end_pos
+            ! Skip single-quote sentinels (for new lexer path)
             if (cmd%tokens(i)(strip_j:strip_j) /= char(2) .and. &
                 cmd%tokens(i)(strip_j:strip_j) /= char(3)) then
               stripped(strip_k:strip_k) = cmd%tokens(i)(strip_j:strip_j)
@@ -1446,9 +1484,13 @@ contains
             i <= size(cmd%token_quote_type) .and. &
             cmd%token_quote_type(i) == QUOTE_DOUBLE) then
           ! For quoted tokens, use token_lengths to preserve trailing whitespace
-          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
-              cmd%token_lengths(i) > 0) then
-            call expand_variables(cmd%tokens(i)(1:cmd%token_lengths(i)), expanded, shell, was_quoted_in=.true.)
+          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths)) then
+            if (cmd%token_lengths(i) > 0) then
+              call expand_variables(cmd%tokens(i)(1:cmd%token_lengths(i)), expanded, shell, was_quoted_in=.true.)
+            else
+              ! Empty double-quoted string "" - expand empty string, not full buffer
+              expanded = ''
+            end if
           else
             call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.true.)
           end if
@@ -1516,6 +1558,9 @@ contains
           total_tokens = total_tokens + 1
           if (total_tokens <= size(temp_tokens)) then
             temp_tokens(total_tokens) = split_words(j)
+            temp_token_lengths(total_tokens) = len_trim(split_words(j))
+            ! Split tokens from unquoted expansion are not quoted
+            temp_token_quoted(total_tokens) = .false.
           end if
         end do
       else
@@ -1538,6 +1583,14 @@ contains
         total_tokens = total_tokens + 1
         if (total_tokens <= size(temp_tokens)) then
           temp_tokens(total_tokens) = expanded
+          ! Track actual length of expanded token (use len for allocatable to get real length)
+          if (allocated(expanded)) then
+            temp_token_lengths(total_tokens) = len(expanded)
+          else
+            temp_token_lengths(total_tokens) = 0
+          end if
+          ! Preserve quoted status for trailing whitespace preservation
+          temp_token_quoted(total_tokens) = was_originally_quoted
         end if
       end if
     end do
@@ -1550,7 +1603,19 @@ contains
     end do
     cmd%num_tokens = total_tokens
 
+    ! Update token_lengths with actual expanded lengths
+    if (allocated(cmd%token_lengths)) deallocate(cmd%token_lengths)
+    allocate(cmd%token_lengths(total_tokens))
+    cmd%token_lengths(1:total_tokens) = temp_token_lengths(1:total_tokens)
+
+    ! Update token_quoted to preserve original quoted status
+    if (allocated(cmd%token_quoted)) deallocate(cmd%token_quoted)
+    allocate(cmd%token_quoted(total_tokens))
+    cmd%token_quoted(1:total_tokens) = temp_token_quoted(1:total_tokens)
+
     deallocate(temp_tokens)
+    deallocate(temp_token_lengths)
+    deallocate(temp_token_quoted)
   end subroutine
 
   subroutine execute_external(cmd, shell, original_input)
@@ -2820,5 +2885,83 @@ contains
     ! Register our execute_completion_function as the callback
     call register_completion_executor(execute_completion_function)
   end subroutine init_completion_executor
+
+  ! Initialize token metadata arrays if not already set
+  ! This is needed for commands parsed by the old parser path which doesn't
+  ! populate these arrays. Inspects tokens to determine quote type and length.
+  subroutine init_token_metadata(cmd)
+    type(command_t), intent(inout) :: cmd
+    integer :: i, token_len
+    character(len=1) :: first_char, last_char
+
+    if (cmd%num_tokens == 0) return
+
+    ! Initialize token_quoted if not allocated
+    if (.not. allocated(cmd%token_quoted)) then
+      allocate(cmd%token_quoted(cmd%num_tokens))
+      cmd%token_quoted = .false.
+    end if
+
+    ! Initialize token_escaped if not allocated
+    if (.not. allocated(cmd%token_escaped)) then
+      allocate(cmd%token_escaped(cmd%num_tokens))
+      cmd%token_escaped = .false.
+    end if
+
+    ! Initialize token_quote_type if not allocated
+    if (.not. allocated(cmd%token_quote_type)) then
+      allocate(cmd%token_quote_type(cmd%num_tokens))
+      cmd%token_quote_type = QUOTE_NONE
+    end if
+
+    ! Initialize token_lengths if not allocated
+    if (.not. allocated(cmd%token_lengths)) then
+      allocate(cmd%token_lengths(cmd%num_tokens))
+      cmd%token_lengths = 0
+    end if
+
+    ! Inspect each token to determine quote type and length
+    do i = 1, cmd%num_tokens
+      token_len = len_trim(cmd%tokens(i))
+
+      ! If quote info isn't set, try to detect from token content
+      if (cmd%token_quote_type(i) == QUOTE_NONE .and. token_len >= 2) then
+        first_char = cmd%tokens(i)(1:1)
+        last_char = cmd%tokens(i)(token_len:token_len)
+
+        ! Check for single-quoted token (may have sentinel markers char(2)/char(3))
+        if (first_char == "'" .and. last_char == "'") then
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_SINGLE
+          ! For single quotes, preserve trailing whitespace by not using len_trim
+          ! Find actual content length between quotes
+          cmd%token_lengths(i) = token_len
+        else if (first_char == char(2)) then
+          ! Single-quote sentinel marker - this token was single-quoted
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_SINGLE
+          cmd%token_lengths(i) = token_len
+        ! Check for double-quoted token
+        else if (first_char == '"' .and. last_char == '"') then
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_DOUBLE
+          ! For double-quoted, find actual length including trailing whitespace
+          ! The content is between the quotes: token(2:token_len-1)
+          ! We need to preserve the full quoted token including any trailing space inside
+          cmd%token_lengths(i) = token_len
+        else if (first_char == char(1)) then
+          ! Double-quote sentinel marker
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_DOUBLE
+          cmd%token_lengths(i) = token_len
+        else
+          ! Unquoted token
+          cmd%token_lengths(i) = token_len
+        end if
+      else if (cmd%token_lengths(i) == 0) then
+        cmd%token_lengths(i) = token_len
+      end if
+    end do
+  end subroutine init_token_metadata
 
 end module executor
