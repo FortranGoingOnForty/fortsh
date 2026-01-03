@@ -30,6 +30,8 @@ contains
 
     character(len=4096) :: format_string, output_buffer
     integer :: arg_index, prev_arg_index, output_len, format_string_len
+    integer, allocatable :: arg_lengths(:)
+    integer :: i
 
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'printf: usage: printf FORMAT [ARGUMENTS...]'
@@ -63,13 +65,26 @@ contains
         end if
       end if
     end if
+
+    ! Build array of argument lengths for preserving trailing spaces
+    allocate(arg_lengths(cmd%num_tokens))
+    do i = 1, cmd%num_tokens
+      if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths)) then
+        arg_lengths(i) = cmd%token_lengths(i)
+      else
+        arg_lengths(i) = len_trim(cmd%tokens(i))
+      end if
+    end do
+
     arg_index = 3
 
     ! POSIX behavior: always output format string at least once,
     ! then repeat for any remaining arguments
     do
       prev_arg_index = arg_index
-      call process_printf_format(format_string, format_string_len, cmd%tokens, cmd%num_tokens, arg_index, output_buffer, output_len)
+      call process_printf_format(format_string, format_string_len, cmd%tokens, &
+                                  cmd%num_tokens, arg_lengths, arg_index, &
+                                  output_buffer, output_len)
       ! Output exactly output_len characters to preserve trailing spaces
       if (output_len > 0) then
         write(output_unit, '(a)', advance='no') output_buffer(1:output_len)
@@ -79,19 +94,22 @@ contains
       if (arg_index == prev_arg_index .or. arg_index > cmd%num_tokens) exit
     end do
 
+    deallocate(arg_lengths)
     shell%last_exit_status = 0
   end subroutine
 
-  subroutine process_printf_format(format_str, format_str_len, args, num_args, start_arg, output, output_len)
+  subroutine process_printf_format(format_str, format_str_len, args, num_args, arg_lengths, start_arg, output, output_len)
     character(len=*), intent(in) :: format_str
     integer, intent(in) :: format_str_len
     character(len=*), intent(in) :: args(:)
     integer, intent(in) :: num_args
+    integer, intent(in) :: arg_lengths(:)
     integer, intent(inout) :: start_arg
     character(len=*), intent(out) :: output
     integer, intent(out) :: output_len
 
     integer :: pos, output_pos, arg_index, format_len, fmt_len
+    integer :: current_arg_len
     character :: current_char, next_char
     type(format_info_t) :: fmt_info
     character(len=1024) :: arg_value, formatted_value
@@ -136,15 +154,21 @@ contains
             end if
           end if
 
-          ! Get argument value
+          ! Get argument value and its length
           if (arg_index <= num_args) then
             arg_value = args(arg_index)
+            if (arg_index <= size(arg_lengths)) then
+              current_arg_len = arg_lengths(arg_index)
+            else
+              current_arg_len = len_trim(arg_value)
+            end if
             arg_index = arg_index + 1
           else
             arg_value = ''
+            current_arg_len = 0
           end if
 
-          call format_argument(fmt_info, arg_value, formatted_value, fmt_len)
+          call format_argument(fmt_info, arg_value, current_arg_len, formatted_value, fmt_len)
 
           ! Append formatted value to output (use exact length to preserve padding)
           call append_to_output_len(output, output_pos, formatted_value, fmt_len)
@@ -282,14 +306,15 @@ contains
     end do
   end subroutine
 
-  subroutine format_argument(fmt_info, arg_value, formatted_value, formatted_len)
+  subroutine format_argument(fmt_info, arg_value, arg_len, formatted_value, formatted_len)
     type(format_info_t), intent(in) :: fmt_info
     character(len=*), intent(in) :: arg_value
+    integer, intent(in) :: arg_len  ! Actual length of arg_value (to preserve trailing spaces)
     character(len=*), intent(out) :: formatted_value
     integer, intent(out) :: formatted_len
 
     character(len=1024) :: raw_value, temp_value
-    integer :: int_val, status, val_len, pad_len, prec
+    integer :: int_val, status, val_len, pad_len, prec, actual_len
     real(8) :: real_val
     character :: pad_char
 
@@ -297,13 +322,24 @@ contains
     raw_value = ''
     formatted_len = 0
 
+    ! Use provided arg_len to preserve trailing spaces
+    actual_len = arg_len
+    if (actual_len <= 0 .or. actual_len > len(arg_value)) then
+      actual_len = len_trim(arg_value)
+    end if
+
     select case (fmt_info%conversion)
     case ('s')
-      ! String
-      raw_value = arg_value
+      ! String - use actual_len to preserve trailing spaces
+      if (actual_len > 0 .and. actual_len <= len(raw_value)) then
+        raw_value = arg_value(1:actual_len)
+      else
+        raw_value = arg_value
+      end if
       ! Apply precision (truncation for strings)
-      if (fmt_info%precision >= 0 .and. fmt_info%precision < len_trim(raw_value)) then
+      if (fmt_info%precision >= 0 .and. fmt_info%precision < actual_len) then
         raw_value = raw_value(1:fmt_info%precision)
+        actual_len = fmt_info%precision
       end if
 
     case ('b')
@@ -312,7 +348,7 @@ contains
 
     case ('c')
       ! Character
-      if (len_trim(arg_value) > 0) then
+      if (actual_len > 0) then
         raw_value = arg_value(1:1)
       else
         raw_value = ''
@@ -437,7 +473,13 @@ contains
     end select
 
     ! Apply width padding
-    val_len = len_trim(raw_value)
+    ! For string types, use actual_len to preserve trailing spaces
+    if (fmt_info%conversion == 's') then
+      val_len = actual_len
+    else
+      val_len = len_trim(raw_value)
+    end if
+
     if (fmt_info%width > val_len) then
       pad_len = fmt_info%width - val_len
       if (fmt_info%zero_pad .and. .not. fmt_info%left_align .and. &
@@ -448,7 +490,12 @@ contains
       end if
 
       if (fmt_info%left_align) then
-        formatted_value = trim(raw_value) // repeat(' ', pad_len)
+        ! For strings, use actual length; for others, use trim
+        if (fmt_info%conversion == 's' .and. val_len > 0) then
+          formatted_value = raw_value(1:val_len) // repeat(' ', pad_len)
+        else
+          formatted_value = trim(raw_value) // repeat(' ', pad_len)
+        end if
         formatted_len = fmt_info%width
       else
         ! For zero padding with sign, put sign before zeros
@@ -459,12 +506,21 @@ contains
             formatted_value = repeat('0', pad_len) // trim(raw_value)
           end if
         else
-          formatted_value = repeat(pad_char, pad_len) // trim(raw_value)
+          if (fmt_info%conversion == 's' .and. val_len > 0) then
+            formatted_value = repeat(pad_char, pad_len) // raw_value(1:val_len)
+          else
+            formatted_value = repeat(pad_char, pad_len) // trim(raw_value)
+          end if
         end if
         formatted_len = fmt_info%width
       end if
     else
-      formatted_value = trim(raw_value)
+      ! No padding needed - use exact length
+      if (fmt_info%conversion == 's' .and. val_len > 0) then
+        formatted_value = raw_value(1:val_len)
+      else
+        formatted_value = trim(raw_value)
+      end if
       formatted_len = val_len
     end if
   end subroutine

@@ -423,8 +423,12 @@ contains
                 was_quoted(num_words) = tok%quoted
                 was_escaped(num_words) = tok%escaped
                 quote_types(num_words) = tok%quote_type
-                ! Use actual token value length (quotes are converted to sentinels)
-                word_lens(num_words) = len_trim(tok%value)
+                ! For FULLY quoted tokens (quote_type set), calculate length from positions
+                if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE) then
+                  word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
+                else
+                  word_lens(num_words) = len_trim(tok%value)
+                end if
               end if
             end if
           end if
@@ -449,8 +453,15 @@ contains
               was_quoted(num_words) = tok%quoted
               was_escaped(num_words) = tok%escaped
               quote_types(num_words) = tok%quote_type
-              ! Use actual token value length (quotes are converted to sentinels)
-              word_lens(num_words) = len_trim(tok%value)
+              ! For FULLY quoted tokens (quote_type set), calculate length from positions
+              ! This preserves whitespace-only content like " " or empty strings like ""
+              ! (end_pos - start_pos + 1 includes quotes, subtract 2 for the quotes)
+              ! Only apply for QUOTE_DOUBLE/QUOTE_SINGLE, not for partially quoted tokens
+              if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE) then
+                word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
+              else
+                word_lens(num_words) = len_trim(tok%value)
+              end if
             end if
             call advance(state)
           end if

@@ -1266,14 +1266,28 @@ contains
     end if
 
     ! For double-quoted tokens that are all whitespace (no special chars),
-    ! return a single space to preserve the whitespace argument
-    ! This handles cases like " " where len_trim would be 0
-    ! We can't determine exact whitespace count, so return at least one space
+    ! return the whitespace to preserve the argument
+    ! This handles cases like " " or "   " where len_trim would be 0
+    ! Now that executor passes correct token length, we preserve exact whitespace count
     if (is_quoted .and. len_trim(token) == 0 .and. len(token) > 0) then
-      ! Token is all whitespace - return a single space
-      ! (This preserves the argument while avoiding the len_trim=0 issue in exec_child)
-      expanded = ' '
-      return
+      ! Check if this is truly a whitespace token vs a token with quotes at boundaries
+      block
+        ! If token has quotes at boundaries, don't count them as content - let normal processing handle it
+        if (len(token) >= 2) then
+          if ((token(1:1) == '"' .and. token(len(token):len(token)) == '"') .or. &
+              (token(1:1) == "'" .and. token(len(token):len(token)) == "'")) then
+            ! Token is just quotes with possibly empty content - let normal processing handle it
+          else
+            ! Token is all whitespace (no quotes) - return the whitespace exactly as-is
+            expanded = token
+            return
+          end if
+        else
+          ! Short token that's all whitespace - return it as-is
+          expanded = token
+          return
+        end if
+      end block
     end if
 
     ! Apply brace expansion ONLY if token is not quoted
@@ -1291,6 +1305,14 @@ contains
     ! For unquoted tokens, use len_trim() to skip padding
     if (is_quoted) then
       end_pos = len(token)  ! Use actual passed token length, not buffer size
+      ! If token has actual quote characters (not sentinels), skip them
+      ! This handles tokens from the old parser path which don't use sentinels
+      if (end_pos >= 2) then
+        if (working_token(1:1) == '"' .and. working_token(end_pos:end_pos) == '"') then
+          i = 2  ! Skip opening quote
+          end_pos = end_pos - 1  ! Skip closing quote
+        end if
+      end if
     else
       end_pos = len_trim(working_token)
     end if
