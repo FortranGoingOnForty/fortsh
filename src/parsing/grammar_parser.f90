@@ -423,11 +423,11 @@ contains
                 was_quoted(num_words) = tok%quoted
                 was_escaped(num_words) = tok%escaped
                 quote_types(num_words) = tok%quote_type
-                ! Use len_trim first (works for escaped content), position formula only for whitespace
-                word_lens(num_words) = len_trim(tok%value)
-                if (word_lens(num_words) == 0 .and. &
-                    (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE)) then
-                  word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
+                ! For fully quoted tokens, use value_length (preserves trailing whitespace)
+                if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE) then
+                  word_lens(num_words) = tok%value_length
+                else
+                  word_lens(num_words) = len_trim(tok%value)
                 end if
               end if
             end if
@@ -453,13 +453,11 @@ contains
               was_quoted(num_words) = tok%quoted
               was_escaped(num_words) = tok%escaped
               quote_types(num_words) = tok%quote_type
-              ! For quoted tokens, use len_trim first (works for escaped content)
-              ! Only use position formula for whitespace-only content where len_trim = 0
-              word_lens(num_words) = len_trim(tok%value)
-              if (word_lens(num_words) == 0 .and. &
-                  (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE)) then
-                ! Whitespace-only or empty - use position formula to preserve whitespace
-                word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
+              ! For fully quoted tokens, use value_length (preserves trailing whitespace)
+              if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE) then
+                word_lens(num_words) = tok%value_length
+              else
+                word_lens(num_words) = len_trim(tok%value)
               end if
             end if
             call advance(state)

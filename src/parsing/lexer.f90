@@ -966,6 +966,7 @@ contains
       num_tokens = num_tokens + 1
       tokens(num_tokens)%token_type = tok_type
       tokens(num_tokens)%value = value
+      tokens(num_tokens)%value_length = len(value)  ! Store actual content length
       tokens(num_tokens)%start_pos = start_pos
       tokens(num_tokens)%end_pos = end_pos
       tokens(num_tokens)%quoted = quoted

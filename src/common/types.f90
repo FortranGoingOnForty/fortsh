@@ -94,6 +94,7 @@ module shell_types
   type :: token_t
     integer :: token_type           ! TOKEN_* constant
     character(len=MAX_TOKEN_LEN) :: value
+    integer :: value_length = 0     ! Actual content length (excludes fixed-length padding)
     integer :: start_pos
     integer :: end_pos
     logical :: quoted               ! DEPRECATED - use quote_type instead
