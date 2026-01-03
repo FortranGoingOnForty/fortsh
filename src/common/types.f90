@@ -393,7 +393,7 @@ module shell_types
     integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting
     character(len=256) :: ifs = ' \t\n'       ! $IFS (internal field separator)
-    integer :: ifs_len = 0                    ! Actual length of IFS (preserves trailing spaces)
+    integer :: ifs_len = -1                   ! -1 = unset (use default), 0 = empty, >0 = set
     ! History control
     character(len=MAX_PATH_LEN) :: histfile = ''  ! $HISTFILE (history file path)
     integer :: histsize = 1000                ! $HISTSIZE (max commands in memory)
