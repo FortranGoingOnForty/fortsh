@@ -1426,6 +1426,7 @@ contains
           total_tokens = total_tokens + 1
           if (total_tokens <= size(temp_tokens)) then
             temp_tokens(total_tokens) = trim(shell%positional_params(j))
+            temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j))
             temp_token_quoted(total_tokens) = .true.  ! Positional params from "$@" are quoted
           end if
         end do
