@@ -423,11 +423,8 @@ contains
                 was_quoted(num_words) = tok%quoted
                 was_escaped(num_words) = tok%escaped
                 quote_types(num_words) = tok%quote_type
-                if (tok%quoted) then
-                  word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
-                else
-                  word_lens(num_words) = tok%end_pos - tok%start_pos + 1
-                end if
+                ! Use actual token value length (quotes are converted to sentinels)
+                word_lens(num_words) = len_trim(tok%value)
               end if
             end if
           end if
@@ -440,12 +437,8 @@ contains
             ! This is a prefix assignment
             num_assignments = num_assignments + 1
             assignments(num_assignments) = tok%value
-            ! Calculate length accounting for quotes
-            if (tok%quoted) then
-              assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1 - 2
-            else
-              assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1
-            end if
+            ! Use actual token value length (quotes are converted to sentinels)
+            assignment_lens(num_assignments) = len_trim(tok%value)
             call advance(state)
           else
             ! Regular word - this is the command or an argument
@@ -456,11 +449,8 @@ contains
               was_quoted(num_words) = tok%quoted
               was_escaped(num_words) = tok%escaped
               quote_types(num_words) = tok%quote_type
-              if (tok%quoted) then
-                word_lens(num_words) = tok%end_pos - tok%start_pos + 1 - 2
-              else
-                word_lens(num_words) = tok%end_pos - tok%start_pos + 1
-              end if
+              ! Use actual token value length (quotes are converted to sentinels)
+              word_lens(num_words) = len_trim(tok%value)
             end if
             call advance(state)
           end if

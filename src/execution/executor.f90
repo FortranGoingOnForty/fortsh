@@ -1417,8 +1417,28 @@ contains
       if (allocated(cmd%token_quote_type) .and. &
           i <= size(cmd%token_quote_type) .and. &
           cmd%token_quote_type(i) == QUOTE_SINGLE) then
-        ! Single quotes - no expansion, use literal value
-        expanded = cmd%tokens(i)
+        ! Single quotes - no expansion, use literal value but strip sentinels
+        ! Lexer uses char(2) for start sentinel and char(3) for end sentinel
+        block
+          character(len=:), allocatable :: stripped
+          integer :: strip_j, strip_k, strip_len
+          strip_len = len_trim(cmd%tokens(i))
+          allocate(character(len=strip_len) :: stripped)
+          strip_k = 1
+          do strip_j = 1, strip_len
+            ! Skip single-quote sentinels
+            if (cmd%tokens(i)(strip_j:strip_j) /= char(2) .and. &
+                cmd%tokens(i)(strip_j:strip_j) /= char(3)) then
+              stripped(strip_k:strip_k) = cmd%tokens(i)(strip_j:strip_j)
+              strip_k = strip_k + 1
+            end if
+          end do
+          if (strip_k > 1) then
+            expanded = stripped(1:strip_k-1)
+          else
+            expanded = ''
+          end if
+        end block
       else
         ! No quotes or double quotes - perform expansion
         ! Pass was_quoted flag if token was double-quoted
