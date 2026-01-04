@@ -343,7 +343,10 @@ else
     fail "read -r preserves backslashes" 'hello\nworld' "$result"
 fi
 
-result=$("$FORTSH_BIN" -c 'printf "line\\\ncontinued\n" | { read x; echo "$x"; }' 2>&1)
+# POSIX: read without -r joins lines ending with backslash (line continuation)
+# printf with single quotes produces: line<backslash><newline>continued<newline>
+# read joins: line + continued = linecontinued
+result=$("$FORTSH_BIN" -c 'printf '"'"'line\\\ncontinued\n'"'"' | { read x; echo "$x"; }' 2>&1)
 if [ "$result" = "linecontinued" ]; then
     pass "read without -r joins continued lines"
 else
