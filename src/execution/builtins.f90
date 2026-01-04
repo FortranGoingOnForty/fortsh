@@ -2427,6 +2427,7 @@ contains
     use command_builtin, only: find_command_full_path
     use fd_redirection, only: apply_single_redirection
     use parser, only: expand_variables
+    use system_interface, only: file_exists, file_is_executable
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -2479,6 +2480,19 @@ contains
         return
       end if
       c_prog_name = trim(prog_path) // c_null_char
+    else
+      ! Absolute or relative path - check if it exists
+      if (.not. file_exists(trim(cmd%tokens(2)))) then
+        write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': No such file or directory'
+        shell%last_exit_status = 127
+        return
+      end if
+      ! Check if it's executable
+      if (.not. file_is_executable(trim(cmd%tokens(2)))) then
+        write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': Permission denied'
+        shell%last_exit_status = 126
+        return
+      end if
     end if
 
     ! Build argv array for execvp (NULL-terminated array of C string pointers)
@@ -3065,10 +3079,10 @@ contains
     children_sys_sec = children_sys_sec - (children_sys_min * 60.0)
 
     ! Print in bash format: user_time system_time (one line for shell, one for children)
-    write(output_unit, '(i15,a,f5.3,a,1x,i15,a,f5.3,a)') &
+    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
       self_user_min, 'm', self_user_sec, 's', &
       self_sys_min, 'm', self_sys_sec, 's'
-    write(output_unit, '(i15,a,f5.3,a,1x,i0,a,f5.3,a)') &
+    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
       children_user_min, 'm', children_user_sec, 's', &
       children_sys_min, 'm', children_sys_sec, 's'
 

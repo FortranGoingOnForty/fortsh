@@ -95,7 +95,7 @@ contains
               call grow_token_array(temp_tokens, current_size)
             end if
             total_count = total_count + 1
-            temp_tokens(total_count) = matches(j)
+            temp_tokens(total_count) = trim(matches(j))
           end do
         else
           ! No matches found - keep original token
@@ -224,12 +224,12 @@ contains
           match_count = match_count + 1
           if (include_dir_path) then
             if (trim(dir_path) == '.') then
-              matches(match_count) = test_files(i)
+              matches(match_count) = trim(test_files(i))
             else
               matches(match_count) = trim(dir_path) // '/' // trim(test_files(i))
             end if
           else
-            matches(match_count) = test_files(i)
+            matches(match_count) = trim(test_files(i))
           end if
         end if
       end if
