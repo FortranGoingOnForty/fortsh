@@ -524,11 +524,13 @@ contains
 
   subroutine builtin_export(cmd, shell)
     use variables, only: set_shell_variable, get_shell_variable
+    use system_interface, only: get_environ_entry
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: print_mode, found
+    character(len=:), allocatable :: env_entry
 
     print_mode = .false.
 
@@ -538,12 +540,15 @@ contains
     end if
 
     if (print_mode) then
-      ! Print all exported variables
-      do i = 1, shell%num_variables
-        if (shell%variables(i)%exported .and. len_trim(shell%variables(i)%name) > 0) then
-          write(output_unit, '(a)') 'export ' // trim(shell%variables(i)%name) // '=' // &
-                                   trim(shell%variables(i)%value)
-        end if
+      ! Print all environment variables (inherited from parent + shell-exported)
+      i = 0
+      do
+        env_entry = get_environ_entry(i)
+        if (.not. allocated(env_entry) .or. len(env_entry) == 0) exit
+        ! Format: export VAR=value
+        write(output_unit, '(a)') 'export ' // trim(env_entry)
+        if (allocated(env_entry)) deallocate(env_entry)
+        i = i + 1
       end do
       shell%last_exit_status = 0
       return
@@ -3330,6 +3335,7 @@ contains
   end subroutine
 
   subroutine builtin_printenv(cmd, shell)
+    use system_interface, only: get_environ_entry
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i
@@ -3339,14 +3345,17 @@ contains
 #else
     character(len=:), allocatable :: env_value
 #endif
+    character(len=:), allocatable :: env_entry
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all environment variables
-      do i = 1, shell%num_variables
-        if (shell%variables(i)%exported .and. len_trim(shell%variables(i)%name) > 0) then
-          write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
-                                   trim(shell%variables(i)%value)
-        end if
+      i = 0
+      do
+        env_entry = get_environ_entry(i)
+        if (.not. allocated(env_entry) .or. len(env_entry) == 0) exit
+        write(output_unit, '(a)') trim(env_entry)
+        if (allocated(env_entry)) deallocate(env_entry)
+        i = i + 1
       end do
       shell%last_exit_status = 0
     else
