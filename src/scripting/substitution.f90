@@ -70,7 +70,8 @@ contains
     call execute_command_and_capture(shell, processed_input, output)
     shell%in_command_substitution = .false.
 
-    ! Remove trailing newlines
+    ! Remove trailing newlines (this may already be done by execute_command_and_capture
+    ! but we do it here too for safety with nested substitutions)
     do while (len_trim(output) > 0 .and. output(len_trim(output):len_trim(output)) == char(10))
       output = output(:len_trim(output)-1)
     end do

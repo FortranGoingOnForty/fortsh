@@ -160,6 +160,8 @@ program fortran_shell
   if (execute_command_string) then
     ! Set LINENO to 1 for -c commands (POSIX: lines start at 1)
     shell%current_line_number = 1
+    ! Mark that we're in command mode (for $- flag)
+    shell%in_command_mode = .true.
 
     ! POSIX: Handle additional arguments after -c 'command'
     ! For -c 'command' arg0 arg1 arg2: arg0 becomes $0, arg1 arg2 become $1 $2
@@ -1295,6 +1297,8 @@ contains
       ret = c_setpgid(shell%shell_pgid, shell%shell_pgid)
       shell%shell_terminal = STDIN_FD
       ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
+      ! Enable monitor mode (job control) for interactive shells
+      shell%option_monitor = .true.
     end if
 
     ! Query terminal size (only if interactive to avoid SIGTTOU)

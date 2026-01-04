@@ -1597,11 +1597,27 @@ contains
     flags = ''
     pos = 1
 
-    ! Hashall is enabled by default in most shells (uppercase H for visibility in tests)
-    flags(pos:pos) = 'H'
-    pos = pos + 1
-
     ! Build option flags string from shell options
+    ! Order follows bash convention for common flags: h, i, m, B, H, s, then others
+    ! h for hashall (enabled by default in most shells)
+    flags(pos:pos) = 'h'
+    pos = pos + 1
+    if (shell%is_interactive) then
+      flags(pos:pos) = 'i'
+      pos = pos + 1
+    end if
+    if (shell%option_monitor) then
+      flags(pos:pos) = 'm'
+      pos = pos + 1
+    end if
+    ! B for braceexpand (bash extension, enabled by default)
+    flags(pos:pos) = 'B'
+    pos = pos + 1
+    ! c flag when running in command mode (-c)
+    if (shell%in_command_mode) then
+      flags(pos:pos) = 'c'
+      pos = pos + 1
+    end if
     if (shell%option_allexport) then
       flags(pos:pos) = 'a'
       pos = pos + 1
@@ -1612,10 +1628,6 @@ contains
     end if
     if (shell%option_noglob) then
       flags(pos:pos) = 'f'
-      pos = pos + 1
-    end if
-    if (shell%option_monitor) then
-      flags(pos:pos) = 'm'
       pos = pos + 1
     end if
     if (shell%option_nounset) then
@@ -1632,10 +1644,6 @@ contains
     end if
     if (shell%option_noclobber) then
       flags(pos:pos) = 'C'
-      pos = pos + 1
-    end if
-    if (shell%is_interactive) then
-      flags(pos:pos) = 'i'
       pos = pos + 1
     end if
   end function

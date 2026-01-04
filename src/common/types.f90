@@ -280,6 +280,7 @@ module shell_types
     integer :: term_cols = 80
     logical :: term_supports_color = .true.  ! Terminal supports ANSI escape codes
     logical :: is_interactive = .false.
+    logical :: in_command_mode = .false.  ! Running with -c flag
     logical :: in_background = .false.
     logical :: running = .true.
     logical :: fatal_expansion_error = .false.  ! Set by ${VAR?error} to abort execution
