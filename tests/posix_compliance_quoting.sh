@@ -428,11 +428,13 @@ fi
 section "457. BACKSLASH IN DOUBLE QUOTES"
 # =====================================
 
+# POSIX: In double quotes, \\\\ (4 backslashes) becomes \\ (2 backslashes)
+# Each pair of \\ in double quotes produces one literal backslash
 result=$("$FORTSH_BIN" -c 'echo "back\\\\slash"' 2>&1)
-if [ "$result" = 'back\slash' ]; then
+if [ "$result" = 'back\\slash' ]; then
     pass "Backslash-backslash in double quotes"
 else
-    fail "Backslash-backslash in double quotes" 'back\slash' "$result"
+    fail "Backslash-backslash in double quotes" 'back\\slash' "$result"
 fi
 
 result=$("$FORTSH_BIN" -c 'echo "newline\\n"' 2>&1)
