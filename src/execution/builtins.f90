@@ -11,7 +11,7 @@ module builtins
   use shell_config
   use aliases
   use shell_options
-  use command_builtin, only: find_command_in_path, builtin_which, builtin_command
+  use command_builtin, only: find_command_in_path, builtin_which, builtin_command, find_executable_in_path
   use directory_builtin, only: builtin_pushd, builtin_popd, builtin_dirs
   use performance
   use parser
@@ -1985,6 +1985,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: command_name
+    character(len=1024) :: full_path
     integer :: i
     logical :: any_not_found
 
@@ -2007,10 +2008,9 @@ contains
       else if (is_function(shell, command_name)) then
         write(output_unit, '(a)') trim(command_name) // ' is a function'
       else
-        ! Try to find in PATH (use silent=true to avoid duplicate "not found" messages)
-        call find_command_in_path(shell, command_name, .false., .true.)
-        if (shell%last_exit_status == 0) then
-          write(output_unit, '(a)') trim(command_name) // ' is hashed'
+        ! Try to find in PATH
+        if (find_executable_in_path(shell, command_name, full_path)) then
+          write(output_unit, '(a)') trim(command_name) // ' is ' // trim(full_path)
         else
           write(error_unit, '(a)') trim(command_name) // ': not found'
           any_not_found = .true.
