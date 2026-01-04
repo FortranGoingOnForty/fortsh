@@ -393,6 +393,13 @@ contains
 
     if (cmd%num_tokens == 0) return
 
+    ! Check for empty command (e.g., from empty command substitution result)
+    if (len_trim(cmd%tokens(1)) == 0) then
+      ! Empty command - nothing to execute
+      ! Note: exit status from command substitution is preserved
+      return
+    end if
+
     ! Handle negation operator (!)
     negate_exit_status = .false.
 
@@ -565,6 +572,14 @@ contains
       ! End performance timing
       call end_timer('execute_single', exec_start_time, total_exec_time)
       return  ! Abort command execution
+    end if
+
+    ! Check for empty command after expansion (e.g., $(exit 0) returns empty)
+    if (cmd%num_tokens > 0 .and. len_trim(cmd%tokens(1)) == 0) then
+      ! Empty command after expansion - nothing to execute
+      ! Note: exit status from command substitution is preserved
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      return
     end if
 
     ! Check for variable assignment (after expansion so ${...} is processed)
@@ -1632,6 +1647,13 @@ contains
     type(c_funptr) :: old_handler
 
     foreground = .not. cmd%background
+
+    ! Check for empty command before forking (e.g., from empty command substitution)
+    ! This preserves the exit status from the command substitution
+    if (cmd%num_tokens < 1 .or. len_trim(cmd%tokens(1)) == 0) then
+      ! Empty command - nothing to execute, preserve current exit status
+      return
+    end if
 
     ! CRITICAL: Re-ensure SIGCHLD is SIG_DFL before forking
     ! Something in interactive mode might be resetting it
