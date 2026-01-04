@@ -147,10 +147,10 @@ contains
         ! Early return for timeout - exit status already set
         if (shell%last_exit_status /= 0) return
       else
-        call read_line_input(input_line, eof_reached)
+        call read_line_input(input_line, eof_reached, raw_mode)
       end if
 
-      ! Process input based on raw mode
+      ! Process backslash escapes (but not continuation, which was handled above)
       if (.not. raw_mode) then
         call process_backslash_escapes(input_line)
       end if
@@ -175,17 +175,43 @@ contains
     end block
   end subroutine
 
-  subroutine read_line_input(input_line, eof_reached)
+  subroutine read_line_input(input_line, eof_reached, raw_mode)
     character(len=*), intent(out) :: input_line
     logical, intent(out), optional :: eof_reached
-    integer :: iostat
+    logical, intent(in), optional :: raw_mode
+    integer :: iostat, line_len
+    character(len=4096) :: continuation_line
+    logical :: is_raw
+
+    is_raw = .false.
+    if (present(raw_mode)) is_raw = raw_mode
 
     read(input_unit, '(a)', iostat=iostat) input_line
     if (iostat /= 0) then
       input_line = ''
       if (present(eof_reached)) eof_reached = .true.
-    else
-      if (present(eof_reached)) eof_reached = .false.
+      return
+    end if
+    if (present(eof_reached)) eof_reached = .false.
+
+    ! POSIX: Without -r, backslash at end of line continues to next line
+    if (.not. is_raw) then
+      do while (.true.)
+        line_len = len_trim(input_line)
+        if (line_len == 0) exit
+        ! Check if line ends with backslash
+        if (input_line(line_len:line_len) == '\') then
+          ! Remove trailing backslash
+          input_line(line_len:line_len) = ' '
+          ! Read next line
+          read(input_unit, '(a)', iostat=iostat) continuation_line
+          if (iostat /= 0) exit
+          ! Append continuation line
+          input_line = trim(input_line) // trim(continuation_line)
+        else
+          exit
+        end if
+      end do
     end if
   end subroutine
 
