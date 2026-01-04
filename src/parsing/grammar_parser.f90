@@ -951,6 +951,79 @@ contains
     node => create_subshell(commands)
   end function
 
+  ! Parse (( ... )) arithmetic command
+  recursive function parse_arithmetic_command(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node
+    type(token_t) :: tok
+    character(len=MAX_TOKEN_LEN) :: arith_expr, words(1)
+    integer :: paren_depth, expr_pos
+    logical :: found_close
+
+    nullify(node)
+
+    ! Consume first (
+    if (.not. expect(state, '(')) return
+    ! Consume second (
+    if (.not. expect(state, '(')) return
+
+    ! Collect tokens until )) is found
+    arith_expr = '(('
+    expr_pos = 3
+    paren_depth = 2
+    found_close = .false.
+
+    do while (state%pos <= state%num_tokens)
+      tok = current_token(state)
+
+      if (tok%token_type == TOKEN_EOF) exit
+
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ')') then
+        paren_depth = paren_depth - 1
+        arith_expr(expr_pos:expr_pos) = ')'
+        expr_pos = expr_pos + 1
+        call advance(state)
+        if (paren_depth == 0) then
+          found_close = .true.
+          exit
+        end if
+      else if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+        paren_depth = paren_depth + 1
+        arith_expr(expr_pos:expr_pos) = '('
+        expr_pos = expr_pos + 1
+        call advance(state)
+      else
+        ! Add token value to expression
+        if (expr_pos + len_trim(tok%value) <= MAX_TOKEN_LEN) then
+          arith_expr(expr_pos:expr_pos+len_trim(tok%value)-1) = trim(tok%value)
+          expr_pos = expr_pos + len_trim(tok%value)
+        end if
+        call advance(state)
+      end if
+    end do
+
+    if (.not. found_close) then
+      ! Syntax error - unmatched ((
+      return
+    end if
+
+    ! Create a simple command with the arithmetic expression as the first token
+    words(1) = arith_expr(1:expr_pos-1)
+    node => create_simple_command(words, 1)
+
+    ! Allocate metadata arrays to prevent segfaults in AST executor
+    if (associated(node) .and. associated(node%simple_cmd)) then
+      allocate(node%simple_cmd%word_was_quoted(1))
+      node%simple_cmd%word_was_quoted(1) = .false.
+      allocate(node%simple_cmd%word_was_escaped(1))
+      node%simple_cmd%word_was_escaped(1) = .false.
+      allocate(node%simple_cmd%word_quote_type(1))
+      node%simple_cmd%word_quote_type(1) = QUOTE_NONE
+      allocate(node%simple_cmd%word_lengths(1))
+      node%simple_cmd%word_lengths(1) = expr_pos - 1
+    end if
+  end function
+
   recursive function parse_brace_group(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, commands

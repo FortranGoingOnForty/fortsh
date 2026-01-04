@@ -2038,13 +2038,30 @@ contains
     
     ! Replace command tokens with expanded ones
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    
+
     if (expanded_count > 0) then
       allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(expanded_count))
       do i = 1, expanded_count
         cmd%tokens(i) = expanded_tokens(i)
       end do
       cmd%num_tokens = expanded_count
+
+      ! Update token_lengths to match new tokens (use trimmed length)
+      if (allocated(cmd%token_lengths)) deallocate(cmd%token_lengths)
+      allocate(cmd%token_lengths(expanded_count))
+      do i = 1, expanded_count
+        cmd%token_lengths(i) = len_trim(expanded_tokens(i))
+      end do
+
+      ! Reset token_quoted and token_escaped for expanded tokens
+      ! (glob-expanded filenames are not quoted)
+      if (allocated(cmd%token_quoted)) deallocate(cmd%token_quoted)
+      allocate(cmd%token_quoted(expanded_count))
+      cmd%token_quoted = .false.
+
+      if (allocated(cmd%token_escaped)) deallocate(cmd%token_escaped)
+      allocate(cmd%token_escaped(expanded_count))
+      cmd%token_escaped = .false.
     else
       ! No expansion occurred - restore original
       allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(cmd%num_tokens))
@@ -2052,7 +2069,7 @@ contains
         cmd%tokens(i) = original_tokens(i)
       end do
     end if
-    
+
     ! Cleanup
     if (allocated(expanded_tokens)) deallocate(expanded_tokens)
     if (allocated(original_tokens)) deallocate(original_tokens)
