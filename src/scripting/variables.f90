@@ -1610,6 +1610,10 @@ contains
       flags(pos:pos) = 'e'
       pos = pos + 1
     end if
+    if (shell%option_noglob) then
+      flags(pos:pos) = 'f'
+      pos = pos + 1
+    end if
     if (shell%option_monitor) then
       flags(pos:pos) = 'm'
       pos = pos + 1
