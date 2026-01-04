@@ -78,6 +78,22 @@ contains
         shell%ifs_len = actual_len
         ! Don't return - continue to add IFS to variables array too
         ! This allows checking if IFS was explicitly set vs using default
+      case ('PWD')
+        ! Update shell%cwd when PWD is set
+        shell%cwd = value(1:min(actual_len, len(shell%cwd)))
+        ! Also update environment for child processes
+        if (.not. set_environment_var('PWD', trim(shell%cwd))) then
+          ! Silently ignore errors
+        end if
+        return
+      case ('OLDPWD')
+        ! Update shell%oldpwd when OLDPWD is set
+        shell%oldpwd = value(1:min(actual_len, len(shell%oldpwd)))
+        ! Also update environment for child processes
+        if (.not. set_environment_var('OLDPWD', trim(shell%oldpwd))) then
+          ! Silently ignore errors
+        end if
+        return
       case ('HISTFILE')
         shell%histfile = value
         return
