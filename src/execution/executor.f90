@@ -2931,7 +2931,8 @@ contains
         last_char = cmd%tokens(i)(token_len:token_len)
 
         ! Check for single-quoted token (may have sentinel markers char(2)/char(3))
-        if (first_char == "'" .and. last_char == "'") then
+        ! IMPORTANT: Don't treat as syntactic quotes if token was escaped (e.g., \'a\')
+        if (first_char == "'" .and. last_char == "'" .and. .not. cmd%token_escaped(i)) then
           cmd%token_quoted(i) = .true.
           cmd%token_quote_type(i) = QUOTE_SINGLE
           ! For single quotes, preserve trailing whitespace by not using len_trim
@@ -2943,7 +2944,8 @@ contains
           cmd%token_quote_type(i) = QUOTE_SINGLE
           cmd%token_lengths(i) = token_len
         ! Check for double-quoted token
-        else if (first_char == '"' .and. last_char == '"') then
+        ! IMPORTANT: Don't treat as syntactic quotes if token was escaped (e.g., \"a\")
+        else if (first_char == '"' .and. last_char == '"' .and. .not. cmd%token_escaped(i)) then
           cmd%token_quoted(i) = .true.
           cmd%token_quote_type(i) = QUOTE_DOUBLE
           ! For double-quoted, find actual length including trailing whitespace
