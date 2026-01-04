@@ -790,8 +790,8 @@ contains
       end if
     else
       ! Remove smallest matching suffix (%)
-      ! Try to match from end of string
-      do i = len_trim(input), 1, -1
+      ! Try to match from end of string - include len_trim+1 for empty suffix
+      do i = len_trim(input) + 1, 1, -1
         if (match_pattern(input(i:), trim(pattern))) then
           output = input(1:i-1)
           return
@@ -826,8 +826,8 @@ contains
       end if
     else
       ! Remove smallest matching prefix (#)
-      ! Try to match from start
-      do i = 1, len_trim(input)
+      ! Try to match from start - start at 0 to test empty prefix
+      do i = 0, len_trim(input)
         if (match_pattern(input(1:i), trim(pattern))) then
           output = input(i+1:)
           return

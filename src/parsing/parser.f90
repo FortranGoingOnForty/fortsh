@@ -2227,8 +2227,8 @@ contains
     character(len=:), allocatable :: output
     integer :: i
 
-    ! Try matching from shortest to longest
-    do i = 1, len_trim(text)
+    ! Try matching from shortest to longest - start at 0 for empty prefix
+    do i = 0, len_trim(text)
       if (shell_pattern_match(text(1:i), trim(pattern))) then
         output = text(i+1:)
         return
@@ -2260,8 +2260,8 @@ contains
     integer :: i, text_len
 
     text_len = len_trim(text)
-    ! Try matching from shortest to longest
-    do i = text_len, 1, -1
+    ! Try matching from shortest to longest - include text_len+1 for empty suffix
+    do i = text_len + 1, 1, -1
       if (shell_pattern_match(text(i:text_len), trim(pattern))) then
         output = text(1:i-1)
         return
