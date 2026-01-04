@@ -275,37 +275,23 @@ contains
 
   subroutine process_backslash_escapes(input_line)
     character(len=*), intent(inout) :: input_line
-    
+
     character(len=len(input_line)) :: processed
     integer :: i, j
-    
+
+    ! POSIX: Without -r, backslash removes itself and preserves the following char
+    ! This is NOT like printf escapes - \n becomes literal 'n', not newline
+    ! The only special case is \<newline> which is handled in read_line_input
+
     processed = ''
     i = 1
     j = 1
-    
+
     do while (i <= len_trim(input_line))
       if (input_line(i:i) == '\' .and. i < len_trim(input_line)) then
+        ! Skip the backslash, keep the next character literally
         i = i + 1
-        select case (input_line(i:i))
-        case ('n')
-          processed(j:j) = char(10)  ! newline
-        case ('t')
-          processed(j:j) = char(9)   ! tab
-        case ('r')
-          processed(j:j) = char(13)  ! carriage return
-        case ('b')
-          processed(j:j) = char(8)   ! backspace
-        case ('a')
-          processed(j:j) = char(7)   ! bell
-        case ('\')
-          processed(j:j) = '\'
-        case ('"')
-          processed(j:j) = '"'
-        case ("'")
-          processed(j:j) = "'"
-        case default
-          processed(j:j) = input_line(i:i)
-        end select
+        processed(j:j) = input_line(i:i)
         j = j + 1
         i = i + 1
       else
@@ -314,7 +300,7 @@ contains
         j = j + 1
       end if
     end do
-    
+
     input_line = processed
   end subroutine
 

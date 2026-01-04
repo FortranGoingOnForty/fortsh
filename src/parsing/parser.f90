@@ -1237,16 +1237,28 @@ contains
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
     logical :: is_quoted, is_single_quoted
+    logical :: escapes_already_processed  ! True if lexer already processed escapes
 
     ! Check if token was originally quoted (from lexer metadata or token inspection)
     is_quoted = .false.
     is_single_quoted = .false.
+    escapes_already_processed = .false.
 
     ! Use the passed parameter if provided, otherwise fall back to checking the token
     if (present(was_quoted_in)) then
       is_quoted = was_quoted_in
       ! We don't track single vs double quotes in metadata, assume double if quoted
       is_single_quoted = .false.
+      ! If was_quoted_in=true but token doesn't have outer quotes, the new lexer
+      ! already stripped quotes and processed escapes - don't re-process them
+      if (is_quoted .and. len_trim(token) >= 2) then
+        if (.not. (token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"')) then
+          escapes_already_processed = .true.
+        end if
+      else if (is_quoted .and. len_trim(token) < 2) then
+        ! Short quoted token without surrounding quotes - escapes were processed
+        escapes_already_processed = .true.
+      end if
     else
       ! Legacy: check if token still has quotes (for backward compatibility)
       if (len_trim(token) >= 2) then
@@ -1352,19 +1364,27 @@ contains
       end if
 
       ! Check for backslash escape
-      ! Handle \$ even outside quotes since lexer may have already removed quotes
+      ! Handle \$ and \` even outside quotes since lexer keeps both chars for these
       if (working_token(i:i) == '\' .and. i < end_pos) then
         if (working_token(i+1:i+1) == '$') then
-          ! \$ -> literal $
+          ! \$ -> literal $ (lexer keeps both chars, we process here)
           i = i + 1  ! Skip backslash
           result(j:j) = '$'
           i = i + 1
           j = j + 1
           cycle
-        else if (is_quoted .and. .not. is_single_quoted) then
-          ! In double quotes, backslash also escapes: ` " \ and newline
-          if (working_token(i+1:i+1) == '`' .or. &
-              working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
+        else if (working_token(i+1:i+1) == '`') then
+          ! \` -> literal ` (lexer keeps both chars, we process here)
+          i = i + 1  ! Skip backslash
+          result(j:j) = '`'
+          i = i + 1
+          j = j + 1
+          cycle
+        else if (is_quoted .and. .not. is_single_quoted .and. .not. escapes_already_processed) then
+          ! In double quotes, backslash also escapes: " \ and newline
+          ! BUT skip this if lexer already processed escapes (new lexer path)
+          ! Note: \$ and \` are handled above because lexer keeps both chars for them
+          if (working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
             ! Skip the backslash and add the escaped character
             i = i + 1
             result(j:j) = working_token(i:i)
