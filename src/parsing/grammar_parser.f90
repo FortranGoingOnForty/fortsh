@@ -263,6 +263,10 @@ contains
     is_compound = .false.
     if (tok%token_type == TOKEN_KEYWORD) then
       select case(trim(tok%value))
+      case('!')
+        ! Nested negation - parse as a pipeline with negation
+        node => parse_pipeline_node(state)
+        is_compound = .true.
       case('if')
         node => parse_if_stmt(state)
         is_compound = .true.
