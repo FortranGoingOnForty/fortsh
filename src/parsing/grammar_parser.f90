@@ -568,6 +568,10 @@ contains
                 ! Don't add as regular redirect
                 num_redirects = num_redirects - 1
               end if
+            case('<<<')
+              ! Here-string - get content from next token
+              redirects(num_redirects)%type = REDIR_HERE_STRING
+              redirects(num_redirects)%fd = 0  ! stdin
             end select
           end if
 
@@ -1139,6 +1143,9 @@ contains
         case('>&')
           redirects(num_redirects)%type = REDIR_DUP_OUT
           redirects(num_redirects)%fd = 1  ! default stdout
+        case('<<<')
+          redirects(num_redirects)%type = REDIR_HERE_STRING
+          redirects(num_redirects)%fd = 0  ! stdin
         case default
           num_redirects = num_redirects - 1
           exit
