@@ -1380,7 +1380,7 @@ contains
       if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ') &
           .and. .not. is_quoted) then
         ! Tilde expansion
-        call process_tilde_expansion(working_token, i, result, j)
+        call process_tilde_expansion(working_token, i, result, j, shell)
       else if (working_token(i:i) == '$' .and. i < len_trim(working_token)) then
         i = i + 1
         
@@ -3113,19 +3113,59 @@ contains
     end if
   end subroutine
 
-  subroutine process_tilde_expansion(token, pos, result, result_pos)
+  subroutine process_tilde_expansion(token, pos, result, result_pos, shell)
     character(len=*), intent(in) :: token
     integer, intent(inout) :: pos, result_pos
     character(len=*), intent(inout) :: result
+    type(shell_state_t), intent(in) :: shell
 
     character(len=MAX_TOKEN_LEN) :: username, home_path
-    character(len=:), allocatable :: home_dir
+    character(len=:), allocatable :: home_dir, shell_var
     integer :: start_pos
-    
+
     ! Skip the tilde
     pos = pos + 1
-    
-    if (pos > len_trim(token) .or. token(pos:pos) == '/' .or. token(pos:pos) == ' ') then
+
+    ! POSIX: ~+ expands to PWD, ~- expands to OLDPWD
+    if (pos <= len_trim(token) .and. token(pos:pos) == '+') then
+      ! ~+ - expand to PWD (check shell variable first, then environment)
+      shell_var = get_shell_variable(shell, 'PWD')
+      if (len_trim(shell_var) > 0) then
+        result(result_pos:result_pos+len_trim(shell_var)-1) = trim(shell_var)
+        result_pos = result_pos + len_trim(shell_var)
+      else
+        home_dir = get_environment_var('PWD')
+        if (allocated(home_dir) .and. len(home_dir) > 0) then
+          result(result_pos:result_pos+len(home_dir)-1) = home_dir
+          result_pos = result_pos + len(home_dir)
+        else
+          ! Fallback: return ~+ literally
+          result(result_pos:result_pos+1) = '~+'
+          result_pos = result_pos + 2
+        end if
+      end if
+      pos = pos + 1  ! Skip the +
+      return
+    else if (pos <= len_trim(token) .and. token(pos:pos) == '-') then
+      ! ~- - expand to OLDPWD (check shell variable first, then environment)
+      shell_var = get_shell_variable(shell, 'OLDPWD')
+      if (len_trim(shell_var) > 0) then
+        result(result_pos:result_pos+len_trim(shell_var)-1) = trim(shell_var)
+        result_pos = result_pos + len_trim(shell_var)
+      else
+        home_dir = get_environment_var('OLDPWD')
+        if (allocated(home_dir) .and. len(home_dir) > 0) then
+          result(result_pos:result_pos+len(home_dir)-1) = home_dir
+          result_pos = result_pos + len(home_dir)
+        else
+          ! Fallback: return ~- literally
+          result(result_pos:result_pos+1) = '~-'
+          result_pos = result_pos + 2
+        end if
+      end if
+      pos = pos + 1  ! Skip the -
+      return
+    else if (pos > len_trim(token) .or. token(pos:pos) == '/' .or. token(pos:pos) == ' ') then
       ! Simple ~ expansion - use HOME environment variable
       home_dir = get_environment_var('HOME')
       if (allocated(home_dir) .and. len(home_dir) > 0) then
