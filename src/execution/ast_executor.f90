@@ -142,6 +142,17 @@ contains
       return
     end if
 
+    ! Check for empty command (e.g., from empty command substitution result like $(true))
+    ! When a command substitution returns empty and is the only word, we have num_words=1
+    ! but the word itself is empty
+    if (node%simple_cmd%num_words > 0 .and. allocated(node%simple_cmd%words)) then
+      if (len_trim(node%simple_cmd%words(1)) == 0) then
+        ! Empty first word - this is an empty command, preserve exit status and return
+        exit_status = shell%last_exit_status
+        return
+      end if
+    end if
+
     if (node%simple_cmd%num_words == 0) then
       ! Handle pure assignments (no command, just VAR=value)
       if (node%simple_cmd%num_assignments > 0) then
