@@ -1376,7 +1376,9 @@ contains
         ! Otherwise, keep the backslash (it's not escaping anything special)
       end if
 
-      if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ')) then
+      ! POSIX: Tilde expansion is NOT performed inside double quotes
+      if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ') &
+          .and. .not. is_quoted) then
         ! Tilde expansion
         call process_tilde_expansion(working_token, i, result, j)
       else if (working_token(i:i) == '$' .and. i < len_trim(working_token)) then
