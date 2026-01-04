@@ -1611,7 +1611,7 @@ contains
               else
                 ! Variable is not set - check if set -u is enabled
                 if (check_nounset(shell, trim(var_name))) then
-                  shell%last_exit_status = 127  ! POSIX: expansion errors return 127
+                  shell%last_exit_status = 1  ! POSIX: parameter expansion errors return 1
                   shell%fatal_expansion_error = .true.
                   shell%running = .false.  ! Stop shell execution
                   expanded = ''
@@ -3050,7 +3050,7 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (.not. var_is_set) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 127  ! POSIX: expansion errors return 127
+          shell%last_exit_status = 1  ! POSIX: parameter expansion errors return 1
           shell%fatal_expansion_error = .true.
           shell%running = .false.  ! Stop shell execution
           result_value = ''
@@ -3122,7 +3122,7 @@ contains
         write(error_unit, '(A,A,A,A,A)') 'fortsh: ', trim(var_name), ': ', &
               trim(default_value), ' (parameter null or not set)'
         result_value = ''
-        shell%last_exit_status = 127
+        shell%last_exit_status = 1  ! POSIX: parameter expansion errors return 1
         shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else
@@ -3137,7 +3137,7 @@ contains
           write(error_unit, '(A,A,A)') 'fortsh: ', trim(var_name), ': parameter not set'
         end if
         result_value = ''
-        shell%last_exit_status = 127
+        shell%last_exit_status = 1  ! POSIX: parameter expansion errors return 1
         shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else
