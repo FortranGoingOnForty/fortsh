@@ -423,8 +423,8 @@ contains
                 was_quoted(num_words) = tok%quoted
                 was_escaped(num_words) = tok%escaped
                 quote_types(num_words) = tok%quote_type
-                ! For fully quoted tokens, use value_length (preserves trailing whitespace)
-                if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE) then
+                ! For quoted tokens (fully or partially), use value_length (preserves trailing whitespace)
+                if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE .or. tok%quoted) then
                   word_lens(num_words) = tok%value_length
                 else
                   word_lens(num_words) = len_trim(tok%value)
@@ -441,8 +441,12 @@ contains
             ! This is a prefix assignment
             num_assignments = num_assignments + 1
             assignments(num_assignments) = tok%value
-            ! Use actual token value length (quotes are converted to sentinels)
-            assignment_lens(num_assignments) = len_trim(tok%value)
+            ! Use actual token value length (preserves whitespace in quoted parts)
+            if (tok%quoted) then
+              assignment_lens(num_assignments) = tok%value_length
+            else
+              assignment_lens(num_assignments) = len_trim(tok%value)
+            end if
             call advance(state)
           else
             ! Regular word - this is the command or an argument
@@ -453,8 +457,8 @@ contains
               was_quoted(num_words) = tok%quoted
               was_escaped(num_words) = tok%escaped
               quote_types(num_words) = tok%quote_type
-              ! For fully quoted tokens, use value_length (preserves trailing whitespace)
-              if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE) then
+              ! For quoted tokens (fully or partially), use value_length (preserves trailing whitespace)
+              if (tok%quote_type == QUOTE_DOUBLE .or. tok%quote_type == QUOTE_SINGLE .or. tok%quoted) then
                 word_lens(num_words) = tok%value_length
               else
                 word_lens(num_words) = len_trim(tok%value)

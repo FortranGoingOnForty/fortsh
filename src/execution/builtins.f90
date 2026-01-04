@@ -1523,6 +1523,13 @@ contains
       return
     end if
 
+    ! Check for -a flag (remove all aliases)
+    if (trim(cmd%tokens(2)) == '-a') then
+      call clear_all_aliases(shell)
+      shell%last_exit_status = 0
+      return
+    end if
+
     any_not_found = .false.
 
     ! Remove each specified alias

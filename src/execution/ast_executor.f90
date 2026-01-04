@@ -2029,8 +2029,21 @@ contains
 
       ! Copy words to temp command
       do j = 1, temp_cmd%num_tokens
-        temp_cmd%tokens(j) = trim(node%pipeline%commands(i)%simple_cmd%words(j))
-        temp_cmd%token_lengths(j) = len_trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        ! Preserve whitespace for quoted tokens by using word_lengths
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted) .and. &
+            allocated(node%pipeline%commands(i)%simple_cmd%word_lengths)) then
+          if (node%pipeline%commands(i)%simple_cmd%word_was_quoted(j)) then
+            temp_cmd%tokens(j) = node%pipeline%commands(i)%simple_cmd%words(j)( &
+                                  1:node%pipeline%commands(i)%simple_cmd%word_lengths(j))
+            temp_cmd%token_lengths(j) = node%pipeline%commands(i)%simple_cmd%word_lengths(j)
+          else
+            temp_cmd%tokens(j) = trim(node%pipeline%commands(i)%simple_cmd%words(j))
+            temp_cmd%token_lengths(j) = len_trim(node%pipeline%commands(i)%simple_cmd%words(j))
+          end if
+        else
+          temp_cmd%tokens(j) = trim(node%pipeline%commands(i)%simple_cmd%words(j))
+          temp_cmd%token_lengths(j) = len_trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        end if
         if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted)) then
           temp_cmd%token_quoted(j) = node%pipeline%commands(i)%simple_cmd%word_was_quoted(j)
         else
