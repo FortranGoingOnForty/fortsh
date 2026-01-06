@@ -385,7 +385,7 @@ contains
     use prompt_formatting, only: expand_prompt
     use iso_c_binding, only: c_size_t, c_loc, c_char
     use system_interface, only: c_write
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command_line
     character(len=1024) :: expanded_ps4
     character(len=2048) :: trace_line

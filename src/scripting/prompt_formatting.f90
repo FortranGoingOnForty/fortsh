@@ -7,6 +7,8 @@ module prompt_formatting
   use shell_types
   use system_interface
   use iso_fortran_env, only: output_unit
+  use substitution, only: enhanced_command_substitution
+  use variables, only: get_shell_variable
   implicit none
 
   ! History counter for prompts
@@ -24,11 +26,12 @@ contains
   subroutine safe_expand_prompt(prompt_str, shell, stored_len, expanded)
     use iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: prompt_str
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     integer, intent(in), optional :: stored_len
     character(len=*), intent(out) :: expanded
 
     character(len=1024) :: result  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
+    character(len=1024) :: var_expanded  ! Buffer for variable/command expansion
     integer :: i, j, prompt_len
     integer, parameter :: RESULT_CAPACITY = 1024
     character(len=256) :: replacement  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
@@ -81,17 +84,24 @@ contains
       call expand_zsh_colors(expanded, result, len_trim(expanded))
       expanded = result(1:min(len_trim(result), len(expanded)))
     end if
+
+    ! Expand variables and command substitutions ($VAR, ${VAR}, $(cmd))
+    if (index(expanded, '$') > 0) then
+      call expand_prompt_variables(expanded, shell, var_expanded)
+      expanded = var_expanded(1:min(len_trim(var_expanded), len(expanded)))
+    end if
   end subroutine
 
   ! Main function to expand prompt string with escape sequences
   function expand_prompt(prompt_str, shell, stored_len) result(expanded)
     character(len=*), intent(in) :: prompt_str
-    type(shell_state_t), intent(in) :: shell
+    type(shell_state_t), intent(inout) :: shell
     integer, intent(in), optional :: stored_len
     character(len=:), allocatable :: expanded
 
     ! Use allocatable to avoid stack allocation
     character(len=:), allocatable :: result
+    character(len=1024) :: var_expanded  ! Buffer for variable/command expansion
     integer :: i, j, prompt_len, result_capacity
     character(len=:), allocatable :: replacement  ! Heap allocation to avoid stack overflow
 
@@ -150,6 +160,12 @@ contains
       call expand_zsh_colors(expanded, result, len(expanded))
       expanded = trim(result)
       deallocate(result)
+    end if
+
+    ! Expand variables and command substitutions ($VAR, ${VAR}, $(cmd))
+    if (index(expanded, '$') > 0) then
+      call expand_prompt_variables(expanded, shell, var_expanded)
+      expanded = trim(var_expanded)
     end if
   end function
 
@@ -946,5 +962,124 @@ contains
     call move_alloc(new_array, array)
     current_size = new_size
   end subroutine
+
+  ! Expand variable references and command substitutions in prompt strings
+  ! Handles: $VAR, ${VAR}, $(command)
+  subroutine expand_prompt_variables(input, shell, output)
+    character(len=*), intent(in) :: input
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(out) :: output
+
+    character(len=:), allocatable :: var_name, var_value
+    character(len=4096) :: cmd_result
+    integer :: i, j, start_pos, paren_count, brace_count, input_len
+    character :: c
+
+    output = ''
+    j = 1
+    i = 1
+    input_len = len_trim(input)
+
+    do while (i <= input_len .and. j < len(output))
+      c = input(i:i)
+
+      if (c == '$' .and. i < input_len) then
+        ! Check what follows $
+        if (input(i+1:i+1) == '(') then
+          ! Command substitution $(...)
+          start_pos = i + 2
+          paren_count = 1
+          i = i + 2
+
+          ! Find matching closing parenthesis
+          do while (i <= input_len .and. paren_count > 0)
+            if (input(i:i) == '(') paren_count = paren_count + 1
+            if (input(i:i) == ')') paren_count = paren_count - 1
+            i = i + 1
+          end do
+
+          if (paren_count == 0) then
+            ! Extract command and execute
+            cmd_result = enhanced_command_substitution(shell, input(start_pos:i-2))
+            ! Copy result to output
+            if (len_trim(cmd_result) > 0) then
+              if (j + len_trim(cmd_result) - 1 < len(output)) then
+                output(j:j+len_trim(cmd_result)-1) = trim(cmd_result)
+                j = j + len_trim(cmd_result)
+              end if
+            end if
+          end if
+
+        else if (input(i+1:i+1) == '{') then
+          ! Brace-enclosed variable ${VAR}
+          start_pos = i + 2
+          brace_count = 1
+          i = i + 2
+
+          ! Find matching closing brace
+          do while (i <= input_len .and. brace_count > 0)
+            if (input(i:i) == '{') brace_count = brace_count + 1
+            if (input(i:i) == '}') brace_count = brace_count - 1
+            i = i + 1
+          end do
+
+          if (brace_count == 0) then
+            var_name = input(start_pos:i-2)
+            var_value = get_shell_variable(shell, trim(var_name))
+            if (len_trim(var_value) > 0) then
+              if (j + len_trim(var_value) - 1 < len(output)) then
+                output(j:j+len_trim(var_value)-1) = trim(var_value)
+                j = j + len_trim(var_value)
+              end if
+            end if
+          end if
+
+        else if (is_var_name_char(input(i+1:i+1))) then
+          ! Simple variable $VAR
+          start_pos = i + 1
+          i = i + 1
+
+          ! Read variable name (letters, digits, underscore)
+          do while (i <= input_len .and. is_var_name_char(input(i:i)))
+            i = i + 1
+          end do
+
+          var_name = input(start_pos:i-1)
+          var_value = get_shell_variable(shell, trim(var_name))
+          if (len_trim(var_value) > 0) then
+            if (j + len_trim(var_value) - 1 < len(output)) then
+              output(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
+            end if
+          end if
+
+        else
+          ! Lone $ or unrecognized pattern - copy as-is
+          output(j:j) = c
+          j = j + 1
+          i = i + 1
+        end if
+
+      else
+        ! Regular character
+        output(j:j) = c
+        j = j + 1
+        i = i + 1
+      end if
+    end do
+  end subroutine
+
+  ! Check if character is valid in a variable name
+  function is_var_name_char(c) result(valid)
+    character(len=1), intent(in) :: c
+    logical :: valid
+    integer :: ic
+
+    ic = iachar(c)
+    valid = (ic >= iachar('a') .and. ic <= iachar('z')) .or. &
+            (ic >= iachar('A') .and. ic <= iachar('Z')) .or. &
+            (ic >= iachar('0') .and. ic <= iachar('9')) .or. &
+            c == '_'
+  end function
 
 end module prompt_formatting
