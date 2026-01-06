@@ -556,7 +556,8 @@ contains
 
     ! Check if parameter expansion error occurred (${VAR?error})
     if (shell%fatal_expansion_error) then
-      shell%fatal_expansion_error = .false.  ! Reset flag
+      ! NOTE: Don't reset flag here - let it propagate to subshell handler
+      ! The subshell code uses this flag to convert exit code 127 to 1 (bash behavior)
       ! End performance timing
       call end_timer('execute_single', exec_start_time, total_exec_time)
       ! POSIX: In non-interactive shells, exit the shell entirely

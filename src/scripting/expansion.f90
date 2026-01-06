@@ -505,7 +505,7 @@ contains
             else
               write(error_unit, '(A)') trim(operation) // ': parameter null or not set'
             end if
-            shell%last_exit_status = 127
+            shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
             shell%fatal_expansion_error = .true.  ! Signal to abort execution
             expanded = ''
           else
@@ -518,7 +518,7 @@ contains
             else
               write(error_unit, '(A)') trim(operation) // ': parameter not set'
             end if
-            shell%last_exit_status = 127
+            shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
             shell%fatal_expansion_error = .true.  ! Signal to abort execution
             expanded = ''
           else
@@ -541,7 +541,7 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (len_trim(var_value) == 0 .and. .not. is_shell_variable_set(shell, trim(var_name))) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 127  ! POSIX sh returns 127 for expansion errors
+          shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
           shell%fatal_expansion_error = .true.
           expanded = ''
           return
@@ -942,7 +942,13 @@ contains
 
     ! Expand ALL parameter expansions ($var, $1, $(cmd), etc.) before evaluation
     ! This handles variables, positional parameters, and command substitutions
-    call enhanced_expand_variables(expr, expanded_expr, shell)
+    ! NOTE: Only call enhanced_expand_variables if there are $ characters to expand,
+    ! because it has a bug where it strips internal whitespace.
+    if (index(expr, '$') > 0) then
+      call enhanced_expand_variables(expr, expanded_expr, shell)
+    else
+      expanded_expr = trim(expr)
+    end if
 
     ! Evaluate with shell context for any remaining variable resolution
     result_int = eval_expression_shell(trim(expanded_expr), shell)
@@ -1680,7 +1686,7 @@ contains
     integer :: pos
     character(len=512) :: left_expr, right_expr
 
-    value = eval_logical_and_shell(expr, shell)
+    ! FIRST check for || operator (lowest precedence in logical chain)
     pos = find_operator(expr, '||')
     if (pos > 0) then
       left_expr = expr(:pos-1)
@@ -1692,6 +1698,9 @@ contains
       else
         value = 0
       end if
+    else
+      ! No || found, delegate to next precedence level
+      value = eval_logical_and_shell(expr, shell)
     end if
   end function
 
@@ -1702,7 +1711,7 @@ contains
     integer :: pos
     character(len=512) :: left_expr, right_expr
 
-    value = eval_bitwise_or_shell(expr, shell)
+    ! FIRST check for && operator (lowest precedence in this chain)
     pos = find_operator(expr, '&&')
     if (pos > 0) then
       left_expr = expr(:pos-1)
@@ -1714,6 +1723,9 @@ contains
       else
         value = 0
       end if
+    else
+      ! No && found, delegate to next precedence level
+      value = eval_bitwise_or_shell(expr, shell)
     end if
   end function
 
@@ -1724,7 +1736,7 @@ contains
     integer :: pos
     character(len=512) :: left_expr, right_expr
 
-    value = eval_bitwise_xor_shell(expr, shell)
+    ! FIRST check for | operator
     pos = find_single_operator(expr, '|')
     if (pos > 0) then
       left_expr = expr(:pos-1)
@@ -1732,6 +1744,8 @@ contains
       value = eval_bitwise_xor_shell(trim(adjustl(left_expr)), shell)
       right_val = eval_bitwise_or_shell(trim(adjustl(right_expr)), shell)
       value = ior(int(value), int(right_val))
+    else
+      value = eval_bitwise_xor_shell(expr, shell)
     end if
   end function
 
@@ -1742,7 +1756,7 @@ contains
     integer :: pos
     character(len=512) :: left_expr, right_expr
 
-    value = eval_bitwise_and_shell(expr, shell)
+    ! FIRST check for ^ operator
     pos = find_single_operator(expr, '^')
     if (pos > 0) then
       left_expr = expr(:pos-1)
@@ -1750,6 +1764,8 @@ contains
       value = eval_bitwise_and_shell(trim(adjustl(left_expr)), shell)
       right_val = eval_bitwise_xor_shell(trim(adjustl(right_expr)), shell)
       value = ieor(int(value), int(right_val))
+    else
+      value = eval_bitwise_and_shell(expr, shell)
     end if
   end function
 
@@ -1760,7 +1776,7 @@ contains
     integer :: pos
     character(len=512) :: left_expr, right_expr
 
-    value = eval_equality_shell(expr, shell)
+    ! FIRST check for & operator
     pos = find_single_operator(expr, '&')
     if (pos > 0) then
       left_expr = expr(:pos-1)
@@ -1768,6 +1784,8 @@ contains
       value = eval_equality_shell(trim(adjustl(left_expr)), shell)
       right_val = eval_bitwise_and_shell(trim(adjustl(right_expr)), shell)
       value = iand(int(value), int(right_val))
+    else
+      value = eval_equality_shell(expr, shell)
     end if
   end function
 
@@ -2153,14 +2171,26 @@ contains
     value = parse_arithmetic_number(temp_expr, iostat)
     if (iostat == 0) return
 
-    ! Resolve as variable
+    ! Check if it's a valid identifier before treating as variable
+    if (.not. is_valid_identifier(trim(adjustl(expr)))) then
+      ! Not a number and not a valid identifier - syntax error
+      arithmetic_error = .true.
+      arithmetic_error_msg = 'syntax error in expression (error token is "' // trim(adjustl(expr)) // '")'
+      value = 0
+      return
+    end if
+
+    ! Resolve as variable (valid identifier)
     var_value = get_shell_variable(shell, trim(adjustl(expr)))
     if (len_trim(var_value) > 0) then
       value = parse_arithmetic_number(trim(var_value), iostat)
       if (iostat == 0) return
+      ! Variable exists but is not numeric - try recursive evaluation
+      value = eval_expression_shell(trim(var_value), shell)
+      return
     end if
 
-    ! Variable not found or not numeric - return 0
+    ! Valid identifier but variable not found or empty - return 0
     value = 0
   end function
 
@@ -3386,6 +3416,18 @@ contains
     end if
 
     ! Default: parse as decimal
+    ! First verify the string contains only valid decimal characters (digits and optional leading +/-)
+    i = 1
+    if (len_str > 0 .and. (trimmed_str(1:1) == '+' .or. trimmed_str(1:1) == '-')) then
+      i = 2
+    end if
+    do while (i <= len_str)
+      if (trimmed_str(i:i) < '0' .or. trimmed_str(i:i) > '9') then
+        iostat = 1  ! Not a valid decimal number
+        return
+      end if
+      i = i + 1
+    end do
     read(trimmed_str, *, iostat=iostat) value
   end function
 

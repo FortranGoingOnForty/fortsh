@@ -1611,7 +1611,7 @@ contains
               else
                 ! Variable is not set - check if set -u is enabled
                 if (check_nounset(shell, trim(var_name))) then
-                  shell%last_exit_status = 127  ! Match bash behavior for expansion errors
+                  shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
                   shell%fatal_expansion_error = .true.
                   shell%running = .false.  ! Stop shell execution
                   expanded = ''
@@ -2205,19 +2205,25 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=4096) :: temp_output
+    integer :: actual_len
 
     ! POSIX: errexit should not trigger in command substitution
     shell%in_command_substitution = .true.
 
     ! Execute in current shell context to preserve functions, variables, etc.
-    call execute_command_and_capture(shell, command, temp_output)
+    call execute_command_and_capture(shell, command, temp_output, actual_len)
 
     shell%in_command_substitution = .false.
 
-    ! Allocate and copy result
-    output = trim(temp_output)
+    ! Allocate and copy result, preserving exact length (don't use trim!)
+    if (actual_len > 0) then
+      allocate(character(len=actual_len) :: output)
+      output = temp_output(1:actual_len)
+    else
+      output = ''
+    end if
 
-    ! Remove trailing newline for single-line output (bash behavior)
+    ! Remove trailing newlines (but NOT other whitespace like spaces)
     do while (len(output) > 0 .and. output(len(output):len(output)) == char(10))
       output = output(:len(output)-1)
     end do
@@ -3050,7 +3056,7 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (.not. var_is_set) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 127  ! Match bash behavior for expansion errors
+          shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
           shell%fatal_expansion_error = .true.
           shell%running = .false.  ! Stop shell execution
           result_value = ''
@@ -3122,7 +3128,7 @@ contains
         write(error_unit, '(A,A,A,A,A)') 'fortsh: ', trim(var_name), ': ', &
               trim(default_value), ' (parameter null or not set)'
         result_value = ''
-        shell%last_exit_status = 127  ! Match bash behavior for expansion errors
+        shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
         shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else
@@ -3137,7 +3143,7 @@ contains
           write(error_unit, '(A,A,A)') 'fortsh: ', trim(var_name), ': parameter not set'
         end if
         result_value = ''
-        shell%last_exit_status = 127  ! Match bash behavior for expansion errors
+        shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
         shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else

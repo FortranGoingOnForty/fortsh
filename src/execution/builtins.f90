@@ -1158,6 +1158,44 @@ contains
       if (len_trim(cmd%tokens(2)) > 1) then
         ! Check for -l flag (list signals)
         if (trim(cmd%tokens(2)) == '-l') then
+          ! Check if there's a signal number argument
+          if (cmd%num_tokens >= 3) then
+            ! kill -l <num> - translate signal number to name
+            read(cmd%tokens(3), *, iostat=iostat) signal_num
+            if (iostat == 0) then
+              select case(signal_num)
+              case(1);  write(output_unit, '(a)') 'HUP'
+              case(2);  write(output_unit, '(a)') 'INT'
+              case(3);  write(output_unit, '(a)') 'QUIT'
+              case(4);  write(output_unit, '(a)') 'ILL'
+              case(5);  write(output_unit, '(a)') 'TRAP'
+              case(6);  write(output_unit, '(a)') 'ABRT'
+              case(7);  write(output_unit, '(a)') 'BUS'
+              case(8);  write(output_unit, '(a)') 'FPE'
+              case(9);  write(output_unit, '(a)') 'KILL'
+              case(10); write(output_unit, '(a)') 'USR1'
+              case(11); write(output_unit, '(a)') 'SEGV'
+              case(12); write(output_unit, '(a)') 'USR2'
+              case(13); write(output_unit, '(a)') 'PIPE'
+              case(14); write(output_unit, '(a)') 'ALRM'
+              case(15); write(output_unit, '(a)') 'TERM'
+              case(16); write(output_unit, '(a)') 'STKFLT'
+              case(17); write(output_unit, '(a)') 'CHLD'
+              case(18); write(output_unit, '(a)') 'CONT'
+              case(19); write(output_unit, '(a)') 'STOP'
+              case(20); write(output_unit, '(a)') 'TSTP'
+              case(21); write(output_unit, '(a)') 'TTIN'
+              case(22); write(output_unit, '(a)') 'TTOU'
+              case default
+                write(error_unit, '(a,i0)') 'kill: invalid signal number: ', signal_num
+                shell%last_exit_status = 1
+                return
+              end select
+              shell%last_exit_status = 0
+              return
+            end if
+          end if
+          ! No argument or invalid - list all signals
           write(output_unit, '(a)') 'Available signals:'
           write(output_unit, '(a)') '  1) SIGHUP    2) SIGINT    3) SIGQUIT   4) SIGILL'
           write(output_unit, '(a)') '  5) SIGTRAP   6) SIGABRT   7) SIGBUS    8) SIGFPE'
@@ -2116,7 +2154,40 @@ contains
     end if
 
     if (print_mode) then
-      ! Print all readonly variables
+      ! Print all readonly variables (including special readonly params)
+      ! Match bash behavior: include PPID, UID, EUID, and shell options
+      block
+        use system_interface, only: c_getuid, c_geteuid
+        character(len=20) :: ppid_str, uid_str, euid_str
+        character(len=256) :: shellopts
+
+        ! PPID - parent process ID
+        write(ppid_str, '(i0)') shell%parent_pid
+        write(output_unit, '(a)') 'readonly PPID=' // trim(ppid_str)
+
+        ! UID - real user ID
+        write(uid_str, '(i0)') c_getuid()
+        write(output_unit, '(a)') 'readonly UID=' // trim(uid_str)
+
+        ! EUID - effective user ID
+        write(euid_str, '(i0)') c_geteuid()
+        write(output_unit, '(a)') 'readonly EUID=' // trim(euid_str)
+
+        ! SHELLOPTS - shell option settings (bash compatibility)
+        shellopts = ''
+        if (shell%option_braceexpand) shellopts = trim(shellopts) // ':braceexpand'
+        if (shell%option_hashall) shellopts = trim(shellopts) // ':hashall'
+        shellopts = trim(shellopts) // ':interactive-comments'  ! Always on
+        if (len_trim(shellopts) > 0 .and. shellopts(1:1) == ':') shellopts = shellopts(2:)
+        write(output_unit, '(a)') 'readonly SHELLOPTS="' // trim(shellopts) // '"'
+
+        ! FORTSH_VERSION - shell version
+        write(output_unit, '(a)') 'readonly FORTSH_VERSION="0.1.0"'
+
+        ! HOSTNAME - system hostname (bash compatibility)
+        write(output_unit, '(a)') 'readonly HOSTNAME="' // trim(shell%hostname) // '"'
+      end block
+      ! Print user-defined readonly variables
       do i = 1, shell%num_variables
         if (shell%variables(i)%readonly .and. len_trim(shell%variables(i)%name) > 0) then
           write(output_unit, '(a)') 'readonly ' // trim(shell%variables(i)%name) // '=' // &
@@ -2600,6 +2671,7 @@ contains
     ! hash with no arguments - display hash table
     if (cmd%num_tokens == 1) then
       if (shell%num_hashed_commands == 0) then
+        write(output_unit, '(a)') 'hash: hash table empty'
         shell%last_exit_status = 0
         return
       end if

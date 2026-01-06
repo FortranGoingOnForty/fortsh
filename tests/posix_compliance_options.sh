@@ -192,11 +192,16 @@ fi
 section "386. SET -v (VERBOSE)"
 # =====================================
 
-result=$("$FORTSH_BIN" -c 'set -v; echo hello' 2>&1)
-if echo "$result" | grep -q "echo hello"; then
-    pass "set -v shows input lines"
+# Note: set -v only echoes lines as they're READ, not from -c argument
+# Test that -v option is accepted and runs without error
+"$FORTSH_BIN" -c 'set -v; echo hello' >/dev/null 2>&1
+fortsh_exit=$?
+bash -c 'set -v; echo hello' >/dev/null 2>&1
+bash_exit=$?
+if [ "$fortsh_exit" -eq "$bash_exit" ]; then
+    pass "set -v runs without error"
 else
-    fail "set -v shows input lines" "input echoed" "$result"
+    fail "set -v runs without error" "exit=$bash_exit" "exit=$fortsh_exit"
 fi
 
 # =====================================

@@ -669,7 +669,8 @@ contains
         else if (ch == '(' .or. ch == ')') then
           ! Parentheses: Keep ONLY if inside $(( or $(
           ! Check if current token ends with $ (for x=$(cmd) or just $(cmd))
-          if (token_len >= 1 .and. current_token(token_len:token_len) == '$') then
+          ! NOTE: Only for '(' - ')' after $ (like $$) should end the word
+          if (ch == '(' .and. token_len >= 1 .and. current_token(token_len:token_len) == '$') then
             ! Just added $, now seeing ( - this is $( substitution - keep both
             if (token_len < MAX_TOKEN_LEN) then
               token_len = token_len + 1

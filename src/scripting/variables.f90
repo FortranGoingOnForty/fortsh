@@ -94,6 +94,12 @@ contains
           ! Silently ignore errors
         end if
         return
+      case ('PATH')
+        ! PATH must ALWAYS update environment so child processes use new PATH
+        if (.not. set_environment_var('PATH', value(1:actual_len))) then
+          ! Silently ignore errors
+        end if
+        ! Don't return - continue to store in variables array too
       case ('HISTFILE')
         shell%histfile = value
         return
@@ -1524,10 +1530,11 @@ contains
 
     if (as_single_word) then
       ! Use first character of IFS as separator for $*
+      ! POSIX: If IFS is empty (set to ""), no separator is used
       if (len_trim(shell%ifs) > 0) then
         separator = shell%ifs(1:1)
       else
-        separator = ' '
+        separator = char(0)  ! Use NUL to indicate no separator
       end if
     else
       ! Use space for $@ (will be properly quoted during expansion)
@@ -1536,7 +1543,7 @@ contains
 
     pos = 1
     do i = 1, shell%num_positional
-      if (i > 1) then
+      if (i > 1 .and. separator /= char(0)) then
         result(pos:pos) = separator
         pos = pos + 1
       end if

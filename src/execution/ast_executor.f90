@@ -79,6 +79,11 @@ contains
       return
     end if
 
+    ! Update LINENO to reflect current line being executed
+    if (node%line > 0) then
+      shell%current_line_number = node%line
+    end if
+
     select case(node%node_type)
     case(CMD_SIMPLE)
       exit_status = execute_simple_command(node, shell)
@@ -146,11 +151,79 @@ contains
     ! When a command substitution returns empty and is the only word, we have num_words=1
     ! but the word itself is empty
     if (node%simple_cmd%num_words > 0 .and. allocated(node%simple_cmd%words)) then
-      if (len_trim(node%simple_cmd%words(1)) == 0) then
-        ! Empty first word - this is an empty command, preserve exit status and return
-        exit_status = shell%last_exit_status
-        return
-      end if
+      block
+        logical :: is_empty_cmd
+        integer :: check_i, check_len
+        character(len=1) :: ch
+
+        ! Check if first word is empty (accounting for sentinel characters)
+        is_empty_cmd = .false.
+        check_len = len_trim(node%simple_cmd%words(1))
+        if (check_len == 0) then
+          is_empty_cmd = .true.
+        else
+          ! Check if word contains only sentinel characters (char(2), char(3))
+          is_empty_cmd = .true.
+          do check_i = 1, check_len
+            ch = node%simple_cmd%words(1)(check_i:check_i)
+            if (ch /= char(2) .and. ch /= char(3)) then
+              is_empty_cmd = .false.
+              exit
+            end if
+          end do
+        end if
+
+        if (is_empty_cmd) then
+          ! Empty first word - check if it was a quoted literal empty string
+          ! If so, it's an explicit empty command name which is "command not found"
+          ! If not quoted (came from expansion), just preserve exit status
+          if (allocated(node%simple_cmd%word_was_quoted)) then
+            if (node%simple_cmd%word_was_quoted(1)) then
+              ! Explicit empty string like '' or "" - command not found
+              ! Apply any redirections first (e.g., 2>/dev/null)
+              if (node%simple_cmd%num_redirects > 0) then
+                block
+                  use fd_redirection, only: apply_single_redirection, restore_fds
+                  use parser, only: expand_variables
+                  type(redirection_t) :: temp_redirect
+                  logical :: redir_success
+                  character(len=:), allocatable :: expanded_filename
+                  integer :: redir_idx
+
+                  do redir_idx = 1, node%simple_cmd%num_redirects
+                    temp_redirect%type = node%simple_cmd%redirects(redir_idx)%type
+                    temp_redirect%fd = node%simple_cmd%redirects(redir_idx)%fd
+                    temp_redirect%target_fd = node%simple_cmd%redirects(redir_idx)%target_fd
+                    if (allocated(node%simple_cmd%redirects(redir_idx)%filename)) then
+                      call expand_variables(trim(node%simple_cmd%redirects(redir_idx)%filename), expanded_filename, shell)
+                      if (allocated(expanded_filename)) then
+                        temp_redirect%filename = expanded_filename
+                      else
+                        temp_redirect%filename = trim(node%simple_cmd%redirects(redir_idx)%filename)
+                      end if
+                    else
+                      temp_redirect%filename = ''
+                    end if
+                    temp_redirect%force_clobber = node%simple_cmd%redirects(redir_idx)%force_clobber
+                    call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+                  end do
+                end block
+              end if
+              write(error_unit, '(a)') 'fortsh: : command not found'
+              ! Restore file descriptors
+              if (node%simple_cmd%num_redirects > 0) then
+                call restore_fds()
+              end if
+              exit_status = 127
+              shell%last_exit_status = exit_status
+              return
+            end if
+          end if
+          ! Empty from expansion - preserve exit status and return
+          exit_status = shell%last_exit_status
+          return
+        end if
+      end block
     end if
 
     if (node%simple_cmd%num_words == 0) then
@@ -661,7 +734,8 @@ contains
 
     ! Check if fatal expansion error occurred (e.g., set -u with undefined variable)
     if (shell%fatal_expansion_error) then
-      shell%fatal_expansion_error = .false.  ! Reset flag
+      ! NOTE: Don't reset fatal_expansion_error here - let it propagate to subshell handler
+      ! The subshell code needs to know about the error to adjust exit code (127 -> 1)
       ! POSIX: In non-interactive shells, exit the shell entirely
       if (.not. shell%is_interactive) then
         shell%running = .false.
@@ -690,6 +764,11 @@ contains
     ! If a trap command was queued, execute it now (unless we're already executing a trap)
     if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap) then
       call execute_pending_trap(shell)
+    end if
+
+    ! POSIX: Update $_ to last argument of previous command
+    if (node%simple_cmd%num_words > 0 .and. allocated(node%simple_cmd%words)) then
+      shell%last_arg = trim(node%simple_cmd%words(node%simple_cmd%num_words))
     end if
 
     ! Clean up
@@ -1467,21 +1546,29 @@ contains
         call expand_variables(trim(node%for_loop%words(i)), expanded_word, shell, was_quoted_in=.false.)
       end if
 
-      ! Split the expanded word on IFS characters ONLY if it was NOT originally quoted
-      ! POSIX: Quoted words should not undergo field splitting
+      ! Split the expanded word on IFS characters ONLY if:
+      ! 1. It was NOT originally quoted, AND
+      ! 2. It contained a parameter expansion ($ or backtick)
+      ! POSIX: Field splitting only occurs on results of expansions, not literal text
       if (allocated(node%for_loop%words_was_quoted) .and. i <= size(node%for_loop%words_was_quoted) .and. &
           node%for_loop%words_was_quoted(i)) then
         ! Word was quoted - do not split, treat as single word
         split_words(1) = trim(expanded_word)
         split_count = 1
-      else
-        ! Word was not quoted - split on IFS
+      else if (index(node%for_loop%words(i), '$') > 0 .or. &
+               index(node%for_loop%words(i), '`') > 0) then
+        ! Word contained expansion - split on IFS
         call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
+      else
+        ! Literal word (no expansion) - do not split on IFS
+        split_words(1) = trim(expanded_word)
+        split_count = 1
       end if
 
       ! Now process each split word for globs
       do k = 1, split_count
-        if (has_unescaped_glob_chars(trim(split_words(k)))) then
+        ! Only expand globs if noglob option is NOT set (POSIX: set -f disables glob)
+        if (.not. shell%option_noglob .and. has_unescaped_glob_chars(trim(split_words(k)))) then
           ! Expand the glob pattern
           call glob_match(trim(split_words(k)), glob_matches, glob_count)
           if (glob_count > 0) then
@@ -1736,6 +1823,10 @@ contains
       end if
 
       status = execute_ast_node(node%subshell, shell)
+      ! bash: expansion errors in subshells exit with 1, not 127
+      if (shell%fatal_expansion_error .and. status == 127) then
+        status = 1
+      end if
       call c_exit(status)
     else if (pid > 0) then
       ! Parent - wait for subshell

@@ -1139,12 +1139,16 @@ else
     fail "subshell isolates variable changes" "1" "$result"
 fi
 
-# nested subshells
-result=$("$FORTSH_BIN" -c '((echo deep))' 2>&1)
-if [ "$result" = "deep" ]; then
-    pass "nested subshells"
+# Note: (( )) is arithmetic syntax in bash, not nested subshell
+# Both bash and fortsh correctly treat this as arithmetic and error
+"$FORTSH_BIN" -c '((echo deep))' >/dev/null 2>&1
+fortsh_exit=$?
+bash -c '((echo deep))' >/dev/null 2>&1
+bash_exit=$?
+if [ "$fortsh_exit" -eq "$bash_exit" ]; then
+    pass "double paren arithmetic exit"
 else
-    fail "nested subshells" "deep" "$result"
+    fail "double paren arithmetic exit" "exit=$bash_exit" "exit=$fortsh_exit"
 fi
 
 # =====================================

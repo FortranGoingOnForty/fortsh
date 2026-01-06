@@ -57,7 +57,14 @@ contains
     ! Determine if this is a '[' command and calculate effective token count
     is_bracket_cmd = (trim(cmd%tokens(1)) == '[')
     if (is_bracket_cmd) then
-      ! For '[' commands, ignore the closing ']'
+      ! For '[' commands, verify the closing ']' is present
+      ! DEBUG removed
+      if (trim(cmd%tokens(cmd%num_tokens)) /= ']') then
+        write(error_unit, '(a)') '[: missing `]'''
+        shell%last_exit_status = 2  ! POSIX: syntax error returns 2
+        return
+      end if
+      ! Ignore the closing ']'
       effective_num_tokens = cmd%num_tokens - 1
     else
       effective_num_tokens = cmd%num_tokens
@@ -258,10 +265,21 @@ contains
           ! Strip outer parentheses and recursively evaluate
           sub_cmd = cmd  ! Copy all fields
           sub_cmd%tokens(1) = cmd%tokens(1)  ! Keep the original command (test or [)
-          sub_cmd%num_tokens = cmd%num_tokens - 2
-          do i = 2, sub_cmd%num_tokens
-            sub_cmd%tokens(i) = cmd%tokens(i + 1)
-          end do
+          if (is_bracket_cmd) then
+            ! For [ ], we remove ( and ) but keep [ and ]
+            ! Original: [ ( expr ) ] -> New: [ expr ]
+            sub_cmd%num_tokens = cmd%num_tokens - 2
+            do i = 2, sub_cmd%num_tokens - 1
+              sub_cmd%tokens(i) = cmd%tokens(i + 1)
+            end do
+            sub_cmd%tokens(sub_cmd%num_tokens) = ']'  ! Keep closing bracket
+          else
+            ! For test, just remove ( and )
+            sub_cmd%num_tokens = cmd%num_tokens - 2
+            do i = 2, sub_cmd%num_tokens
+              sub_cmd%tokens(i) = cmd%tokens(i + 1)
+            end do
+          end if
           call execute_test_command(sub_cmd, shell)
           return
         end if
