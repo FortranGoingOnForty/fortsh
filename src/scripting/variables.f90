@@ -15,7 +15,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: name, value
     integer, intent(in), optional :: value_length
-    integer :: i, empty_slot, iostat, actual_len
+    integer :: i, empty_slot, iostat, actual_len, depth
 
 
     empty_slot = -1
@@ -25,6 +25,21 @@ contains
       actual_len = value_length
     else
       actual_len = len_trim(value)
+    end if
+
+    ! First check local variables - if variable exists in current function scope, update it there
+    if (shell%function_depth > 0) then
+      depth = shell%function_depth
+      if (depth <= size(shell%local_var_counts)) then
+        do i = 1, shell%local_var_counts(depth)
+          if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+            ! Found existing local variable - update it
+            shell%local_vars(depth, i)%value = value(1:actual_len)
+            shell%local_vars(depth, i)%value_len = actual_len
+            return
+          end if
+        end do
+      end if
     end if
 
     ! Handle special built-in variables
@@ -63,6 +78,28 @@ contains
         shell%ifs_len = actual_len
         ! Don't return - continue to add IFS to variables array too
         ! This allows checking if IFS was explicitly set vs using default
+      case ('PWD')
+        ! Update shell%cwd when PWD is set
+        shell%cwd = value(1:min(actual_len, len(shell%cwd)))
+        ! Also update environment for child processes
+        if (.not. set_environment_var('PWD', trim(shell%cwd))) then
+          ! Silently ignore errors
+        end if
+        return
+      case ('OLDPWD')
+        ! Update shell%oldpwd when OLDPWD is set
+        shell%oldpwd = value(1:min(actual_len, len(shell%oldpwd)))
+        ! Also update environment for child processes
+        if (.not. set_environment_var('OLDPWD', trim(shell%oldpwd))) then
+          ! Silently ignore errors
+        end if
+        return
+      case ('PATH')
+        ! PATH must ALWAYS update environment so child processes use new PATH
+        if (.not. set_environment_var('PATH', value(1:actual_len))) then
+          ! Silently ignore errors
+        end if
+        ! Don't return - continue to store in variables array too
       case ('HISTFILE')
         shell%histfile = value
         return
@@ -85,7 +122,8 @@ contains
       if (trim(shell%variables(i)%name) == trim(name)) then
         ! Check if variable is readonly
         if (shell%variables(i)%readonly) then
-          write(error_unit, '(a)') 'sh: ' // trim(name) // ': readonly variable'
+          write(error_unit, '(a,i0,a)') 'fortsh: line ', shell%current_line_number, ': ' // &
+                                        trim(name) // ': readonly variable'
           shell%last_exit_status = 1  ! POSIX: readonly assignment failure returns 1
           ! POSIX: In non-interactive shells, stop execution after readonly violation
           if (.not. shell%is_interactive) then
@@ -148,7 +186,7 @@ contains
     ! Handle special variables
     select case (trim(name))
       case ('$')
-        write(value, '(i15)') shell%shell_pid
+        write(value, '(i0)') shell%shell_pid
         return
       case ('!')
         write(value, '(i15)') shell%last_bg_pid
@@ -168,7 +206,7 @@ contains
         value = get_shell_option_flags(shell)
         return
       case ('PPID')
-        write(value, '(i15)') shell%parent_pid
+        write(value, '(i0)') int(shell%parent_pid)
         return
       case ('UID')
         write(value, '(i15)') shell%uid
@@ -191,7 +229,7 @@ contains
         call get_seconds_since_start(shell, value)
         return
       case ('LINENO')
-        write(value, '(i15)') shell%current_line_number
+        write(value, '(i0)') shell%current_line_number
         return
       case ('#')
         ! Number of positional parameters
@@ -383,8 +421,8 @@ contains
         var_len = len_trim(shell%shell_name)
         return
       case ('$')
-        write(temp_value, '(i15)') shell%shell_pid
-        var_len = len_trim(adjustl(temp_value))
+        write(temp_value, '(i0)') shell%shell_pid
+        var_len = len_trim(temp_value)
         return
       case ('PPID')
         write(temp_value, '(i15)') shell%parent_pid
@@ -1492,10 +1530,11 @@ contains
 
     if (as_single_word) then
       ! Use first character of IFS as separator for $*
+      ! POSIX: If IFS is empty (set to ""), no separator is used
       if (len_trim(shell%ifs) > 0) then
         separator = shell%ifs(1:1)
       else
-        separator = ' '
+        separator = char(0)  ! Use NUL to indicate no separator
       end if
     else
       ! Use space for $@ (will be properly quoted during expansion)
@@ -1504,7 +1543,7 @@ contains
 
     pos = 1
     do i = 1, shell%num_positional
-      if (i > 1) then
+      if (i > 1 .and. separator /= char(0)) then
         result(pos:pos) = separator
         pos = pos + 1
       end if
@@ -1565,11 +1604,27 @@ contains
     flags = ''
     pos = 1
 
-    ! Hashall is enabled by default in most shells (uppercase H for visibility in tests)
-    flags(pos:pos) = 'H'
-    pos = pos + 1
-
     ! Build option flags string from shell options
+    ! Order follows bash convention for common flags: h, i, m, B, H, s, then others
+    ! h for hashall (enabled by default in most shells)
+    flags(pos:pos) = 'h'
+    pos = pos + 1
+    if (shell%is_interactive) then
+      flags(pos:pos) = 'i'
+      pos = pos + 1
+    end if
+    if (shell%option_monitor) then
+      flags(pos:pos) = 'm'
+      pos = pos + 1
+    end if
+    ! B for braceexpand (bash extension, enabled by default)
+    flags(pos:pos) = 'B'
+    pos = pos + 1
+    ! c flag when running in command mode (-c)
+    if (shell%in_command_mode) then
+      flags(pos:pos) = 'c'
+      pos = pos + 1
+    end if
     if (shell%option_allexport) then
       flags(pos:pos) = 'a'
       pos = pos + 1
@@ -1578,8 +1633,8 @@ contains
       flags(pos:pos) = 'e'
       pos = pos + 1
     end if
-    if (shell%option_monitor) then
-      flags(pos:pos) = 'm'
+    if (shell%option_noglob) then
+      flags(pos:pos) = 'f'
       pos = pos + 1
     end if
     if (shell%option_nounset) then
@@ -1596,10 +1651,6 @@ contains
     end if
     if (shell%option_noclobber) then
       flags(pos:pos) = 'C'
-      pos = pos + 1
-    end if
-    if (shell%is_interactive) then
-      flags(pos:pos) = 'i'
       pos = pos + 1
     end if
   end function

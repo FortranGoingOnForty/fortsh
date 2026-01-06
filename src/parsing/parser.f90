@@ -1237,16 +1237,28 @@ contains
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
     logical :: is_quoted, is_single_quoted
+    logical :: escapes_already_processed  ! True if lexer already processed escapes
 
     ! Check if token was originally quoted (from lexer metadata or token inspection)
     is_quoted = .false.
     is_single_quoted = .false.
+    escapes_already_processed = .false.
 
     ! Use the passed parameter if provided, otherwise fall back to checking the token
     if (present(was_quoted_in)) then
       is_quoted = was_quoted_in
       ! We don't track single vs double quotes in metadata, assume double if quoted
       is_single_quoted = .false.
+      ! If was_quoted_in=true but token doesn't have outer quotes, the new lexer
+      ! already stripped quotes and processed escapes - don't re-process them
+      if (is_quoted .and. len_trim(token) >= 2) then
+        if (.not. (token(1:1) == '"' .and. token(len_trim(token):len_trim(token)) == '"')) then
+          escapes_already_processed = .true.
+        end if
+      else if (is_quoted .and. len_trim(token) < 2) then
+        ! Short quoted token without surrounding quotes - escapes were processed
+        escapes_already_processed = .true.
+      end if
     else
       ! Legacy: check if token still has quotes (for backward compatibility)
       if (len_trim(token) >= 2) then
@@ -1266,14 +1278,28 @@ contains
     end if
 
     ! For double-quoted tokens that are all whitespace (no special chars),
-    ! return a single space to preserve the whitespace argument
-    ! This handles cases like " " where len_trim would be 0
-    ! We can't determine exact whitespace count, so return at least one space
+    ! return the whitespace to preserve the argument
+    ! This handles cases like " " or "   " where len_trim would be 0
+    ! Now that executor passes correct token length, we preserve exact whitespace count
     if (is_quoted .and. len_trim(token) == 0 .and. len(token) > 0) then
-      ! Token is all whitespace - return a single space
-      ! (This preserves the argument while avoiding the len_trim=0 issue in exec_child)
-      expanded = ' '
-      return
+      ! Check if this is truly a whitespace token vs a token with quotes at boundaries
+      block
+        ! If token has quotes at boundaries, don't count them as content - let normal processing handle it
+        if (len(token) >= 2) then
+          if ((token(1:1) == '"' .and. token(len(token):len(token)) == '"') .or. &
+              (token(1:1) == "'" .and. token(len(token):len(token)) == "'")) then
+            ! Token is just quotes with possibly empty content - let normal processing handle it
+          else
+            ! Token is all whitespace (no quotes) - return the whitespace exactly as-is
+            expanded = token
+            return
+          end if
+        else
+          ! Short token that's all whitespace - return it as-is
+          expanded = token
+          return
+        end if
+      end block
     end if
 
     ! Apply brace expansion ONLY if token is not quoted
@@ -1287,23 +1313,78 @@ contains
     result = ''
     i = 1
     j = 1
-    end_pos = len_trim(working_token)
+    ! For quoted tokens, use len(token) to preserve trailing whitespace
+    ! For unquoted tokens, use len_trim() to skip padding
+    if (is_quoted) then
+      end_pos = len(token)  ! Use actual passed token length, not buffer size
+      ! If token has actual quote characters (not sentinels), skip them
+      ! This handles tokens from the old parser path which don't use sentinels
+      if (end_pos >= 2) then
+        if (working_token(1:1) == '"' .and. working_token(end_pos:end_pos) == '"') then
+          i = 2  ! Skip opening quote
+          end_pos = end_pos - 1  ! Skip closing quote
+        end if
+      end if
+    else
+      end_pos = len_trim(working_token)
+    end if
+
+    ! Track if we're inside single-quoted literal region (between char(2) markers)
+    block
+    logical :: in_single_quote_literal
+    in_single_quote_literal = .false.
 
     do while (i <= end_pos)
+      ! Check for single-quote literal START sentinel (char(2))
+      if (working_token(i:i) == char(2)) then
+        in_single_quote_literal = .true.
+        i = i + 1
+        cycle
+      end if
+
+      ! Check for single-quote literal END sentinel (char(3))
+      if (working_token(i:i) == char(3)) then
+        in_single_quote_literal = .false.
+        i = i + 1
+        cycle
+      end if
+
+      ! In single-quoted literal region, copy everything literally (no expansion)
+      if (in_single_quote_literal) then
+        result(j:j) = working_token(i:i)
+        i = i + 1
+        j = j + 1
+        cycle
+      end if
+
+      ! Check for double-quote boundary sentinel (char(1)) - skip it
+      if (working_token(i:i) == char(1)) then
+        i = i + 1
+        cycle
+      end if
+
       ! Check for backslash escape
-      ! Handle \$ even outside quotes since lexer may have already removed quotes
+      ! Handle \$ and \` even outside quotes since lexer keeps both chars for these
       if (working_token(i:i) == '\' .and. i < end_pos) then
         if (working_token(i+1:i+1) == '$') then
-          ! \$ -> literal $
+          ! \$ -> literal $ (lexer keeps both chars, we process here)
           i = i + 1  ! Skip backslash
           result(j:j) = '$'
           i = i + 1
           j = j + 1
           cycle
-        else if (is_quoted .and. .not. is_single_quoted) then
-          ! In double quotes, backslash also escapes: ` " \ and newline
-          if (working_token(i+1:i+1) == '`' .or. &
-              working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
+        else if (working_token(i+1:i+1) == '`') then
+          ! \` -> literal ` (lexer keeps both chars, we process here)
+          i = i + 1  ! Skip backslash
+          result(j:j) = '`'
+          i = i + 1
+          j = j + 1
+          cycle
+        else if (is_quoted .and. .not. is_single_quoted .and. .not. escapes_already_processed) then
+          ! In double quotes, backslash also escapes: " \ and newline
+          ! BUT skip this if lexer already processed escapes (new lexer path)
+          ! Note: \$ and \` are handled above because lexer keeps both chars for them
+          if (working_token(i+1:i+1) == '"' .or. working_token(i+1:i+1) == '\') then
             ! Skip the backslash and add the escaped character
             i = i + 1
             result(j:j) = working_token(i:i)
@@ -1315,9 +1396,11 @@ contains
         ! Otherwise, keep the backslash (it's not escaping anything special)
       end if
 
-      if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ')) then
+      ! POSIX: Tilde expansion is NOT performed inside double quotes
+      if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ') &
+          .and. .not. is_quoted) then
         ! Tilde expansion
-        call process_tilde_expansion(working_token, i, result, j)
+        call process_tilde_expansion(working_token, i, result, j, shell)
       else if (working_token(i:i) == '$' .and. i < len_trim(working_token)) then
         i = i + 1
         
@@ -1329,7 +1412,8 @@ contains
           j = j + len_trim(pid_str)
           i = i + 1
         else if (working_token(i:i) == '$') then
-          write(pid_str, '(i15)') c_getpid()
+          ! Use shell%shell_pid (set at startup) so $$ returns same value in subshells
+          write(pid_str, '(i0)') shell%shell_pid
           pid_str = adjustl(pid_str)  ! Left-justify to remove leading spaces
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
@@ -1381,13 +1465,30 @@ contains
           end if
           i = i + 1
         else if (working_token(i:i) == '_') then
-          ! $_ - last argument of previous command
-          var_value = get_shell_variable(shell, '_')
-          if (len_trim(var_value) > 0) then
-            result(j:j+len_trim(var_value)-1) = trim(var_value)
-            j = j + len_trim(var_value)
+          ! Check if this is $_ alone or $_varname
+          if (i+1 <= len_trim(working_token) .and. &
+              (is_alnum(working_token(i+1:i+1)) .or. working_token(i+1:i+1) == '_')) then
+            ! $_varname - underscore-prefixed variable name
+            var_start = i
+            do while (i <= len_trim(working_token) .and. &
+                      (is_alnum(working_token(i:i)) .or. working_token(i:i) == '_'))
+              i = i + 1
+            end do
+            var_name = working_token(var_start:i-1)
+            var_value = get_shell_variable(shell, trim(var_name))
+            if (len_trim(var_value) > 0) then
+              result(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
+            end if
+          else
+            ! $_ - last argument of previous command
+            var_value = get_shell_variable(shell, '_')
+            if (len_trim(var_value) > 0) then
+              result(j:j+len_trim(var_value)-1) = trim(var_value)
+              j = j + len_trim(var_value)
+            end if
+            i = i + 1
           end if
-          i = i + 1
         else if (working_token(i:i) >= '0' .and. working_token(i:i) <= '9') then
           ! $0, $1, $2, ... - positional parameters
           var_name = working_token(i:i)
@@ -1510,7 +1611,7 @@ contains
               else
                 ! Variable is not set - check if set -u is enabled
                 if (check_nounset(shell, trim(var_name))) then
-                  shell%last_exit_status = 127  ! POSIX: expansion errors return 127
+                  shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
                   shell%fatal_expansion_error = .true.
                   shell%running = .false.  ! Stop shell execution
                   expanded = ''
@@ -1545,12 +1646,16 @@ contains
           result(j:j) = '`'
           j = j + 1
         end if
+      else if (working_token(i:i) == char(1)) then
+        ! Skip sentinel character (marks quote boundary from lexer)
+        i = i + 1
       else
         result(j:j) = working_token(i:i)
         i = i + 1
         j = j + 1
       end if
     end do
+    end block  ! End of in_single_quote_literal block
 
     ! POSIX: Quote removal does NOT apply to the results of parameter expansion
     ! Only apply quote removal to quotes that were literally in the command, not in variable values
@@ -1907,10 +2012,17 @@ contains
       original_tokens(i) = cmd%tokens(i)
     end do
 
-    ! Don't glob expand tokens that were escaped or have backslashes
+    ! Don't glob expand tokens that were quoted, escaped, or have backslashes
     ! Check metadata if available, otherwise fall back to checking for backslash
     has_expandable = .false.
     do i = 1, cmd%num_tokens
+      ! Skip if token was quoted (prevents glob expansion per POSIX)
+      if (allocated(cmd%token_quoted)) then
+        if (i <= size(cmd%token_quoted) .and. cmd%token_quoted(i)) then
+          cycle  ! Skip this token - it was quoted
+        end if
+      end if
+
       ! Skip if token was escaped (metadata available) or has backslash (fallback)
       if (allocated(cmd%token_escaped)) then
         ! Use metadata if available
@@ -1937,18 +2049,39 @@ contains
       return
     end if
 
-    ! Expand glob patterns
-    call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count)
+    ! Expand glob patterns (pass token_quoted to prevent glob expansion on quoted tokens)
+    if (allocated(cmd%token_quoted)) then
+      call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count, cmd%token_quoted)
+    else
+      call expand_glob_patterns(original_tokens, cmd%num_tokens, expanded_tokens, expanded_count)
+    end if
     
     ! Replace command tokens with expanded ones
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    
+
     if (expanded_count > 0) then
       allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(expanded_count))
       do i = 1, expanded_count
         cmd%tokens(i) = expanded_tokens(i)
       end do
       cmd%num_tokens = expanded_count
+
+      ! Update token_lengths to match new tokens (use trimmed length)
+      if (allocated(cmd%token_lengths)) deallocate(cmd%token_lengths)
+      allocate(cmd%token_lengths(expanded_count))
+      do i = 1, expanded_count
+        cmd%token_lengths(i) = len_trim(expanded_tokens(i))
+      end do
+
+      ! Reset token_quoted and token_escaped for expanded tokens
+      ! (glob-expanded filenames are not quoted)
+      if (allocated(cmd%token_quoted)) deallocate(cmd%token_quoted)
+      allocate(cmd%token_quoted(expanded_count))
+      cmd%token_quoted = .false.
+
+      if (allocated(cmd%token_escaped)) deallocate(cmd%token_escaped)
+      allocate(cmd%token_escaped(expanded_count))
+      cmd%token_escaped = .false.
     else
       ! No expansion occurred - restore original
       allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(cmd%num_tokens))
@@ -1956,7 +2089,7 @@ contains
         cmd%tokens(i) = original_tokens(i)
       end do
     end if
-    
+
     ! Cleanup
     if (allocated(expanded_tokens)) deallocate(expanded_tokens)
     if (allocated(original_tokens)) deallocate(original_tokens)
@@ -1987,6 +2120,53 @@ contains
           in_single_quote = .not. in_single_quote
         else if (input(i:i) == '"' .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
           in_double_quote = .not. in_double_quote
+        end if
+      end if
+
+      ! Inside backticks: handle escaped backticks as nested substitution delimiters
+      ! POSIX: \` inside backticks means start/end of nested command substitution
+      if (in_backticks .and. input(i:i) == backslash .and. i < len_trim(input)) then
+        if (input(i+1:i+1) == '`') then
+          ! Escaped backtick inside backticks = nested command substitution
+          ! Convert to $() for the nested level
+          temp_result(j:j+1) = '$('
+          j = j + 2
+          i = i + 2
+          ! Find the matching closing \` and convert it too
+          block
+            integer :: k, nest_level
+            nest_level = 1
+            k = i
+            do while (k <= len_trim(input) .and. nest_level > 0)
+              if (input(k:k) == backslash .and. k < len_trim(input) .and. input(k+1:k+1) == '`') then
+                nest_level = nest_level - 1
+                if (nest_level == 0) then
+                  ! Copy everything up to here, then add closing )
+                  do while (i < k)
+                    temp_result(j:j) = input(i:i)
+                    j = j + 1
+                    i = i + 1
+                  end do
+                  temp_result(j:j) = ')'
+                  j = j + 1
+                  i = k + 2  ! Skip the \`
+                  exit
+                else
+                  k = k + 2
+                end if
+              else
+                k = k + 1
+              end if
+            end do
+          end block
+          cycle
+        else if (input(i+1:i+1) == '$' .or. input(i+1:i+1) == backslash .or. &
+                 input(i+1:i+1) == char(10)) then
+          ! Other escapes: consume backslash, copy the character
+          temp_result(j:j) = input(i+1:i+1)
+          j = j + 1
+          i = i + 2
+          cycle
         end if
       end if
 
@@ -2025,19 +2205,25 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=4096) :: temp_output
+    integer :: actual_len
 
     ! POSIX: errexit should not trigger in command substitution
     shell%in_command_substitution = .true.
 
     ! Execute in current shell context to preserve functions, variables, etc.
-    call execute_command_and_capture(shell, command, temp_output)
+    call execute_command_and_capture(shell, command, temp_output, actual_len)
 
     shell%in_command_substitution = .false.
 
-    ! Allocate and copy result
-    output = trim(temp_output)
+    ! Allocate and copy result, preserving exact length (don't use trim!)
+    if (actual_len > 0) then
+      allocate(character(len=actual_len) :: output)
+      output = temp_output(1:actual_len)
+    else
+      output = ''
+    end if
 
-    ! Remove trailing newline for single-line output (bash behavior)
+    ! Remove trailing newlines (but NOT other whitespace like spaces)
     do while (len(output) > 0 .and. output(len(output):len(output)) == char(10))
       output = output(:len(output)-1)
     end do
@@ -2086,8 +2272,8 @@ contains
     character(len=:), allocatable :: output
     integer :: i
 
-    ! Try matching from shortest to longest
-    do i = 1, len_trim(text)
+    ! Try matching from shortest to longest - start at 0 for empty prefix
+    do i = 0, len_trim(text)
       if (shell_pattern_match(text(1:i), trim(pattern))) then
         output = text(i+1:)
         return
@@ -2119,8 +2305,8 @@ contains
     integer :: i, text_len
 
     text_len = len_trim(text)
-    ! Try matching from shortest to longest
-    do i = text_len, 1, -1
+    ! Try matching from shortest to longest - include text_len+1 for empty suffix
+    do i = text_len + 1, 1, -1
       if (shell_pattern_match(text(i:text_len), trim(pattern))) then
         output = text(1:i-1)
         return
@@ -2870,7 +3056,7 @@ contains
       ! Check if variable is unset and set -u is enabled
       if (.not. var_is_set) then
         if (check_nounset(shell, trim(var_name))) then
-          shell%last_exit_status = 127  ! POSIX: expansion errors return 127
+          shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
           shell%fatal_expansion_error = .true.
           shell%running = .false.  ! Stop shell execution
           result_value = ''
@@ -2942,7 +3128,7 @@ contains
         write(error_unit, '(A,A,A,A,A)') 'fortsh: ', trim(var_name), ': ', &
               trim(default_value), ' (parameter null or not set)'
         result_value = ''
-        shell%last_exit_status = 127
+        shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
         shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else
@@ -2957,7 +3143,7 @@ contains
           write(error_unit, '(A,A,A)') 'fortsh: ', trim(var_name), ': parameter not set'
         end if
         result_value = ''
-        shell%last_exit_status = 127
+        shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
         shell%fatal_expansion_error = .true.  ! Signal to abort execution
         return
       else
@@ -2970,19 +3156,59 @@ contains
     end if
   end subroutine
 
-  subroutine process_tilde_expansion(token, pos, result, result_pos)
+  subroutine process_tilde_expansion(token, pos, result, result_pos, shell)
     character(len=*), intent(in) :: token
     integer, intent(inout) :: pos, result_pos
     character(len=*), intent(inout) :: result
+    type(shell_state_t), intent(in) :: shell
 
     character(len=MAX_TOKEN_LEN) :: username, home_path
-    character(len=:), allocatable :: home_dir
+    character(len=:), allocatable :: home_dir, shell_var
     integer :: start_pos
-    
+
     ! Skip the tilde
     pos = pos + 1
-    
-    if (pos > len_trim(token) .or. token(pos:pos) == '/' .or. token(pos:pos) == ' ') then
+
+    ! POSIX: ~+ expands to PWD, ~- expands to OLDPWD
+    if (pos <= len_trim(token) .and. token(pos:pos) == '+') then
+      ! ~+ - expand to PWD (check shell variable first, then environment)
+      shell_var = get_shell_variable(shell, 'PWD')
+      if (len_trim(shell_var) > 0) then
+        result(result_pos:result_pos+len_trim(shell_var)-1) = trim(shell_var)
+        result_pos = result_pos + len_trim(shell_var)
+      else
+        home_dir = get_environment_var('PWD')
+        if (allocated(home_dir) .and. len(home_dir) > 0) then
+          result(result_pos:result_pos+len(home_dir)-1) = home_dir
+          result_pos = result_pos + len(home_dir)
+        else
+          ! Fallback: return ~+ literally
+          result(result_pos:result_pos+1) = '~+'
+          result_pos = result_pos + 2
+        end if
+      end if
+      pos = pos + 1  ! Skip the +
+      return
+    else if (pos <= len_trim(token) .and. token(pos:pos) == '-') then
+      ! ~- - expand to OLDPWD (check shell variable first, then environment)
+      shell_var = get_shell_variable(shell, 'OLDPWD')
+      if (len_trim(shell_var) > 0) then
+        result(result_pos:result_pos+len_trim(shell_var)-1) = trim(shell_var)
+        result_pos = result_pos + len_trim(shell_var)
+      else
+        home_dir = get_environment_var('OLDPWD')
+        if (allocated(home_dir) .and. len(home_dir) > 0) then
+          result(result_pos:result_pos+len(home_dir)-1) = home_dir
+          result_pos = result_pos + len(home_dir)
+        else
+          ! Fallback: return ~- literally
+          result(result_pos:result_pos+1) = '~-'
+          result_pos = result_pos + 2
+        end if
+      end if
+      pos = pos + 1  ! Skip the -
+      return
+    else if (pos > len_trim(token) .or. token(pos:pos) == '/' .or. token(pos:pos) == ' ') then
       ! Simple ~ expansion - use HOME environment variable
       home_dir = get_environment_var('HOME')
       if (allocated(home_dir) .and. len(home_dir) > 0) then

@@ -188,11 +188,14 @@ else
     fail ">&2 redirects stdout to stderr" "error" "$result"
 fi
 
+# Note: matches bash - POSIX redirections processed left-to-right
+# 1>&2 copies fd2 to fd1, then 2>/dev/null redirects fd2 to null
+# fd1 still points to original fd2 (stderr), so output appears
 result=$("$FORTSH_BIN" -c 'echo error 1>&2 2>/dev/null' 2>&1)
-if [ -z "$result" ]; then
-    pass "1>&2 with stderr suppressed"
+if [ "$result" = "error" ]; then
+    pass "1>&2 with stderr suppressed (matches bash)"
 else
-    fail "1>&2 with stderr suppressed" "(empty)" "$result"
+    fail "1>&2 with stderr suppressed (matches bash)" "error" "$result"
 fi
 
 # =====================================
@@ -683,12 +686,14 @@ else
     fail "Redirect stdout to stderr" "test" "$result"
 fi
 
-# Close stdout (write to stderr)
+# Close stdout after redirecting to stderr
+# Note: matches bash - >&2 redirects stdout to stderr, then 1>&- closes fd1
+# The write to closed fd1 fails with "Bad file descriptor"
 result=$("$FORTSH_BIN" -c 'echo test >&2 1>&-' 2>&1)
-if [ "$result" = "test" ]; then
-    pass "Close stdout, write to stderr"
+if echo "$result" | grep -q "Bad file descriptor"; then
+    pass "Close stdout after redirect (matches bash - write error)"
 else
-    fail "Close stdout, write to stderr" "test" "$result"
+    fail "Close stdout after redirect (matches bash - write error)" "Bad file descriptor error" "$result"
 fi
 
 # =====================================

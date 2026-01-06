@@ -50,6 +50,7 @@ module shell_types
   integer, parameter :: REDIR_DUP_OUT = 8 ! >&n
   integer, parameter :: REDIR_CLOSE = 9   ! n>&-
   integer, parameter :: REDIR_READWRITE = 10  ! <> file (open for read/write)
+  integer, parameter :: REDIR_HERE_STRING = 11  ! <<< string (here-string)
 
   type :: redirection_t
     integer :: type = 0           ! REDIR_* constant
@@ -94,8 +95,10 @@ module shell_types
   type :: token_t
     integer :: token_type           ! TOKEN_* constant
     character(len=MAX_TOKEN_LEN) :: value
+    integer :: value_length = 0     ! Actual content length (excludes fixed-length padding)
     integer :: start_pos
     integer :: end_pos
+    integer :: line = 1             ! Line number (for LINENO tracking)
     logical :: quoted               ! DEPRECATED - use quote_type instead
     logical :: escaped              ! Token had backslash escape (don't glob expand)
     integer :: quote_type = QUOTE_NONE  ! QUOTE_* constant - tracks quote style
@@ -278,6 +281,7 @@ module shell_types
     integer :: term_cols = 80
     logical :: term_supports_color = .true.  ! Terminal supports ANSI escape codes
     logical :: is_interactive = .false.
+    logical :: in_command_mode = .false.  ! Running with -c flag
     logical :: in_background = .false.
     logical :: running = .true.
     logical :: fatal_expansion_error = .false.  ! Set by ${VAR?error} to abort execution
@@ -392,7 +396,7 @@ module shell_types
     integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting
     character(len=256) :: ifs = ' \t\n'       ! $IFS (internal field separator)
-    integer :: ifs_len = 0                    ! Actual length of IFS (preserves trailing spaces)
+    integer :: ifs_len = -1                   ! -1 = unset (use default), 0 = empty, >0 = set
     ! History control
     character(len=MAX_PATH_LEN) :: histfile = ''  ! $HISTFILE (history file path)
     integer :: histsize = 1000                ! $HISTSIZE (max commands in memory)

@@ -57,6 +57,7 @@ contains
     character(len=4096) :: output
 
     character(len=4096) :: processed_input
+    integer :: actual_len
 
     output = ''
     processed_input = input
@@ -67,13 +68,18 @@ contains
     ! Execute the final command in the current shell context
     ! POSIX: errexit should not trigger in command substitution
     shell%in_command_substitution = .true.
-    call execute_command_and_capture(shell, processed_input, output)
+    call execute_command_and_capture(shell, processed_input, output, actual_len)
     shell%in_command_substitution = .false.
 
-    ! Remove trailing newlines
-    do while (len_trim(output) > 0 .and. output(len_trim(output):len_trim(output)) == char(10))
-      output = output(:len_trim(output)-1)
+    ! Remove trailing newlines only (preserve trailing spaces!)
+    ! Use actual_len to track content, not len_trim which strips whitespace
+    do while (actual_len > 0 .and. output(actual_len:actual_len) == char(10))
+      actual_len = actual_len - 1
     end do
+    ! Clear any content beyond actual_len
+    if (actual_len < 4096) then
+      output(actual_len+1:) = ''
+    end if
   end function
 
   subroutine process_nested_substitutions(shell, cmd_str)

@@ -7,7 +7,8 @@ module executor
   use builtin_interface
   use parser
   use job_control
-  use variables, only: var_set_shell_variable => set_shell_variable, set_array_variable, set_array_element
+  use variables, only: var_set_shell_variable => set_shell_variable, set_array_variable, set_array_element, &
+                       get_shell_variable
   use control_flow
   use error_handling
   use performance
@@ -392,6 +393,13 @@ contains
 
     if (cmd%num_tokens == 0) return
 
+    ! Check for empty command (e.g., from empty command substitution result)
+    if (len_trim(cmd%tokens(1)) == 0) then
+      ! Empty command - nothing to execute
+      ! Note: exit status from command substitution is preserved
+      return
+    end if
+
     ! Handle negation operator (!)
     negate_exit_status = .false.
 
@@ -541,12 +549,15 @@ contains
     if (.not. cmd%skip_expansion .and. &
         trim(cmd%tokens(1)) /= 'defun' .and. &
         .not. (index(cmd%tokens(1), '=') > 0 .and. index(cmd%tokens(1), '=') > 1)) then
+      ! Initialize token metadata if not set (for old parser path)
+      call init_token_metadata(cmd)
       call expand_tokens(cmd, shell)
     end if
 
     ! Check if parameter expansion error occurred (${VAR?error})
     if (shell%fatal_expansion_error) then
-      shell%fatal_expansion_error = .false.  ! Reset flag
+      ! NOTE: Don't reset flag here - let it propagate to subshell handler
+      ! The subshell code uses this flag to convert exit code 127 to 1 (bash behavior)
       ! End performance timing
       call end_timer('execute_single', exec_start_time, total_exec_time)
       ! POSIX: In non-interactive shells, exit the shell entirely
@@ -562,6 +573,14 @@ contains
       ! End performance timing
       call end_timer('execute_single', exec_start_time, total_exec_time)
       return  ! Abort command execution
+    end if
+
+    ! Check for empty command after expansion (e.g., $(exit 0) returns empty)
+    if (cmd%num_tokens > 0 .and. len_trim(cmd%tokens(1)) == 0) then
+      ! Empty command after expansion - nothing to execute
+      ! Note: exit status from command substitution is preserved
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      return
     end if
 
     ! Check for variable assignment (after expansion so ${...} is processed)
@@ -753,18 +772,55 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     integer :: saved_stdout, saved_stdin, saved_stderr
-    integer :: fd, ret, flags
+    integer :: fd, ret, flags, i
+    integer, target :: pipefd(2)
+    integer(c_size_t) :: bytes_written
     character(len=256), target :: c_filename
-    logical :: has_redirects
+    character(kind=c_char), target :: c_content(MAX_HEREDOC_LEN)
+    character(len=:), allocatable :: content_to_write, expanded_content
+    logical :: has_redirects, has_heredoc
+    ! Prefix assignment handling
+    character(len=256) :: saved_var_names(10), saved_var_values(10)
+    integer :: num_saved_vars, eq_pos, j
+    character(len=256) :: var_name, var_value
+    logical :: var_was_set(10)
+
+    ! Apply prefix assignments to shell variables (save old values first)
+    num_saved_vars = 0
+    do j = 1, cmd%num_prefix_assignments
+      eq_pos = index(cmd%prefix_assignments(j), '=')
+      if (eq_pos > 1) then
+        num_saved_vars = num_saved_vars + 1
+        var_name = cmd%prefix_assignments(j)(:eq_pos-1)
+        var_value = cmd%prefix_assignments(j)(eq_pos+1:)
+        saved_var_names(num_saved_vars) = trim(var_name)
+        ! Save old value (empty string if not set)
+        saved_var_values(num_saved_vars) = get_shell_variable(shell, trim(var_name))
+        var_was_set(num_saved_vars) = (len_trim(saved_var_values(num_saved_vars)) > 0)
+        ! Set new value
+        call var_set_shell_variable(shell, trim(var_name), trim(var_value))
+      end if
+    end do
 
     ! Check if we have any redirections
     has_redirects = allocated(cmd%output_file) .or. allocated(cmd%input_file) .or. &
                     allocated(cmd%error_file) .or. cmd%redirect_stderr_to_stdout .or. &
                     cmd%redirect_stdout_to_stderr
+    has_heredoc = allocated(cmd%heredoc_content) .or. allocated(cmd%here_string)
 
-    if (.not. has_redirects) then
+    if (.not. has_redirects .and. .not. has_heredoc) then
       ! No redirections, just execute the builtin normally
       call execute_builtin(cmd, shell)
+      ! Restore prefix assignment variables
+      do j = 1, num_saved_vars
+        if (var_was_set(j)) then
+          call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+        else
+          ! Variable wasn't set before, we should unset it
+          ! For now, just set to empty (proper unset would need more work)
+          call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+        end if
+      end do
       return
     end if
 
@@ -773,7 +829,50 @@ contains
     saved_stdin = c_dup(STDIN_FD)
     saved_stderr = c_dup(STDERR_FD)
 
-    ! Handle input redirection
+    ! Handle heredoc/here-string input (redirects stdin)
+    if (has_heredoc) then
+      ! Prepare content to write
+      if (allocated(cmd%here_string)) then
+        content_to_write = cmd%here_string // char(10)  ! Add newline
+      else if (allocated(cmd%heredoc_content)) then
+        ! Check if we should expand variables (unquoted delimiter)
+        if (.not. cmd%heredoc_quoted) then
+          ! Expand variables in heredoc content
+          call expand_variables(cmd%heredoc_content, expanded_content, shell)
+          if (allocated(expanded_content)) then
+            content_to_write = expanded_content
+          else
+            content_to_write = cmd%heredoc_content
+          end if
+        else
+          ! Quoted delimiter - use content as-is
+          content_to_write = cmd%heredoc_content
+        end if
+      end if
+
+      ! Create pipe and redirect stdin
+      if (allocated(content_to_write)) then
+        ret = c_pipe(c_loc(pipefd))
+        if (ret == 0) then
+          ! Convert content to C string
+          do i = 1, min(len(content_to_write), MAX_HEREDOC_LEN-1)
+            c_content(i) = content_to_write(i:i)
+          end do
+          c_content(min(len(content_to_write), MAX_HEREDOC_LEN-1)+1) = c_null_char
+
+          ! Write content to pipe
+          bytes_written = c_write(pipefd(2), c_loc(c_content), &
+                                 int(min(len(content_to_write), MAX_HEREDOC_LEN-1), c_size_t))
+
+          ! Close write end and redirect stdin to read end
+          ret = c_close(pipefd(2))
+          ret = c_dup2(pipefd(1), STDIN_FD)
+          ret = c_close(pipefd(1))
+        end if
+      end if
+    end if
+
+    ! Handle input redirection (file)
     if (allocated(cmd%input_file)) then
       c_filename = trim(cmd%input_file)//c_null_char
       fd = c_open(c_loc(c_filename), O_RDONLY, 0)
@@ -783,6 +882,14 @@ contains
       else
         write(error_unit, '(3a)') 'fortsh: cannot open input file: ', trim(cmd%input_file)
         shell%last_exit_status = 1
+        ! Restore prefix assignment variables before returning
+        do j = 1, num_saved_vars
+          if (var_was_set(j)) then
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+          else
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+          end if
+        end do
         return
       end if
     end if
@@ -798,6 +905,14 @@ contains
           ! Restore stdin before returning
           ret = c_dup2(saved_stdin, STDIN_FD)
           ret = c_close(saved_stdin)
+          ! Restore prefix assignment variables before returning
+          do j = 1, num_saved_vars
+            if (var_was_set(j)) then
+              call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+            else
+              call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+            end if
+          end do
           return
         end if
       end if
@@ -819,6 +934,14 @@ contains
         ! Restore stdin before returning
         ret = c_dup2(saved_stdin, STDIN_FD)
         ret = c_close(saved_stdin)
+        ! Restore prefix assignment variables before returning
+        do j = 1, num_saved_vars
+          if (var_was_set(j)) then
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+          else
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+          end if
+        end do
         return
       end if
     end if
@@ -844,6 +967,14 @@ contains
         ret = c_dup2(saved_stdout, STDOUT_FD)
         ret = c_close(saved_stdin)
         ret = c_close(saved_stdout)
+        ! Restore prefix assignment variables before returning
+        do j = 1, num_saved_vars
+          if (var_was_set(j)) then
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+          else
+            call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+          end if
+        end do
         return
       end if
     end if
@@ -867,6 +998,16 @@ contains
     ret = c_close(saved_stdout)
     ret = c_close(saved_stdin)
     ret = c_close(saved_stderr)
+
+    ! Restore prefix assignment variables
+    do j = 1, num_saved_vars
+      if (var_was_set(j)) then
+        call var_set_shell_variable(shell, trim(saved_var_names(j)), trim(saved_var_values(j)))
+      else
+        ! Variable wasn't set before, set to empty
+        call var_set_shell_variable(shell, trim(saved_var_names(j)), '')
+      end if
+    end do
   end subroutine
 
   ! Execute ((expression)) arithmetic evaluation command
@@ -1224,6 +1365,8 @@ contains
     integer :: i, j, total_tokens
     character(len=:), allocatable :: expanded
     character(len=1024), allocatable :: temp_tokens(:)  ! Increased to match split_words length
+    integer, allocatable :: temp_token_lengths(:)  ! Track actual lengths of expanded tokens
+    logical, allocatable :: temp_token_quoted(:)  ! Track if original token was quoted
     logical :: is_format_string
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
     character(len=1024) :: split_words(30)
@@ -1231,9 +1374,14 @@ contains
     integer :: word_count, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
     logical :: is_double_bracket_cmd
+    logical :: was_originally_quoted
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
+    allocate(temp_token_lengths(cmd%num_tokens * 10))
+    allocate(temp_token_quoted(cmd%num_tokens * 10))
+    temp_token_lengths = 0
+    temp_token_quoted = .false.
     total_tokens = 0
 
     ! Check if this is a [[ ]] command - word splitting is NOT performed in [[ ]]
@@ -1273,19 +1421,96 @@ contains
     end if
 
     do i = 1, cmd%num_tokens
+      ! Track if this token was originally quoted (for preserving trailing whitespace)
+      was_originally_quoted = .false.
+      if (allocated(cmd%token_quoted) .and. i <= size(cmd%token_quoted)) then
+        was_originally_quoted = cmd%token_quoted(i)
+      else if (allocated(cmd%token_quote_type) .and. i <= size(cmd%token_quote_type)) then
+        was_originally_quoted = (cmd%token_quote_type(i) == QUOTE_SINGLE .or. &
+                                 cmd%token_quote_type(i) == QUOTE_DOUBLE)
+      end if
+
+      ! POSIX: Special handling for "$@" - expands to separate quoted arguments
+      ! When a double-quoted token is exactly $@ or just contains $@ as the whole expansion,
+      ! we need to add each positional parameter as a separate token
+      if (allocated(cmd%token_quote_type) .and. &
+          i <= size(cmd%token_quote_type) .and. &
+          cmd%token_quote_type(i) == QUOTE_DOUBLE .and. &
+          trim(cmd%tokens(i)) == '$@') then
+        ! "$@" - add each positional parameter as a separate quoted token
+        do j = 1, shell%num_positional
+          total_tokens = total_tokens + 1
+          if (total_tokens <= size(temp_tokens)) then
+            temp_tokens(total_tokens) = trim(shell%positional_params(j))
+            temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j))
+            temp_token_quoted(total_tokens) = .true.  ! Positional params from "$@" are quoted
+          end if
+        end do
+        cycle  ! Skip normal token processing
+      end if
+
       ! Check if this token was single-quoted (no expansion)
       if (allocated(cmd%token_quote_type) .and. &
           i <= size(cmd%token_quote_type) .and. &
           cmd%token_quote_type(i) == QUOTE_SINGLE) then
-        ! Single quotes - no expansion, use literal value
-        expanded = cmd%tokens(i)
+        ! Single quotes - no expansion, use literal value but strip sentinels/quotes
+        ! Lexer uses char(2) for start sentinel and char(3) for end sentinel
+        ! Old parser path uses actual quote characters
+        block
+          character(len=:), allocatable :: stripped
+          integer :: strip_j, strip_k, strip_len, start_pos, end_pos
+          ! Use token_lengths to preserve trailing spaces if available
+          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+              cmd%token_lengths(i) > 0) then
+            strip_len = cmd%token_lengths(i)
+          else
+            strip_len = len_trim(cmd%tokens(i))
+          end if
+
+          ! Determine start and end positions, skipping outer quotes if present
+          start_pos = 1
+          end_pos = strip_len
+          if (strip_len >= 2) then
+            ! Check for actual quote characters at start and end (old parser path)
+            if (cmd%tokens(i)(1:1) == "'" .and. cmd%tokens(i)(strip_len:strip_len) == "'") then
+              start_pos = 2
+              end_pos = strip_len - 1
+            end if
+          end if
+
+          allocate(character(len=end_pos - start_pos + 1) :: stripped)
+          strip_k = 1
+          do strip_j = start_pos, end_pos
+            ! Skip single-quote sentinels (for new lexer path)
+            if (cmd%tokens(i)(strip_j:strip_j) /= char(2) .and. &
+                cmd%tokens(i)(strip_j:strip_j) /= char(3)) then
+              stripped(strip_k:strip_k) = cmd%tokens(i)(strip_j:strip_j)
+              strip_k = strip_k + 1
+            end if
+          end do
+          if (strip_k > 1) then
+            expanded = stripped(1:strip_k-1)
+          else
+            expanded = ''
+          end if
+        end block
       else
         ! No quotes or double quotes - perform expansion
         ! Pass was_quoted flag if token was double-quoted
         if (allocated(cmd%token_quote_type) .and. &
             i <= size(cmd%token_quote_type) .and. &
             cmd%token_quote_type(i) == QUOTE_DOUBLE) then
-          call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.true.)
+          ! For quoted tokens, use token_lengths to preserve trailing whitespace
+          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths)) then
+            if (cmd%token_lengths(i) > 0) then
+              call expand_variables(cmd%tokens(i)(1:cmd%token_lengths(i)), expanded, shell, was_quoted_in=.true.)
+            else
+              ! Empty double-quoted string "" - expand empty string, not full buffer
+              expanded = ''
+            end if
+          else
+            call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.true.)
+          end if
         else
           call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.false.)
         end if
@@ -1350,6 +1575,9 @@ contains
           total_tokens = total_tokens + 1
           if (total_tokens <= size(temp_tokens)) then
             temp_tokens(total_tokens) = split_words(j)
+            temp_token_lengths(total_tokens) = len_trim(split_words(j))
+            ! Split tokens from unquoted expansion are not quoted
+            temp_token_quoted(total_tokens) = .false.
           end if
         end do
       else
@@ -1372,6 +1600,14 @@ contains
         total_tokens = total_tokens + 1
         if (total_tokens <= size(temp_tokens)) then
           temp_tokens(total_tokens) = expanded
+          ! Track actual length of expanded token (use len for allocatable to get real length)
+          if (allocated(expanded)) then
+            temp_token_lengths(total_tokens) = len(expanded)
+          else
+            temp_token_lengths(total_tokens) = 0
+          end if
+          ! Preserve quoted status for trailing whitespace preservation
+          temp_token_quoted(total_tokens) = was_originally_quoted
         end if
       end if
     end do
@@ -1384,7 +1620,19 @@ contains
     end do
     cmd%num_tokens = total_tokens
 
+    ! Update token_lengths with actual expanded lengths
+    if (allocated(cmd%token_lengths)) deallocate(cmd%token_lengths)
+    allocate(cmd%token_lengths(total_tokens))
+    cmd%token_lengths(1:total_tokens) = temp_token_lengths(1:total_tokens)
+
+    ! Update token_quoted to preserve original quoted status
+    if (allocated(cmd%token_quoted)) deallocate(cmd%token_quoted)
+    allocate(cmd%token_quoted(total_tokens))
+    cmd%token_quoted(1:total_tokens) = temp_token_quoted(1:total_tokens)
+
     deallocate(temp_tokens)
+    deallocate(temp_token_lengths)
+    deallocate(temp_token_quoted)
   end subroutine
 
   subroutine execute_external(cmd, shell, original_input)
@@ -1400,6 +1648,13 @@ contains
     type(c_funptr) :: old_handler
 
     foreground = .not. cmd%background
+
+    ! Check for empty command before forking (e.g., from empty command substitution)
+    ! This preserves the exit status from the command substitution
+    if (cmd%num_tokens < 1 .or. len_trim(cmd%tokens(1)) == 0) then
+      ! Empty command - nothing to execute, preserve current exit status
+      return
+    end if
 
     ! CRITICAL: Re-ensure SIGCHLD is SIG_DFL before forking
     ! Something in interactive mode might be resetting it
@@ -2654,5 +2909,85 @@ contains
     ! Register our execute_completion_function as the callback
     call register_completion_executor(execute_completion_function)
   end subroutine init_completion_executor
+
+  ! Initialize token metadata arrays if not already set
+  ! This is needed for commands parsed by the old parser path which doesn't
+  ! populate these arrays. Inspects tokens to determine quote type and length.
+  subroutine init_token_metadata(cmd)
+    type(command_t), intent(inout) :: cmd
+    integer :: i, token_len
+    character(len=1) :: first_char, last_char
+
+    if (cmd%num_tokens == 0) return
+
+    ! Initialize token_quoted if not allocated
+    if (.not. allocated(cmd%token_quoted)) then
+      allocate(cmd%token_quoted(cmd%num_tokens))
+      cmd%token_quoted = .false.
+    end if
+
+    ! Initialize token_escaped if not allocated
+    if (.not. allocated(cmd%token_escaped)) then
+      allocate(cmd%token_escaped(cmd%num_tokens))
+      cmd%token_escaped = .false.
+    end if
+
+    ! Initialize token_quote_type if not allocated
+    if (.not. allocated(cmd%token_quote_type)) then
+      allocate(cmd%token_quote_type(cmd%num_tokens))
+      cmd%token_quote_type = QUOTE_NONE
+    end if
+
+    ! Initialize token_lengths if not allocated
+    if (.not. allocated(cmd%token_lengths)) then
+      allocate(cmd%token_lengths(cmd%num_tokens))
+      cmd%token_lengths = 0
+    end if
+
+    ! Inspect each token to determine quote type and length
+    do i = 1, cmd%num_tokens
+      token_len = len_trim(cmd%tokens(i))
+
+      ! If quote info isn't set, try to detect from token content
+      if (cmd%token_quote_type(i) == QUOTE_NONE .and. token_len >= 2) then
+        first_char = cmd%tokens(i)(1:1)
+        last_char = cmd%tokens(i)(token_len:token_len)
+
+        ! Check for single-quoted token (may have sentinel markers char(2)/char(3))
+        ! IMPORTANT: Don't treat as syntactic quotes if token was escaped (e.g., \'a\')
+        if (first_char == "'" .and. last_char == "'" .and. .not. cmd%token_escaped(i)) then
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_SINGLE
+          ! For single quotes, preserve trailing whitespace by not using len_trim
+          ! Find actual content length between quotes
+          cmd%token_lengths(i) = token_len
+        else if (first_char == char(2)) then
+          ! Single-quote sentinel marker - this token was single-quoted
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_SINGLE
+          cmd%token_lengths(i) = token_len
+        ! Check for double-quoted token
+        ! IMPORTANT: Don't treat as syntactic quotes if token was escaped (e.g., \"a\")
+        else if (first_char == '"' .and. last_char == '"' .and. .not. cmd%token_escaped(i)) then
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_DOUBLE
+          ! For double-quoted, find actual length including trailing whitespace
+          ! The content is between the quotes: token(2:token_len-1)
+          ! We need to preserve the full quoted token including any trailing space inside
+          cmd%token_lengths(i) = token_len
+        else if (first_char == char(1)) then
+          ! Double-quote sentinel marker
+          cmd%token_quoted(i) = .true.
+          cmd%token_quote_type(i) = QUOTE_DOUBLE
+          cmd%token_lengths(i) = token_len
+        else
+          ! Unquoted token
+          cmd%token_lengths(i) = token_len
+        end if
+      else if (cmd%token_lengths(i) == 0) then
+        cmd%token_lengths(i) = token_len
+      end if
+    end do
+  end subroutine init_token_metadata
 
 end module executor

@@ -541,6 +541,13 @@ module system_interface
       integer(c_int) :: rows, cols
       integer(c_int) :: get_term_size_c
     end function
+
+    ! Get environ pointer (array of environment strings)
+    function c_get_environ_ptr(idx) bind(C, name="get_environ_ptr")
+      import :: c_ptr, c_int
+      integer(c_int), value :: idx
+      type(c_ptr) :: c_get_environ_ptr
+    end function
   end interface
 
   ! Signal handler types (initialized in module initialization)
@@ -639,6 +646,33 @@ contains
     ret = c_unsetenv(c_loc(c_var_name))
     ! Ignore return value - unsetenv doesn't typically fail
   end subroutine
+
+  ! Get environment entry by index (for iterating through all env vars)
+  ! Returns empty string when index is beyond end of environ array
+  function get_environ_entry(idx) result(entry)
+    integer, intent(in) :: idx
+    character(len=:), allocatable :: entry
+    type(c_ptr) :: c_entry_ptr
+    character(kind=c_char), pointer :: c_entry(:)
+    integer :: i
+
+    c_entry_ptr = c_get_environ_ptr(int(idx, c_int))
+
+    if (c_associated(c_entry_ptr)) then
+      call c_f_pointer(c_entry_ptr, c_entry, [MAX_ENV_LEN])
+
+      do i = 1, MAX_ENV_LEN
+        if (c_entry(i) == c_null_char) exit
+      end do
+
+      allocate(character(len=i-1) :: entry)
+      do i = 1, len(entry)
+        entry(i:i) = c_entry(i)
+      end do
+    else
+      allocate(character(len=0) :: entry)
+    end if
+  end function
 
   function change_directory(path) result(success)
     character(len=*), intent(in) :: path

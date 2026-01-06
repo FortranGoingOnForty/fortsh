@@ -28,7 +28,7 @@ contains
     shell%option_verbose = .false.
     shell%option_xtrace = .false.
     shell%option_noclobber = .false.
-    shell%option_monitor = .true.     ! Enable job control by default
+    shell%option_monitor = .false.    ! Job control only for interactive mode (set later)
     shell%option_allexport = .false.
     shell%option_noglob = .false.
     shell%option_vi = .false.         ! Emacs mode by default

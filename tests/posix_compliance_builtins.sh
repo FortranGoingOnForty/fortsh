@@ -123,7 +123,7 @@ test_p0_set_u() {
     fi
 
     # Test 3: Non-interactive shell exits on unbound variable
-    # POSIX: Expansion errors should return exit code 127, not 1
+    # Bash uses exit code 127 for expansion errors (matching bash behavior)
     $FORTSH_BIN -c 'set -u; echo $UNDEF; echo SHOULD_NOT_PRINT' >/dev/null 2>&1
     exit_code=$?
     output=$($FORTSH_BIN -c 'set -u; echo $UNDEF; echo SHOULD_NOT_PRINT' 2>&1)

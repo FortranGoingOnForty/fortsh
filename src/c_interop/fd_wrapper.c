@@ -18,3 +18,10 @@ int fortsh_dup(int fd) {
 int fortsh_dup2(int oldfd, int newfd) {
     return dup2(oldfd, newfd);
 }
+
+// Access environ array by index
+// Returns NULL when idx is beyond the end
+extern char **environ;
+char *get_environ_ptr(int idx) {
+    return environ[idx];
+}

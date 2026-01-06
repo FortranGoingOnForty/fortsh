@@ -11,7 +11,7 @@ module builtins
   use shell_config
   use aliases
   use shell_options
-  use command_builtin, only: find_command_in_path, builtin_which, builtin_command
+  use command_builtin, only: find_command_in_path, builtin_which, builtin_command, find_executable_in_path
   use directory_builtin, only: builtin_pushd, builtin_popd, builtin_dirs
   use performance
   use parser
@@ -524,11 +524,13 @@ contains
 
   subroutine builtin_export(cmd, shell)
     use variables, only: set_shell_variable, get_shell_variable
+    use system_interface, only: get_environ_entry
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: print_mode, found
+    character(len=:), allocatable :: env_entry
 
     print_mode = .false.
 
@@ -538,12 +540,15 @@ contains
     end if
 
     if (print_mode) then
-      ! Print all exported variables
-      do i = 1, shell%num_variables
-        if (shell%variables(i)%exported .and. len_trim(shell%variables(i)%name) > 0) then
-          write(output_unit, '(a)') 'export ' // trim(shell%variables(i)%name) // '=' // &
-                                   trim(shell%variables(i)%value)
-        end if
+      ! Print all environment variables (inherited from parent + shell-exported)
+      i = 0
+      do
+        env_entry = get_environ_entry(i)
+        if (.not. allocated(env_entry) .or. len(env_entry) == 0) exit
+        ! Format: export VAR=value
+        write(output_unit, '(a)') 'export ' // trim(env_entry)
+        if (allocated(env_entry)) deallocate(env_entry)
+        i = i + 1
       end do
       shell%last_exit_status = 0
       return
@@ -675,8 +680,21 @@ contains
     end do
 
     do i = start_token, cmd%num_tokens
-      ! POSIX: Skip empty tokens (unquoted empty variables disappear)
-      if (len_trim(cmd%tokens(i)) == 0) cycle
+      ! POSIX: Skip empty tokens ONLY if they were unquoted (empty variables disappear)
+      ! Quoted empty strings "" should produce an empty argument
+      if (len_trim(cmd%tokens(i)) == 0) then
+        if (allocated(cmd%token_quoted)) then
+          if (i <= size(cmd%token_quoted) .and. cmd%token_quoted(i)) then
+            ! Token was quoted - keep it as empty argument
+          else
+            ! Token was not quoted - skip it
+            cycle
+          end if
+        else
+          ! No quote info available - skip empty tokens (safer default)
+          cycle
+        end if
+      end if
 
       if (.not. first) then
         call write_stdout_nonl_checked(' ', write_ok)
@@ -685,7 +703,14 @@ contains
 
       ! Process escape sequences in token (only if interpret_escapes is true)
       token = cmd%tokens(i)
-      len_token = len_trim(token)
+      ! Use token_lengths to preserve trailing spaces if available
+      if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+          cmd%token_lengths(i) > 0) then
+        len_token = cmd%token_lengths(i)
+      else
+        len_token = len_trim(token)
+      end if
+
       processed = ''
       j = 1
 
@@ -1133,6 +1158,44 @@ contains
       if (len_trim(cmd%tokens(2)) > 1) then
         ! Check for -l flag (list signals)
         if (trim(cmd%tokens(2)) == '-l') then
+          ! Check if there's a signal number argument
+          if (cmd%num_tokens >= 3) then
+            ! kill -l <num> - translate signal number to name
+            read(cmd%tokens(3), *, iostat=iostat) signal_num
+            if (iostat == 0) then
+              select case(signal_num)
+              case(1);  write(output_unit, '(a)') 'HUP'
+              case(2);  write(output_unit, '(a)') 'INT'
+              case(3);  write(output_unit, '(a)') 'QUIT'
+              case(4);  write(output_unit, '(a)') 'ILL'
+              case(5);  write(output_unit, '(a)') 'TRAP'
+              case(6);  write(output_unit, '(a)') 'ABRT'
+              case(7);  write(output_unit, '(a)') 'BUS'
+              case(8);  write(output_unit, '(a)') 'FPE'
+              case(9);  write(output_unit, '(a)') 'KILL'
+              case(10); write(output_unit, '(a)') 'USR1'
+              case(11); write(output_unit, '(a)') 'SEGV'
+              case(12); write(output_unit, '(a)') 'USR2'
+              case(13); write(output_unit, '(a)') 'PIPE'
+              case(14); write(output_unit, '(a)') 'ALRM'
+              case(15); write(output_unit, '(a)') 'TERM'
+              case(16); write(output_unit, '(a)') 'STKFLT'
+              case(17); write(output_unit, '(a)') 'CHLD'
+              case(18); write(output_unit, '(a)') 'CONT'
+              case(19); write(output_unit, '(a)') 'STOP'
+              case(20); write(output_unit, '(a)') 'TSTP'
+              case(21); write(output_unit, '(a)') 'TTIN'
+              case(22); write(output_unit, '(a)') 'TTOU'
+              case default
+                write(error_unit, '(a,i0)') 'kill: invalid signal number: ', signal_num
+                shell%last_exit_status = 1
+                return
+              end select
+              shell%last_exit_status = 0
+              return
+            end if
+          end if
+          ! No argument or invalid - list all signals
           write(output_unit, '(a)') 'Available signals:'
           write(output_unit, '(a)') '  1) SIGHUP    2) SIGINT    3) SIGQUIT   4) SIGILL'
           write(output_unit, '(a)') '  5) SIGTRAP   6) SIGABRT   7) SIGBUS    8) SIGFPE'
@@ -1453,9 +1516,15 @@ contains
         alias_name = full_arg(:eq_pos-1)
         alias_command = full_arg(eq_pos+1:)
 
-        ! Remove quotes if present
+        ! Remove quotes or quote sentinels if present
+        ! Lexer uses char(2)/char(3) for single-quote boundaries, char(1) for double-quote
         if (len_trim(alias_command) >= 2) then
-          if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
+          ! Check for single-quote sentinels (char(2) start, char(3) end)
+          if (alias_command(1:1) == char(2) .and. &
+              alias_command(len_trim(alias_command):len_trim(alias_command)) == char(3)) then
+            alias_command = alias_command(2:len_trim(alias_command)-1)
+          ! Check for actual quote characters (in case they weren't converted)
+          else if (alias_command(1:1) == '"' .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == '"') then
             alias_command = alias_command(2:len_trim(alias_command)-1)
           else if (alias_command(1:1) == "'" .and. alias_command(len_trim(alias_command):len_trim(alias_command)) == "'") then
             alias_command = alias_command(2:len_trim(alias_command)-1)
@@ -1494,6 +1563,13 @@ contains
     if (cmd%num_tokens < 2) then
       call write_stderr('unalias: usage: unalias name...')
       shell%last_exit_status = 1
+      return
+    end if
+
+    ! Check for -a flag (remove all aliases)
+    if (trim(cmd%tokens(2)) == '-a') then
+      call clear_all_aliases(shell)
+      shell%last_exit_status = 0
       return
     end if
 
@@ -1947,6 +2023,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: command_name
+    character(len=1024) :: full_path
     integer :: i
     logical :: any_not_found
 
@@ -1970,9 +2047,8 @@ contains
         write(output_unit, '(a)') trim(command_name) // ' is a function'
       else
         ! Try to find in PATH
-        call find_command_in_path(shell, command_name, .false., .false.)
-        if (shell%last_exit_status == 0) then
-          write(output_unit, '(a)') trim(command_name) // ' is hashed'
+        if (find_executable_in_path(shell, command_name, full_path)) then
+          write(output_unit, '(a)') trim(command_name) // ' is ' // trim(full_path)
         else
           write(error_unit, '(a)') trim(command_name) // ': not found'
           any_not_found = .true.
@@ -2078,7 +2154,40 @@ contains
     end if
 
     if (print_mode) then
-      ! Print all readonly variables
+      ! Print all readonly variables (including special readonly params)
+      ! Match bash behavior: include PPID, UID, EUID, and shell options
+      block
+        use system_interface, only: c_getuid, c_geteuid
+        character(len=20) :: ppid_str, uid_str, euid_str
+        character(len=256) :: shellopts
+
+        ! PPID - parent process ID
+        write(ppid_str, '(i0)') shell%parent_pid
+        write(output_unit, '(a)') 'readonly PPID=' // trim(ppid_str)
+
+        ! UID - real user ID
+        write(uid_str, '(i0)') c_getuid()
+        write(output_unit, '(a)') 'readonly UID=' // trim(uid_str)
+
+        ! EUID - effective user ID
+        write(euid_str, '(i0)') c_geteuid()
+        write(output_unit, '(a)') 'readonly EUID=' // trim(euid_str)
+
+        ! SHELLOPTS - shell option settings (bash compatibility)
+        shellopts = ''
+        if (shell%option_braceexpand) shellopts = trim(shellopts) // ':braceexpand'
+        if (shell%option_hashall) shellopts = trim(shellopts) // ':hashall'
+        shellopts = trim(shellopts) // ':interactive-comments'  ! Always on
+        if (len_trim(shellopts) > 0 .and. shellopts(1:1) == ':') shellopts = shellopts(2:)
+        write(output_unit, '(a)') 'readonly SHELLOPTS="' // trim(shellopts) // '"'
+
+        ! FORTSH_VERSION - shell version
+        write(output_unit, '(a)') 'readonly FORTSH_VERSION="0.1.0"'
+
+        ! HOSTNAME - system hostname (bash compatibility)
+        write(output_unit, '(a)') 'readonly HOSTNAME="' // trim(shell%hostname) // '"'
+      end block
+      ! Print user-defined readonly variables
       do i = 1, shell%num_variables
         if (shell%variables(i)%readonly .and. len_trim(shell%variables(i)%name) > 0) then
           write(output_unit, '(a)') 'readonly ' // trim(shell%variables(i)%name) // '=' // &
@@ -2393,6 +2502,8 @@ contains
   subroutine builtin_exec(cmd, shell)
     use command_builtin, only: find_command_full_path
     use fd_redirection, only: apply_single_redirection
+    use parser, only: expand_variables
+    use system_interface, only: file_exists, file_is_executable
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -2402,13 +2513,23 @@ contains
     integer :: i, ret
     character(len=MAX_PATH_LEN) :: prog_path
     logical :: redir_success
+    type(redirection_t) :: expanded_redir
+    character(len=:), allocatable :: expanded_filename
 
     ! exec without arguments but with redirections applies them to the current shell
     if (cmd%num_tokens < 2) then
       if (cmd%num_redirections > 0) then
-        ! Apply redirections to the current shell process
+        ! Apply redirections to the current shell process (permanent=.true. for exec)
         do i = 1, cmd%num_redirections
-          call apply_single_redirection(cmd%redirections(i), redir_success, shell%option_noclobber)
+          ! Make a copy of the redirection and expand the filename
+          expanded_redir = cmd%redirections(i)
+          if (allocated(cmd%redirections(i)%filename)) then
+            call expand_variables(trim(cmd%redirections(i)%filename), expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              expanded_redir%filename = expanded_filename
+            end if
+          end if
+          call apply_single_redirection(expanded_redir, redir_success, shell%option_noclobber, permanent=.true.)
           if (.not. redir_success) then
             shell%last_exit_status = 1
             return
@@ -2435,6 +2556,19 @@ contains
         return
       end if
       c_prog_name = trim(prog_path) // c_null_char
+    else
+      ! Absolute or relative path - check if it exists
+      if (.not. file_exists(trim(cmd%tokens(2)))) then
+        write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': No such file or directory'
+        shell%last_exit_status = 127
+        return
+      end if
+      ! Check if it's executable
+      if (.not. file_is_executable(trim(cmd%tokens(2)))) then
+        write(error_unit, '(a)') 'exec: ' // trim(cmd%tokens(2)) // ': Permission denied'
+        shell%last_exit_status = 126
+        return
+      end if
     end if
 
     ! Build argv array for execvp (NULL-terminated array of C string pointers)
@@ -2537,6 +2671,7 @@ contains
     ! hash with no arguments - display hash table
     if (cmd%num_tokens == 1) then
       if (shell%num_hashed_commands == 0) then
+        write(output_unit, '(a)') 'hash: hash table empty'
         shell%last_exit_status = 0
         return
       end if
@@ -3021,10 +3156,10 @@ contains
     children_sys_sec = children_sys_sec - (children_sys_min * 60.0)
 
     ! Print in bash format: user_time system_time (one line for shell, one for children)
-    write(output_unit, '(i15,a,f5.3,a,1x,i15,a,f5.3,a)') &
+    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
       self_user_min, 'm', self_user_sec, 's', &
       self_sys_min, 'm', self_sys_sec, 's'
-    write(output_unit, '(i15,a,f5.3,a,1x,i0,a,f5.3,a)') &
+    write(output_unit, '(i0,a,f5.3,a,1x,i0,a,f5.3,a)') &
       children_user_min, 'm', children_user_sec, 's', &
       children_sys_min, 'm', children_sys_sec, 's'
 
@@ -3272,6 +3407,7 @@ contains
   end subroutine
 
   subroutine builtin_printenv(cmd, shell)
+    use system_interface, only: get_environ_entry
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i
@@ -3281,14 +3417,17 @@ contains
 #else
     character(len=:), allocatable :: env_value
 #endif
+    character(len=:), allocatable :: env_entry
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all environment variables
-      do i = 1, shell%num_variables
-        if (shell%variables(i)%exported .and. len_trim(shell%variables(i)%name) > 0) then
-          write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
-                                   trim(shell%variables(i)%value)
-        end if
+      i = 0
+      do
+        env_entry = get_environ_entry(i)
+        if (.not. allocated(env_entry) .or. len(env_entry) == 0) exit
+        write(output_unit, '(a)') trim(env_entry)
+        if (allocated(env_entry)) deallocate(env_entry)
+        i = i + 1
       end do
       shell%last_exit_status = 0
     else

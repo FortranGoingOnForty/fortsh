@@ -29,10 +29,12 @@ contains
 
   ! Show enhanced "command not found" error with suggestions
   subroutine show_command_not_found_error(command)
+    use system_interface, only: file_exists
     character(len=*), intent(in) :: command
     character(len=:), allocatable :: suggestions(:)
     integer :: num_suggestions, i
     character(len=10) :: shell_name
+    character(len=64) :: error_msg
 
     ! Use "sh" for POSIX compliance in non-interactive mode
     if (stderr_is_tty()) then
@@ -41,10 +43,22 @@ contains
       shell_name = "sh"
     end if
 
+    ! POSIX: For paths (containing /), use "No such file or directory" if file doesn't exist
+    ! Use "command not found" only for bare command names searched in PATH
+    if (index(command, '/') > 0) then
+      if (.not. file_exists(trim(command))) then
+        error_msg = "No such file or directory"
+      else
+        error_msg = "Permission denied"
+      end if
+    else
+      error_msg = "command not found"
+    end if
+
     ! Print main error message in red (POSIX format)
     write(error_unit, '(a,a,a,a,a)') &
       trim(color_code(COLOR_RED)), &
-      trim(shell_name), ": ", trim(command), ": command not found"
+      trim(shell_name), ": ", trim(command), ": " // trim(error_msg)
 
     ! Only write color reset if using colors
     if (stderr_is_tty()) then

@@ -199,10 +199,11 @@ section "449. MIXED QUOTING"
 # =====================================
 
 result=$("$FORTSH_BIN" -c 'echo "hello"'\''world'\''' 2>&1)
-if [ "$result" = "hello'world'" ]; then
+# Adjacent quoted strings concatenate: "hello" + 'world' = helloworld
+if [ "$result" = "helloworld" ]; then
     pass "Adjacent double and single quotes"
 else
-    fail "Adjacent double and single quotes" "hello'world'" "$result"
+    fail "Adjacent double and single quotes" "helloworld" "$result"
 fi
 
 result=$("$FORTSH_BIN" -c 'x=val; echo "$x"'\''$x'\''' 2>&1)
@@ -427,11 +428,13 @@ fi
 section "457. BACKSLASH IN DOUBLE QUOTES"
 # =====================================
 
+# POSIX: In double quotes, \\\\ (4 backslashes) becomes \\ (2 backslashes)
+# Each pair of \\ in double quotes produces one literal backslash
 result=$("$FORTSH_BIN" -c 'echo "back\\\\slash"' 2>&1)
-if [ "$result" = 'back\slash' ]; then
+if [ "$result" = 'back\\slash' ]; then
     pass "Backslash-backslash in double quotes"
 else
-    fail "Backslash-backslash in double quotes" 'back\slash' "$result"
+    fail "Backslash-backslash in double quotes" 'back\\slash' "$result"
 fi
 
 result=$("$FORTSH_BIN" -c 'echo "newline\\n"' 2>&1)
