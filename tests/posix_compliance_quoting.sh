@@ -615,7 +615,8 @@ else
     fail "Backslash-t in double quotes"
 fi
 
-result=$("$FORTSH_BIN" -c "echo 'hello\nworld'" 2>&1)
+# Use $'...' to pass literal backslash-n to the shell
+result=$("$FORTSH_BIN" -c $'echo \'hello\\nworld\'' 2>&1)
 if echo "$result" | grep -q 'hello\\nworld'; then
     pass "Backslash-n literal in single quotes"
 else
