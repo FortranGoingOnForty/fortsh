@@ -20,6 +20,7 @@ module grammar_parser
     type(token_t) :: tokens(MAX_TOKENS)
     integer :: num_tokens = 0
     integer :: pos = 1
+    integer :: current_line = 1  ! Track line number for LINENO
     logical :: has_error = .false.
     character(len=1024) :: error_msg = ''
     character(len=:), allocatable :: raw_input  ! For heredoc extraction
@@ -134,6 +135,8 @@ contains
         if (trim(tok%value) == ';') then
           sep_type = LIST_SEP_SEQUENTIAL
           call advance(state)
+          ! Skip any newlines after semicolon (e.g., semicolon at end of line)
+          call skip_newlines(state)
         else if (trim(tok%value) == ';;') then
           ! ;; is only valid in case statements, not here
           write(error_unit, '(A)') 'sh: -c: line 1: syntax error near unexpected token `;;'''
@@ -148,11 +151,14 @@ contains
         else if (trim(tok%value) == '&') then
           sep_type = LIST_SEP_BACKGROUND
           call advance(state)
+          ! Skip any newlines after ampersand (e.g., background at end of line)
+          call skip_newlines(state)
         else
           exit
         end if
       else if (tok%token_type == TOKEN_NEWLINE) then
         sep_type = LIST_SEP_SEQUENTIAL
+        state%current_line = state%current_line + 1  ! Track this newline for LINENO
         call advance(state)
         ! Skip any additional newlines (e.g., from comment-only lines)
         call skip_newlines(state)
@@ -257,7 +263,7 @@ contains
   recursive function parse_command_node(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node
-    type(token_t) :: tok
+    type(token_t) :: tok, next_tok
     logical :: is_compound
     tok = current_token(state)
     is_compound = .false.
@@ -289,7 +295,16 @@ contains
         node => parse_simple_cmd(state)
       end select
     else if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
-      node => parse_subshell(state)
+      ! Check if this is (( for arithmetic command vs ( for subshell
+      ! Key: (( with no space = arithmetic, ( ( with space = nested subshell
+      next_tok = peek_token(state%tokens, state%pos + 1)
+      if (next_tok%token_type == TOKEN_OPERATOR .and. trim(next_tok%value) == '(' .and. &
+          tok%end_pos + 1 == next_tok%start_pos) then
+        ! Adjacent (( - treat as arithmetic
+        node => parse_arithmetic_command(state)
+      else
+        node => parse_subshell(state)
+      end if
       is_compound = .true.
     else
       node => parse_simple_cmd(state)
@@ -617,6 +632,7 @@ contains
     end do
     if (num_words > 0) then
       node => create_simple_command(words, num_words)
+      node%line = state%current_line  ! Track line number for LINENO
       if (associated(node%simple_cmd)) then
         ! Store quoted and escaped flags
         allocate(node%simple_cmd%word_was_quoted(num_words))
@@ -655,6 +671,7 @@ contains
     else if (num_assignments > 0) then
       ! Pure assignment(s) with no command - create a node with just assignments
       node => create_simple_command(assignments, num_assignments)
+      node%line = state%current_line  ! Track line number for LINENO
       if (associated(node%simple_cmd)) then
         ! Mark these as assignments, not command words
         node%simple_cmd%num_words = 0
@@ -673,6 +690,7 @@ contains
       words(1) = ':'
       num_words = 1
       node => create_simple_command(words, num_words)
+      node%line = state%current_line  ! Track line number for LINENO
       if (associated(node%simple_cmd)) then
         allocate(node%simple_cmd%word_was_quoted(1))
         node%simple_cmd%word_was_quoted(1) = .false.
@@ -955,6 +973,15 @@ contains
     call skip_newlines(state)
     commands => parse_list(state)
     call skip_newlines(state)
+    ! POSIX: Empty subshell () is a syntax error
+    if (.not. associated(commands)) then
+      write(error_unit, '(A)') "sh: -c: line 1: syntax error near unexpected token `)'"
+      if (allocated(state%raw_input)) then
+        write(error_unit, '(A)') "sh: -c: `" // trim(state%raw_input) // "'"
+      end if
+      state%has_error = .true.
+      return
+    end if
     if (.not. expect(state, ')')) return
     node => create_subshell(commands)
   end function
@@ -965,7 +992,7 @@ contains
     type(command_node_t), pointer :: node
     type(token_t) :: tok
     character(len=MAX_TOKEN_LEN) :: arith_expr, words(1)
-    integer :: paren_depth, expr_pos
+    integer :: paren_depth, expr_pos, prev_end_pos
     logical :: found_close
 
     nullify(node)
@@ -980,6 +1007,7 @@ contains
     expr_pos = 3
     paren_depth = 2
     found_close = .false.
+    prev_end_pos = -1  ! Track previous token's end position
 
     do while (state%pos <= state%num_tokens)
       tok = current_token(state)
@@ -990,6 +1018,7 @@ contains
         paren_depth = paren_depth - 1
         arith_expr(expr_pos:expr_pos) = ')'
         expr_pos = expr_pos + 1
+        prev_end_pos = tok%end_pos
         call advance(state)
         if (paren_depth == 0) then
           found_close = .true.
@@ -999,13 +1028,23 @@ contains
         paren_depth = paren_depth + 1
         arith_expr(expr_pos:expr_pos) = '('
         expr_pos = expr_pos + 1
+        prev_end_pos = tok%end_pos
         call advance(state)
       else
         ! Add token value to expression
+        ! Only add a space if there was whitespace between this token and the previous one
+        ! in the original source (to preserve adjacent operators like && and ||)
+        if (prev_end_pos >= 0 .and. tok%start_pos > prev_end_pos + 1) then
+          if (expr_pos + 1 <= MAX_TOKEN_LEN) then
+            arith_expr(expr_pos:expr_pos) = ' '
+            expr_pos = expr_pos + 1
+          end if
+        end if
         if (expr_pos + len_trim(tok%value) <= MAX_TOKEN_LEN) then
           arith_expr(expr_pos:expr_pos+len_trim(tok%value)-1) = trim(tok%value)
           expr_pos = expr_pos + len_trim(tok%value)
         end if
+        prev_end_pos = tok%end_pos
         call advance(state)
       end if
     end do
@@ -1018,15 +1057,18 @@ contains
     ! Create a simple command with the arithmetic expression as the first token
     words(1) = arith_expr(1:expr_pos-1)
     node => create_simple_command(words, 1)
+    node%line = state%current_line  ! Track line number for LINENO
 
     ! Allocate metadata arrays to prevent segfaults in AST executor
+    ! Mark the arithmetic expression as "quoted" to prevent word splitting
+    ! (the expression is a single unit that should not be split on IFS)
     if (associated(node) .and. associated(node%simple_cmd)) then
       allocate(node%simple_cmd%word_was_quoted(1))
-      node%simple_cmd%word_was_quoted(1) = .false.
+      node%simple_cmd%word_was_quoted(1) = .true.  ! Prevent word splitting
       allocate(node%simple_cmd%word_was_escaped(1))
       node%simple_cmd%word_was_escaped(1) = .false.
       allocate(node%simple_cmd%word_quote_type(1))
-      node%simple_cmd%word_quote_type(1) = QUOTE_NONE
+      node%simple_cmd%word_quote_type(1) = QUOTE_DOUBLE  ! Treat like double-quoted
       allocate(node%simple_cmd%word_lengths(1))
       node%simple_cmd%word_lengths(1) = expr_pos - 1
     end if
@@ -1049,6 +1091,7 @@ contains
     type(token_t) :: tok
     tok = current_token(state)
     do while (tok%token_type == TOKEN_NEWLINE)
+      state%current_line = state%current_line + 1  ! Track LINENO
       call advance(state)
       tok = current_token(state)
     end do

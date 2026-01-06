@@ -76,10 +76,11 @@ contains
     execute_command_ptr => callback
   end subroutine set_execute_callback
 
-  subroutine execute_command_and_capture(shell, command, output)
+  subroutine execute_command_and_capture(shell, command, output, output_len)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command
     character(len=*), intent(out) :: output
+    integer, intent(out), optional :: output_len  ! Actual content length
 
     integer(c_int) :: pipe_fds(2)
     integer(c_int) :: ret, exit_status
@@ -91,6 +92,7 @@ contains
     type(c_ptr) :: wstatus_ptr
 
     output = ''
+    if (present(output_len)) output_len = 0
 
     ! Check if callback is set
     if (.not. associated(execute_command_ptr)) then
@@ -178,6 +180,9 @@ contains
     if (total_len < len(output)) then
       output = output(1:total_len)
     end if
+
+    ! Return the actual content length (preserves trailing whitespace info)
+    if (present(output_len)) output_len = total_len
 
   end subroutine execute_command_and_capture
 

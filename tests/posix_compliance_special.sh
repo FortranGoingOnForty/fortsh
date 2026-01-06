@@ -720,8 +720,9 @@ else
     fail "PATH is set" "non-empty" "$result"
 fi
 
-# PATH affects command lookup
-result=$("$FORTSH_BIN" -c 'PATH=/bin:/usr/bin; ls / >/dev/null 2>&1; echo $?' 2>&1)
+# PATH affects command lookup - use actual system paths
+LS_DIR=$(dirname "$(which ls 2>/dev/null)")
+result=$("$FORTSH_BIN" -c "PATH=$LS_DIR; ls / >/dev/null 2>&1; echo \$?" 2>&1)
 if [ "$result" = "0" ]; then
     pass "PATH affects command resolution"
 else

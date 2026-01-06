@@ -202,6 +202,11 @@ program fortran_shell
     command_string = remove_line_continuations(command_string)
     call process_substitutions(shell, trim(command_string), proc_subst_line)
 
+    ! POSIX set -v: Print input line before execution
+    if (shell%option_verbose) then
+      write(error_unit, '(A)') trim(command_string)
+    end if
+
     ! Use new parser if feature flag is enabled
     if (shell%use_new_parser) then
       ! NEW PARSER PATH: Parse to AST and execute directly
@@ -394,6 +399,11 @@ program fortran_shell
 
     ! Process substitutions <() and >() before parsing
     call process_substitutions(shell, expanded_line, proc_subst_line)
+
+    ! POSIX set -v: Print input line before execution
+    if (shell%option_verbose) then
+      write(error_unit, '(A)') trim(expanded_line)
+    end if
 
     ! Parse and execute (use new parser if feature flag is enabled)
     if (shell%use_new_parser) then
@@ -1042,6 +1052,11 @@ contains
 
       ! Process substitutions <() and >() before parsing
       call process_substitutions(shell, expanded_line, proc_subst_line)
+
+      ! POSIX set -v: Print input line before execution
+      if (shell%option_verbose) then
+        write(error_unit, '(A)') trim(input_line)
+      end if
 
       ! Parse and execute (use new AST parser by default)
       if (shell%use_new_parser) then

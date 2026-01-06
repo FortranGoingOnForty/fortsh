@@ -444,7 +444,8 @@ section "97. POSIX SUBSHELL VARIABLE ISOLATION"
 
 compare_posix_output "subshell no export" 'X=1; (X=2; echo $X); echo $X'
 compare_posix_output "subshell unset" 'X=1; (unset X; echo ${X:-empty}); echo $X'
-compare_posix_output "nested subshell" '(( echo nested ))'
+# Note: (( expr )) is arithmetic syntax in bash, not nested subshell. Compare exit codes.
+compare_posix_exit_code "double paren arithmetic" '(( echo nested ))'
 compare_posix_output "subshell exit" '(exit 5); echo $?'
 
 section "98. POSIX BRACE GROUP VS SUBSHELL"
@@ -567,7 +568,8 @@ compare_posix_output "subshell pwd" '(cd /tmp; pwd)'
 compare_posix_output "subshell var" 'X=outer; (X=inner); echo $X'
 compare_posix_output "subshell function" 'f() { echo hi; }; (f)'
 compare_posix_output "subshell pipeline" '(echo a; echo b) | wc -l'
-compare_posix_output "nested subshell 3" '(((echo deep)))'
+# Note: ((( expr ))) is arithmetic syntax in bash. Compare exit codes.
+compare_posix_exit_code "triple paren arithmetic" '(((echo deep)))'
 compare_posix_output "subshell arithmetic" '(echo $((2+2)))'
 
 section "114. POSIX BRACE GROUP EDGE CASES"

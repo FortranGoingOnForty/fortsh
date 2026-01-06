@@ -98,6 +98,7 @@ module shell_types
     integer :: value_length = 0     ! Actual content length (excludes fixed-length padding)
     integer :: start_pos
     integer :: end_pos
+    integer :: line = 1             ! Line number (for LINENO tracking)
     logical :: quoted               ! DEPRECATED - use quote_type instead
     logical :: escaped              ! Token had backslash escape (don't glob expand)
     integer :: quote_type = QUOTE_NONE  ! QUOTE_* constant - tracks quote style
