@@ -388,7 +388,8 @@ compare_posix_exit_code "trap reset" "trap - INT"
 section "37. POSIX BACKGROUND AND JOBS"
 
 compare_posix_output "background job" "sleep 0.1 & echo started; wait"
-compare_posix_output "\$! last background pid" "sleep 0.1 & echo \$! | grep -E '^[0-9]+\$'"
+# Note: $! returns different PIDs in each shell, so we check both output valid PIDs (exit code)
+compare_posix_exit_code "\$! last background pid" "sleep 0.1 & echo \$! | grep -qE '^[0-9]+\$'"
 
 section "38. POSIX ALIAS"
 

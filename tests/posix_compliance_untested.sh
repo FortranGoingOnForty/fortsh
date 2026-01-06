@@ -92,7 +92,7 @@ compare_posix_output() {
 # Normalize shell error messages by stripping shell name and "line N: " prefix
 # POSIX doesn't mandate error message format, so we normalize for comparison
 normalize_error() {
-    echo "$1" | sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'
+    echo "$1" | sed -e 's/^bash: /sh: /' -e 's/^fortsh: /sh: /' -e 's/line [0-9]*: //'
 }
 
 # Compare error output, normalizing line number differences

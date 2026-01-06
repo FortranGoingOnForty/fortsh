@@ -488,8 +488,10 @@ section "369. $$ IN SUBSHELLS"
 # =====================================
 
 # $$ in subshell should return parent shell PID per POSIX
-parent_pid=$("$FORTSH_BIN" -c 'echo $$' 2>&1)
-subshell_pid=$("$FORTSH_BIN" -c '(echo $$)' 2>&1)
+# Test within SAME shell instance (not separate invocations)
+result=$("$FORTSH_BIN" -c 'echo $$; (echo $$)' 2>&1)
+parent_pid=$(echo "$result" | sed -n '1p')
+subshell_pid=$(echo "$result" | sed -n '2p')
 if [ "$parent_pid" = "$subshell_pid" ]; then
     pass "\$\$ in subshell returns parent shell PID"
 else
@@ -718,8 +720,9 @@ else
     fail "PATH is set" "non-empty" "$result"
 fi
 
-# PATH affects command lookup
-result=$("$FORTSH_BIN" -c 'PATH=/bin:/usr/bin; ls / >/dev/null 2>&1; echo $?' 2>&1)
+# PATH affects command lookup - use actual system paths
+LS_DIR=$(dirname "$(which ls 2>/dev/null)")
+result=$("$FORTSH_BIN" -c "PATH=$LS_DIR; ls / >/dev/null 2>&1; echo \$?" 2>&1)
 if [ "$result" = "0" ]; then
     pass "PATH affects command resolution"
 else

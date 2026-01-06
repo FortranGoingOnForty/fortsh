@@ -79,6 +79,17 @@ contains
     call write_stderr('unalias: ' // trim(alias_name) // ': not found')
   end function
 
+  subroutine clear_all_aliases(shell)
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i
+
+    do i = 1, size(shell%aliases)
+      shell%aliases(i)%name = ''
+      shell%aliases(i)%command = ''
+    end do
+    shell%num_aliases = 0
+  end subroutine
+
   subroutine show_aliases(shell)
     type(shell_state_t), intent(in) :: shell
     integer :: i, count
@@ -92,9 +103,10 @@ contains
       end if
     end do
     
-    if (count == 0) then
-      write(output_unit, '(a)') 'No aliases defined'
-    end if
+    ! POSIX: alias with no args and no aliases produces no output (bash behavior)
+    ! if (count == 0) then
+    !   write(output_unit, '(a)') 'No aliases defined'
+    ! end if
   end subroutine
 
   function expand_alias_with_params(shell, alias_name, args, num_args) result(expanded_command)

@@ -192,11 +192,16 @@ fi
 section "386. SET -v (VERBOSE)"
 # =====================================
 
-result=$("$FORTSH_BIN" -c 'set -v; echo hello' 2>&1)
-if echo "$result" | grep -q "echo hello"; then
-    pass "set -v shows input lines"
+# Note: set -v only echoes lines as they're READ, not from -c argument
+# Test that -v option is accepted and runs without error
+"$FORTSH_BIN" -c 'set -v; echo hello' >/dev/null 2>&1
+fortsh_exit=$?
+bash -c 'set -v; echo hello' >/dev/null 2>&1
+bash_exit=$?
+if [ "$fortsh_exit" -eq "$bash_exit" ]; then
+    pass "set -v runs without error"
 else
-    fail "set -v shows input lines" "input echoed" "$result"
+    fail "set -v runs without error" "exit=$bash_exit" "exit=$fortsh_exit"
 fi
 
 # =====================================
@@ -343,7 +348,10 @@ else
     fail "read -r preserves backslashes" 'hello\nworld' "$result"
 fi
 
-result=$("$FORTSH_BIN" -c 'printf "line\\\ncontinued\n" | { read x; echo "$x"; }' 2>&1)
+# POSIX: read without -r joins lines ending with backslash (line continuation)
+# printf with single quotes produces: line<backslash><newline>continued<newline>
+# read joins: line + continued = linecontinued
+result=$("$FORTSH_BIN" -c 'printf '"'"'line\\\ncontinued\n'"'"' | { read x; echo "$x"; }' 2>&1)
 if [ "$result" = "linecontinued" ]; then
     pass "read without -r joins continued lines"
 else
@@ -506,11 +514,13 @@ else
     fail "alias defines and shows alias" "ls -la" "$result"
 fi
 
-result=$("$FORTSH_BIN" -c 'alias greeting="echo hello"; greeting' 2>&1)
-if [ "$result" = "hello" ]; then
-    pass "alias expands in command"
+# Note: Aliases defined in -c mode aren't expanded in the same command line
+# This matches bash behavior - aliases are expanded at parse time
+result=$("$FORTSH_BIN" -c 'alias greeting="echo hello"; alias greeting' 2>&1)
+if echo "$result" | grep -q "echo hello"; then
+    pass "alias defines correctly (matches bash)"
 else
-    fail "alias expands in command" "hello" "$result"
+    fail "alias defines correctly (matches bash)" "echo hello" "$result"
 fi
 
 result=$("$FORTSH_BIN" -c 'alias x="echo a"; alias y="echo b"; alias | wc -l' 2>&1)
@@ -527,11 +537,12 @@ else
     fail "unalias removes alias" "non-zero exit" "$result"
 fi
 
-result=$("$FORTSH_BIN" -c 'alias foo="echo one"; alias foo="echo two"; foo' 2>&1)
-if [ "$result" = "two" ]; then
+# Note: Test redefinition by checking alias output (execution won't work in same line)
+result=$("$FORTSH_BIN" -c 'alias foo="echo one"; alias foo="echo two"; alias foo' 2>&1)
+if echo "$result" | grep -q "echo two"; then
     pass "alias can be redefined"
 else
-    fail "alias can be redefined" "two" "$result"
+    fail "alias can be redefined" "echo two" "$result"
 fi
 
 # =====================================
@@ -822,7 +833,7 @@ section "406. WAIT BUILTIN EDGE CASES"
 # =====================================
 
 # wait with no args
-result=$("$FORTSH_BIN" -c 'sleep 0.1 & sleep 0.1 &; wait; echo done' 2>&1)
+result=$("$FORTSH_BIN" -c 'sleep 0.1 & sleep 0.1 & wait; echo done' 2>&1)
 if [ "$result" = "done" ]; then
     pass "wait with no args waits for all"
 else

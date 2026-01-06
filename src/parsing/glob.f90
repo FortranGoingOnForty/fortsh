@@ -44,19 +44,20 @@ contains
   end function
 
   ! Main glob expansion function
-  subroutine expand_glob_patterns(tokens, num_tokens, expanded_tokens, expanded_count)
+  subroutine expand_glob_patterns(tokens, num_tokens, expanded_tokens, expanded_count, token_quoted)
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
     character(len=MAX_TOKEN_LEN), allocatable, intent(out) :: expanded_tokens(:)
     integer, intent(out) :: expanded_count
+    logical, intent(in), optional :: token_quoted(:)
 
     ! Use allocatable arrays to avoid static storage
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     character(len=MAX_TOKEN_LEN), allocatable :: matches(:)
     integer :: i, j, match_count, total_count, current_size
-    logical :: has_glob_chars
+    logical :: has_glob_chars, is_quoted
     integer(int64) :: glob_start_time
-    
+
     ! Start performance timing
     call start_timer('glob_expansion', glob_start_time)
 
@@ -67,8 +68,20 @@ contains
     total_count = 0
 
     do i = 1, num_tokens
-      ! Check if token contains unescaped glob characters
-      has_glob_chars = has_unescaped_glob_chars(tokens(i))
+      ! Check if this token was quoted (skip glob expansion if so)
+      is_quoted = .false.
+      if (present(token_quoted)) then
+        if (i <= size(token_quoted)) then
+          is_quoted = token_quoted(i)
+        end if
+      end if
+
+      ! Check if token contains unescaped glob characters (skip if quoted)
+      if (is_quoted) then
+        has_glob_chars = .false.  ! Quoted tokens don't get glob expanded
+      else
+        has_glob_chars = has_unescaped_glob_chars(tokens(i))
+      end if
 
       if (has_glob_chars) then
         ! Expand the glob pattern
@@ -82,7 +95,7 @@ contains
               call grow_token_array(temp_tokens, current_size)
             end if
             total_count = total_count + 1
-            temp_tokens(total_count) = matches(j)
+            temp_tokens(total_count) = trim(matches(j))
           end do
         else
           ! No matches found - keep original token
@@ -199,7 +212,7 @@ contains
     integer :: num_test_files, i
 
     match_count = 0
-    allocate(test_files(2000))  ! Increased to handle directories with many files
+    allocate(test_files(10000))  ! Increased to handle directories with many files
 
     ! For now, simulate some common files for testing
     ! In a real implementation, this would read the actual directory
@@ -211,12 +224,12 @@ contains
           match_count = match_count + 1
           if (include_dir_path) then
             if (trim(dir_path) == '.') then
-              matches(match_count) = test_files(i)
+              matches(match_count) = trim(test_files(i))
             else
               matches(match_count) = trim(dir_path) // '/' // trim(test_files(i))
             end if
           else
-            matches(match_count) = test_files(i)
+            matches(match_count) = trim(test_files(i))
           end if
         end if
       end if
@@ -248,7 +261,7 @@ contains
     integer, intent(out) :: count
 
     ! Increased buffer size to handle directories with many files (like /tmp)
-    integer, parameter :: BUFFER_SIZE = 65536  ! 64KB buffer
+    integer, parameter :: BUFFER_SIZE = 524288  ! 512KB buffer for large directories
 
     character(len=512) :: command
     integer(c_pid_t) :: pid
@@ -410,10 +423,26 @@ contains
     integer :: p_len, t_len, i, bracket_end
     character(len=1) :: p_char, t_char
     logical :: bracket_match
-    
+
     p_len = len_trim(pattern)
     t_len = len_trim(text)
-    
+
+    ! Special case: empty pattern should only match empty text
+    if (p_len == 0) then
+      matches = (t_len == 0)
+      return
+    end if
+
+    ! Handle whitespace-only text (e.g., " " should match [[:space:]])
+    ! len_trim returns 0 for whitespace, but we need to match it
+    ! Only do this if pattern is NOT empty (otherwise we'd match padding)
+    if (t_len == 0 .and. len(text) > 0) then
+      ! Check if first char is whitespace - if so, use length 1
+      if (text(1:1) == ' ' .or. ichar(text(1:1)) == 9) then
+        t_len = 1
+      end if
+    end if
+
     ! End conditions
     if (p_pos > p_len) then
       matches = (t_pos > t_len)
@@ -457,7 +486,17 @@ contains
       end if
       
       ! Find end of bracket expression (handling nested [:...:])
+      ! POSIX: ] is literal if it's first char after [ or [! or [^
       bracket_end = p_pos + 1
+      ! Skip negation marker if present
+      if (bracket_end <= p_len .and. &
+          (pattern(bracket_end:bracket_end) == '!' .or. pattern(bracket_end:bracket_end) == '^')) then
+        bracket_end = bracket_end + 1
+      end if
+      ! Skip ] if it's first (literal ])
+      if (bracket_end <= p_len .and. pattern(bracket_end:bracket_end) == ']') then
+        bracket_end = bracket_end + 1
+      end if
       do while (bracket_end <= p_len)
         ! Check for character class [:...:] and skip over it
         if (bracket_end + 1 <= p_len .and. pattern(bracket_end:bracket_end+1) == '[:') then
@@ -520,8 +559,8 @@ contains
       return
     end if
 
-    ! Check for negation
-    negated = (bracket_content(1:1) == '!')
+    ! Check for negation (POSIX uses ! but ^ is also common)
+    negated = (bracket_content(1:1) == '!' .or. bracket_content(1:1) == '^')
     i = 1
     if (negated) i = 2
 

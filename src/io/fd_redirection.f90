@@ -4,9 +4,9 @@
 ! ==============================================================================
 module fd_redirection
   use shell_types
-  use system_interface, only: get_environment_var, c_null_char
+  use system_interface, only: get_environment_var, c_null_char, create_pipe
   use iso_fortran_env, only: output_unit, error_unit
-  use iso_c_binding, only: c_int
+  use iso_c_binding, only: c_int, c_ptr, c_size_t, c_intptr_t, c_loc
   implicit none
 
   interface
@@ -36,6 +36,14 @@ module fd_redirection
       integer(c_int), value :: fd
       integer(c_int) :: c_dup
     end function c_dup
+
+    function c_write(fd, buf, count) bind(C, name="write")
+      use iso_c_binding
+      integer(c_int), value :: fd
+      type(c_ptr), value :: buf
+      integer(c_size_t), value :: count
+      integer(c_intptr_t) :: c_write
+    end function c_write
   end interface
 
   ! File access flags (from fcntl.h) - use local names to avoid conflicts
@@ -282,9 +290,10 @@ contains
 
       case (REDIR_READWRITE)
         ! <> file (open for read/write, default fd=0)
+        ! POSIX: Create file if it doesn't exist
         if (allocated(redir%filename)) then
           filename_c = trim(redir%filename)//c_null_char
-          flags = FD_O_RDWR
+          flags = ior(FD_O_RDWR, FD_O_CREAT)
           file_fd = c_open(filename_c, flags, 420)  ! mode 0644
           if (file_fd < 0) then
             write(error_unit, '(3a)') 'fortsh: cannot open file: ', trim(redir%filename)
@@ -295,16 +304,68 @@ contains
               if (c_dup2(file_fd, FD_STDIN) < 0) then
                 success = .false.
               end if
+              ! Close original only if it's different from target
+              if (file_fd /= FD_STDIN) then
+                if (c_close(file_fd) < 0) then
+                  ! Error closing file descriptor
+                end if
+              end if
             else
               if (.not. is_permanent) call save_fd(redir%fd)
               if (c_dup2(file_fd, redir%fd) < 0) then
                 success = .false.
               end if
-            end if
-            if (c_close(file_fd) < 0) then
-              ! Error closing file descriptor
+              ! Close original only if it's different from target
+              if (file_fd /= redir%fd) then
+                if (c_close(file_fd) < 0) then
+                  ! Error closing file descriptor
+                end if
+              end if
             end if
           end if
+        end if
+
+      case (REDIR_HERE_STRING)
+        ! <<< string (here-string) - redirect string content to stdin
+        if (allocated(redir%filename)) then
+          block
+            integer(c_int) :: read_fd, write_fd
+            character(len=:), allocatable, target :: content
+            integer(c_intptr_t) :: bytes_written
+
+            ! Create pipe for here-string
+            if (.not. create_pipe(read_fd, write_fd)) then
+              write(error_unit, '(a)') 'fortsh: cannot create pipe for here-string'
+              success = .false.
+            else
+              ! Write content to pipe (with trailing newline)
+              content = trim(redir%filename) // char(10)
+              bytes_written = c_write(write_fd, c_loc(content), int(len(content), c_size_t))
+              if (bytes_written < 0) then
+                write(error_unit, '(a)') 'fortsh: error writing to here-string pipe'
+                success = .false.
+              end if
+
+              ! Close write end
+              if (c_close(write_fd) < 0) then
+                ! Error closing write end
+              end if
+
+              ! Redirect stdin from read end
+              if (.not. is_permanent) call save_fd(FD_STDIN)
+              if (c_dup2(read_fd, FD_STDIN) < 0) then
+                success = .false.
+              end if
+
+              ! Close original read fd
+              if (c_close(read_fd) < 0) then
+                ! Error closing read end
+              end if
+            end if
+          end block
+        else
+          write(error_unit, '(a)') 'fortsh: here-string missing content'
+          success = .false.
         end if
 
       case default

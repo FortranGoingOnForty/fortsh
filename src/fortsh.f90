@@ -96,6 +96,8 @@ program fortran_shell
       if (num_args >= 2) then
         call get_command_argument(2, command_string)
         execute_command_string = .true.
+        ! Note: Additional arguments after command string will be processed
+        ! after shell initialization (to set $0 and positional params)
       else
         write(error_unit, '(a)') 'fortsh: -c: option requires an argument'
         stop 2
@@ -156,6 +158,39 @@ program fortran_shell
 
   ! Execute command string if -c was specified
   if (execute_command_string) then
+    ! Set LINENO to 1 for -c commands (POSIX: lines start at 1)
+    shell%current_line_number = 1
+    ! Mark that we're in command mode (for $- flag)
+    shell%in_command_mode = .true.
+
+    ! POSIX: Handle additional arguments after -c 'command'
+    ! For -c 'command' arg0 arg1 arg2: arg0 becomes $0, arg1 arg2 become $1 $2
+    if (num_args >= 3) then
+      block
+        character(len=1024) :: c_arg
+        integer :: c_idx
+        ! Third argument becomes $0
+        call get_command_argument(3, c_arg)
+        shell%shell_name = trim(c_arg)
+        ! Remaining arguments become positional parameters $1, $2, ...
+        if (num_args >= 4) then
+          shell%num_positional = num_args - 3
+          if (.not. allocated(shell%positional_params)) then
+            allocate(shell%positional_params(shell%num_positional))
+            shell%positional_params_capacity = shell%num_positional
+          else if (shell%positional_params_capacity < shell%num_positional) then
+            deallocate(shell%positional_params)
+            allocate(shell%positional_params(shell%num_positional))
+            shell%positional_params_capacity = shell%num_positional
+          end if
+          do c_idx = 4, num_args
+            call get_command_argument(c_idx, c_arg)
+            shell%positional_params(c_idx - 3) = trim(c_arg)
+          end do
+        end if
+      end block
+    end if
+
     ! Check if string contains heredoc outside quotes and pre-process it
     if (has_heredoc_outside_quotes(command_string)) then
       ! Pre-process heredocs before parsing
@@ -166,6 +201,11 @@ program fortran_shell
     ! Handle line continuation (backslash-newline)
     command_string = remove_line_continuations(command_string)
     call process_substitutions(shell, trim(command_string), proc_subst_line)
+
+    ! POSIX set -v: Print input line before execution
+    if (shell%option_verbose) then
+      write(error_unit, '(A)') trim(command_string)
+    end if
 
     ! Use new parser if feature flag is enabled
     if (shell%use_new_parser) then
@@ -359,6 +399,11 @@ program fortran_shell
 
     ! Process substitutions <() and >() before parsing
     call process_substitutions(shell, expanded_line, proc_subst_line)
+
+    ! POSIX set -v: Print input line before execution
+    if (shell%option_verbose) then
+      write(error_unit, '(A)') trim(expanded_line)
+    end if
 
     ! Parse and execute (use new parser if feature flag is enabled)
     if (shell%use_new_parser) then
@@ -769,14 +814,21 @@ contains
       do while (j <= len_trim(input))
         ! Check if we're at start of a line
         if (j == content_pos .or. input(j-1:j-1) == char(10)) then
-          ! Check if this line starts with the delimiter
-          if (j + len_trim(delimiter) - 1 <= len_trim(input)) then
-            if (input(j:j+len_trim(delimiter)-1) == trim(delimiter)) then
+          ! For <<-, skip leading tabs before checking delimiter
+          k = j
+          if (strip_tabs) then
+            do while (k <= len_trim(input) .and. input(k:k) == char(9))
+              k = k + 1
+            end do
+          end if
+          ! Check if this line starts with the delimiter (after tabs if strip_tabs)
+          if (k + len_trim(delimiter) - 1 <= len_trim(input)) then
+            if (input(k:k+len_trim(delimiter)-1) == trim(delimiter)) then
               ! Check if delimiter is alone on the line or followed by newline
-              if (j + len_trim(delimiter) > len_trim(input) .or. &
-                  input(j+len_trim(delimiter):j+len_trim(delimiter)) == char(10)) then
+              if (k + len_trim(delimiter) > len_trim(input) .or. &
+                  input(k+len_trim(delimiter):k+len_trim(delimiter)) == char(10)) then
                 content_end = j - 1
-                content_pos = j + len_trim(delimiter)
+                content_pos = k + len_trim(delimiter)
                 if (content_pos <= len_trim(input) .and. &
                     input(content_pos:content_pos) == char(10)) then
                   content_pos = content_pos + 1
@@ -847,8 +899,13 @@ contains
       shell%has_pending_heredoc = .true.
     end if
 
-    ! Return just the command line
-    output = cmd_line
+    ! Return the command line plus any remaining commands after heredocs
+    if (content_pos <= len_trim(input)) then
+      ! There are more commands after the last heredoc
+      output = trim(cmd_line) // char(10) // trim(input(content_pos:))
+    else
+      output = cmd_line
+    end if
 
   end function
 
@@ -995,6 +1052,11 @@ contains
 
       ! Process substitutions <() and >() before parsing
       call process_substitutions(shell, expanded_line, proc_subst_line)
+
+      ! POSIX set -v: Print input line before execution
+      if (shell%option_verbose) then
+        write(error_unit, '(A)') trim(input_line)
+      end if
 
       ! Parse and execute (use new AST parser by default)
       if (shell%use_new_parser) then
@@ -1250,6 +1312,8 @@ contains
       ret = c_setpgid(shell%shell_pgid, shell%shell_pgid)
       shell%shell_terminal = STDIN_FD
       ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
+      ! Enable monitor mode (job control) for interactive shells
+      shell%option_monitor = .true.
     end if
 
     ! Query terminal size (only if interactive to avoid SIGTTOU)

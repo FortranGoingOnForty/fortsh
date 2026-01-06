@@ -134,41 +134,85 @@ contains
     end if
 
     ! Read input based on options
-    if (use_nchars) then
-      call read_n_characters(nchars, input_line)
-    else if (use_delimiter) then
-      call read_until_delimiter(delimiter, input_line)
-    else if (use_timeout) then
-      call read_with_timeout(timeout_sec, input_line, shell%last_exit_status)
-    else
-      call read_line_input(input_line)
-    end if
+    block
+      logical :: eof_reached
+      eof_reached = .false.
 
-    ! Process input based on raw mode
-    if (.not. raw_mode) then
-      call process_backslash_escapes(input_line)
-    end if
+      if (use_nchars) then
+        call read_n_characters(nchars, input_line)
+      else if (use_delimiter) then
+        call read_until_delimiter(delimiter, input_line)
+      else if (use_timeout) then
+        call read_with_timeout(timeout_sec, input_line, shell%last_exit_status)
+        ! Early return for timeout - exit status already set
+        if (shell%last_exit_status /= 0) return
+      else
+        call read_line_input(input_line, eof_reached, raw_mode)
+      end if
 
-    ! Store result in variable(s)
-    if (use_array) then
-      call store_array_result(shell, var_name, input_line)
-    else if (arg_index < cmd%num_tokens) then
-      ! Multiple variables: start from arg_index (first variable)
-      call store_multiple_variables(shell, cmd%tokens, arg_index, cmd%num_tokens, input_line)
-    else
-      ! Single variable
-      call set_shell_variable(shell, var_name, trim(input_line))
-    end if
-    
-    shell%last_exit_status = 0
+      ! Process backslash escapes (but not continuation, which was handled above)
+      if (.not. raw_mode) then
+        call process_backslash_escapes(input_line)
+      end if
+
+      ! Store result in variable(s)
+      if (use_array) then
+        call store_array_result(shell, var_name, input_line)
+      else if (arg_index < cmd%num_tokens) then
+        ! Multiple variables: start from arg_index (first variable)
+        call store_multiple_variables(shell, cmd%tokens, arg_index, cmd%num_tokens, input_line)
+      else
+        ! Single variable
+        call set_shell_variable(shell, var_name, trim(input_line))
+      end if
+
+      ! Set exit status: 1 if EOF reached without reading any data, 0 otherwise
+      if (eof_reached .and. len_trim(input_line) == 0) then
+        shell%last_exit_status = 1
+      else
+        shell%last_exit_status = 0
+      end if
+    end block
   end subroutine
 
-  subroutine read_line_input(input_line)
+  subroutine read_line_input(input_line, eof_reached, raw_mode)
     character(len=*), intent(out) :: input_line
-    integer :: iostat
-    
+    logical, intent(out), optional :: eof_reached
+    logical, intent(in), optional :: raw_mode
+    integer :: iostat, line_len
+    character(len=4096) :: continuation_line
+    logical :: is_raw
+
+    is_raw = .false.
+    if (present(raw_mode)) is_raw = raw_mode
+
     read(input_unit, '(a)', iostat=iostat) input_line
-    if (iostat /= 0) input_line = ''
+    if (iostat /= 0) then
+      input_line = ''
+      if (present(eof_reached)) eof_reached = .true.
+      return
+    end if
+    if (present(eof_reached)) eof_reached = .false.
+
+    ! POSIX: Without -r, backslash at end of line continues to next line
+    if (.not. is_raw) then
+      do while (.true.)
+        line_len = len_trim(input_line)
+        if (line_len == 0) exit
+        ! Check if line ends with backslash
+        if (input_line(line_len:line_len) == '\') then
+          ! Remove trailing backslash
+          input_line(line_len:line_len) = ' '
+          ! Read next line
+          read(input_unit, '(a)', iostat=iostat) continuation_line
+          if (iostat /= 0) exit
+          ! Append continuation line
+          input_line = trim(input_line) // trim(continuation_line)
+        else
+          exit
+        end if
+      end do
+    end if
   end subroutine
 
   subroutine read_n_characters(n, input_line)
@@ -231,37 +275,23 @@ contains
 
   subroutine process_backslash_escapes(input_line)
     character(len=*), intent(inout) :: input_line
-    
+
     character(len=len(input_line)) :: processed
     integer :: i, j
-    
+
+    ! POSIX: Without -r, backslash removes itself and preserves the following char
+    ! This is NOT like printf escapes - \n becomes literal 'n', not newline
+    ! The only special case is \<newline> which is handled in read_line_input
+
     processed = ''
     i = 1
     j = 1
-    
+
     do while (i <= len_trim(input_line))
       if (input_line(i:i) == '\' .and. i < len_trim(input_line)) then
+        ! Skip the backslash, keep the next character literally
         i = i + 1
-        select case (input_line(i:i))
-        case ('n')
-          processed(j:j) = char(10)  ! newline
-        case ('t')
-          processed(j:j) = char(9)   ! tab
-        case ('r')
-          processed(j:j) = char(13)  ! carriage return
-        case ('b')
-          processed(j:j) = char(8)   ! backspace
-        case ('a')
-          processed(j:j) = char(7)   ! bell
-        case ('\')
-          processed(j:j) = '\'
-        case ('"')
-          processed(j:j) = '"'
-        case ("'")
-          processed(j:j) = "'"
-        case default
-          processed(j:j) = input_line(i:i)
-        end select
+        processed(j:j) = input_line(i:i)
         j = j + 1
         i = i + 1
       else
@@ -270,7 +300,7 @@ contains
         j = j + 1
       end if
     end do
-    
+
     input_line = processed
   end subroutine
 
@@ -344,35 +374,57 @@ contains
     start_pos = pos
 
     ! Split input by IFS characters
+    ! POSIX: For non-whitespace IFS chars, consecutive delimiters create empty fields
     do while (pos <= input_len .and. word_count < var_count)
       is_ifs_char = (index(ifs_value, input_line(pos:pos)) > 0)
 
       if (is_ifs_char) then
+        ! Record the word before this IFS char (may be empty if consecutive IFS)
         if (pos > start_pos) then
           word_count = word_count + 1
           words(word_count) = input_line(start_pos:pos-1)
-
-          ! If we've filled all but the last variable, assign remaining input to last var
-          if (word_count >= var_count - 1) then
-            ! Skip IFS chars before remainder
-            pos = pos + 1
-            do while (pos <= input_len .and. index(ifs_value, input_line(pos:pos)) > 0)
-              pos = pos + 1
-            end do
-            if (pos <= input_len) then
-              word_count = word_count + 1
-              words(word_count) = input_line(pos:input_len)
-            end if
-            exit
+        else
+          ! Empty field (consecutive IFS chars for non-whitespace delimiters)
+          ! Only create empty field for non-whitespace IFS characters
+          if (index(' ' // char(9) // char(10), input_line(pos:pos)) == 0) then
+            word_count = word_count + 1
+            words(word_count) = ''
           end if
         end if
 
-        ! Skip all consecutive IFS chars to find start of next word
-        do while (pos <= input_len .and. index(ifs_value, input_line(pos:pos)) > 0)
+        ! If we've filled all but the last variable, assign remaining input to last var
+        if (word_count >= var_count - 1) then
+          ! Skip current IFS char
           pos = pos + 1
+          ! Skip only whitespace IFS chars before remainder
+          do while (pos <= input_len)
+            if (index(' ' // char(9) // char(10), input_line(pos:pos)) > 0 .and. &
+                index(ifs_value, input_line(pos:pos)) > 0) then
+              pos = pos + 1
+            else
+              exit
+            end if
+          end do
+          if (pos <= input_len) then
+            word_count = word_count + 1
+            words(word_count) = input_line(pos:input_len)
+          end if
+          exit
+        end if
+
+        ! Skip this IFS char
+        pos = pos + 1
+
+        ! Only skip additional consecutive whitespace IFS chars
+        do while (pos <= input_len)
+          if (index(' ' // char(9) // char(10), input_line(pos:pos)) > 0 .and. &
+              index(ifs_value, input_line(pos:pos)) > 0) then
+            pos = pos + 1
+          else
+            exit
+          end if
         end do
         start_pos = pos
-        ! Don't increment pos, just continue to next iteration
         cycle
       end if
 

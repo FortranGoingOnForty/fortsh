@@ -79,6 +79,11 @@ contains
       return
     end if
 
+    ! Update LINENO to reflect current line being executed
+    if (node%line > 0) then
+      shell%current_line_number = node%line
+    end if
+
     select case(node%node_type)
     case(CMD_SIMPLE)
       exit_status = execute_simple_command(node, shell)
@@ -121,6 +126,7 @@ contains
   function execute_simple_command(node, shell) result(exit_status)
     use executor, only: execute_pipeline
     use fd_redirection, only: apply_single_redirection, restore_fds
+    use parser, only: expand_variables
     use iso_fortran_env, only: error_unit
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
@@ -130,6 +136,7 @@ contains
     type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
     character(len=1024), allocatable :: old_params(:)
+    character(len=:), allocatable :: expanded_filename
     logical :: redir_success
     logical :: has_redirects, is_pure_assignment
 
@@ -138,6 +145,85 @@ contains
     if (.not. associated(node%simple_cmd)) then
       exit_status = 0
       return
+    end if
+
+    ! Check for empty command (e.g., from empty command substitution result like $(true))
+    ! When a command substitution returns empty and is the only word, we have num_words=1
+    ! but the word itself is empty
+    if (node%simple_cmd%num_words > 0 .and. allocated(node%simple_cmd%words)) then
+      block
+        logical :: is_empty_cmd
+        integer :: check_i, check_len
+        character(len=1) :: ch
+
+        ! Check if first word is empty (accounting for sentinel characters)
+        is_empty_cmd = .false.
+        check_len = len_trim(node%simple_cmd%words(1))
+        if (check_len == 0) then
+          is_empty_cmd = .true.
+        else
+          ! Check if word contains only sentinel characters (char(2), char(3))
+          is_empty_cmd = .true.
+          do check_i = 1, check_len
+            ch = node%simple_cmd%words(1)(check_i:check_i)
+            if (ch /= char(2) .and. ch /= char(3)) then
+              is_empty_cmd = .false.
+              exit
+            end if
+          end do
+        end if
+
+        if (is_empty_cmd) then
+          ! Empty first word - check if it was a quoted literal empty string
+          ! If so, it's an explicit empty command name which is "command not found"
+          ! If not quoted (came from expansion), just preserve exit status
+          if (allocated(node%simple_cmd%word_was_quoted)) then
+            if (node%simple_cmd%word_was_quoted(1)) then
+              ! Explicit empty string like '' or "" - command not found
+              ! Apply any redirections first (e.g., 2>/dev/null)
+              if (node%simple_cmd%num_redirects > 0) then
+                block
+                  use fd_redirection, only: apply_single_redirection, restore_fds
+                  use parser, only: expand_variables
+                  type(redirection_t) :: temp_redirect
+                  logical :: redir_success
+                  character(len=:), allocatable :: expanded_filename
+                  integer :: redir_idx
+
+                  do redir_idx = 1, node%simple_cmd%num_redirects
+                    temp_redirect%type = node%simple_cmd%redirects(redir_idx)%type
+                    temp_redirect%fd = node%simple_cmd%redirects(redir_idx)%fd
+                    temp_redirect%target_fd = node%simple_cmd%redirects(redir_idx)%target_fd
+                    if (allocated(node%simple_cmd%redirects(redir_idx)%filename)) then
+                      call expand_variables(trim(node%simple_cmd%redirects(redir_idx)%filename), expanded_filename, shell)
+                      if (allocated(expanded_filename)) then
+                        temp_redirect%filename = expanded_filename
+                      else
+                        temp_redirect%filename = trim(node%simple_cmd%redirects(redir_idx)%filename)
+                      end if
+                    else
+                      temp_redirect%filename = ''
+                    end if
+                    temp_redirect%force_clobber = node%simple_cmd%redirects(redir_idx)%force_clobber
+                    call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+                  end do
+                end block
+              end if
+              write(error_unit, '(a)') 'fortsh: : command not found'
+              ! Restore file descriptors
+              if (node%simple_cmd%num_redirects > 0) then
+                call restore_fds()
+              end if
+              exit_status = 127
+              shell%last_exit_status = exit_status
+              return
+            end if
+          end if
+          ! Empty from expansion - preserve exit status and return
+          exit_status = shell%last_exit_status
+          return
+        end if
+      end block
     end if
 
     if (node%simple_cmd%num_words == 0) then
@@ -168,7 +254,27 @@ contains
             if (assign_eq_pos > 1) then
               assign_name = node%simple_cmd%assignments(assign_idx)(1:assign_eq_pos-1)
               assign_value = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:)
-              value_len = token_len - assign_eq_pos
+              ! Calculate value_len - normally use len_trim, but preserve
+              ! whitespace-only values (like IFS=" ")
+              if (len_trim(assign_value) > 0) then
+                ! Normal case: value has non-whitespace content
+                value_len = len_trim(assign_value)
+              else
+                ! Special case: value is empty or all whitespace
+                ! Use tracked length minus equals sign position
+                value_len = token_len - assign_eq_pos
+                ! Adjust for quotes if present in original
+                if (value_len >= 2) then
+                  block
+                    character(len=1) :: first_char
+                    first_char = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:assign_eq_pos+1)
+                    if (first_char == "'" .or. first_char == '"') then
+                      value_len = value_len - 2  ! Remove quote characters from length
+                    end if
+                  end block
+                end if
+                if (value_len <= 0) value_len = 0
+              end if
 
               ! Check if this is an array assignment: VAR=(...)
               if (value_len >= 2 .and. assign_value(1:1) == '(' .and. &
@@ -188,7 +294,22 @@ contains
                 end if
               else
                 ! Preserve whitespace in value by passing explicit length
-                call set_shell_variable(shell, trim(assign_name), assign_value, value_len)
+                ! Strip sentinel characters that may be embedded from lexer processing
+                block
+                  character(len=1024) :: clean_value
+                  integer :: src_i, dst_i
+                  clean_value = ''
+                  dst_i = 1
+                  do src_i = 1, value_len
+                    if (assign_value(src_i:src_i) /= char(2) .and. &
+                        assign_value(src_i:src_i) /= char(3) .and. &
+                        assign_value(src_i:src_i) /= char(1)) then
+                      clean_value(dst_i:dst_i) = assign_value(src_i:src_i)
+                      dst_i = dst_i + 1
+                    end if
+                  end do
+                  call set_shell_variable(shell, trim(assign_name), clean_value, dst_i - 1)
+                end block
               end if
 
               ! If allexport is enabled (set -a), automatically export the variable
@@ -223,24 +344,34 @@ contains
       ! Check if this is exec with only redirections (no command to execute)
       if (node%simple_cmd%num_words == 1 .and. node%simple_cmd%num_redirects > 0) then
         ! exec without arguments but with redirections - apply redirections permanently
-        do i = 1, node%simple_cmd%num_redirects
-          ! Convert AST redirection to fd_redirection format
-          temp_redirect%type = node%simple_cmd%redirects(i)%type
-          temp_redirect%fd = node%simple_cmd%redirects(i)%fd
-          temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
-          if (allocated(node%simple_cmd%redirects(i)%filename)) then
-            temp_redirect%filename = trim(node%simple_cmd%redirects(i)%filename)
-          else
-            temp_redirect%filename = ''
-          end if
-          temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
+        block
+          use parser, only: expand_variables
+          character(len=:), allocatable :: expanded_filename
+          do i = 1, node%simple_cmd%num_redirects
+            ! Convert AST redirection to fd_redirection format
+            temp_redirect%type = node%simple_cmd%redirects(i)%type
+            temp_redirect%fd = node%simple_cmd%redirects(i)%fd
+            temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
+            if (allocated(node%simple_cmd%redirects(i)%filename)) then
+              ! Expand variables in the filename (e.g., $$ -> PID)
+              call expand_variables(trim(node%simple_cmd%redirects(i)%filename), expanded_filename, shell)
+              if (allocated(expanded_filename)) then
+                temp_redirect%filename = expanded_filename
+              else
+                temp_redirect%filename = trim(node%simple_cmd%redirects(i)%filename)
+              end if
+            else
+              temp_redirect%filename = ''
+            end if
+            temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
 
-          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber, permanent=.true.)
-          if (.not. redir_success) then
-            exit_status = 1
-            return
-          end if
-        end do
+            call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber, permanent=.true.)
+            if (.not. redir_success) then
+              exit_status = 1
+              return
+            end if
+          end do
+        end block
         exit_status = 0
         return
       else if (node%simple_cmd%num_words == 1) then
@@ -347,6 +478,50 @@ contains
           shell%num_positional = 0
         end if
 
+        ! Apply redirections for the function call
+        block
+          use fd_redirection, only: apply_single_redirection, restore_fds
+          use parser, only: expand_variables
+          type(redirection_t) :: temp_redirect
+          logical :: redir_success, func_has_redirects
+          character(len=:), allocatable :: expanded_filename
+          integer :: redir_idx
+
+          func_has_redirects = (node%simple_cmd%num_redirects > 0)
+          if (func_has_redirects) then
+            do redir_idx = 1, node%simple_cmd%num_redirects
+              temp_redirect%type = node%simple_cmd%redirects(redir_idx)%type
+              temp_redirect%fd = node%simple_cmd%redirects(redir_idx)%fd
+              temp_redirect%target_fd = node%simple_cmd%redirects(redir_idx)%target_fd
+              if (allocated(node%simple_cmd%redirects(redir_idx)%filename)) then
+                call expand_variables(trim(node%simple_cmd%redirects(redir_idx)%filename), expanded_filename, shell)
+                if (allocated(expanded_filename)) then
+                  allocate(temp_redirect%filename, source=trim(expanded_filename))
+                  deallocate(expanded_filename)
+                else
+                  allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(redir_idx)%filename))
+                end if
+              end if
+              temp_redirect%force_clobber = node%simple_cmd%redirects(redir_idx)%force_clobber
+
+              call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+              if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+              if (.not. redir_success) then
+                call restore_fds()
+                exit_status = 1
+                ! Restore old positional params before returning
+                shell%num_positional = old_num_positional
+                if (allocated(old_params)) then
+                  if (shell%num_positional > 0) then
+                    shell%positional_params(1:old_num_positional) = old_params(1:old_num_positional)
+                  end if
+                  deallocate(old_params)
+                end if
+                return
+              end if
+            end do
+          end if
+
         ! Increment function depth for return/exit context tracking
         shell%function_depth = shell%function_depth + 1
 
@@ -359,6 +534,18 @@ contains
 
         ! Decrement function depth
         shell%function_depth = shell%function_depth - 1
+
+        ! Restore file descriptors if we applied redirections
+        if (func_has_redirects) then
+          call restore_fds()
+        end if
+        end block
+
+        ! Clear function return flag and use return value as exit status
+        if (shell%function_return_pending) then
+          exit_status = shell%function_return_value
+          shell%function_return_pending = .false.
+        end if
 
         ! Restore old positional parameters
         shell%num_positional = old_num_positional
@@ -505,7 +692,13 @@ contains
         temp_redirect%fd = node%simple_cmd%redirects(i)%fd
         temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
         if (allocated(node%simple_cmd%redirects(i)%filename)) then
-          allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(i)%filename))
+          ! Expand variables in redirect filename (e.g., /tmp/file$$)
+          call expand_variables(trim(node%simple_cmd%redirects(i)%filename), expanded_filename, shell)
+          if (allocated(expanded_filename)) then
+            allocate(temp_redirect%filename, source=expanded_filename)
+          else
+            allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(i)%filename))
+          end if
         end if
         temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
 
@@ -541,7 +734,8 @@ contains
 
     ! Check if fatal expansion error occurred (e.g., set -u with undefined variable)
     if (shell%fatal_expansion_error) then
-      shell%fatal_expansion_error = .false.  ! Reset flag
+      ! NOTE: Don't reset fatal_expansion_error here - let it propagate to subshell handler
+      ! The subshell code needs to know about the error to adjust exit code (127 -> 1)
       ! POSIX: In non-interactive shells, exit the shell entirely
       if (.not. shell%is_interactive) then
         shell%running = .false.
@@ -570,6 +764,11 @@ contains
     ! If a trap command was queued, execute it now (unless we're already executing a trap)
     if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap) then
       call execute_pending_trap(shell)
+    end if
+
+    ! POSIX: Update $_ to last argument of previous command
+    if (node%simple_cmd%num_words > 0 .and. allocated(node%simple_cmd%words)) then
+      shell%last_arg = trim(node%simple_cmd%words(node%simple_cmd%num_words))
     end if
 
     ! Clean up
@@ -949,6 +1148,11 @@ contains
           return
         end if
       end if
+      ! Check for function return - if requested, skip the right side
+      if (shell%function_return_pending) then
+        exit_status = shell%function_return_value
+        return
+      end if
       ! Check if noexec was set - if so, skip right side (set -n behavior)
       if (shell%option_noexec .and. .not. shell%is_interactive) then
         exit_status = left_status
@@ -1022,14 +1226,49 @@ contains
   ! =====================================
 
   recursive function execute_if_node(node, shell) result(exit_status)
+    use fd_redirection, only: apply_single_redirection, restore_fds
+    use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, cond_status
+    integer :: exit_status, cond_status, i
+    type(redirection_t) :: temp_redirect
+    logical :: redir_success, has_redirects
 
     exit_status = 0
 
     if (.not. associated(node%if_stmt)) then
       return
+    end if
+
+    ! Apply redirections for the entire if statement
+    has_redirects = (node%num_redirects > 0)
+    if (has_redirects) then
+      block
+        character(len=:), allocatable :: expanded_filename
+        do i = 1, node%num_redirects
+          temp_redirect%type = node%redirects(i)%type
+          temp_redirect%fd = node%redirects(i)%fd
+          temp_redirect%target_fd = node%redirects(i)%target_fd
+          if (allocated(node%redirects(i)%filename)) then
+            call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              allocate(temp_redirect%filename, source=trim(expanded_filename))
+              deallocate(expanded_filename)
+            else
+              allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+            end if
+          end if
+          temp_redirect%force_clobber = node%redirects(i)%force_clobber
+
+          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+          if (.not. redir_success) then
+            call restore_fds()
+            exit_status = 1
+            return
+          end if
+        end do
+      end block
     end if
 
     ! Evaluate condition
@@ -1055,6 +1294,11 @@ contains
       end if
     end if
 
+    ! Restore file descriptors if we applied redirections
+    if (has_redirects) then
+      call restore_fds()
+    end if
+
   end function execute_if_node
 
   ! =====================================
@@ -1063,15 +1307,50 @@ contains
 
   recursive function execute_while_node(node, shell) result(exit_status)
     use control_flow, only: push_control_block, pop_control_block, BLOCK_WHILE, BLOCK_UNTIL
+    use fd_redirection, only: apply_single_redirection, restore_fds
+    use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, cond_status
+    integer :: exit_status, cond_status, i
     logical :: should_continue
+    type(redirection_t) :: temp_redirect
+    logical :: redir_success, has_redirects
 
     exit_status = 0
 
     if (.not. associated(node%while_loop)) then
       return
+    end if
+
+    ! Apply redirections for the entire while loop
+    has_redirects = (node%num_redirects > 0)
+    if (has_redirects) then
+      block
+        character(len=:), allocatable :: expanded_filename
+        do i = 1, node%num_redirects
+          temp_redirect%type = node%redirects(i)%type
+          temp_redirect%fd = node%redirects(i)%fd
+          temp_redirect%target_fd = node%redirects(i)%target_fd
+          if (allocated(node%redirects(i)%filename)) then
+            call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              allocate(temp_redirect%filename, source=trim(expanded_filename))
+              deallocate(expanded_filename)
+            else
+              allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+            end if
+          end if
+          temp_redirect%force_clobber = node%redirects(i)%force_clobber
+
+          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+          if (.not. redir_success) then
+            call restore_fds()
+            exit_status = 1
+            return
+          end if
+        end do
+      end block
     end if
 
     ! Push loop control block so break/continue can find it
@@ -1149,6 +1428,11 @@ contains
     ! Pop loop control block
     call pop_control_block(shell)
 
+    ! Restore file descriptors if we applied redirections
+    if (has_redirects) then
+      call restore_fds()
+    end if
+
   end function execute_while_node
 
   ! =====================================
@@ -1181,34 +1465,62 @@ contains
     ! Apply redirections for the entire for loop
     has_redirects = (node%num_redirects > 0)
     if (has_redirects) then
-      do i = 1, node%num_redirects
-        temp_redirect%type = node%redirects(i)%type
-        temp_redirect%fd = node%redirects(i)%fd
-        temp_redirect%target_fd = node%redirects(i)%target_fd
-        if (allocated(node%redirects(i)%filename)) then
-          allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
-        end if
-        temp_redirect%force_clobber = node%redirects(i)%force_clobber
+      block
+        character(len=:), allocatable :: expanded_filename
+        do i = 1, node%num_redirects
+          temp_redirect%type = node%redirects(i)%type
+          temp_redirect%fd = node%redirects(i)%fd
+          temp_redirect%target_fd = node%redirects(i)%target_fd
+          if (allocated(node%redirects(i)%filename)) then
+            ! Expand variables in filename
+            call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              allocate(temp_redirect%filename, source=trim(expanded_filename))
+              deallocate(expanded_filename)
+            else
+              allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+            end if
+          end if
+          temp_redirect%force_clobber = node%redirects(i)%force_clobber
 
-        call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
-        if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
-        if (.not. redir_success) then
-          call restore_fds()
-          exit_status = 1
-          return
-        end if
-      end do
+          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+          if (.not. redir_success) then
+            call restore_fds()
+            exit_status = 1
+            return
+          end if
+        end do
+      end block
     end if
 
     ! Get IFS for word splitting
-    ifs_chars = get_shell_variable(shell, 'IFS')
-    if (.not. allocated(ifs_chars) .or. len_trim(ifs_chars) == 0) then
-      ifs_chars = ' ' // achar(9) // new_line('a')  ! Default: space, tab, newline
+    ! POSIX: Empty IFS (IFS="") means no field splitting
+    ! Unset IFS means use default (space, tab, newline)
+    if (shell%ifs_len == 0) then
+      ! IFS is set but empty - no splitting will occur
+      ifs_chars = ''
+    else if (shell%ifs_len > 0) then
+      ! IFS is set with content - use it
+      ifs_chars = shell%ifs(1:shell%ifs_len)
+    else
+      ! Default IFS
+      ifs_chars = ' ' // achar(9) // new_line('a')
     end if
 
     ! First, expand variables and split on IFS, then expand globs
     allocate(expanded_words(MAX_TOKEN_LEN))
     total_words = 0
+
+    ! POSIX: If 'in' is omitted (num_words == 0), iterate over positional parameters
+    if (node%for_loop%num_words == 0) then
+      do i = 1, shell%num_positional
+        if (total_words < MAX_TOKEN_LEN) then
+          total_words = total_words + 1
+          expanded_words(total_words) = shell%positional_params(i)
+        end if
+      end do
+    else
 
     do i = 1, node%for_loop%num_words
       ! Special handling for quoted "$@" - each positional parameter becomes a separate word
@@ -1234,21 +1546,29 @@ contains
         call expand_variables(trim(node%for_loop%words(i)), expanded_word, shell, was_quoted_in=.false.)
       end if
 
-      ! Split the expanded word on IFS characters ONLY if it was NOT originally quoted
-      ! POSIX: Quoted words should not undergo field splitting
+      ! Split the expanded word on IFS characters ONLY if:
+      ! 1. It was NOT originally quoted, AND
+      ! 2. It contained a parameter expansion ($ or backtick)
+      ! POSIX: Field splitting only occurs on results of expansions, not literal text
       if (allocated(node%for_loop%words_was_quoted) .and. i <= size(node%for_loop%words_was_quoted) .and. &
           node%for_loop%words_was_quoted(i)) then
         ! Word was quoted - do not split, treat as single word
         split_words(1) = trim(expanded_word)
         split_count = 1
-      else
-        ! Word was not quoted - split on IFS
+      else if (index(node%for_loop%words(i), '$') > 0 .or. &
+               index(node%for_loop%words(i), '`') > 0) then
+        ! Word contained expansion - split on IFS
         call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
+      else
+        ! Literal word (no expansion) - do not split on IFS
+        split_words(1) = trim(expanded_word)
+        split_count = 1
       end if
 
       ! Now process each split word for globs
       do k = 1, split_count
-        if (has_unescaped_glob_chars(trim(split_words(k)))) then
+        ! Only expand globs if noglob option is NOT set (POSIX: set -f disables glob)
+        if (.not. shell%option_noglob .and. has_unescaped_glob_chars(trim(split_words(k)))) then
           ! Expand the glob pattern
           call glob_match(trim(split_words(k)), glob_matches, glob_count)
           if (glob_count > 0) then
@@ -1275,6 +1595,7 @@ contains
         end if
       end do
     end do
+    end if  ! End of else branch for num_words > 0
 
     ! Push loop control block so break/continue can find it
     call push_control_block(shell, BLOCK_FOR, .true.)
@@ -1351,14 +1672,17 @@ contains
   function execute_case_node(node, shell) result(exit_status)
     use variables, only: get_shell_variable
     use parser, only: expand_variables
+    use fd_redirection, only: apply_single_redirection, restore_fds
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status
+    integer :: exit_status, i
     character(len=1024) :: case_value
     integer :: item_idx, pattern_idx
     logical :: matched
     character(len=MAX_TOKEN_LEN) :: pattern
     character(len=:), allocatable :: expanded_pattern
+    type(redirection_t) :: temp_redirect
+    logical :: redir_success, has_redirects
 
     exit_status = 0
 
@@ -1366,11 +1690,43 @@ contains
       return
     end if
 
+    ! Apply redirections for the entire case statement
+    has_redirects = (node%num_redirects > 0)
+    if (has_redirects) then
+      block
+        character(len=:), allocatable :: expanded_filename
+        do i = 1, node%num_redirects
+          temp_redirect%type = node%redirects(i)%type
+          temp_redirect%fd = node%redirects(i)%fd
+          temp_redirect%target_fd = node%redirects(i)%target_fd
+          if (allocated(node%redirects(i)%filename)) then
+            call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              allocate(temp_redirect%filename, source=trim(expanded_filename))
+              deallocate(expanded_filename)
+            else
+              allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+            end if
+          end if
+          temp_redirect%force_clobber = node%redirects(i)%force_clobber
+
+          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+          if (.not. redir_success) then
+            call restore_fds()
+            exit_status = 1
+            return
+          end if
+        end do
+      end block
+    end if
+
     ! Get the value to match (expand variables)
-    case_value = trim(node%case_stmt%word)
+    ! Note: Don't trim - the value might BE whitespace (e.g., " " in case " " in ...)
+    case_value = node%case_stmt%word
     ! If it starts with $, expand it
-    if (case_value(1:1) == '$') then
-      case_value = get_shell_variable(shell, case_value(2:))
+    if (len_trim(case_value) > 0 .and. case_value(1:1) == '$') then
+      case_value = get_shell_variable(shell, trim(case_value(2:)))
     end if
 
     ! Try to match against each case item
@@ -1385,7 +1741,8 @@ contains
         call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), trim(case_value))
+        ! Note: Don't trim case_value - it might BE whitespace
+        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), case_value)
 
         if (matched) exit
       end do
@@ -1401,6 +1758,11 @@ contains
       end if
     end do
 
+    ! Restore file descriptors if we applied redirections
+    if (has_redirects) then
+      call restore_fds()
+    end if
+
   end function execute_case_node
 
   ! =====================================
@@ -1409,6 +1771,7 @@ contains
 
   recursive function execute_subshell_node(node, shell) result(exit_status)
     use fd_redirection, only: apply_single_redirection
+    use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
@@ -1433,24 +1796,37 @@ contains
 
       ! Apply redirections in child process
       if (node%num_redirects > 0) then
-        do i = 1, node%num_redirects
-          temp_redirect%type = node%redirects(i)%type
-          temp_redirect%fd = node%redirects(i)%fd
-          temp_redirect%target_fd = node%redirects(i)%target_fd
-          if (allocated(node%redirects(i)%filename)) then
-            allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
-          end if
-          temp_redirect%force_clobber = node%redirects(i)%force_clobber
+        block
+          character(len=:), allocatable :: expanded_filename
+          do i = 1, node%num_redirects
+            temp_redirect%type = node%redirects(i)%type
+            temp_redirect%fd = node%redirects(i)%fd
+            temp_redirect%target_fd = node%redirects(i)%target_fd
+            if (allocated(node%redirects(i)%filename)) then
+              call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+              if (allocated(expanded_filename)) then
+                allocate(temp_redirect%filename, source=trim(expanded_filename))
+                deallocate(expanded_filename)
+              else
+                allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+              end if
+            end if
+            temp_redirect%force_clobber = node%redirects(i)%force_clobber
 
-          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
-          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
-          if (.not. redir_success) then
-            call c_exit(1)
-          end if
-        end do
+            call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
+            if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+            if (.not. redir_success) then
+              call c_exit(1)
+            end if
+          end do
+        end block
       end if
 
       status = execute_ast_node(node%subshell, shell)
+      ! bash: expansion errors in subshells exit with 1, not 127
+      if (shell%fatal_expansion_error .and. status == 127) then
+        status = 1
+      end if
       call c_exit(status)
     else if (pid > 0) then
       ! Parent - wait for subshell
@@ -1469,12 +1845,14 @@ contains
 
   recursive function execute_brace_group_node(node, shell) result(exit_status)
     use fd_redirection, only: apply_single_redirection, restore_fds
+    use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
     integer :: i
     type(redirection_t) :: temp_redirect
     logical :: redir_success
+    character(len=:), allocatable :: expanded_filename
 
     exit_status = 0
 
@@ -1489,7 +1867,14 @@ contains
         temp_redirect%fd = node%redirects(i)%fd
         temp_redirect%target_fd = node%redirects(i)%target_fd
         if (allocated(node%redirects(i)%filename)) then
-          allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+          ! Expand variables in redirect filename (e.g., $$ becomes PID)
+          call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+          if (allocated(expanded_filename)) then
+            allocate(temp_redirect%filename, source=trim(expanded_filename))
+            deallocate(expanded_filename)
+          else
+            allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+          end if
         end if
         temp_redirect%force_clobber = node%redirects(i)%force_clobber
 
@@ -1704,7 +2089,10 @@ contains
       if (associated(ast_root)) then
         exit_code = execute_ast_node(ast_root, shell)
         shell%last_exit_status = exit_code
-        call destroy_command_node(ast_root)
+        ! Don't destroy function definitions - their AST is cached for later execution
+        if (ast_root%node_type /= CMD_FUNCTION_DEF) then
+          call destroy_command_node(ast_root)
+        end if
       end if
 
       ! Stop execution if exit command was encountered
@@ -1763,18 +2151,25 @@ contains
     character(len=*), intent(in) :: ifs_chars
     character(len=MAX_TOKEN_LEN), intent(out) :: words(MAX_TOKEN_LEN)
     integer, intent(out) :: word_count
-    integer :: i, start, str_len
+    integer :: i, str_len, word_pos
     logical :: in_word
     character(len=MAX_TOKEN_LEN) :: current_word
 
     word_count = 0
     current_word = ''
+    word_pos = 0
     in_word = .false.
-    start = 1
     str_len = len_trim(str)
 
     ! Handle empty string
     if (str_len == 0) then
+      return
+    end if
+
+    ! Special case: empty IFS means no splitting - return entire string as one word
+    if (len(ifs_chars) == 0) then
+      word_count = 1
+      words(1) = str(1:str_len)
       return
     end if
 
@@ -1784,14 +2179,16 @@ contains
         if (in_word) then
           word_count = word_count + 1
           if (word_count <= MAX_TOKEN_LEN) then
-            words(word_count) = current_word
+            words(word_count) = current_word(1:word_pos)
           end if
           current_word = ''
+          word_pos = 0
           in_word = .false.
         end if
       else
-        ! Non-IFS character - add to current word
-        current_word = trim(current_word) // str(i:i)
+        ! Non-IFS character - add to current word (preserve spaces!)
+        word_pos = word_pos + 1
+        current_word(word_pos:word_pos) = str(i:i)
         in_word = .true.
       end if
     end do
@@ -1800,7 +2197,7 @@ contains
     if (in_word) then
       word_count = word_count + 1
       if (word_count <= MAX_TOKEN_LEN) then
-        words(word_count) = current_word
+        words(word_count) = current_word(1:word_pos)
       end if
     end if
   end subroutine split_on_ifs
@@ -1833,8 +2230,21 @@ contains
 
       ! Copy words to temp command
       do j = 1, temp_cmd%num_tokens
-        temp_cmd%tokens(j) = trim(node%pipeline%commands(i)%simple_cmd%words(j))
-        temp_cmd%token_lengths(j) = len_trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        ! Preserve whitespace for quoted tokens by using word_lengths
+        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted) .and. &
+            allocated(node%pipeline%commands(i)%simple_cmd%word_lengths)) then
+          if (node%pipeline%commands(i)%simple_cmd%word_was_quoted(j)) then
+            temp_cmd%tokens(j) = node%pipeline%commands(i)%simple_cmd%words(j)( &
+                                  1:node%pipeline%commands(i)%simple_cmd%word_lengths(j))
+            temp_cmd%token_lengths(j) = node%pipeline%commands(i)%simple_cmd%word_lengths(j)
+          else
+            temp_cmd%tokens(j) = trim(node%pipeline%commands(i)%simple_cmd%words(j))
+            temp_cmd%token_lengths(j) = len_trim(node%pipeline%commands(i)%simple_cmd%words(j))
+          end if
+        else
+          temp_cmd%tokens(j) = trim(node%pipeline%commands(i)%simple_cmd%words(j))
+          temp_cmd%token_lengths(j) = len_trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        end if
         if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted)) then
           temp_cmd%token_quoted(j) = node%pipeline%commands(i)%simple_cmd%word_was_quoted(j)
         else
