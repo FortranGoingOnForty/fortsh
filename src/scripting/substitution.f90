@@ -87,7 +87,7 @@ contains
     character(len=*), intent(inout) :: cmd_str
 
     character(len=len(cmd_str)) :: result
-    integer :: i, paren_count, subst_start, subst_end
+    integer :: i, j, paren_count, subst_start, subst_end, result_len
     character(len=2048) :: inner_cmd, inner_result
     logical :: found_nested
 
@@ -97,6 +97,7 @@ contains
     do while (found_nested)
       found_nested = .false.
       result = ''
+      j = 1  ! Position in result (tracks actual content including spaces)
       i = 1
 
       do while (i <= len_trim(cmd_str))
@@ -150,22 +151,37 @@ contains
               shell%in_command_substitution = .true.
               call execute_command_and_capture(shell, inner_cmd, inner_result)
               shell%in_command_substitution = .false.
-              result = trim(result) // trim(inner_result)
+              result_len = len_trim(inner_result)
+              if (j + result_len - 1 <= len(result)) then
+                result(j:j+result_len-1) = inner_result(1:result_len)
+                j = j + result_len
+              end if
               found_nested = .true.
             else
               ! Keep the substitution for next iteration
-              result = trim(result) // cmd_str(subst_start:subst_end)
+              result_len = subst_end - subst_start + 1
+              if (j + result_len - 1 <= len(result)) then
+                result(j:j+result_len-1) = cmd_str(subst_start:subst_end)
+                j = j + result_len
+              end if
             end if
           else
-            result = trim(result) // cmd_str(subst_start:subst_start)
+            if (j <= len(result)) then
+              result(j:j) = cmd_str(subst_start:subst_start)
+              j = j + 1
+            end if
             i = subst_start + 1
           end if
         else
-          result = trim(result) // cmd_str(i:i)
+          ! Copy character preserving spaces
+          if (j <= len(result)) then
+            result(j:j) = cmd_str(i:i)
+            j = j + 1
+          end if
           i = i + 1
         end if
       end do
-      
+
       cmd_str = result
     end do
   end subroutine
