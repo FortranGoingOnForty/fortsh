@@ -22,13 +22,13 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello"
       - send_key: "Escape"
-      - wait: 0.5
+      - wait: 0.7
       - send: "0"
-      - wait: 0.1
+      - wait: 0.2
       - send: "dw"
-      - wait: 0.1
+      - wait: 0.2
       - send: "i"
-      - wait: 0.1
+      - wait: 0.2
       - send: "echo goodbye"
       - send_key: "Enter"
     expect_output: "goodbye"
@@ -59,20 +59,20 @@ tests:
       - send_line: "set -o vi"
       - send: "echo ABCD"
       - send_key: "Escape"
-      - wait: 0.5
+      - wait: 0.7
       - send: "0"
-      - wait: 0.1
+      - wait: 0.2
       - send: "w"
-      - wait: 0.1
+      - wait: 0.2
       - send: "l"
-      - wait: 0.1
+      - wait: 0.2
       - send: "i"
-      - wait: 0.1
+      - wait: 0.2
       - send: "X"
       - send_key: "Escape"
-      - wait: 0.1
+      - wait: 0.2
       - send: "0i"
-      - wait: 0.1
+      - wait: 0.2
       - send_key: "Enter"
     expect_output: "AXBCD"
     match_type: "contains"
@@ -111,20 +111,20 @@ tests:
       - send_line: "set -o vi"
       - send: "echo ABC DEF"
       - send_key: "Escape"
-      - wait: 0.5
+      - wait: 0.7
       - send: "0"
-      - wait: 0.1
+      - wait: 0.2
       - send: "w"
-      - wait: 0.1
+      - wait: 0.2
       - send: "w"
-      - wait: 0.1
+      - wait: 0.2
       - send: "i"
-      - wait: 0.1
+      - wait: 0.2
       - send: "X"
       - send_key: "Escape"
-      - wait: 0.1
+      - wait: 0.2
       - send: "0i"
-      - wait: 0.1
+      - wait: 0.2
       - send_key: "Enter"
     expect_output: "ABC XDEF"
     match_type: "contains"
@@ -171,18 +171,18 @@ tests:
       - send_line: "set -o vi"
       - send: "echo ABCD"
       - send_key: "Escape"
-      - wait: 0.5
+      - wait: 0.7
       - send: "0"
-      - wait: 0.1
+      - wait: 0.2
       - send: "w"
-      - wait: 0.1
+      - wait: 0.2
       - send: "i"
-      - wait: 0.1
+      - wait: 0.2
       - send: "X"
       - send_key: "Escape"
-      - wait: 0.1
+      - wait: 0.2
       - send: "0i"
-      - wait: 0.1
+      - wait: 0.2
       - send_key: "Enter"
     expect_output: "XABCD"
     match_type: "contains"
@@ -192,18 +192,18 @@ tests:
       - send_line: "set -o vi"
       - send: "echo ABCD"
       - send_key: "Escape"
-      - wait: 0.5
+      - wait: 0.7
       - send: "0"
-      - wait: 0.1
+      - wait: 0.2
       - send: "w"
-      - wait: 0.1
+      - wait: 0.2
       - send: "a"
-      - wait: 0.1
+      - wait: 0.2
       - send: "X"
       - send_key: "Escape"
-      - wait: 0.1
+      - wait: 0.2
       - send: "0i"
-      - wait: 0.1
+      - wait: 0.2
       - send_key: "Enter"
     expect_output: "AXBCD"
     match_type: "contains"
@@ -308,13 +308,13 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.5
+      - wait: 0.7
       - send: "0"
-      - wait: 0.1
+      - wait: 0.2
       - send: "w"
-      - wait: 0.1
+      - wait: 0.2
       - send: "cw"
-      - wait: 0.1
+      - wait: 0.2
       - send: "goodbye"
       - send_key: "Enter"
     expect_output: "goodbye world"
@@ -412,20 +412,20 @@ tests:
       - send_line: "set -o vi"
       - send: "echo ABCDEF"
       - send_key: "Escape"
-      - wait: 0.5
+      - wait: 0.7
       - send: "0"
-      - wait: 0.1
+      - wait: 0.2
       - send: "w"
-      - wait: 0.1
+      - wait: 0.2
       - send: "3l"
-      - wait: 0.1
+      - wait: 0.2
       - send: "i"
-      - wait: 0.1
+      - wait: 0.2
       - send: "X"
       - send_key: "Escape"
-      - wait: 0.1
+      - wait: 0.2
       - send: "0i"
-      - wait: 0.1
+      - wait: 0.2
       - send_key: "Enter"
     expect_output: "ABCXDEF"
     match_type: "contains"
