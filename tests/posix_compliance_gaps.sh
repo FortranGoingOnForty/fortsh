@@ -36,6 +36,7 @@ PASSED=0
 FAILED=0
 SKIPPED=0
 FAILED_TESTS_LIST=""
+DEBUG_INFO=""
 
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -160,6 +161,10 @@ compare_posix_exit_code() {
         pass "$test_name"
     else
         fail "$test_name" "exit=$posix_exit" "exit=$fortsh_exit"
+        # Accumulate debug info for CI summary
+        DEBUG_INFO="${DEBUG_INFO}DEBUG [$test_name]: cmd='$command'\n"
+        DEBUG_INFO="${DEBUG_INFO}  bash exit: $posix_exit\n"
+        DEBUG_INFO="${DEBUG_INFO}  fortsh exit: $fortsh_exit\n"
     fi
 }
 
@@ -2781,6 +2786,9 @@ fi
 if [ "$FAILED" -gt 0 ]; then
     printf "\n${RED}Failed tests:${NC}\n"
     printf "%b" "$FAILED_TESTS_LIST"
+    if [ -n "$DEBUG_INFO" ]; then
+        printf "\n${YELLOW}Debug info:${NC}\n%b" "$DEBUG_INFO"
+    fi
     printf "==========================================\n"
 fi
 
