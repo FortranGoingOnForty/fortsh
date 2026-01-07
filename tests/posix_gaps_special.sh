@@ -62,7 +62,13 @@ compare_posix_output() {
     posix_out=$(bash -c "$command" 2>&1 | normalize_output)
     fortsh_out=$("$FORTSH_BIN" -c "$command" 2>&1 | normalize_output)
     if [ "$posix_out" = "$fortsh_out" ]; then pass "$test_name"
-    else fail "$test_name" "$posix_out" "$fortsh_out"; fi
+    else
+        fail "$test_name" "$posix_out" "$fortsh_out"
+        # Extra debug for CI
+        printf "  DEBUG: bash version: %s\n" "$(bash --version | head -1)"
+        printf "  DEBUG: posix_out hex: %s\n" "$(printf '%s' "$posix_out" | od -A x -t x1z | head -1)"
+        printf "  DEBUG: fortsh_out hex: %s\n" "$(printf '%s' "$fortsh_out" | od -A x -t x1z | head -1)"
+    fi
 }
 
 # ============================================================================
