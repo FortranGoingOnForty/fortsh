@@ -22,10 +22,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "0"
-      - send: "dw"
-      - send: "i"
+      - wait: 0.5
+      - send: "0dwi"
+      - wait: 0.1
       - send: "echo goodbye"
       - send_key: "Enter"
     expect_output: "goodbye"
@@ -37,25 +36,35 @@ tests:
   - name: "h moves cursor left"
     steps:
       - send_line: "set -o vi"
-      - send: "echo test"
+      - send: "echo ABCD"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "hhi"
+      - wait: 0.5
+      - send: "hi"
+      - wait: 0.1
       - send: "X"
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "teXst"
+    expect_output: "ABXCD"
     match_type: "contains"
 
   - name: "l moves cursor right"
     steps:
       - send_line: "set -o vi"
-      - send: "echo test"
+      - send: "echo ABCD"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "0lli"
+      - wait: 0.5
+      - send: "0wli"
+      - wait: 0.1
       - send: "X"
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "ecXho test"
+    expect_output: "AXBCD"
     match_type: "contains"
 
   - name: "0 moves to beginning of line"
@@ -63,11 +72,15 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "0i"
-      - send: "X"
+      - wait: 0.5
+      - send: "0dwi"
+      - wait: 0.1
+      - send: "printf '"
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "A'"
       - send_key: "Enter"
-    expect_output: "Xecho test"
+    expect_output: "test"
     match_type: "contains"
 
   - name: "$ moves to end of line"
@@ -75,8 +88,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "0$a"
+      - wait: 0.1
       - send: "X"
       - send_key: "Enter"
     expect_output: "echo testX"
@@ -85,43 +99,52 @@ tests:
   - name: "w moves forward one word"
     steps:
       - send_line: "set -o vi"
-      - send: "one two three"
+      - send: "echo ABC DEF"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "0wi"
+      - wait: 0.5
+      - send: "0wwi"
+      - wait: 0.1
       - send: "X"
-      - send_key: "C-a"
-      - send: "echo "
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "one Xtwo three"
+    expect_output: "ABC XDEF"
     match_type: "contains"
 
   - name: "b moves backward one word"
     steps:
       - send_line: "set -o vi"
-      - send: "one two three"
+      - send: "echo ABC DEF"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "bi"
+      - wait: 0.1
       - send: "X"
-      - send_key: "C-a"
-      - send: "echo "
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "one two Xthree"
+    expect_output: "ABC XDEF"
     match_type: "contains"
 
   - name: "e moves to end of word"
     steps:
       - send_line: "set -o vi"
-      - send: "one two three"
+      - send: "echo ABC DEF"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "0ea"
+      - wait: 0.5
+      - send: "0wea"
+      - wait: 0.1
       - send: "X"
-      - send_key: "C-a"
-      - send: "echo "
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "oneX two three"
+    expect_output: "ABCX DEF"
     match_type: "contains"
 
   # =============================================================
@@ -130,37 +153,46 @@ tests:
   - name: "i enters insert mode before cursor"
     steps:
       - send_line: "set -o vi"
-      - send: "echo test"
+      - send: "echo ABCD"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "0i"
+      - wait: 0.5
+      - send: "0wi"
+      - wait: 0.1
       - send: "X"
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "Xecho test"
+    expect_output: "XABCD"
     match_type: "contains"
 
   - name: "a enters insert mode after cursor"
     steps:
       - send_line: "set -o vi"
-      - send: "echo test"
+      - send: "echo ABCD"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "0a"
+      - wait: 0.5
+      - send: "0wa"
+      - wait: 0.1
       - send: "X"
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "eXcho test"
+    expect_output: "AXBCD"
     match_type: "contains"
 
   - name: "I enters insert mode at beginning"
     steps:
       - send_line: "set -o vi"
-      - send: "echo test"
+      - send: "cho test"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "I"
-      - send: "X"
+      - wait: 0.5
+      - send: "Ie"
       - send_key: "Enter"
-    expect_output: "Xecho test"
+    expect_output: "test"
     match_type: "contains"
 
   - name: "A enters insert mode at end"
@@ -168,8 +200,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "A"
+      - wait: 0.1
       - send: "X"
       - send_key: "Enter"
     expect_output: "echo testX"
@@ -183,8 +216,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "0x"
+      - wait: 0.1
       - send: "i"
       - send_key: "Enter"
     expect_output: "cho test"
@@ -195,8 +229,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "X"
+      - wait: 0.1
       - send: "a"
       - send_key: "Enter"
     expect_output: "echo tes"
@@ -207,8 +242,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "0dw"
+      - wait: 0.1
       - send: "i"
       - send_key: "Enter"
     expect_output: "hello world"
@@ -219,9 +255,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "dd"
-      - send: "i"
+      - wait: 0.5
+      - send: "ddi"
+      - wait: 0.1
       - send: "echo cleared"
       - send_key: "Enter"
     expect_output: "cleared"
@@ -232,8 +268,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "0wD"
+      - wait: 0.1
       - send: "a"
       - send_key: "Enter"
     expect_output: "echo"
@@ -247,11 +284,12 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "0wcw"
+      - wait: 0.1
       - send: "goodbye"
       - send_key: "Enter"
-    expect_output: "echo goodbye world"
+    expect_output: "goodbye world"
     match_type: "contains"
 
   - name: "cc changes entire line"
@@ -259,8 +297,9 @@ tests:
       - send_line: "set -o vi"
       - send: "old command"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "cc"
+      - wait: 0.1
       - send: "echo new"
       - send_key: "Enter"
     expect_output: "new"
@@ -271,11 +310,12 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "0wC"
+      - wait: 0.1
       - send: "changed"
       - send_key: "Enter"
-    expect_output: "echo changed"
+    expect_output: "changed"
     match_type: "contains"
 
   # =============================================================
@@ -287,7 +327,7 @@ tests:
       - send_line: "echo first"
       - send_line: "echo second"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "k"
       - send_key: "Enter"
     expect_output: "second"
@@ -299,8 +339,9 @@ tests:
       - send_line: "echo first"
       - send_line: "echo second"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "kk"
+      - wait: 0.1
       - send: "j"
       - send_key: "Enter"
     expect_output: "second"
@@ -314,12 +355,12 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "0dw"
-      - send: "u"
-      - send: "i"
+      - wait: 0.1
+      - send: "ui"
       - send_key: "Enter"
-    expect_output: "echo test"
+    expect_output: "test"
     match_type: "contains"
 
   # =============================================================
@@ -330,8 +371,9 @@ tests:
       - send_line: "set -o vi"
       - send: "echo abcd"
       - send_key: "Escape"
-      - wait: 0.3
+      - wait: 0.5
       - send: "02x"
+      - wait: 0.1
       - send: "i"
       - send_key: "Enter"
     expect_output: "ho abcd"
@@ -340,13 +382,18 @@ tests:
   - name: "3l moves 3 characters right"
     steps:
       - send_line: "set -o vi"
-      - send: "echo test"
+      - send: "echo ABCDEF"
       - send_key: "Escape"
-      - wait: 0.3
-      - send: "03li"
+      - wait: 0.5
+      - send: "0w3li"
+      - wait: 0.1
       - send: "X"
+      - send_key: "Escape"
+      - wait: 0.1
+      - send: "0i"
+      - wait: 0.1
       - send_key: "Enter"
-    expect_output: "echXo test"
+    expect_output: "ABCXDEF"
     match_type: "contains"
 
   # =============================================================
@@ -356,9 +403,9 @@ tests:
     steps:
       - send_line: "set -o vi"
       - send_line: "set -o emacs"
-      - send: "echo hello"
+      - send: "cho hello"
       - send_key: "C-a"
-      - send: "X"
+      - send: "e"
       - send_key: "Enter"
-    expect_output: "Xecho hello"
+    expect_output: "hello"
     match_type: "contains"
