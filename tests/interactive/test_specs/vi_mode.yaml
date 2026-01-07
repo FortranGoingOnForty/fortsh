@@ -23,7 +23,11 @@ tests:
       - send: "echo hello"
       - send_key: "Escape"
       - wait: 0.5
-      - send: "0dwi"
+      - send: "0"
+      - wait: 0.1
+      - send: "dw"
+      - wait: 0.1
+      - send: "i"
       - wait: 0.1
       - send: "echo goodbye"
       - send_key: "Enter"
@@ -56,7 +60,13 @@ tests:
       - send: "echo ABCD"
       - send_key: "Escape"
       - wait: 0.5
-      - send: "0wli"
+      - send: "0"
+      - wait: 0.1
+      - send: "w"
+      - wait: 0.1
+      - send: "l"
+      - wait: 0.1
+      - send: "i"
       - wait: 0.1
       - send: "X"
       - send_key: "Escape"
@@ -102,7 +112,13 @@ tests:
       - send: "echo ABC DEF"
       - send_key: "Escape"
       - wait: 0.5
-      - send: "0wwi"
+      - send: "0"
+      - wait: 0.1
+      - send: "w"
+      - wait: 0.1
+      - send: "w"
+      - wait: 0.1
+      - send: "i"
       - wait: 0.1
       - send: "X"
       - send_key: "Escape"
@@ -156,7 +172,11 @@ tests:
       - send: "echo ABCD"
       - send_key: "Escape"
       - wait: 0.5
-      - send: "0wi"
+      - send: "0"
+      - wait: 0.1
+      - send: "w"
+      - wait: 0.1
+      - send: "i"
       - wait: 0.1
       - send: "X"
       - send_key: "Escape"
@@ -173,7 +193,11 @@ tests:
       - send: "echo ABCD"
       - send_key: "Escape"
       - wait: 0.5
-      - send: "0wa"
+      - send: "0"
+      - wait: 0.1
+      - send: "w"
+      - wait: 0.1
+      - send: "a"
       - wait: 0.1
       - send: "X"
       - send_key: "Escape"
@@ -285,7 +309,11 @@ tests:
       - send: "echo hello world"
       - send_key: "Escape"
       - wait: 0.5
-      - send: "0wcw"
+      - send: "0"
+      - wait: 0.1
+      - send: "w"
+      - wait: 0.1
+      - send: "cw"
       - wait: 0.1
       - send: "goodbye"
       - send_key: "Enter"
@@ -385,7 +413,13 @@ tests:
       - send: "echo ABCDEF"
       - send_key: "Escape"
       - wait: 0.5
-      - send: "0w3li"
+      - send: "0"
+      - wait: 0.1
+      - send: "w"
+      - wait: 0.1
+      - send: "3l"
+      - wait: 0.1
+      - send: "i"
       - wait: 0.1
       - send: "X"
       - send_key: "Escape"
