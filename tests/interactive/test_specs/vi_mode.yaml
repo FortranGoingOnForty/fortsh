@@ -22,7 +22,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0"
       - send: "dw"
       - send: "i"
@@ -39,7 +39,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "hhi"
       - send: "X"
       - send_key: "Enter"
@@ -51,7 +51,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0lli"
       - send: "X"
       - send_key: "Enter"
@@ -63,7 +63,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0i"
       - send: "X"
       - send_key: "Enter"
@@ -75,7 +75,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0$a"
       - send: "X"
       - send_key: "Enter"
@@ -87,7 +87,7 @@ tests:
       - send_line: "set -o vi"
       - send: "one two three"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0wi"
       - send: "X"
       - send_key: "C-a"
@@ -101,7 +101,7 @@ tests:
       - send_line: "set -o vi"
       - send: "one two three"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "bi"
       - send: "X"
       - send_key: "C-a"
@@ -115,7 +115,7 @@ tests:
       - send_line: "set -o vi"
       - send: "one two three"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0ea"
       - send: "X"
       - send_key: "C-a"
@@ -132,7 +132,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0i"
       - send: "X"
       - send_key: "Enter"
@@ -144,7 +144,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0a"
       - send: "X"
       - send_key: "Enter"
@@ -156,7 +156,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "I"
       - send: "X"
       - send_key: "Enter"
@@ -168,7 +168,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "A"
       - send: "X"
       - send_key: "Enter"
@@ -183,7 +183,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0x"
       - send: "i"
       - send_key: "Enter"
@@ -195,7 +195,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "X"
       - send: "a"
       - send_key: "Enter"
@@ -207,7 +207,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0dw"
       - send: "i"
       - send_key: "Enter"
@@ -219,7 +219,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "dd"
       - send: "i"
       - send: "echo cleared"
@@ -232,7 +232,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0wD"
       - send: "a"
       - send_key: "Enter"
@@ -247,7 +247,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0wcw"
       - send: "goodbye"
       - send_key: "Enter"
@@ -259,7 +259,7 @@ tests:
       - send_line: "set -o vi"
       - send: "old command"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "cc"
       - send: "echo new"
       - send_key: "Enter"
@@ -271,7 +271,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo hello world"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0wC"
       - send: "changed"
       - send_key: "Enter"
@@ -287,7 +287,7 @@ tests:
       - send_line: "echo first"
       - send_line: "echo second"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "k"
       - send_key: "Enter"
     expect_output: "second"
@@ -299,7 +299,7 @@ tests:
       - send_line: "echo first"
       - send_line: "echo second"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "kk"
       - send: "j"
       - send_key: "Enter"
@@ -314,7 +314,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "0dw"
       - send: "u"
       - send: "i"
@@ -330,7 +330,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo abcd"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "02x"
       - send: "i"
       - send_key: "Enter"
@@ -342,7 +342,7 @@ tests:
       - send_line: "set -o vi"
       - send: "echo test"
       - send_key: "Escape"
-      - wait: 0.2
+      - wait: 0.3
       - send: "03li"
       - send: "X"
       - send_key: "Enter"
