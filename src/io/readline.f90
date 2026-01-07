@@ -2601,18 +2601,32 @@ contains
 
     pos = input_state%cursor_pos + 1
 
-    ! Bash/readline M-f: Skip spaces first, then move to end of word
-    ! Skip any leading spaces
-    do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) == ' ')
-      pos = pos + 1
-    end do
+    ! Vi mode vs Emacs mode have different word movement behavior
+    if (input_state%editing_mode == EDITING_MODE_VI) then
+      ! Vi mode 'w': move to START of next word
+      ! 1. Skip remaining non-space chars of current word
+      do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) /= ' ')
+        pos = pos + 1
+      end do
+      ! 2. Skip spaces
+      do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) == ' ')
+        pos = pos + 1
+      end do
+      ! 3. Now at START of next word (or end of line)
+      input_state%cursor_pos = min(pos - 1, input_state%length)
+    else
+      ! Emacs mode (Alt+f): Skip spaces first, then move to END of word
+      ! Skip any leading spaces
+      do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) == ' ')
+        pos = pos + 1
+      end do
+      ! Skip word characters (stop at end of word)
+      do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) /= ' ')
+        pos = pos + 1
+      end do
+      input_state%cursor_pos = min(pos - 1, input_state%length)
+    end if
 
-    ! Skip word characters (stop at end of word)
-    do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) /= ' ')
-      pos = pos + 1
-    end do
-
-    input_state%cursor_pos = min(pos - 1, input_state%length)
     input_state%dirty = .true.
   end subroutine
 
