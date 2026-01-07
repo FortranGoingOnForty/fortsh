@@ -21,6 +21,7 @@ PASSED=0
 FAILED=0
 SKIPPED=0
 FAILED_TESTS_LIST=""
+DEBUG_INFO=""
 
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -64,10 +65,10 @@ compare_posix_output() {
     if [ "$posix_out" = "$fortsh_out" ]; then pass "$test_name"
     else
         fail "$test_name" "$posix_out" "$fortsh_out"
-        # Extra debug for CI
-        printf "  DEBUG: bash version: %s\n" "$(bash --version | head -1)"
-        printf "  DEBUG: posix_out hex: %s\n" "$(printf '%s' "$posix_out" | od -A x -t x1z | head -1)"
-        printf "  DEBUG: fortsh_out hex: %s\n" "$(printf '%s' "$fortsh_out" | od -A x -t x1z | head -1)"
+        # Accumulate debug for CI summary
+        DEBUG_INFO="${DEBUG_INFO}DEBUG [$test_name]: cmd='$command'\n"
+        DEBUG_INFO="${DEBUG_INFO}  bash: '${posix_out}' hex=$(printf '%s' "$posix_out" | od -A x -t x1z | head -1)\n"
+        DEBUG_INFO="${DEBUG_INFO}  fortsh: '${fortsh_out}' hex=$(printf '%s' "$fortsh_out" | od -A x -t x1z | head -1)\n"
     fi
 }
 
@@ -215,6 +216,9 @@ printf "${RED}Failed:${NC}  %d\n" "$FAILED"
 printf "Total:   %d\n" "$((PASSED + FAILED))"
 if [ "$FAILED" -gt 0 ]; then
     printf "\n${RED}Failed tests:${NC}\n%b" "$FAILED_TESTS_LIST"
+    if [ -n "$DEBUG_INFO" ]; then
+        printf "\n${YELLOW}Debug info:${NC}\n%b" "$DEBUG_INFO"
+    fi
     exit 1
 fi
 exit 0
