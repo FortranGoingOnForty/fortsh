@@ -1,0 +1,13 @@
+tests:
+  - name: "Use alternate ${var:+alt}"
+    steps:
+      - send_line: "SET=yes; echo ${SET:+alternate}"
+    expect_output: "alternate"
+    match_type: "contains"
+
+  - name: "String length ${#var}"
+    steps:
+      - send_line: "VAR=hello; echo ${#VAR}"
+      - wait: 1.0
+    expect_output: "5"
+    match_type: "contains"
