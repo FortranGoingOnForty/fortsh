@@ -175,6 +175,7 @@ tests:
     match_type: "contains"
 
   - name: "String length ${#var}"
+    fresh_session: true
     steps:
       - send_line: "VAR=hello; echo ${#VAR}"
       - wait: 1.0
