@@ -2092,15 +2092,20 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer, intent(in) :: key
     character :: key_char
-    integer :: repeat_count, i
+    integer :: repeat_count, i, dbg_unit, ios
 
     if (input_state%editing_mode /= EDITING_MODE_VI .or. input_state%vi_mode /= VI_MODE_COMMAND) return
 
     key_char = char(key)
 
     ! Handle pending two-character commands first
+#ifdef USE_MEMORY_POOL
+    if (len_trim(input_state%vi_command_buffer_ref%data) > 0) then
+      select case (input_state%vi_command_buffer_ref%data(1:1))
+#else
     if (len_trim(input_state%vi_command_buffer) > 0) then
       select case (input_state%vi_command_buffer(1:1))
+#endif
       case ('m')
         ! Setting a mark
         call handle_vi_mark_set(input_state, key_char)
@@ -2494,17 +2499,30 @@ contains
   subroutine handle_vi_change_with_motion(input_state, motion)
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: motion
-    character :: actual_motion
+    integer :: start_pos, end_pos, saved_cursor
 
-    ! Vi quirk: 'cw' behaves like 'ce' (change to end of word, not to next word)
-    ! This is different from 'dw' which deletes to the start of the next word
-    actual_motion = motion
-    if (motion == 'w') then
-      actual_motion = 'e'
+    if (motion == 'c') then
+      ! cc - change entire line
+      call state_buffer_get(input_state, input_state%vi_yank_buffer)
+      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+      input_state%vi_yank_length = input_state%length
+      call state_buffer_clear(input_state)
+      input_state%length = 0
+      input_state%cursor_pos = 0
+    else if (motion == 'w') then
+      ! Vi quirk: 'cw' behaves like 'ce' (change to end of word, not to next word)
+      start_pos = input_state%cursor_pos + 1
+      saved_cursor = input_state%cursor_pos
+      call move_to_word_end(input_state)
+      end_pos = input_state%cursor_pos + 2
+      call yank_range(input_state, start_pos, end_pos)
+      call delete_range(input_state, start_pos, end_pos)
+      input_state%cursor_pos = saved_cursor
+    else
+      ! For other motions, use standard delete + insert
+      call handle_vi_delete_with_motion(input_state, motion)
     end if
 
-    ! Change is like delete + insert mode
-    call handle_vi_delete_with_motion(input_state, actual_motion)
     input_state%vi_mode = VI_MODE_INSERT
   end subroutine
 
@@ -2594,11 +2612,14 @@ contains
       pos = pos + 1
     end do
 
-    ! Find end of word
+    ! Find end of word (pos will be one past the last character)
     do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) /= ' ')
       pos = pos + 1
     end do
 
+    ! cursor_pos is 0-indexed, pos is 1-indexed buffer position
+    ! After loop, pos is at space after word, so pos-1 is last char buffer position
+    ! To get cursor at last char: cursor_pos + 1 = pos - 1, so cursor_pos = pos - 2
     input_state%cursor_pos = max(0, min(pos - 2, input_state%length - 1))
     input_state%dirty = .true.
   end subroutine
