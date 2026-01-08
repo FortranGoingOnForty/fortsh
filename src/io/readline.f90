@@ -2494,9 +2494,17 @@ contains
   subroutine handle_vi_change_with_motion(input_state, motion)
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: motion
+    character :: actual_motion
+
+    ! Vi quirk: 'cw' behaves like 'ce' (change to end of word, not to next word)
+    ! This is different from 'dw' which deletes to the start of the next word
+    actual_motion = motion
+    if (motion == 'w') then
+      actual_motion = 'e'
+    end if
 
     ! Change is like delete + insert mode
-    call handle_vi_delete_with_motion(input_state, motion)
+    call handle_vi_delete_with_motion(input_state, actual_motion)
     input_state%vi_mode = VI_MODE_INSERT
   end subroutine
 
