@@ -1,5 +1,7 @@
 bin/
 build/
+CLAUDE.md
+.DS_Store
 
 # Build artifacts
 *.mod
