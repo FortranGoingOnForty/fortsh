@@ -2444,9 +2444,13 @@ contains
 
   ! Execute a pending trap command (set by signal_handling module)
   subroutine execute_pending_trap(shell)
+    use grammar_parser, only: parse_command_line
+    use command_tree, only: command_node_t
+    use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
-    type(pipeline_t) :: trap_pipeline
-    integer :: i, saved_status
+    integer :: saved_status, exit_code
+    logical :: saved_bypass
+    type(command_node_t), pointer :: ast_root
 
     ! Save the trap command and signal before clearing
     character(len=1024) :: trap_cmd
@@ -2455,6 +2459,11 @@ contains
     ! Save current exit status (traps don't affect $?)
     saved_status = shell%last_exit_status
 
+    ! Save and clear bypass_functions — trap handlers should see all functions
+    ! even when fired inside 'command' builtin context
+    saved_bypass = shell%bypass_functions
+    shell%bypass_functions = .false.
+
     ! Clear the pending trap
     shell%pending_trap_command = ''
     shell%pending_trap_signal = 0
@@ -2462,31 +2471,18 @@ contains
     ! Set flag to prevent recursive trap execution
     shell%executing_trap = .true.
 
-    ! Parse the trap command
-    call parse_pipeline(trim(trap_cmd), trap_pipeline)
-
-    ! Execute it in current shell context
-    if (trap_pipeline%num_commands > 0) then
-      call execute_pipeline(trap_pipeline, shell, trim(trap_cmd))
-
-      ! Clean up pipeline allocations
-      do i = 1, trap_pipeline%num_commands
-        if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
-        if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
-        if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
-        if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
-        if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
-        if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
-        if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
-      end do
-
-      if (allocated(trap_pipeline%commands)) deallocate(trap_pipeline%commands)
+    ! Parse and execute the trap command using AST parser
+    ! This ensures AST-cached functions (from eval) are properly dispatched
+    ast_root => parse_command_line(trim(trap_cmd))
+    if (associated(ast_root)) then
+      exit_code = execute_ast(ast_root, shell)
     end if
 
     ! Clear flag to allow future trap execution
     shell%executing_trap = .false.
 
-    ! Restore original exit status (traps don't affect $?)
+    ! Restore bypass_functions and exit status
+    shell%bypass_functions = saved_bypass
     shell%last_exit_status = saved_status
   end subroutine
 
