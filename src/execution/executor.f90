@@ -1364,12 +1364,12 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, total_tokens
     character(len=:), allocatable :: expanded
-    character(len=1024), allocatable :: temp_tokens(:)  ! Increased to match split_words length
+    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     integer, allocatable :: temp_token_lengths(:)  ! Track actual lengths of expanded tokens
     logical, allocatable :: temp_token_quoted(:)  ! Track if original token was quoted
     logical :: is_format_string
     ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
-    character(len=1024) :: split_words(30)
+    character(len=MAX_TOKEN_LEN) :: split_words(30)
     character(len=256) :: ifs_to_use
     integer :: word_count, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
@@ -1614,7 +1614,7 @@ contains
 
     ! Replace command tokens with expanded ones
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    allocate(character(len=1024) :: cmd%tokens(total_tokens))  ! Match temp_tokens length
+    allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(total_tokens))
     do i = 1, total_tokens
       cmd%tokens(i) = temp_tokens(i)
     end do
