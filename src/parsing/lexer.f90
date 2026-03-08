@@ -29,6 +29,10 @@ module lexer
   integer, parameter :: LEX_IN_WORD = 4
   integer, parameter :: LEX_IN_OPERATOR = 5
 
+  ! Context tracking for [[ ]] test expressions
+  ! Inside [[ ]], && || < > are test operators, not shell operators
+  logical :: in_double_bracket_context = .false.
+
 contains
 
   ! =====================================
@@ -140,6 +144,7 @@ contains
     paren_depth = 0
     continuing_word = .false.
     token_has_quoted_part = .false.
+    in_double_bracket_context = .false.
 
     do while (pos <= input_len .and. num_tokens < size(tokens))
       ch = input(pos:pos)
@@ -226,6 +231,17 @@ contains
         end if
 
         ! Multi-character operators
+        ! Inside [[ ]], treat & | < > ( ) as word characters (test operators)
+        if (in_double_bracket_context .and. &
+            (ch == '&' .or. ch == '|' .or. ch == '<' .or. ch == '>' .or. &
+             ch == '(' .or. ch == ')')) then
+          state = LEX_IN_WORD
+          token_start = pos
+          token_len = 1
+          current_token = ch
+          pos = pos + 1
+          cycle
+        end if
         if (is_operator_start(ch)) then
           state = LEX_IN_OPERATOR
           token_start = pos
@@ -792,6 +808,15 @@ contains
             current_token(token_len:token_len) = ch
           end if
           pos = pos + 1
+        else if (in_double_bracket_context .and. &
+                 (ch == '&' .or. ch == '|' .or. ch == '<' .or. ch == '>' .or. &
+                  ch == '(' .or. ch == ')')) then
+          ! Inside [[ ]], these are test operators, not shell operators
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = ch
+          end if
+          pos = pos + 1
         else if (is_word_char(ch)) then
           ! Continue word
           if (token_len < MAX_TOKEN_LEN) then
@@ -1004,6 +1029,12 @@ contains
       tok_type = TOKEN_KEYWORD
     else
       tok_type = TOKEN_WORD
+    end if
+
+    ! Track [[ ]] context: inside test expressions, operators become words
+    if (.not. quoted) then
+      if (trim(value) == '[[') in_double_bracket_context = .true.
+      if (trim(value) == ']]') in_double_bracket_context = .false.
     end if
 
     call add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted, escaped)
