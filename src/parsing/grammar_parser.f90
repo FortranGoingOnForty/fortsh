@@ -169,7 +169,7 @@ contains
       if (tok%token_type == TOKEN_KEYWORD) then
         if (trim(tok%value) == 'done' .or. trim(tok%value) == 'fi' .or. &
             trim(tok%value) == 'else' .or. trim(tok%value) == 'elif' .or. &
-            trim(tok%value) == 'esac') exit
+            trim(tok%value) == 'esac' .or. trim(tok%value) == 'then') exit
       end if
       right_node => parse_and_or(state)
       ! Create LIST node even if right side is null (for background jobs at end of input)
