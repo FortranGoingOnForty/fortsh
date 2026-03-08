@@ -2023,6 +2023,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     type(command_node_t), pointer :: trap_ast
     integer :: saved_status, trap_status
+    logical :: saved_bypass
     character(len=4096) :: trap_cmd
 
     ! Save the trap command and signal before clearing
@@ -2030,6 +2031,11 @@ contains
 
     ! Save current exit status (traps don't affect $?)
     saved_status = shell%last_exit_status
+
+    ! Save and clear bypass_functions — trap handlers should see all functions
+    ! even when fired inside 'command' builtin context
+    saved_bypass = shell%bypass_functions
+    shell%bypass_functions = .false.
 
     ! Clear the pending trap
     shell%pending_trap_command = ''
@@ -2048,7 +2054,8 @@ contains
     ! Clear flag to allow future trap execution
     shell%executing_trap = .false.
 
-    ! Restore original exit status (traps don't affect $?)
+    ! Restore bypass_functions and exit status
+    shell%bypass_functions = saved_bypass
     shell%last_exit_status = saved_status
   end subroutine execute_pending_trap
 
