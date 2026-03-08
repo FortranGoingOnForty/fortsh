@@ -736,7 +736,55 @@ contains
     else if (is_builtin(cmd%tokens(1))) then
       call execute_builtin_with_redirects(cmd, shell)
     else
-      call execute_external(cmd, shell, original_input)
+      ! Check for command_not_found_handle before executing external
+      if (.not. shell%bypass_functions .and. &
+          is_function(shell, 'command_not_found_handle') .and. &
+          index(trim(cmd%tokens(1)), '/') == 0) then
+        block
+          logical :: cmd_found
+          type(command_t) :: handler_cmd
+          integer :: ii, token_len
+          character(len=4096) :: path_var, candidate
+          character(len=1024) :: path_dir
+          integer :: spos, cpos
+
+          ! Inline PATH search to avoid command_builtin dependency
+          cmd_found = .false.
+          path_var = get_shell_variable(shell, 'PATH')
+          if (len_trim(path_var) == 0) path_var = '/usr/bin:/bin'
+          spos = 1
+          do while (spos <= len_trim(path_var) .and. .not. cmd_found)
+            cpos = index(path_var(spos:), ':')
+            if (cpos == 0) then
+              path_dir = path_var(spos:len_trim(path_var))
+              spos = len_trim(path_var) + 1
+            else
+              path_dir = path_var(spos:spos + cpos - 2)
+              spos = spos + cpos
+            end if
+            if (len_trim(path_dir) == 0) path_dir = '.'
+            write(candidate, '(a,a,a)') trim(path_dir), '/', trim(cmd%tokens(1))
+            cmd_found = file_exists(trim(candidate))
+          end do
+
+          if (.not. cmd_found) then
+            ! Build handler call: command_not_found_handle <original_cmd> <args...>
+            token_len = len(cmd%tokens)
+            allocate(character(len=token_len) :: handler_cmd%tokens(cmd%num_tokens + 1))
+            handler_cmd%tokens(1) = 'command_not_found_handle'
+            do ii = 1, cmd%num_tokens
+              handler_cmd%tokens(ii + 1) = cmd%tokens(ii)
+            end do
+            handler_cmd%num_tokens = cmd%num_tokens + 1
+            call execute_function(handler_cmd, shell)
+            deallocate(handler_cmd%tokens)
+          else
+            call execute_external(cmd, shell, original_input)
+          end if
+        end block
+      else
+        call execute_external(cmd, shell, original_input)
+      end if
     end if
 
     ! === ERROR TRAP HOOK ===
