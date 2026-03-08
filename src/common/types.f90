@@ -11,7 +11,7 @@ module shell_types
 
   integer, parameter :: MAX_PATH_LEN = 4096
   integer, parameter :: MAX_TOKEN_LEN = 4096  ! Increased from 1024 to handle command substitution output
-  integer, parameter :: MAX_TOKENS = 100
+  integer, parameter :: MAX_TOKENS = 500
   integer, parameter :: MAX_ENV_LEN = 32768
   integer, parameter :: MAX_PIPELINE = 10
   integer, parameter :: MAX_JOBS = 100
