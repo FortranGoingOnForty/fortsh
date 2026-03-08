@@ -1,7 +1,7 @@
 module eval_builtin
   use shell_types
   use grammar_parser, only: parse_command_line
-  use command_tree, only: destroy_command_node, command_node_t
+  use command_tree, only: command_node_t
   use ast_executor, only: execute_ast
   implicit none
 
@@ -31,7 +31,6 @@ contains
     if (associated(ast_root)) then
       exit_code = execute_ast(ast_root, shell)
       shell%last_exit_status = exit_code
-      call destroy_command_node(ast_root)
     else
       ! Parse error - set failure status
       shell%last_exit_status = 1
