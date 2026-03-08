@@ -722,23 +722,11 @@ contains
     call skip_newlines(state)
     tok = current_token(state)
     if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'elif') then
-      call advance(state)
+      ! Delegate to parse_if_continuation which properly nests elif chains
+      ! as recursive if_statement nodes in the else_part
+      else_part => parse_if_continuation(state)
       call skip_newlines(state)
-      cond => parse_list(state)
-      call skip_newlines(state)
-      if (.not. expect(state, 'then')) return
-      call skip_newlines(state)
-      then_part => parse_list(state)
-      call skip_newlines(state)
-      tok = current_token(state)
-      if (tok%token_type == TOKEN_KEYWORD .and. (trim(tok%value) == 'elif' .or. trim(tok%value) == 'else')) then
-        elif_node => parse_if_continuation(state)
-        else_part => elif_node
-      else
-        if (.not. expect(state, 'fi')) return
-      end if
-      node => create_if_statement(cond, then_part, else_part)
-      return
+      if (.not. expect(state, 'fi')) return
     else if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == 'else') then
       call advance(state)
       call skip_newlines(state)
