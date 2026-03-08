@@ -10,7 +10,7 @@ module shell_types
   integer, parameter :: c_pid_t = c_int
 
   integer, parameter :: MAX_PATH_LEN = 4096
-  integer, parameter :: MAX_TOKEN_LEN = 1024  ! Increased from 256 to handle long variable expansions (e.g., $PATH)
+  integer, parameter :: MAX_TOKEN_LEN = 4096  ! Increased from 1024 to handle command substitution output
   integer, parameter :: MAX_TOKENS = 100
   integer, parameter :: MAX_ENV_LEN = 32768
   integer, parameter :: MAX_PIPELINE = 10
