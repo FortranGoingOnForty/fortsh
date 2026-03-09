@@ -2610,7 +2610,7 @@ contains
   ! Field splitting based on IFS
   subroutine field_split(input, ifs_chars, fields, field_count)
     character(len=*), intent(in) :: input, ifs_chars
-    character(len=1024), intent(out) :: fields(:)
+    character(len=*), intent(out) :: fields(:)
     integer, intent(out) :: field_count
 
     integer :: i, field_idx, input_len
@@ -2730,7 +2730,7 @@ contains
   subroutine word_split(shell, input, words, word_count)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
-    character(len=1024), intent(out) :: words(:)
+    character(len=*), intent(out) :: words(:)
     integer, intent(out) :: word_count
 
     character(len=256) :: ifs_to_use
