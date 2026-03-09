@@ -2444,13 +2444,10 @@ contains
 
   ! Execute a pending trap command (set by signal_handling module)
   subroutine execute_pending_trap(shell)
-    use grammar_parser, only: parse_command_line
-    use command_tree, only: command_node_t
-    use ast_executor, only: execute_ast
+    use trap_dispatch, only: eval_trap_string
     type(shell_state_t), intent(inout) :: shell
     integer :: saved_status, exit_code
     logical :: saved_bypass
-    type(command_node_t), pointer :: ast_root
 
     ! Save the trap command and signal before clearing
     character(len=1024) :: trap_cmd
@@ -2471,12 +2468,8 @@ contains
     ! Set flag to prevent recursive trap execution
     shell%executing_trap = .true.
 
-    ! Parse and execute the trap command using AST parser
-    ! This ensures AST-cached functions (from eval) are properly dispatched
-    ast_root => parse_command_line(trim(trap_cmd))
-    if (associated(ast_root)) then
-      exit_code = execute_ast(ast_root, shell)
-    end if
+    ! Execute via trap_dispatch (registered by ast_executor at startup)
+    call eval_trap_string(trim(trap_cmd), shell, exit_code)
 
     ! Clear flag to allow future trap execution
     shell%executing_trap = .false.
