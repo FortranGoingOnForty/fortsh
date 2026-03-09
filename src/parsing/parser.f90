@@ -58,8 +58,8 @@ contains
         end if
       else
         ! Track ${...} parameter expansion
-        if (i > 1 .and. working_input(i-1:i) == '${') then
-          in_param_expansion = .true.
+        if (i > 1 .and. working_input(i:i) == '{') then
+          if (working_input(i-1:i-1) == '$') in_param_expansion = .true.
         else if (in_param_expansion .and. working_input(i:i) == '}') then
           in_param_expansion = .false.
         end if
@@ -69,10 +69,10 @@ contains
           quote_char = working_input(i:i)
         else if (working_input(i:i) == '#' .and. .not. in_param_expansion) then
           ! Only treat # as comment if not part of $# or ${...}
-          if (i > 1 .and. working_input(i-1:i-1) == '$') then
+          if (i > 1) then; if (working_input(i-1:i-1) == '$') then
             ! This is $#, not a comment
             cycle
-          end if
+          end if; end if
           ! Found comment - remove from # to end of line (but keep newline and rest)
           ! Find the next newline
           newline_pos = index(working_input(i:), char(10))
@@ -144,7 +144,9 @@ contains
         ! Skip tracking for $( which is command substitution
         if (working_input(i:i) == '(') then
           ! Check if this is $( command substitution - if so, skip tracking
-          if (i == 1 .or. working_input(i-1:i-1) /= '$') then
+          if (i == 1) then
+            paren_depth = paren_depth + 1
+          else if (working_input(i-1:i-1) /= '$') then
             paren_depth = paren_depth + 1
           end if
         else if (working_input(i:i) == ')') then
@@ -169,14 +171,22 @@ contains
         if (i <= len_trim(working_input) - 3) then
           if (working_input(i:i+3) == 'case') then
             ! Verify it's a word boundary (space or start of command before it)
-            if (i == 1 .or. working_input(i-1:i-1) == ' ' .or. working_input(i-1:i-1) == ';') then
-              ! Verify word boundary after (space or special char)
-              if (i+4 > len_trim(working_input) .or. working_input(i+4:i+4) == ' ' .or. &
-                  working_input(i+4:i+4) == ';') then
-                case_depth = case_depth + 1
-                after_case_in = .false.  ! Reset when we see 'case'
+            block
+              logical :: at_word_boundary
+              if (i == 1) then
+                at_word_boundary = .true.
+              else
+                at_word_boundary = (working_input(i-1:i-1) == ' ' .or. working_input(i-1:i-1) == ';')
               end if
-            end if
+              if (at_word_boundary) then
+                ! Verify word boundary after (space or special char)
+                if (i+4 > len_trim(working_input) .or. working_input(i+4:i+4) == ' ' .or. &
+                    working_input(i+4:i+4) == ';') then
+                  case_depth = case_depth + 1
+                  after_case_in = .false.  ! Reset when we see 'case'
+                end if
+              end if
+            end block
           end if
         end if
 
@@ -185,7 +195,7 @@ contains
           if (i <= len_trim(working_input) - 2) then
             if (working_input(i:i+1) == 'in') then
               ! Verify word boundary before (space)
-              if (i > 1 .and. working_input(i-1:i-1) == ' ') then
+              if (i > 1) then; if (working_input(i-1:i-1) == ' ') then
                 ! Verify word boundary after (space or end)
                 if (i+2 > len_trim(working_input) .or. working_input(i+2:i+2) == ' ') then
                   ! Split after ' in '
@@ -210,7 +220,7 @@ contains
                   i = start - 1  ! Will be incremented at end of loop
                   cycle
                 end if
-              end if
+              end if; end if  ! i > 1 guard
             end if
           end if
         end if
@@ -219,15 +229,23 @@ contains
         if (i <= len_trim(working_input) - 3) then
           if (working_input(i:i+3) == 'esac') then
             ! Verify it's a word boundary (space or start before it)
-            if (i == 1 .or. working_input(i-1:i-1) == ' ' .or. working_input(i-1:i-1) == ';') then
-              ! Verify word boundary after (space, semicolon, or end)
-              if (i+4 > len_trim(working_input) .or. working_input(i+4:i+4) == ' ' .or. &
-                  working_input(i+4:i+4) == ';') then
-                case_depth = case_depth - 1
-                if (case_depth < 0) case_depth = 0  ! Prevent negative
-                after_case_in = .false.  ! Reset after esac
+            block
+              logical :: esac_word_boundary
+              if (i == 1) then
+                esac_word_boundary = .true.
+              else
+                esac_word_boundary = (working_input(i-1:i-1) == ' ' .or. working_input(i-1:i-1) == ';')
               end if
-            end if
+              if (esac_word_boundary) then
+                ! Verify word boundary after (space, semicolon, or end)
+                if (i+4 > len_trim(working_input) .or. working_input(i+4:i+4) == ' ' .or. &
+                    working_input(i+4:i+4) == ';') then
+                  case_depth = case_depth - 1
+                  if (case_depth < 0) case_depth = 0  ! Prevent negative
+                  after_case_in = .false.  ! Reset after esac
+                end if
+              end if
+            end block
           end if
         end if
 
@@ -254,10 +272,22 @@ contains
           end if
         end if
 
-        if (working_input(i:i) == '|' .and. &
-            (i == 1 .or. working_input(i-1:i-1) /= '|') .and. &
-            (i == 1 .or. working_input(i-1:i-1) /= '>') .and. &
-            (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '|')) then
+        block
+          logical :: pipe_not_after_pipe, pipe_not_after_gt, pipe_not_before_pipe
+          if (i == 1) then
+            pipe_not_after_pipe = .true.
+            pipe_not_after_gt = .true.
+          else
+            pipe_not_after_pipe = (working_input(i-1:i-1) /= '|')
+            pipe_not_after_gt = (working_input(i-1:i-1) /= '>')
+          end if
+          if (i == len_trim(working_input)) then
+            pipe_not_before_pipe = .true.
+          else
+            pipe_not_before_pipe = (working_input(i+1:i+1) /= '|')
+          end if
+        if (working_input(i:i) == '|' .and. pipe_not_after_pipe .and. &
+            pipe_not_after_gt .and. pipe_not_before_pipe) then
           ! Don't split on | if we're in a case pattern (after 'case...in') or inside parentheses (subshell)
           if (.not. after_case_in .and. paren_depth == 0) then
             cmd_count = cmd_count + 1
@@ -270,10 +300,21 @@ contains
         else if (working_input(i:i) == '&') then
           ! Check it's not part of && (which is already handled above)
           ! Also check it's not part of >& or <& (FD redirection)
-          if ((i == 1 .or. (working_input(i-1:i-1) /= '&' .and. &
-                           working_input(i-1:i-1) /= '>' .and. &
-                           working_input(i-1:i-1) /= '<')) .and. &
-              (i == len_trim(working_input) .or. working_input(i+1:i+1) /= '&')) then
+          block
+            logical :: amp_not_after_special, amp_not_before_amp
+            if (i == 1) then
+              amp_not_after_special = .true.
+            else
+              amp_not_after_special = (working_input(i-1:i-1) /= '&' .and. &
+                                      working_input(i-1:i-1) /= '>' .and. &
+                                      working_input(i-1:i-1) /= '<')
+            end if
+            if (i == len_trim(working_input)) then
+              amp_not_before_amp = .true.
+            else
+              amp_not_before_amp = (working_input(i+1:i+1) /= '&')
+            end if
+          if (amp_not_after_special .and. amp_not_before_amp) then
             ! Single & - mark current command as background and split
             cmd_count = cmd_count + 1
             if (cmd_count <= MAX_PIPELINE) then
@@ -283,6 +324,7 @@ contains
             end if
             start = i + 1
           end if
+          end block  ! amp_not_after_special bounds-safe check
         else if (working_input(i:i) == ';') then
           ! Check for ;; (double semicolon) which is used in case statements
           if (i < len_trim(working_input) .and. working_input(i+1:i+1) == ';') then
@@ -326,6 +368,7 @@ contains
             end if
           end if
         end if
+        end block  ! pipe_not_after_pipe bounds-safe check
       end if
 
       i = i + 1
@@ -1397,7 +1440,14 @@ contains
       end if
 
       ! POSIX: Tilde expansion is NOT performed inside double quotes
-      if (working_token(i:i) == '~' .and. (i == 1 .or. working_token(i-1:i-1) == ' ') &
+      block
+        logical :: tilde_at_word_start
+        if (i == 1) then
+          tilde_at_word_start = .true.
+        else
+          tilde_at_word_start = (working_token(i-1:i-1) == ' ')
+        end if
+      if (working_token(i:i) == '~' .and. tilde_at_word_start &
           .and. .not. is_quoted) then
         ! Tilde expansion
         call process_tilde_expansion(working_token, i, result, j, shell)
@@ -1654,6 +1704,7 @@ contains
         i = i + 1
         j = j + 1
       end if
+      end block  ! tilde_at_word_start bounds-safe check
     end do
     end block  ! End of in_single_quote_literal block
 
@@ -2116,11 +2167,21 @@ contains
     do while (i <= len_trim(input))
       ! Track quote state (but not inside backticks)
       if (.not. in_backticks) then
-        if (input(i:i) == "'" .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
-          in_single_quote = .not. in_single_quote
-        else if (input(i:i) == '"' .and. (i == 1 .or. input(i-1:i-1) /= backslash)) then
-          in_double_quote = .not. in_double_quote
-        end if
+        ! Fortran .or. does NOT short-circuit, so check i > 1 separately
+        ! to avoid input(0:0) out-of-bounds access
+        block
+          logical :: not_escaped
+          if (i == 1) then
+            not_escaped = .true.
+          else
+            not_escaped = (input(i-1:i-1) /= backslash)
+          end if
+          if (input(i:i) == "'" .and. not_escaped) then
+            in_single_quote = .not. in_single_quote
+          else if (input(i:i) == '"' .and. not_escaped) then
+            in_double_quote = .not. in_double_quote
+          end if
+        end block
       end if
 
       ! Inside backticks: handle escaped backticks as nested substitution delimiters
@@ -2171,8 +2232,15 @@ contains
       end if
 
       ! Process backticks (not inside single quotes)
-      if (input(i:i) == '`' .and. .not. in_single_quote .and. &
-          (i == 1 .or. input(i-1:i-1) /= backslash)) then
+      ! Fortran .or. does NOT short-circuit, so check i > 1 separately
+      block
+        logical :: backtick_not_escaped
+        if (i == 1) then
+          backtick_not_escaped = .true.
+        else
+          backtick_not_escaped = (input(i-1:i-1) /= backslash)
+        end if
+      if (input(i:i) == '`' .and. .not. in_single_quote .and. backtick_not_escaped) then
         if (.not. in_backticks) then
           ! Start of backtick command substitution
           in_backticks = .true.
@@ -2192,6 +2260,7 @@ contains
         i = i + 1
         j = j + 1
       end if
+      end block  ! backtick_not_escaped
     end do
 
     allocate(character(len=j-1) :: output)
@@ -3270,60 +3339,69 @@ contains
 
     do while (i <= len_trim(input))
       ! Check for <( or >(
-      ! IMPORTANT: Must check i+1 doesn't exceed string bounds
-      if (i+1 <= len_trim(input) .and. &
-          (input(i:i+1) == '<(' .or. input(i:i+1) == '>(')) then
+      ! IMPORTANT: Fortran .and. does NOT short-circuit, so we must use
+      ! a nested if to avoid substring out-of-bounds access
+      if (i+1 <= len(input) .and. i+1 <= len_trim(input)) then
+        if (input(i:i+1) == '<(' .or. input(i:i+1) == '>(') then
 
-        subst_type = input(i:i)
-        is_input_subst = (subst_type == '<')
+          subst_type = input(i:i)
+          is_input_subst = (subst_type == '<')
 
-        ! Find matching closing parenthesis
-        start_pos = i + 2
-        paren_depth = 1
-        i = start_pos
+          ! Find matching closing parenthesis
+          start_pos = i + 2
+          paren_depth = 1
+          i = start_pos
 
-        do while (i <= len_trim(input) .and. paren_depth > 0)
-          if (input(i:i) == '(') then
-            paren_depth = paren_depth + 1
-          else if (input(i:i) == ')') then
-            paren_depth = paren_depth - 1
+          do while (i <= len_trim(input) .and. paren_depth > 0)
+            if (input(i:i) == '(') then
+              paren_depth = paren_depth + 1
+            else if (input(i:i) == ')') then
+              paren_depth = paren_depth - 1
+            end if
+            i = i + 1
+          end do
+
+          if (paren_depth == 0) then
+            ! Extract the command
+            command = input(start_pos:i-2)
+
+            ! Create FIFO
+            fifo_path = create_fifo_for_subst(shell, is_input_subst)
+
+            if (len_trim(fifo_path) > 0) then
+              ! Fork background process to execute command with proper redirection
+              pid = c_fork()
+
+              if (pid == 0) then
+                ! Child process
+                call execute_proc_subst_command(trim(command), trim(fifo_path), is_input_subst)
+                call c_exit(0)
+              else
+                ! Parent process - track the PID
+                call set_fifo_pid(shell, fifo_path, pid)
+
+                ! Replace <(command) or >(command) with FIFO path
+                fifo_len = len_trim(fifo_path)
+                if (out_pos + fifo_len - 1 <= len(output)) then
+                  output(out_pos:out_pos+fifo_len-1) = trim(fifo_path)
+                  out_pos = out_pos + fifo_len
+                end if
+              end if
+            else
+              write(error_unit, '(A)') 'fortsh: failed to create process substitution'
+              ! Keep original if failed - but this is a rare error case
+            end if
+          end if
+        else
+          ! Regular character - copy without trimming
+          if (out_pos <= len(output)) then
+            output(out_pos:out_pos) = input(i:i)
+            out_pos = out_pos + 1
           end if
           i = i + 1
-        end do
-
-        if (paren_depth == 0) then
-          ! Extract the command
-          command = input(start_pos:i-2)
-
-          ! Create FIFO
-          fifo_path = create_fifo_for_subst(shell, is_input_subst)
-
-          if (len_trim(fifo_path) > 0) then
-            ! Fork background process to execute command with proper redirection
-            pid = c_fork()
-
-            if (pid == 0) then
-              ! Child process
-              call execute_proc_subst_command(trim(command), trim(fifo_path), is_input_subst)
-              call c_exit(0)
-            else
-              ! Parent process - track the PID
-              call set_fifo_pid(shell, fifo_path, pid)
-
-              ! Replace <(command) or >(command) with FIFO path
-              fifo_len = len_trim(fifo_path)
-              if (out_pos + fifo_len - 1 <= len(output)) then
-                output(out_pos:out_pos+fifo_len-1) = trim(fifo_path)
-                out_pos = out_pos + fifo_len
-              end if
-            end if
-          else
-            write(error_unit, '(A)') 'fortsh: failed to create process substitution'
-            ! Keep original if failed - but this is a rare error case
-          end if
         end if
       else
-        ! Regular character - copy without trimming
+        ! Last character or beyond trim - copy as regular character
         if (out_pos <= len(output)) then
           output(out_pos:out_pos) = input(i:i)
           out_pos = out_pos + 1
