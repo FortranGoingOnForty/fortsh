@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        1.3.0
+Version:        1.3.1
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -59,6 +59,11 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Mar 09 2026 mfw <espadon@outlook.com> - 1.3.1-1
+- Update --help flag with missing -l/--login option
+- Update help builtin with complete builtin command listing
+- Add fzf keybinds, expansion, and process substitution to help output
+
 * Sun Mar 09 2026 mfw <espadon@outlook.com> - 1.3.0-1
 - Fix stack overflows in nested for loops (parser and executor)
 - Fix field splitting null-byte padding from character length mismatch
