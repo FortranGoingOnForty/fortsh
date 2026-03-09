@@ -7630,21 +7630,16 @@ contains
       return
     end if
 
-    ! Append first word to buffer
-#ifdef USE_C_STRINGS
-    ! Use C string API to append
-    if (.not. c_string_append(input_state%buffer_c, input_state%suggestion(:word_end))) then
-      ! Append failed, silently ignore
-      return
+    ! Safety check: ensure we won't overflow
+    if (input_state%length + word_end > MAX_LINE_LEN) then
+      word_end = MAX_LINE_LEN - input_state%length
+      if (word_end <= 0) return
     end if
-#else
+
+    ! Append first word to buffer using accessor (handles memory pool + C strings)
     do i = 1, word_end
-      if (input_state%length + i <= MAX_LINE_LEN) then
-        input_state%buffer(input_state%length + i:input_state%length + i) = &
-          input_state%suggestion(i:i)
-      end if
+      call state_buffer_set_char(input_state, input_state%length + i, input_state%suggestion(i:i))
     end do
-#endif
 
     input_state%length = input_state%length + word_end
     input_state%cursor_pos = input_state%length
