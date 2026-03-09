@@ -369,7 +369,13 @@ compare_posix_exit_code "wait no jobs" "wait"
 section "34. POSIX TIMES"
 
 # times is optional but common
-compare_posix_output "times output exists" "times 2>/dev/null | head -1 || echo skipped"
+# times output contains variable timing values, so just verify format
+_times_out=$("$FORTSH_BIN" -c 'times' 2>/dev/null)
+if echo "$_times_out" | grep -qE '[0-9]+m[0-9]+\.[0-9]+s'; then
+    pass "times output exists"
+else
+    fail "times output exists" "NmN.NNNs NmN.NNNs" "$_times_out"
+fi
 
 section "35. POSIX BREAK AND CONTINUE"
 
