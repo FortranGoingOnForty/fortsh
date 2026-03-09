@@ -7,7 +7,7 @@ module version
   private
   public :: FORTSH_VERSION, print_version, print_help
 
-  character(len=*), parameter :: FORTSH_VERSION = "1.2.0"
+  character(len=*), parameter :: FORTSH_VERSION = "1.3.0"
 
 contains
 
