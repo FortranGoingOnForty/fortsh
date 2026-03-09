@@ -1470,10 +1470,11 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i, j, glob_count, word_idx, k, split_count
-    character(len=MAX_TOKEN_LEN) :: glob_matches(MAX_TOKEN_LEN)
+    integer, parameter :: MAX_GLOB = 256, MAX_SPLIT = 256
+    character(len=MAX_TOKEN_LEN) :: glob_matches(MAX_GLOB)
     character(len=1024), allocatable :: expanded_words(:)  ! 1024 to match positional_params size
     character(len=:), allocatable :: expanded_word, ifs_chars
-    character(len=MAX_TOKEN_LEN) :: split_words(MAX_TOKEN_LEN)
+    character(len=MAX_TOKEN_LEN) :: split_words(MAX_SPLIT)
     integer :: total_words
     type(redirection_t) :: temp_redirect
     logical :: redir_success, has_redirects
@@ -2178,9 +2179,9 @@ contains
   subroutine split_on_ifs(str, ifs_chars, words, word_count)
     character(len=*), intent(in) :: str
     character(len=*), intent(in) :: ifs_chars
-    character(len=MAX_TOKEN_LEN), intent(out) :: words(MAX_TOKEN_LEN)
+    character(len=MAX_TOKEN_LEN), intent(out) :: words(:)
     integer, intent(out) :: word_count
-    integer :: i, str_len, word_pos
+    integer :: i, str_len, word_pos, max_words
     logical :: in_word
     character(len=MAX_TOKEN_LEN) :: current_word
 
@@ -2189,6 +2190,7 @@ contains
     word_pos = 0
     in_word = .false.
     str_len = len_trim(str)
+    max_words = size(words)
 
     ! Handle empty string
     if (str_len == 0) then
@@ -2207,7 +2209,7 @@ contains
         ! IFS character - end current word if in one
         if (in_word) then
           word_count = word_count + 1
-          if (word_count <= MAX_TOKEN_LEN) then
+          if (word_count <= max_words) then
             words(word_count) = current_word(1:word_pos)
           end if
           current_word = ''
@@ -2225,7 +2227,7 @@ contains
     ! Add final word if any
     if (in_word) then
       word_count = word_count + 1
-      if (word_count <= MAX_TOKEN_LEN) then
+      if (word_count <= max_words) then
         words(word_count) = current_word(1:word_pos)
       end if
     end if
