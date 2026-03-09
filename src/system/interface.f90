@@ -629,7 +629,8 @@ contains
     character(len=*), intent(in) :: var_name, var_value
     logical :: success
     integer :: ret
-    character(len=256), target :: c_var_name, c_var_value
+    character(len=MAX_TOKEN_LEN), target :: c_var_name
+    character(len=MAX_PATH_LEN), target :: c_var_value
 
     c_var_name = trim(var_name)//c_null_char
     c_var_value = trim(var_value)//c_null_char
