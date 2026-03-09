@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        0.8.0
+Version:        1.3.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -59,6 +59,14 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Mar 09 2026 mfw <espadon@outlook.com> - 1.3.0-1
+- Fix stack overflows in nested for loops (parser and executor)
+- Fix field splitting null-byte padding from character length mismatch
+- Fix substring OOB crashes from non-short-circuit evaluation
+- Fix environment variable truncation for values over 256 chars
+- Fix flaky times test in POSIX compliance suite
+- 100%% POSIX test suite pass rate (3776/3776)
+
 * Sat Oct 18 2025 mfw <espadon@outlook.com> - 0.8.0-1
 - Version number reset for more realistic versioning
 - Major performance: String pooling implementation
