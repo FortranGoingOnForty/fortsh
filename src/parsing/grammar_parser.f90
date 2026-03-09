@@ -797,11 +797,15 @@ contains
   recursive function parse_for_stmt(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, body
-    character(len=MAX_TOKEN_LEN) :: variable, words(MAX_TOKENS)
-    integer :: num_words, quote_types(MAX_TOKENS)
+    character(len=MAX_TOKEN_LEN) :: variable
+    character(len=MAX_TOKEN_LEN), allocatable :: words(:)
+    integer :: num_words
+    integer, allocatable :: quote_types(:)
     type(token_t) :: tok
     nullify(node)
     num_words = 0
+    allocate(words(MAX_TOKENS))
+    allocate(quote_types(MAX_TOKENS))
     quote_types = QUOTE_NONE
     if (.not. expect(state, 'for')) return
     tok = current_token(state)
