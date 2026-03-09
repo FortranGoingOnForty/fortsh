@@ -26,6 +26,7 @@ module ast_executor
   public :: unset_ast_function
   public :: is_ast_function
   public :: execute_external_command  ! Currently unused but may be needed later
+  public :: register_trap_evaluator
 
   ! C bindings for process control
   interface
@@ -64,6 +65,27 @@ contains
 
     exit_status = execute_ast_node(root, shell)
   end function execute_ast
+
+  ! Register the AST evaluator with trap_dispatch (breaks circular dep with executor)
+  subroutine register_trap_evaluator()
+    use trap_dispatch, only: set_trap_evaluator
+    call set_trap_evaluator(ast_eval_string)
+  end subroutine register_trap_evaluator
+
+  ! Wrapper matching trap_dispatch interface: parse string and execute via AST
+  subroutine ast_eval_string(cmd_string, shell, exit_code)
+    use grammar_parser, only: parse_command_line
+    character(len=*), intent(in) :: cmd_string
+    type(shell_state_t), intent(inout) :: shell
+    integer, intent(out) :: exit_code
+    type(command_node_t), pointer :: ast_root
+
+    exit_code = 0
+    ast_root => parse_command_line(cmd_string)
+    if (associated(ast_root)) then
+      exit_code = execute_ast(ast_root, shell)
+    end if
+  end subroutine ast_eval_string
 
   ! =====================================
   ! Node Execution Functions
