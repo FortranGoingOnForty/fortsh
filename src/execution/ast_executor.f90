@@ -1471,10 +1471,10 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i, j, glob_count, word_idx, k, split_count
     integer, parameter :: MAX_GLOB = 256, MAX_SPLIT = 256
-    character(len=MAX_TOKEN_LEN) :: glob_matches(MAX_GLOB)
+    character(len=MAX_TOKEN_LEN), allocatable :: glob_matches(:)
     character(len=1024), allocatable :: expanded_words(:)  ! 1024 to match positional_params size
     character(len=:), allocatable :: expanded_word, ifs_chars
-    character(len=MAX_TOKEN_LEN) :: split_words(MAX_SPLIT)
+    character(len=MAX_TOKEN_LEN), allocatable :: split_words(:)
     integer :: total_words
     type(redirection_t) :: temp_redirect
     logical :: redir_success, has_redirects
@@ -1533,6 +1533,8 @@ contains
 
     ! First, expand variables and split on IFS, then expand globs
     allocate(expanded_words(MAX_TOKEN_LEN))
+    allocate(glob_matches(MAX_GLOB))
+    allocate(split_words(MAX_SPLIT))
     total_words = 0
 
     ! POSIX: If 'in' is omitted (num_words == 0), iterate over positional parameters
@@ -1680,6 +1682,8 @@ contains
 
     ! Clean up
     if (allocated(expanded_words)) deallocate(expanded_words)
+    if (allocated(glob_matches)) deallocate(glob_matches)
+    if (allocated(split_words)) deallocate(split_words)
 
     ! Restore file descriptors if we applied redirections
     if (has_redirects) then
