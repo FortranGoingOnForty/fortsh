@@ -8,7 +8,7 @@ program fortran_shell
   use signal_handling
   use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash
   use grammar_parser  ! New grammar-aware parser
-  use ast_executor    ! AST execution for new parser
+  use ast_executor, only: execute_ast, register_trap_evaluator
   use command_tree    ! Command tree for new parser
   use executor
   use job_control
@@ -128,6 +128,9 @@ program fortran_shell
 
   ! Initialize signal handling module
   call init_signal_handling(shell)
+
+  ! Register AST evaluator for trap dispatch (breaks executor<->ast_executor circular dep)
+  call register_trap_evaluator()
 
   ! Initialize command capture callback (for command substitution)
   call init_command_capture()
