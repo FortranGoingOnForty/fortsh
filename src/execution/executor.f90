@@ -768,16 +768,19 @@ contains
           end do
 
           if (.not. cmd_found) then
-            ! Build handler call: command_not_found_handle <original_cmd> <args...>
-            token_len = len(cmd%tokens)
-            allocate(character(len=token_len) :: handler_cmd%tokens(cmd%num_tokens + 1))
-            handler_cmd%tokens(1) = 'command_not_found_handle'
-            do ii = 1, cmd%num_tokens
-              handler_cmd%tokens(ii + 1) = cmd%tokens(ii)
-            end do
-            handler_cmd%num_tokens = cmd%num_tokens + 1
-            call execute_function(handler_cmd, shell)
-            deallocate(handler_cmd%tokens)
+            ! Build handler call string and dispatch via AST pipeline
+            ! (command_not_found_handle is an AST-cached function from eval)
+            block
+              use trap_dispatch, only: eval_trap_string
+              character(len=4096) :: handler_str
+              integer :: handler_exit
+
+              handler_str = 'command_not_found_handle'
+              do ii = 1, cmd%num_tokens
+                handler_str = trim(handler_str) // ' ' // trim(cmd%tokens(ii))
+              end do
+              call eval_trap_string(trim(handler_str), shell, handler_exit)
+            end block
           else
             call execute_external(cmd, shell, original_input)
           end if
