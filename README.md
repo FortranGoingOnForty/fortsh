@@ -7,9 +7,9 @@ A shell written in Fortran. Because we can.
 
 ## Status
 
-**POSIX compliance**: working on it, but farther than you'd think    
-**bash compatibility**: ~99%  
-**Chance you'll miss the other 1%**: Low  
+**POSIX compliance**: 3,776/3,776 tests passing across 25 test suites
+**bash compatibility**: ~99%
+**Chance you'll miss the other 1%**: Low
 
 Turns out you can write a pretty decent shell in Fortran. Who knew.
 
@@ -33,7 +33,6 @@ Pretty much everything:
 
 ## What Doesn't Work
 
-- Programmable completion (basic completion works fine)
 - Some advanced vi mode features (yank/put, marks)
 - Nested brace expansion (who uses this?)
 - Your expectations, probably
@@ -454,7 +453,19 @@ trap - INT
 ## Testing
 
 ```bash
-make check
+make test-all           # everything (integration + parity + POSIX)
+make test-posix         # POSIX compliance suite (3,776 tests)
+make test-parity        # bash parity tests
+make test-integration   # integration tests
+make check              # comprehensive build checks
+```
+
+Interactive PTY tests (Python/pexpect):
+```bash
+cd tests/interactive
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python run_tests.py
 ```
 
 Or don't. Live dangerously.
@@ -467,7 +478,7 @@ All of them: `:`, `.`, `break`, `cd`, `continue`, `echo`, `eval`, `exec`, `exit`
 
 ### bash Compatible
 
-The useful ones: `[[`, `alias`, `bg`, `command`, `declare`, `fc`, `fg`, `history`, `jobs`, `kill`, `let`, `local`, `printenv`, `shopt`, `source`, `unalias`, `which`
+The useful ones: `[[`, `alias`, `bg`, `command`, `compgen`, `complete`, `declare`, `fc`, `fg`, `history`, `jobs`, `kill`, `let`, `local`, `printenv`, `shopt`, `source`, `unalias`, `which`
 
 ### fortsh Specific
 
@@ -477,9 +488,98 @@ The useful ones: `[[`, `alias`, `bg`, `command`, `declare`, `fc`, `fg`, `history
 
 Because why not.
 
+## macOS & Apple Silicon
+
+Apple Silicon has been an adventure. Both available Fortran compilers have serious issues on ARM64, so fortsh uses a combination of compiler selection, C interop workarounds, and platform-specific code paths to produce a functional shell. For the full story, see `COMPILER_NOTES.md`.
+
+### The Compiler Situation
+
+| Platform | Compiler | Status |
+|----------|----------|--------|
+| Linux | gfortran | Primary target, no issues |
+| macOS Intel | gfortran | Works with `-frecursive` |
+| macOS ARM64 | flang-new (LLVM) | Required — gfortran has 7+ critical bugs |
+
+**Why not gfortran on Apple Silicon?** It has at least 8 confirmed bugs that make it unusable:
+
+1. Stack corruption on arrays >600KB
+2. Deferred-length allocatable strings lose their length descriptor
+3. `intent(out)` subroutine return epilogue segfaults
+4. Allocatable string assignment corrupts the heap
+5. Automatic finalization crashes
+6. Substring slicing (`buffer(:length)`) segfaults
+7. Empty string assignment (`buffer = ''`) corrupts the heap
+8. `flush()` in tight loops corrupts the heap
+
+Install flang-new via `brew install llvm`. The Makefile auto-detects ARM64 and switches compilers.
+
+### The flang-new 128-Byte Limit
+
+flang-new is far more stable, but has one glaring limitation: string buffers larger than 128 bytes cause heap corruption on substring operations and direct assignments. This means **command lines are limited to 127 characters** on Apple Silicon.
+
+Allocating strings >128 bytes works fine. Operating on them doesn't. We tried a "shadow buffer" pattern (1024-byte storage, 128-byte working buffer) — still limited to 128 effective bytes.
+
+### C String Library Workaround
+
+To mitigate flang-new's string bugs, fortsh includes a C string library (`src/c_interop/fortsh_strings.c`) that performs string operations outside the Fortran runtime. This is **auto-enabled on macOS ARM64** and provides:
+
+- Safe substring extraction (the operation that crashes flang-new)
+- Buffer manipulation (insert, delete, append) without heap corruption
+- Fortran-to-C string conversion with proper indexing translation
+
+The `buffer_ops.f90` abstraction layer routes string operations through either native Fortran (Linux) or the C library (macOS ARM64) transparently.
+
+Build flags:
+```bash
+make                    # auto-enables C strings on ARM64
+make NO_C_STRINGS=1     # force native Fortran strings (will crash on ARM64)
+```
+
+### Platform-Specific Code Paths
+
+Beyond the compiler, macOS differs from Linux in ways that required workarounds throughout the codebase:
+
+**Terminal I/O:**
+- `termios_t` struct is 72 bytes on macOS vs 60 on Linux (8-byte vs 4-byte `tcflag_t`)
+- Control character array (`NCCS`) is 20 on macOS vs 32 on Linux
+- `TIOCGWINSZ` ioctl constant differs (`0x40087468` vs `0x5413`)
+- Terminal size detection uses `tput` on macOS (direct ioctl crashes flang-new) vs ioctl on Linux
+
+**Signal numbers:**
+- `SIGTSTP`: 18 on macOS, 20 on Linux
+- `SIGCHLD`: 20 on macOS, 17 on Linux
+- `SIGCONT`: 19 on macOS, 18 on Linux
+- macOS does NOT ignore `SIGTSTP` (breaks `waitpid` by auto-reaping children)
+
+**File system:**
+- `stat_t` is 96 bytes on macOS vs 144 on Linux, with different field ordering
+- macOS has `st_birthtimespec` (birth time) — Linux does not
+- `open()` flags differ: `O_CREAT` is `0x200` on macOS vs `0x40` on Linux
+
+**Other:**
+- BSD `ps` doesn't support `--no-headers` (macOS uses `pid= -o comm=` format instead)
+- Fortran `block` constructs crash flang-new — variables hoisted to subroutine scope
+- Substring temporaries on allocatable strings trigger heap corruption — char-by-char copy used instead
+- `mode_t` not passed correctly through Fortran C binding — C wrapper (`fd_wrapper.c`) casts explicitly
+
+### macOS ARM64 Build
+
+```bash
+brew install llvm
+git clone https://github.com/FortranGoingOnForty/fortsh.git
+cd fortsh
+make            # auto-detects ARM64, uses flang-new + C string library
+```
+
+You'll see:
+```
+Using flang-new on macOS ARM64
+C string library ENABLED - workaround for flang-new >128 byte bug
+```
+
 ## Known Issues
 
-- **macOS ARM64**: Tab completion menu mode disabled due to gfortran compiler bug. Tab still completes, but you can't arrow through options. Press Tab twice and it'll tell you why. Works fine on Linux and x86 Macs.
+- **macOS ARM64**: 127-character command line limit (flang-new string bug, see above)
 - Slower than bash for large scripts (it's Fortran, not a miracle worker)
 - Some regex patterns with spaces need escaping (affects ~0.1% of use cases)
 - Unicode support varies by system locale
