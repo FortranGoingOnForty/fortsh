@@ -7,7 +7,7 @@ module version
   private
   public :: FORTSH_VERSION, print_version, print_help
 
-  character(len=*), parameter :: FORTSH_VERSION = "1.3.0"
+  character(len=*), parameter :: FORTSH_VERSION = "1.3.1"
 
 contains
 
@@ -25,6 +25,7 @@ contains
     write(output_unit, '(a)') ''
     write(output_unit, '(a)') 'Options:'
     write(output_unit, '(a)') '  -c COMMAND    Execute COMMAND and exit'
+    write(output_unit, '(a)') '  -l, --login   Start as a login shell'
     write(output_unit, '(a)') '  -n            Check syntax only, do not execute'
     write(output_unit, '(a)') '  -v, --version Print version information and exit'
     write(output_unit, '(a)') '  -h, --help    Print this help message and exit'
@@ -40,6 +41,9 @@ contains
     write(output_unit, '(a)') '  - Vi and Emacs editing modes'
     write(output_unit, '(a)') '  - Job control (fg, bg, jobs)'
     write(output_unit, '(a)') '  - Shell functions and aliases'
+    write(output_unit, '(a)') '  - Pipes, process substitution, and coprocesses'
+    write(output_unit, '(a)') '  - Brace, parameter, and arithmetic expansion'
+    write(output_unit, '(a)') '  - fzf integration (Ctrl+F files, Ctrl+R history, Alt+j dirs)'
     write(output_unit, '(a)') ''
     write(output_unit, '(a)') 'Report bugs at: https://github.com/FortranGoingOnForty/fortsh/issues'
   end subroutine print_help
