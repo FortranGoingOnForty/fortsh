@@ -388,9 +388,15 @@ contains
         ! Require at least one char before '=' to avoid treating standalone '=' as assignment
         ! Also check that it's not a != operator (where = is preceded by !)
         eq_pos = index(tok%value, '=')
-        if (eq_pos > 1 .and. &
-            eq_pos == (tok%end_pos - tok%start_pos + 1) .and. &
-            tok%value(eq_pos-1:eq_pos-1) /= '!') then
+        ! Fortran .and. does NOT short-circuit; use a helper variable
+        ! to avoid substring access when eq_pos <= 1
+        block
+          logical :: is_trailing_eq
+          is_trailing_eq = .false.
+          if (eq_pos > 1 .and. eq_pos == (tok%end_pos - tok%start_pos + 1)) then
+            is_trailing_eq = (tok%value(eq_pos-1:eq_pos-1) /= '!')
+          end if
+        if (is_trailing_eq) then
           ! This ends with = , check if next token is the value
           call advance(state)
           next_tok = current_token(state)
@@ -486,6 +492,7 @@ contains
             call advance(state)
           end if
         end if
+        end block  ! is_trailing_eq bounds-safe check
       else if (tok%token_type == TOKEN_REDIRECT) then
         if (num_redirects < 10) then
           num_redirects = num_redirects + 1
