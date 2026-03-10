@@ -240,6 +240,9 @@ module readline
   integer, save :: module_cursor_screen_row = 0
   integer, save :: module_cursor_screen_col = 0
 
+  ! Track whether the search status line is currently displayed below the prompt
+  logical, save :: module_search_status_shown = .false.
+
 contains
 
   !============================================================================
@@ -1346,6 +1349,12 @@ contains
         ! In test mode, skip full redraw to avoid polluting PTY output
         if (.not. test_mode_initialized) call init_test_mode()
         if (module_input_state%dirty .and. .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
+          ! Search mode: delegate to two-line search display instead of normal redraw
+          if (module_input_state%in_search) then
+            call update_search_display(module_input_state, prompt)
+            module_input_state%dirty = .false.
+            cycle
+          end if
           ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
           ! Variables moved to subroutine level
 
@@ -7003,6 +7012,18 @@ contains
     end if
   end subroutine
 
+  ! Clean up the status line below the prompt when exiting search mode
+  subroutine cleanup_search_status_line()
+    ! Move up from status line to prompt line, clear everything below
+    if (module_search_status_shown) then
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! cursor up
+    end if
+    write(output_unit, '(a)', advance='no') char(13)          ! BOL
+    write(output_unit, '(a)', advance='no') char(27) // '[J'  ! clear from cursor down
+    module_search_status_shown = .false.
+    flush(output_unit)
+  end subroutine cleanup_search_status_line
+
   subroutine cancel_search(input_state)
     type(input_state_t), intent(inout) :: input_state
 
@@ -7058,53 +7079,69 @@ contains
 
     ! Keep the current buffer (matched command)
     input_state%in_search = .false.
-#ifdef USE_MEMORY_POOL
-    input_state%search_string_ref%data = ''
-#else
-    input_state%search_string = ''
-#endif
+    call clear_search_string(input_state)
     input_state%search_length = 0
     input_state%search_match_index = 0
 
-    ! Clear the search prompt line and redraw with normal prompt
-    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
-    flush(output_unit)
-
-    ! Mark dirty so line will be redrawn properly
+    ! Clean up status line, mark for normal redraw
+    call cleanup_search_status_line()
     input_state%dirty = .true.
   end subroutine
 
   subroutine update_search_display(input_state, prompt)
     type(input_state_t), intent(in) :: input_state
     character(len=*), intent(in) :: prompt
-    character(len=512) :: search_prompt
-    character(len=32) :: direction_str
-    character(len=MAX_LINE_LEN) :: temp_buf
+    character(len=MAX_LINE_LEN) :: temp_buf, search_str
+    character(len=4096) :: highlighted
+    integer :: highlighted_len, pv_len
+    character(len=16) :: direction_label
+    character(len=8) :: col_str
 
-    if (.false.) print *, prompt  ! Silence unused warning
-
-    ! Determine search direction string
-    if (input_state%search_forward) then
-      direction_str = '(i-search)'
-    else
-      direction_str = '(reverse-i-search)'
+    ! 1. If status line already shown, cursor is on status line — move up first
+    if (module_search_status_shown) then
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! cursor up to prompt line
     end if
 
-    ! Build search prompt
-    if (input_state%search_length > 0) then
-      write(search_prompt, '(a,a,a,a)') trim(direction_str), '`', &
-            input_state%search_string(:input_state%search_length), "': "
-    else
-      write(search_prompt, '(a,a)') trim(direction_str), '`'': '
-    end if
+    ! 2. Position cursor right after the prompt (don't rewrite the prompt)
+    !    Use cursor horizontal absolute ESC[{col}G to jump to the command area
+    pv_len = visual_length(prompt)
+    if (pv_len < 0) pv_len = 0
+    write(col_str, '(i0)') pv_len + 2  ! +1 for space, +1 for 1-based column
+    write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str) // 'G'
 
-    ! Clear line and redraw
-    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
-    write(output_unit, '(a)', advance='no') trim(search_prompt)
+    ! 3. Clear from cursor to end of screen (clears old command text + old status line)
+    write(output_unit, '(a)', advance='no') char(27) // '[J'
+
+    ! 4. Write matched command text with syntax highlighting
     if (input_state%length > 0) then
       call state_buffer_get(input_state, temp_buf)
-      write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
+      call highlight_command_line(temp_buf(:input_state%length), &
+                                  highlighted, highlighted_len, &
+                                  input_state%length)
+      if (highlighted_len > 0 .and. highlighted_len <= len(highlighted)) then
+        write(output_unit, '(a)', advance='no') highlighted(:highlighted_len)
+      else
+        write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
+      end if
     end if
+
+    ! 5. Move to status line below
+    write(output_unit, '(a)', advance='no') char(10) // char(13)  ! newline + BOL
+
+    ! 6. Render search status line
+    if (input_state%search_forward) then
+      direction_label = 'fwd-search: '
+    else
+      direction_label = 'bck-search: '
+    end if
+    write(output_unit, '(a)', advance='no') trim(direction_label)
+    if (input_state%search_length > 0) then
+      call get_search_string(input_state, search_str, input_state%search_length)
+      write(output_unit, '(a)', advance='no') search_str(:input_state%search_length)
+    end if
+    ! Cursor naturally sits at end of query text on the status line
+    module_search_status_shown = .true.
+
     flush(output_unit)
   end subroutine
 
