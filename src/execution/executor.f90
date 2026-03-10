@@ -1104,14 +1104,16 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     character(len=MAX_TOKEN_LEN) :: var_name, var_value, token
-    ! Reduced from 100 to 30 elements
-    character(len=MAX_TOKEN_LEN) :: array_elements(30)
+    ! Heap-allocated to avoid static storage in recursive context
+    character(len=MAX_TOKEN_LEN), allocatable :: array_elements(:)
     character(len=100) :: index_str
     character(len=:), allocatable :: expanded_value
     integer :: eq_pos, paren_start, paren_end, num_elements, bracket_pos
     integer :: bracket_end, array_index, read_status, actual_value_len, i, token_len
     logical :: is_indexed_assignment
     character(len=1) :: quote_char_temp
+
+    allocate(array_elements(30))
 
     ! For quoted tokens, preserve whitespace by not trimming
     ! For unquoted tokens, trim is safe
@@ -1418,13 +1420,15 @@ contains
     integer, allocatable :: temp_token_lengths(:)  ! Track actual lengths of expanded tokens
     logical, allocatable :: temp_token_quoted(:)  ! Track if original token was quoted
     logical :: is_format_string
-    ! Reduced from 100 to 30 to avoid static storage (102KB -> 30KB)
-    character(len=MAX_TOKEN_LEN) :: split_words(30)
+    ! Heap-allocated to avoid static storage in recursive context
+    character(len=MAX_TOKEN_LEN), allocatable :: split_words(:)
     character(len=256) :: ifs_to_use
     integer :: word_count, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
     logical :: is_double_bracket_cmd
     logical :: was_originally_quoted
+
+    allocate(split_words(30))
 
     ! Allocate temporary storage for expanded tokens
     allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
