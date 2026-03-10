@@ -716,7 +716,7 @@ contains
 
   recursive function parse_if_stmt(state) result(node)
     type(parser_state_t), intent(inout) :: state
-    type(command_node_t), pointer :: node, cond, then_part, else_part, elif_node
+    type(command_node_t), pointer :: node, cond, then_part, else_part
     type(token_t) :: tok
     nullify(node, else_part)
     if (.not. expect(state, 'if')) return
