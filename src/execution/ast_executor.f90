@@ -275,6 +275,64 @@ contains
             if (assign_eq_pos > 1) then
               assign_name = node%simple_cmd%assignments(assign_idx)(1:assign_eq_pos-1)
               assign_value = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:)
+
+              ! Handle array element assignment: VAR[key]=value or VAR[idx]=value
+              block
+                use variables, only: is_associative_array, set_assoc_array_value, &
+                                     set_array_element
+                integer :: ab_pos, ab_end, ab_idx_status, ab_array_index
+                character(len=256) :: ab_base_name, ab_index_str
+
+                ab_pos = index(assign_name, '[')
+                if (ab_pos > 0) then
+                  ab_end = index(assign_name(ab_pos:), ']')
+                  if (ab_end > 0) then
+                    ab_end = ab_pos + ab_end - 1
+                    ab_base_name = assign_name(1:ab_pos-1)
+                    ab_index_str = assign_name(ab_pos+1:ab_end-1)
+
+                    ! Calculate value_len for the value portion
+                    if (len_trim(assign_value) > 0) then
+                      value_len = len_trim(assign_value)
+                    else
+                      value_len = token_len - assign_eq_pos
+                      if (value_len >= 2) then
+                        if (node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:assign_eq_pos+1) == "'" .or. &
+                            node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:assign_eq_pos+1) == '"') then
+                          value_len = value_len - 2
+                        end if
+                      end if
+                      if (value_len <= 0) value_len = 0
+                    end if
+
+                    ! Expand variables in value if needed
+                    if (index(assign_value, '$') > 0 .or. index(assign_value, '~') > 0) then
+                      call expand_variables(assign_value, expanded_value, shell)
+                      if (allocated(expanded_value)) then
+                        assign_value = expanded_value
+                        value_len = len(expanded_value)
+                      end if
+                    end if
+
+                    if (is_associative_array(shell, trim(ab_base_name))) then
+                      call set_assoc_array_value(shell, trim(ab_base_name), &
+                                                 trim(ab_index_str), assign_value(1:value_len))
+                    else
+                      read(ab_index_str, *, iostat=ab_idx_status) ab_array_index
+                      if (ab_idx_status == 0) then
+                        ab_array_index = ab_array_index + 1  ! Convert to 1-indexed
+                        call set_array_element(shell, trim(ab_base_name), &
+                                               ab_array_index, assign_value(1:value_len))
+                      else
+                        write(error_unit, '(a)') 'Error: invalid array index'
+                        shell%last_exit_status = 1
+                      end if
+                    end if
+                    cycle  ! Skip normal assignment processing
+                  end if
+                end if
+              end block
+
               ! Calculate value_len - normally use len_trim, but preserve
               ! whitespace-only values (like IFS=" ")
               if (len_trim(assign_value) > 0) then

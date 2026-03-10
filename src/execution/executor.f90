@@ -1196,8 +1196,17 @@ contains
           call set_array_element(shell, trim(var_name), array_index, trim(var_value))
           shell%last_exit_status = 0
         else
-          write(error_unit, '(a)') 'Error: invalid array index'
-          shell%last_exit_status = 1
+          ! Non-numeric index — check for associative array
+          block
+            use variables, only: is_associative_array, set_assoc_array_value
+            if (is_associative_array(shell, trim(var_name))) then
+              call set_assoc_array_value(shell, trim(var_name), trim(index_str), trim(var_value))
+              shell%last_exit_status = 0
+            else
+              write(error_unit, '(a)') 'Error: invalid array index'
+              shell%last_exit_status = 1
+            end if
+          end block
         end if
       else
         write(error_unit, '(a)') 'Error: unclosed bracket in array assignment'
