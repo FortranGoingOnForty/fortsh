@@ -176,7 +176,6 @@ contains
       block
         logical :: is_empty_cmd
         integer :: check_i, check_len
-        character(len=1) :: ch
 
         ! Check if first word is empty (accounting for sentinel characters)
         is_empty_cmd = .false.
@@ -187,8 +186,8 @@ contains
           ! Check if word contains only sentinel characters (char(2), char(3))
           is_empty_cmd = .true.
           do check_i = 1, check_len
-            ch = node%simple_cmd%words(1)(check_i:check_i)
-            if (ch /= char(2) .and. ch /= char(3)) then
+            if (node%simple_cmd%words(1)(check_i:check_i) /= char(2) .and. &
+                node%simple_cmd%words(1)(check_i:check_i) /= char(3)) then
               is_empty_cmd = .false.
               exit
             end if
@@ -256,7 +255,7 @@ contains
           use variables, only: set_shell_variable
           use parser, only: expand_variables
           integer :: assign_idx, assign_eq_pos, value_len, token_len, saved_status
-          character(len=256) :: assign_name, assign_value
+          character(len=MAX_TOKEN_LEN) :: assign_name, assign_value
           character(len=:), allocatable :: expanded_value
 
           ! Save the exit status before assignment expansion
@@ -287,13 +286,10 @@ contains
                 value_len = token_len - assign_eq_pos
                 ! Adjust for quotes if present in original
                 if (value_len >= 2) then
-                  block
-                    character(len=1) :: first_char
-                    first_char = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:assign_eq_pos+1)
-                    if (first_char == "'" .or. first_char == '"') then
-                      value_len = value_len - 2  ! Remove quote characters from length
-                    end if
-                  end block
+                  if (node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:assign_eq_pos+1) == "'" .or. &
+                      node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:assign_eq_pos+1) == '"') then
+                    value_len = value_len - 2  ! Remove quote characters from length
+                  end if
                 end if
                 if (value_len <= 0) value_len = 0
               end if
