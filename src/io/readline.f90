@@ -1149,8 +1149,6 @@ contains
             end if
           else if (module_input_state%in_search) then
             call accept_search(module_input_state, prompt)
-            write(output_unit, '()')  ! New line before execution
-            done = .true.
           else
             write(output_unit, '()')  ! New line
             done = .true.
