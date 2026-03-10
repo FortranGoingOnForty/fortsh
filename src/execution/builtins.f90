@@ -2285,6 +2285,13 @@ contains
     logical :: print_mode, found
 
     print_mode = .false.
+    arg_idx = 2
+
+    ! Parse -p flag
+    if (cmd%num_tokens >= 2 .and. trim(cmd%tokens(2)) == '-p') then
+      print_mode = .true.
+      arg_idx = 3
+    end if
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all readonly variables
@@ -2325,11 +2332,11 @@ contains
         ! HOSTNAME - system hostname (bash compatibility)
         write(output_unit, '(a)') 'readonly HOSTNAME="' // trim(shell%hostname) // '"'
       end block
-      ! Print user-defined readonly variables
+      ! Print user-defined readonly variables in declare -r format
       do i = 1, shell%num_variables
         if (shell%variables(i)%readonly .and. len_trim(shell%variables(i)%name) > 0) then
-          write(output_unit, '(a)') 'readonly ' // trim(shell%variables(i)%name) // '=' // &
-                                   trim(shell%variables(i)%value)
+          write(output_unit, '(a)') 'declare -r ' // trim(shell%variables(i)%name) // '="' // &
+                                   trim(shell%variables(i)%value) // '"'
         end if
       end do
       shell%last_exit_status = 0
@@ -3139,6 +3146,11 @@ contains
             return
         end select
         i = i + 1
+      else if (arg(1:1) == '-') then
+        ! Unknown flag
+        write(error_unit, '(a)') 'ulimit: invalid option: ' // trim(arg)
+        shell%last_exit_status = 2
+        return
       else
         ! This is the value to set
         value_str = arg
