@@ -31,7 +31,7 @@ contains
   subroutine show_command_not_found_error(command)
     use system_interface, only: file_exists
     character(len=*), intent(in) :: command
-    character(len=:), allocatable :: suggestions(:)
+    character(len=256), allocatable :: suggestions(:)
     integer :: num_suggestions, i
     character(len=10) :: shell_name
     character(len=64) :: error_msg
@@ -99,10 +99,10 @@ contains
   ! Find similar commands in PATH and builtins
   subroutine suggest_similar_commands(command, suggestions, num_suggestions)
     character(len=*), intent(in) :: command
-    character(len=:), allocatable, intent(out) :: suggestions(:)
+    character(len=256), allocatable, intent(out) :: suggestions(:)
     integer, intent(out) :: num_suggestions
 
-    character(len=:), allocatable :: candidates(:)
+    character(len=256), allocatable :: candidates(:)
     integer, allocatable :: distances(:)
     integer :: num_candidates, i, min_dist
     character(len=256) :: temp_suggestions(MAX_SUGGESTIONS)
@@ -146,7 +146,7 @@ contains
 
     ! Copy to output
     if (num_suggestions > 0) then
-      allocate(character(len=256) :: suggestions(num_suggestions))
+      allocate(suggestions(num_suggestions))
       do i = 1, num_suggestions
         suggestions(i) = temp_suggestions(i)
       end do
@@ -158,7 +158,7 @@ contains
 
   ! Get list of candidate commands (builtins + PATH)
   subroutine get_command_candidates(candidates, num_candidates)
-    character(len=:), allocatable, intent(out) :: candidates(:)
+    character(len=256), allocatable, intent(out) :: candidates(:)
     integer, intent(out) :: num_candidates
 
     character(len=256), allocatable :: temp_candidates(:)
@@ -178,7 +178,7 @@ contains
     path_env = get_environment_var('PATH')
     if (.not. allocated(path_env) .or. len_trim(path_env) == 0) then
       ! Just return builtins
-      allocate(character(len=256) :: candidates(num_candidates))
+      allocate(candidates(num_candidates))
       candidates(1:num_candidates) = temp_candidates(1:num_candidates)
       deallocate(temp_candidates)
       return
@@ -219,7 +219,7 @@ contains
     end do
 
     ! Copy to output
-    allocate(character(len=256) :: candidates(num_candidates))
+    allocate(candidates(num_candidates))
     candidates(1:num_candidates) = temp_candidates(1:num_candidates)
     deallocate(temp_candidates)
   end subroutine
