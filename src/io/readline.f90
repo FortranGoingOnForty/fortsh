@@ -1248,12 +1248,17 @@ contains
           call handle_kill_to_end(module_input_state)
 
         case(KEY_CTRL_U)
-          ! Kill entire line (exit menu mode first if active)
-          if (module_input_state%in_menu_select) then
-            call exit_menu_select_mode(module_input_state)
+          if (module_input_state%in_search) then
+            ! Clear search query and restore original buffer
+            call search_clear_query(module_input_state, prompt)
+          else
+            ! Kill entire line (exit menu mode first if active)
+            if (module_input_state%in_menu_select) then
+              call exit_menu_select_mode(module_input_state)
+            end if
+            call handle_kill_line(module_input_state)
           end if
-          call handle_kill_line(module_input_state)
-          
+
         case(KEY_CTRL_W)
           ! Kill previous word (exit menu mode first if active)
           if (module_input_state%in_menu_select) then
@@ -6996,6 +7001,33 @@ contains
       call update_search_display(input_state, prompt)
     end if
   end subroutine
+
+  ! Clear the entire search query (Ctrl-U in search mode)
+  subroutine search_clear_query(input_state, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
+
+    if (input_state%search_length == 0) return
+
+    call clear_search_string(input_state)
+    input_state%search_length = 0
+
+    ! Restore original buffer
+    call state_buffer_restore(input_state)
+#ifdef USE_MEMORY_POOL
+    input_state%length = len_trim(input_state%original_buffer_ref%data)
+#else
+#ifdef USE_C_STRINGS
+    input_state%length = c_string_length(input_state%original_buffer_c)
+#else
+    input_state%length = len_trim(input_state%original_buffer)
+#endif
+#endif
+    input_state%cursor_pos = input_state%length
+    input_state%search_match_index = 0
+
+    call update_search_display(input_state, prompt)
+  end subroutine search_clear_query
 
   ! Clean up the status line below the prompt when exiting search mode
   subroutine cleanup_search_status_line()
