@@ -6066,9 +6066,10 @@ contains
     logical :: success
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
 
-    ! Allocate and initialize buffers
+    ! Allocate highlight buffer on heap (too large for stack)
+    ! Do NOT use 'highlighted = ...' — deferred-length allocatable assignment
+    ! reallocates to match RHS length, causing heap corruption downstream
     allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted)
-    highlighted = ' '
     highlighted_len = 0
 
     ! Get terminal size
@@ -6191,9 +6192,10 @@ contains
     integer :: i, cursor_col, highlighted_len
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
 
-    ! Allocate and initialize buffers
+    ! Allocate highlight buffer on heap (too large for stack)
+    ! Do NOT use 'highlighted = ...' — deferred-length allocatable assignment
+    ! reallocates to match RHS length, causing heap corruption downstream
     allocate(character(len=MAX_HIGHLIGHT_LEN) :: highlighted)
-    highlighted = ' '
     highlighted_len = 0
 
     if (input_state%length == 0) return
