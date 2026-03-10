@@ -424,7 +424,7 @@ contains
         if (node%simple_cmd%num_words > 1) then
           ! Create temporary command to expand arguments
           block
-            use executor, only: expand_tokens
+            use pipeline_helpers, only: expand_tokens
             type(command_t) :: temp_cmd
             integer :: k
 
@@ -2393,7 +2393,7 @@ contains
   ! Pre-expand all simple command words in a pipeline before forking
   ! POSIX: Expansion errors should go to parent shell's stderr
   subroutine pre_expand_pipeline(node, shell)
-    use executor, only: expand_tokens
+    use pipeline_helpers, only: expand_tokens
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j
