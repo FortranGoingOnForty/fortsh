@@ -830,7 +830,7 @@ contains
     character(len=:), allocatable :: content_to_write, expanded_content
     logical :: has_redirects, has_heredoc
     ! Prefix assignment handling
-    character(len=256) :: saved_var_names(10), saved_var_values(10)
+    character(len=1024) :: saved_var_names(10), saved_var_values(10)
     integer :: num_saved_vars, eq_pos, j
     character(len=256) :: var_name, var_value
     logical :: var_was_set(10)
