@@ -2413,8 +2413,10 @@ contains
   subroutine builtin_local(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i, eq_pos, depth, var_index
+    integer :: i, eq_pos, depth, var_index, fi, start_arg
     character(len=256) :: var_name, var_value
+    logical :: integer_flag, readonly_flag, array_flag
+    character(len=MAX_TOKEN_LEN) :: flag_str
 
     ! Check if we're inside a function
     if (shell%function_depth == 0) then
@@ -2431,14 +2433,49 @@ contains
       return
     end if
 
+    ! Parse flags
+    integer_flag = .false.
+    readonly_flag = .false.
+    array_flag = .false.
+    start_arg = 2
+    do while (start_arg <= cmd%num_tokens)
+      if (cmd%tokens(start_arg)(1:1) == '-' .and. len_trim(cmd%tokens(start_arg)) >= 2 .and. &
+          index(cmd%tokens(start_arg), '=') == 0) then
+        flag_str = trim(cmd%tokens(start_arg))
+        do fi = 2, len_trim(flag_str)
+          select case (flag_str(fi:fi))
+            case ('i'); integer_flag = .true.
+            case ('r'); readonly_flag = .true.
+            case ('a'); array_flag = .true.
+            case default
+              ! Ignore unknown flags
+          end select
+        end do
+        start_arg = start_arg + 1
+      else
+        exit
+      end if
+    end do
+
     ! Process each variable assignment
-    do i = 2, cmd%num_tokens
+    do i = start_arg, cmd%num_tokens
       eq_pos = index(cmd%tokens(i), '=')
 
       if (eq_pos > 0) then
         ! Variable assignment: local var=value
         var_name = cmd%tokens(i)(:eq_pos-1)
         var_value = cmd%tokens(i)(eq_pos+1:)
+
+        ! Evaluate arithmetic if integer flag is set
+        if (integer_flag .and. len_trim(var_value) > 0) then
+          block
+            use expansion, only: arithmetic_expansion_shell
+            character(len=1024) :: arith_expr, arith_result
+            arith_expr = '$((' // trim(var_value) // '))'
+            arith_result = arithmetic_expansion_shell(trim(arith_expr), shell)
+            var_value = arith_result
+          end block
+        end if
 
         ! Find or create local variable slot
         var_index = shell%local_var_counts(depth) + 1
@@ -2451,8 +2488,9 @@ contains
         ! Store local variable
         shell%local_vars(depth, var_index)%name = var_name
         shell%local_vars(depth, var_index)%value = var_value
-        shell%local_vars(depth, var_index)%readonly = .false.
+        shell%local_vars(depth, var_index)%readonly = readonly_flag
         shell%local_vars(depth, var_index)%exported = .false.
+        shell%local_vars(depth, var_index)%is_integer = integer_flag
         shell%local_var_counts(depth) = var_index
       else
         ! Just declare local: local var (unset or empty)
