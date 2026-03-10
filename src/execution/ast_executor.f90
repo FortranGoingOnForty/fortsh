@@ -953,13 +953,43 @@ contains
       ret = c_tcsetpgrp(shell%shell_terminal, pgid)
     end if
 
-    ! Wait for all children
-    do i = 1, num_commands
-      status = wait_for_process(pids(i))
-    end do
+    ! Wait for all children and collect exit statuses
+    block
+      integer(c_int), target :: wait_status
+      integer, allocatable :: exit_statuses(:)
+      allocate(exit_statuses(num_commands))
 
-    ! Exit status is from last command
-    exit_status = extract_exit_status(status)
+      do i = 1, num_commands
+        ret = c_waitpid(pids(i), c_loc(wait_status), int(0, c_int))
+        if (ret > 0) then
+          if (WIFEXITED(wait_status)) then
+            exit_statuses(i) = WEXITSTATUS(wait_status)
+          else if (WIFSIGNALED(wait_status)) then
+            exit_statuses(i) = 128 + WTERMSIG(wait_status)
+          else
+            exit_statuses(i) = 1
+          end if
+        else
+          exit_statuses(i) = 1
+        end if
+      end do
+
+      ! POSIX default: exit status from last command
+      ! pipefail: rightmost non-zero exit status
+      if (shell%option_pipefail) then
+        exit_status = 0
+        do i = num_commands, 1, -1
+          if (exit_statuses(i) /= 0) then
+            exit_status = exit_statuses(i)
+            exit
+          end if
+        end do
+      else
+        exit_status = exit_statuses(num_commands)
+      end if
+
+      deallocate(exit_statuses)
+    end block
 
     ! Restore terminal control to the shell's process group
     if (shell%is_interactive) then
