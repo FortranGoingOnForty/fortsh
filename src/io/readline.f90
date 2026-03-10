@@ -7175,8 +7175,9 @@ contains
     character(len=*), intent(in) :: prompt
     character(len=MAX_LINE_LEN) :: temp_buf
     character(len=4096) :: highlighted
-    integer :: highlighted_len, pv_len
+    integer :: highlighted_len, pv_len, term_rows, term_cols
     character(len=8) :: col_str
+    logical :: success
 
     ! Keep the current buffer (matched command)
     input_state%in_search = .false.
@@ -7211,6 +7212,12 @@ contains
 
     module_search_status_shown = .false.
     flush(output_unit)
+
+    ! Update cursor screen position tracking so subsequent redraws work correctly
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) term_cols = 80
+    call cursor_get_row_col(prompt, input_state%cursor_pos, term_cols, &
+                            module_cursor_screen_row, module_cursor_screen_col)
   end subroutine
 
   subroutine accept_search_for_editing(input_state)
