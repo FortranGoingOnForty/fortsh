@@ -1218,7 +1218,16 @@ contains
     ! Get variable name (before =)
     var_name = token(:eq_pos-1)
 
-    ! Check if it's an array literal: arr=(...)
+    ! Check for += append syntax: arr+=(...)
+    block
+      logical :: is_append
+      is_append = .false.
+      if (eq_pos >= 2 .and. token(eq_pos-1:eq_pos-1) == '+') then
+        is_append = .true.
+        var_name = token(:eq_pos-2)
+      end if
+
+    ! Check if it's an array literal: arr=(...) or arr+=(...)
     paren_start = eq_pos + 1
     if (paren_start <= token_len .and. token(paren_start:paren_start) == '(') then
       ! Array literal
@@ -1232,8 +1241,21 @@ contains
         num_elements = 0
         call split_array_elements(var_value, array_elements, num_elements)
 
-        ! Set as array variable
-        call set_array_variable(shell, trim(var_name), array_elements, num_elements)
+        if (is_append) then
+          ! Append to existing array
+          block
+            integer :: existing_size, k
+            existing_size = get_array_size(shell, trim(var_name))
+            do k = 1, num_elements
+              call set_array_element(shell, trim(var_name), &
+                existing_size + k, trim(array_elements(k)))
+            end do
+          end block
+        else
+          ! Set as array variable
+          call set_array_variable(shell, trim(var_name), &
+            array_elements, num_elements)
+        end if
         shell%last_exit_status = 0
       else
         write(error_unit, '(a)') 'Error: unclosed array literal'
@@ -1307,8 +1329,8 @@ contains
       ! POSIX: Exit status of assignment is from last command substitution
       ! Only set to 0 if no expansion was performed (i.e., no command substitution)
       ! Don't overwrite exit status when there was a command substitution
-      ! The exit status was already set by execute_command_and_capture
     end if
+    end block
   end subroutine
 
   ! Split array elements by spaces (respecting quotes)
