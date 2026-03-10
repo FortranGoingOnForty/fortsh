@@ -364,13 +364,17 @@ contains
     logical, intent(out) :: should_execute
 
     character(len=MAX_TOKEN_LEN) :: var_name, list_part
-    character(len=MAX_TOKEN_LEN) :: expanded_items(100)
-    character(len=MAX_TOKEN_LEN) :: glob_matches(100)
-    character(len=MAX_TOKEN_LEN) :: final_items(100)
+    character(len=MAX_TOKEN_LEN), allocatable :: expanded_items(:)
+    character(len=MAX_TOKEN_LEN), allocatable :: glob_matches(:)
+    character(len=MAX_TOKEN_LEN), allocatable :: final_items(:)
     integer :: expanded_count, final_count, glob_count
     integer :: i, j
 
     should_execute = .false.  ! Don't execute the for command itself
+
+    allocate(expanded_items(100))
+    allocate(glob_matches(100))
+    allocate(final_items(100))
 
     ! Check if this is arithmetic for loop: for ((init; cond; incr))
     if (cmd%num_tokens >= 2) then
