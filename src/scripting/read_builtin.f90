@@ -162,8 +162,8 @@ contains
         ! Multiple variables: start from arg_index (first variable)
         call store_multiple_variables(shell, cmd%tokens, arg_index, cmd%num_tokens, input_line)
       else
-        ! Single variable
-        call set_shell_variable(shell, var_name, trim(input_line))
+        ! Single variable — strip leading and trailing IFS whitespace
+        call set_shell_variable(shell, var_name, trim(adjustl(input_line)))
       end if
 
       ! Set exit status: 1 if EOF reached without reading any data, 0 otherwise
