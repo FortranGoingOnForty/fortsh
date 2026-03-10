@@ -2842,6 +2842,32 @@ contains
           shell%last_exit_status = 1
           return
         end if
+      else if (trim(cmd%tokens(2)) == '-t') then
+        ! Print cached path for specified commands
+        if (cmd%num_tokens < 3) then
+          write(error_unit, '(a)') 'hash: -t requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+        shell%last_exit_status = 0
+        do i = 3, cmd%num_tokens
+          block
+            logical :: found_in_hash
+            found_in_hash = .false.
+            do j = 1, shell%num_hashed_commands
+              if (trim(shell%command_hash(j)%command_name) == trim(cmd%tokens(i))) then
+                write(output_unit, '(a)') trim(shell%command_hash(j)%full_path)
+                found_in_hash = .true.
+                exit
+              end if
+            end do
+            if (.not. found_in_hash) then
+              write(error_unit, '(a,a,a)') 'hash: ', trim(cmd%tokens(i)), ': not found'
+              shell%last_exit_status = 1
+            end if
+          end block
+        end do
+        return
       else if (trim(cmd%tokens(2)) == '-p') then
         path_mode = .true.
         if (cmd%num_tokens < 4) then
