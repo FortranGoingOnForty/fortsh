@@ -1735,9 +1735,9 @@ contains
           ! Show specific abbreviation
           abbr_short = trim(cmd%tokens(2))
           abbr_expanded = get_abbreviation(abbr_short)
-          if (len(abbr_expanded) > 0) then
-            write(output_unit, '(a)') 'abbr ' // trim(abbr_short) // &
-                                     '=' // "'" // trim(abbr_expanded) // "'"
+          if (len_trim(abbr_expanded) > 0) then
+            write(output_unit, '(a)') trim(abbr_short) // &
+                                     ' = ' // trim(abbr_expanded)
           else
             write(error_unit, '(a)') 'abbr: ' // trim(abbr_short) // ': not found'
             shell%last_exit_status = 1
@@ -2041,7 +2041,6 @@ contains
     end if
 
     call add_function(shell, func_name, function_body, 1)
-    write(output_unit, '(a)') 'Function ' // trim(func_name) // ' defined'
     shell%last_exit_status = 0
   end subroutine
 
