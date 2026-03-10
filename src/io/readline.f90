@@ -7173,6 +7173,10 @@ contains
   subroutine accept_search(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
+    character(len=MAX_LINE_LEN) :: temp_buf
+    character(len=4096) :: highlighted
+    integer :: highlighted_len, pv_len
+    character(len=8) :: col_str
 
     ! Keep the current buffer (matched command)
     input_state%in_search = .false.
@@ -7180,9 +7184,33 @@ contains
     input_state%search_length = 0
     input_state%search_match_index = 0
 
-    ! Clean up status line then redraw with normal prompt
-    call cleanup_search_status_line()
-    call redraw_line(prompt, input_state)
+    ! Clear status line and rewrite command text without redrawing prompt
+    if (module_search_status_shown) then
+      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! cursor up from status line
+    end if
+
+    ! Position cursor after prompt, clear to end of screen
+    pv_len = visual_length(prompt)
+    if (pv_len < 0) pv_len = 0
+    write(col_str, '(i0)') pv_len + 2
+    write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str) // 'G'
+    write(output_unit, '(a)', advance='no') char(27) // '[J'
+
+    ! Write syntax-highlighted command text
+    if (input_state%length > 0) then
+      call state_buffer_get(input_state, temp_buf)
+      call highlight_command_line(temp_buf(:input_state%length), &
+                                  highlighted, highlighted_len, &
+                                  input_state%length)
+      if (highlighted_len > 0 .and. highlighted_len <= len(highlighted)) then
+        write(output_unit, '(a)', advance='no') highlighted(:highlighted_len)
+      else
+        write(output_unit, '(a)', advance='no') temp_buf(:input_state%length)
+      end if
+    end if
+
+    module_search_status_shown = .false.
+    flush(output_unit)
   end subroutine
 
   subroutine accept_search_for_editing(input_state)
