@@ -35,6 +35,30 @@ module directory_builtin
 
 contains
 
+  ! Replace $HOME prefix with ~ for display
+  function tilde_abbreviate(path) result(abbreviated)
+    character(len=*), intent(in) :: path
+    character(len=1024) :: abbreviated
+    character(len=1024) :: home_dir
+    integer :: home_len, path_len
+
+    call get_environment_variable('HOME', home_dir)
+    home_len = len_trim(home_dir)
+    path_len = len_trim(path)
+
+    if (home_len > 0 .and. path_len >= home_len .and. path(1:home_len) == trim(home_dir)) then
+      if (path_len == home_len) then
+        abbreviated = '~'
+      else if (path(home_len+1:home_len+1) == '/') then
+        abbreviated = '~' // path(home_len+1:path_len)
+      else
+        abbreviated = path
+      end if
+    else
+      abbreviated = path
+    end if
+  end function
+
   subroutine builtin_pushd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
@@ -283,16 +307,16 @@ contains
   subroutine print_directory_stack()
     character(len=1024) :: current_dir
     integer :: i, status
-    
+
     call get_current_dir(current_dir, status)
     if (status == 0) then
-      write(output_unit, '(a)', advance='no') trim(current_dir)
+      write(output_unit, '(a)', advance='no') trim(tilde_abbreviate(current_dir))
     else
       write(output_unit, '(a)', advance='no') '~'
     end if
-    
+
     do i = dir_stack%top, 1, -1
-      write(output_unit, '(a,a)', advance='no') ' ', trim(dir_stack%directories(i))
+      write(output_unit, '(a,a)', advance='no') ' ', trim(tilde_abbreviate(dir_stack%directories(i)))
     end do
     write(output_unit, '(a)') ''
   end subroutine
@@ -300,32 +324,32 @@ contains
   subroutine print_directory_stack_lines()
     character(len=1024) :: current_dir
     integer :: i, status
-    
+
     call get_current_dir(current_dir, status)
     if (status == 0) then
-      write(output_unit, '(a)') trim(current_dir)
+      write(output_unit, '(a)') trim(tilde_abbreviate(current_dir))
     else
       write(output_unit, '(a)') '~'
     end if
-    
+
     do i = dir_stack%top, 1, -1
-      write(output_unit, '(a)') trim(dir_stack%directories(i))
+      write(output_unit, '(a)') trim(tilde_abbreviate(dir_stack%directories(i)))
     end do
   end subroutine
 
   subroutine print_directory_stack_verbose()
     character(len=1024) :: current_dir
     integer :: i, status
-    
+
     call get_current_dir(current_dir, status)
     if (status == 0) then
-      write(output_unit, '(a,a)') ' 0  ', trim(current_dir)
+      write(output_unit, '(a,a)') ' 0  ', trim(tilde_abbreviate(current_dir))
     else
       write(output_unit, '(a,a)') ' 0  ', '~'
     end if
-    
+
     do i = dir_stack%top, 1, -1
-      write(output_unit, '(I2,a,a)') dir_stack%top - i + 1, '  ', trim(dir_stack%directories(i))
+      write(output_unit, '(I2,a,a)') dir_stack%top - i + 1, '  ', trim(tilde_abbreviate(dir_stack%directories(i)))
     end do
   end subroutine
 
