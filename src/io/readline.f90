@@ -1147,6 +1147,7 @@ contains
             end if
           else if (module_input_state%in_search) then
             call accept_search(module_input_state, prompt)
+            write(output_unit, '()')  ! New line before execution
             done = .true.
           else
             write(output_unit, '()')  ! New line
@@ -1162,21 +1163,18 @@ contains
 
         case(KEY_CTRL_C)
           ! Ctrl+C - cancel and clear line (bash-compatible)
-          ! Move to beginning, clear line, print ^C on new line
-          write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-          write(output_unit, '(a)') '^C'
-
-          ! Clear buffer and exit search mode if active
           if (module_input_state%in_search) then
+            ! Clean up the search status line first
+            call cleanup_search_status_line()
             module_input_state%in_search = .false.
-#ifdef USE_MEMORY_POOL
-            module_input_state%search_string_ref%data = ''
-#else
-            module_input_state%search_string = ''
-#endif
+            call clear_search_string(module_input_state)
             module_input_state%search_length = 0
             module_input_state%search_match_index = 0
           end if
+
+          ! Move to beginning, clear line, print ^C on new line
+          write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
+          write(output_unit, '(a)') '^C'
 
           ! Clear buffer and return empty line
           module_input_state%length = 0
@@ -1200,12 +1198,8 @@ contains
               call update_signal_display(module_input_state)
             end if
           else if (module_input_state%in_search) then
-            ! For search mode, delete last char and redraw
-            if (module_input_state%length > 0) then
-              module_input_state%length = module_input_state%length - 1
-              module_input_state%cursor_pos = module_input_state%length
-              module_input_state%dirty = .true.
-            end if
+            ! For search mode, delete last search char and re-search
+            call search_backspace(module_input_state, prompt)
           else
             call handle_backspace(module_input_state)
           end if
@@ -1285,26 +1279,9 @@ contains
           call handle_isearch(module_input_state, prompt, .true.)
 
         case(KEY_CTRL_G)
-          ! Cancel search if active (bash-compatible)
+          ! Cancel search if active - restore original buffer and continue editing
           if (module_input_state%in_search) then
-            ! Clear line and exit search mode
-            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-            write(output_unit, '(a)') '^C'
-
-            module_input_state%in_search = .false.
-#ifdef USE_MEMORY_POOL
-            module_input_state%search_string_ref%data = ''
-#else
-            module_input_state%search_string = ''
-#endif
-            module_input_state%search_length = 0
-            module_input_state%search_match_index = 0
-
-            ! Clear buffer and return empty line
-            call state_buffer_clear(module_input_state)
-            module_input_state%length = 0
-            module_input_state%cursor_pos = 0
-            done = .true.
+            call cancel_search(module_input_state)
           end if
 
         case(KEY_CTRL_H)
