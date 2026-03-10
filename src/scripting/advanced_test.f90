@@ -133,9 +133,9 @@ contains
     call expand_test_operand(shell, right, expanded_right)
 
     select case (trim(operator))
-    ! String comparisons
+    ! String comparisons (use wildcard match for [[ ]] glob support)
     case ('=', '==')
-      result_bool = (trim(expanded_left) == trim(expanded_right))
+      result_bool = wildcard_match(trim(expanded_left), trim(expanded_right))
     case ('!=')
       result_bool = (trim(expanded_left) /= trim(expanded_right))
     case ('<')
