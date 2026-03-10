@@ -4085,8 +4085,15 @@ contains
 
     ! Handle list flag
     if (list_flag) then
-      call list_completion_specs()
-      shell%last_exit_status = 0
+      block
+        logical :: has_specs
+        call list_completion_specs(has_specs)
+        if (has_specs) then
+          shell%last_exit_status = 0
+        else
+          shell%last_exit_status = 1
+        end if
+      end block
       return
     end if
 
@@ -4258,7 +4265,7 @@ contains
     spec%use_filenames = .false.
     spec%nospace = .false.
     spec%plusdirs = .false.
-    spec%nosort = .false.
+    spec%nosort = .true.  ! compgen preserves input order (no sorting)
 
     if (len_trim(word_list_arg) > 0) then
       call parse_word_list(word_list_arg, spec)

@@ -216,7 +216,8 @@ contains
   end subroutine clear_completion_specs
 
   ! List all registered completion specs
-  subroutine list_completion_specs()
+  subroutine list_completion_specs(found)
+    logical, intent(out), optional :: found
     integer :: i
     logical :: found_any
 
@@ -228,7 +229,15 @@ contains
 
         ! Print word list if present
         if (completion_specs(i)%word_list_count > 0) then
-          write(output_unit, '(a)', advance='no') ' -W "...'
+          block
+            integer :: w
+            write(output_unit, '(a)', advance='no') " -W '"
+            do w = 1, completion_specs(i)%word_list_count
+              if (w > 1) write(output_unit, '(a)', advance='no') ' '
+              write(output_unit, '(a)', advance='no') trim(completion_specs(i)%word_list(w))
+            end do
+            write(output_unit, '(a)', advance='no') "'"
+          end block
         end if
 
         ! Print function if present
@@ -290,9 +299,7 @@ contains
       end if
     end do
 
-    if (.not. found_any) then
-      ! No output for empty list (matches bash behavior)
-    end if
+    if (present(found)) found = found_any
   end subroutine list_completion_specs
 
   ! Parse word list from -W argument
