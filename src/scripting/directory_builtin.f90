@@ -141,8 +141,13 @@ contains
       end if
       
       dir_stack%top = dir_stack%top + 1
-      dir_stack%directories(dir_stack%top) = current_dir
-      
+      if (no_change) then
+        ! -n: push the target dir onto stack without cd-ing
+        dir_stack%directories(dir_stack%top) = new_dir
+      else
+        dir_stack%directories(dir_stack%top) = current_dir
+      end if
+
       if (.not. no_change) then
         call change_dir(new_dir, status)
         if (status /= 0) then
@@ -296,44 +301,74 @@ contains
     if (clear_stack) then
       dir_stack%top = 0
     else if (one_per_line) then
-      call print_directory_stack_lines()
+      call print_directory_stack_lines(long_format)
     else
-      call print_directory_stack()
+      call print_directory_stack(long_format)
     end if
     
     shell%last_exit_status = 0
   end subroutine
 
-  subroutine print_directory_stack()
-    character(len=1024) :: current_dir
+  subroutine print_directory_stack(long_fmt)
+    logical, intent(in), optional :: long_fmt
+    character(len=1024) :: current_dir, display_dir
     integer :: i, status
+    logical :: use_long
+
+    use_long = .false.
+    if (present(long_fmt)) use_long = long_fmt
 
     call get_current_dir(current_dir, status)
     if (status == 0) then
-      write(output_unit, '(a)', advance='no') trim(tilde_abbreviate(current_dir))
+      if (use_long) then
+        display_dir = current_dir
+      else
+        display_dir = tilde_abbreviate(current_dir)
+      end if
+      write(output_unit, '(a)', advance='no') trim(display_dir)
     else
       write(output_unit, '(a)', advance='no') '~'
     end if
 
     do i = dir_stack%top, 1, -1
-      write(output_unit, '(a,a)', advance='no') ' ', trim(tilde_abbreviate(dir_stack%directories(i)))
+      if (use_long) then
+        display_dir = dir_stack%directories(i)
+      else
+        display_dir = tilde_abbreviate(dir_stack%directories(i))
+      end if
+      write(output_unit, '(a,a)', advance='no') ' ', trim(display_dir)
     end do
     write(output_unit, '(a)') ''
   end subroutine
 
-  subroutine print_directory_stack_lines()
-    character(len=1024) :: current_dir
+  subroutine print_directory_stack_lines(long_fmt)
+    logical, intent(in), optional :: long_fmt
+    character(len=1024) :: current_dir, display_dir
     integer :: i, status
+    logical :: use_long
+
+    use_long = .false.
+    if (present(long_fmt)) use_long = long_fmt
 
     call get_current_dir(current_dir, status)
     if (status == 0) then
-      write(output_unit, '(a)') trim(tilde_abbreviate(current_dir))
+      if (use_long) then
+        display_dir = current_dir
+      else
+        display_dir = tilde_abbreviate(current_dir)
+      end if
+      write(output_unit, '(a)') trim(display_dir)
     else
       write(output_unit, '(a)') '~'
     end if
 
     do i = dir_stack%top, 1, -1
-      write(output_unit, '(a)') trim(tilde_abbreviate(dir_stack%directories(i)))
+      if (use_long) then
+        display_dir = dir_stack%directories(i)
+      else
+        display_dir = tilde_abbreviate(dir_stack%directories(i))
+      end if
+      write(output_unit, '(a)') trim(display_dir)
     end do
   end subroutine
 
