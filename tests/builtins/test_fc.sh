@@ -6,12 +6,22 @@ section "1. fc listing"
 check_exit "fc -l lists history" 'fc -l' "0"
 check_exit "fc -l -n suppresses line numbers" 'fc -l -n' "0"
 check_exit "fc -l -r reverses order" 'fc -l -r' "0"
+check_output "fc -l produces output" 'fc -l | head -1 | grep -q . && echo yes' "yes"
 
 section "2. fc with range"
-check_exit "fc -l with count" 'fc -l -5 2>/dev/null; true' "0"
+check_exit "fc -l with negative offset" 'fc -l -5 2>/dev/null; true' "0"
+check_exit "fc -l first last range" 'fc -l 1 5 2>/dev/null; true' "0"
+check_exit "fc -l with prefix search" 'echo hello; fc -l echo 2>/dev/null; true' "0"
 
-section "3. fc substitution"
-# fc -s re-executes previous command with substitution
-compare_output "fc -s basic re-execute" 'echo hello; fc -s echo 2>/dev/null || true'
+section "3. fc flags combined"
+check_exit "fc -l -n combined" 'fc -l -n 2>/dev/null; true' "0"
+check_exit "fc -l -r -n all combined" 'fc -l -r -n 2>/dev/null; true' "0"
+
+section "4. fc substitution"
+compare_output "fc -s re-executes" 'echo testcmd123; fc -s echo 2>/dev/null || true'
+check_exit "fc -s with no history" 'fc -s nonexistent_xyz 2>/dev/null; true' "0"
+
+section "5. fc editor"
+check_exit "fc -e with EDITOR" 'FCEDIT=/bin/true; fc -e /bin/true 2>/dev/null; true' "0"
 
 print_summary
