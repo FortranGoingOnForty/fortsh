@@ -363,10 +363,10 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
 
-    character(len=256) :: var_name, list_part
-    character(len=256) :: expanded_items(100)
-    character(len=256) :: glob_matches(100)
-    character(len=256) :: final_items(100)
+    character(len=MAX_TOKEN_LEN) :: var_name, list_part
+    character(len=MAX_TOKEN_LEN) :: expanded_items(100)
+    character(len=MAX_TOKEN_LEN) :: glob_matches(100)
+    character(len=MAX_TOKEN_LEN) :: final_items(100)
     integer :: expanded_count, final_count, glob_count
     integer :: i, j
 
