@@ -3480,7 +3480,7 @@ contains
     integer :: i, eq_pos, first_cmd_token
     character(len=256) :: token
     logical :: is_assignment
-    character(len=:), allocatable :: new_tokens(:)
+    character(len=MAX_TOKEN_LEN), allocatable :: new_tokens(:)
     integer :: new_token_count
 
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
@@ -3522,7 +3522,7 @@ contains
 
       if (new_token_count > 0) then
         ! Allocate new token array with remaining tokens
-        allocate(character(len=len(cmd%tokens)) :: new_tokens(new_token_count))
+        allocate(new_tokens(new_token_count))
 
         ! Copy remaining tokens
         do i = 1, new_token_count
