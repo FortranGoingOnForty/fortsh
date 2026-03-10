@@ -839,7 +839,7 @@ contains
     ! Prefix assignment handling
     character(len=1024) :: saved_var_names(10), saved_var_values(10)
     integer :: num_saved_vars, eq_pos, j
-    character(len=256) :: var_name, var_value
+    character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: var_was_set(10)
 
     ! Apply prefix assignments to shell variables (save old values first)
@@ -2866,8 +2866,8 @@ contains
   subroutine apply_prefix_assignments(cmd)
     type(command_t), intent(in) :: cmd
     integer :: i, eq_pos, ret
-    character(len=256) :: var_name, var_value
-    character(len=256), target :: c_var_name, c_var_value
+    character(len=MAX_TOKEN_LEN) :: var_name, var_value
+    character(len=MAX_TOKEN_LEN), target :: c_var_name, c_var_value
 
     ! Iterate through all prefix assignments
     do i = 1, cmd%num_prefix_assignments
