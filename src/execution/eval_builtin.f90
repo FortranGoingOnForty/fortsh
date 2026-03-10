@@ -31,6 +31,9 @@ contains
     if (associated(ast_root)) then
       exit_code = execute_ast(ast_root, shell)
       shell%last_exit_status = exit_code
+    else if (len_trim(eval_command) == 0) then
+      ! Empty command is a no-op, not an error
+      shell%last_exit_status = 0
     else
       ! Parse error - set failure status
       shell%last_exit_status = 1
