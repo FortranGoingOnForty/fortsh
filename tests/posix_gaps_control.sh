@@ -95,7 +95,15 @@ compare_posix_output "for single" "for i in one; do echo \$i; done"
 section "4. FOR EDGE CASES"
 compare_posix_output "for with break" 'for i in 1 2 3; do echo $i; break; done'
 compare_posix_output "for with continue" 'for i in 1 2 3; do if [ $i = 2 ]; then continue; fi; echo $i; done'
-compare_posix_output "for glob expansion" "touch /tmp/posix_gaps_for1_$$.txt /tmp/posix_gaps_for2_$$.txt /tmp/posix_gaps_for3_$$.txt 2>/dev/null; for f in /tmp/posix_gaps_for*_$$.txt; do test -f \$f && echo yes; done | head -1; rm -f /tmp/posix_gaps_for*_$$.txt"
+# Debug: show raw outputs for glob expansion test (investigating CI failure)
+_glob_cmd="touch /tmp/posix_gaps_for1_$$.txt /tmp/posix_gaps_for2_$$.txt /tmp/posix_gaps_for3_$$.txt 2>/dev/null; for f in /tmp/posix_gaps_for*_$$.txt; do test -f \$f && echo yes; done | head -1; rm -f /tmp/posix_gaps_for*_$$.txt"
+_glob_posix=$(bash -c "$_glob_cmd" 2>&1)
+_glob_fortsh=$("$FORTSH_BIN" -c "$_glob_cmd" 2>&1)
+printf "  [DEBUG glob] bash=%s fortsh=%s cmd=%s\n" "$(printf '%s' "$_glob_posix" | od -A n -t x1 | tr -d '\n')" "$(printf '%s' "$_glob_fortsh" | od -A n -t x1 | tr -d '\n')" "$_glob_cmd"
+_glob_posix_n=$(printf '%s' "$_glob_posix" | normalize_output)
+_glob_fortsh_n=$(printf '%s' "$_glob_fortsh" | normalize_output)
+if [ "$_glob_posix_n" = "$_glob_fortsh_n" ]; then pass "for glob expansion"
+else fail "for glob expansion" "$_glob_posix_n" "$_glob_fortsh_n"; fi
 compare_posix_output "for preserves IFS" "IFS=:; for i in a b c; do echo \$i; done; echo \$IFS | od -A n -t x1 | grep -c 3a"
 
 # ============================================================================
