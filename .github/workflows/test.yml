@@ -55,3 +55,39 @@ jobs:
           cd tests/interactive
           source .venv/bin/activate
           python run_tests.py
+
+  builtin-tests:
+    name: Builtin Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gfortran
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran
+
+      - name: Build fortsh
+        run: make
+
+      - name: Run builtin tests
+        continue-on-error: true
+        run: ./tests/builtins/run_builtin_tests.sh
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gfortran
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran
+
+      - name: Build fortsh
+        run: make
+
+      - name: Run integration tests
+        continue-on-error: true
+        run: ./tests/builtins/integration/run_integration_tests.sh
