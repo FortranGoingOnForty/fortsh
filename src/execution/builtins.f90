@@ -3013,6 +3013,33 @@ contains
         resource = RLIMIT_AS
         limit_name = 'virtual memory'
         i = i + 1
+      else if (len_trim(arg) == 3 .and. arg(1:1) == '-' .and. &
+              (arg(2:2) == 'S' .or. arg(2:2) == 'H')) then
+        ! Combined flags like -Sn, -Hn, -Ss, -Hs, etc.
+        if (arg(2:2) == 'S') then
+          set_soft = .true.
+          set_hard = .false.
+        else
+          set_hard = .true.
+          set_soft = .false.
+        end if
+        select case (arg(3:3))
+          case ('c'); resource = RLIMIT_CORE; limit_name = 'core file size'
+          case ('d'); resource = RLIMIT_DATA; limit_name = 'data seg size'
+          case ('f'); resource = RLIMIT_FSIZE; limit_name = 'file size'
+          case ('l'); resource = RLIMIT_MEMLOCK; limit_name = 'max locked memory'
+          case ('m'); resource = RLIMIT_RSS; limit_name = 'max memory size'
+          case ('n'); resource = RLIMIT_NOFILE; limit_name = 'open files'
+          case ('s'); resource = RLIMIT_STACK; limit_name = 'stack size'
+          case ('t'); resource = RLIMIT_CPU; limit_name = 'cpu time'
+          case ('u'); resource = RLIMIT_NPROC; limit_name = 'max user processes'
+          case ('v'); resource = RLIMIT_AS; limit_name = 'virtual memory'
+          case default
+            write(error_unit, '(a)') 'ulimit: invalid option: ' // trim(arg)
+            shell%last_exit_status = 1
+            return
+        end select
+        i = i + 1
       else
         ! This is the value to set
         value_str = arg
@@ -3100,7 +3127,7 @@ contains
         else
           display_value = limit_value
         end if
-        write(output_unit, '(i15)') display_value
+        write(output_unit, '(i0)') display_value
       end if
     end subroutine
 
@@ -3146,7 +3173,8 @@ contains
         else
           val = r%rlim_cur
         end if
-        write(str, '(i15)') val
+        write(str, '(i20)') val
+        str = adjustl(str)
       end if
     end function
 
