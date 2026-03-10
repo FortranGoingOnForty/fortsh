@@ -40,6 +40,7 @@ RUN_POSIX=1
 RUN_MEMORY=0
 RUN_INTERACTIVE=0
 RUN_BUILTINS=0
+RUN_INTEGRATION=0
 SKIP_SLOW=0
 SHOW_PROGRESS=0  # Disabled by default due to output buffering issues
 
@@ -67,11 +68,19 @@ for arg in "$@"; do
             RUN_INTERACTIVE=0
             RUN_BUILTINS=1
             ;;
+        --integration)
+            RUN_POSIX=0
+            RUN_MEMORY=0
+            RUN_INTERACTIVE=0
+            RUN_BUILTINS=0
+            RUN_INTEGRATION=1
+            ;;
         --full)
             RUN_POSIX=1
             RUN_MEMORY=0
             RUN_INTERACTIVE=1
             RUN_BUILTINS=1
+            RUN_INTEGRATION=1
             ;;
         --quick)
             SKIP_SLOW=1
@@ -87,6 +96,7 @@ for arg in "$@"; do
             RUN_MEMORY=1
             RUN_INTERACTIVE=1
             RUN_BUILTINS=1
+            RUN_INTEGRATION=1
             ;;
         --help|-h)
             head -n 20 "$0" | grep '^#' | sed 's/^# \?//'
@@ -352,6 +362,21 @@ if [ "$RUN_BUILTINS" -eq 1 ]; then
         FAILED_SUITES=$((FAILED_SUITES + 1))
     else
         run_test_suite "builtins/run_builtin_tests.sh" "Builtins"
+    fi
+fi
+
+# Run integration tests
+if [ "$RUN_INTEGRATION" -eq 1 ]; then
+    printf "${CYAN}${BOLD}══════════════════════════════════════════\n"
+    printf "INTEGRATION TESTS\n"
+    printf "══════════════════════════════════════════${NC}\n\n"
+
+    INTEGRATION_DIR="$SCRIPT_DIR/builtins/integration"
+    if [ ! -d "$INTEGRATION_DIR" ]; then
+        printf "${RED}Integration test directory not found: %s${NC}\n" "$INTEGRATION_DIR"
+        FAILED_SUITES=$((FAILED_SUITES + 1))
+    else
+        run_test_suite "builtins/integration/run_integration_tests.sh" "Integration"
     fi
 fi
 
