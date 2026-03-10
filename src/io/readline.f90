@@ -1222,7 +1222,7 @@ contains
 
         case(KEY_ESC)
           ! Escape sequence - parse it (will route to menu if needed)
-          call handle_escape_sequence(module_input_state, done)
+          call handle_escape_sequence(module_input_state, done, prompt)
           
         case(KEY_CTRL_A)
           ! Home - move to beginning of line
@@ -5256,9 +5256,10 @@ contains
     end select
   end subroutine
 
-  subroutine handle_escape_sequence(input_state, done)
+  subroutine handle_escape_sequence(input_state, done, prompt)
     type(input_state_t), intent(inout) :: input_state
     logical, intent(inout) :: done
+    character(len=*), intent(in) :: prompt
     character :: ch1, ch2
     logical :: success
 
@@ -5390,7 +5391,11 @@ contains
         end if
       case(char(127))
         ! Alt+Backspace - Delete word backward (same as Ctrl+W)
-        call handle_kill_word(input_state)
+        if (input_state%in_search) then
+          call search_kill_word(input_state, prompt)
+        else
+          call handle_kill_word(input_state)
+        end if
       case default
         ! Unknown Alt+key combination
         continue
