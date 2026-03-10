@@ -13,6 +13,13 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+VERBOSE=0
+for arg in "$@"; do
+    case "$arg" in
+        -v|--verbose) VERBOSE=1 ;;
+    esac
+done
+
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 FORTSH_BIN="${FORTSH_BIN:-$SCRIPT_DIR/../../bin/fortsh}"
 export FORTSH_BIN
@@ -36,8 +43,15 @@ for test_file in "$SCRIPT_DIR"/test_*.sh; do
     # Skip the shared harness
     [ "$suite_name" = "test_harness.sh" ] && continue
 
-    output=$("$test_file" 2>&1)
-    exit_code=$?
+    if [ "$VERBOSE" -eq 1 ]; then
+        printf "\n${CYAN}── %s ──${NC}\n" "$suite_name"
+        output=$("$test_file" 2>&1)
+        exit_code=$?
+        echo "$output"
+    else
+        output=$("$test_file" 2>&1)
+        exit_code=$?
+    fi
 
     # Strip ANSI codes for parsing
     clean=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')

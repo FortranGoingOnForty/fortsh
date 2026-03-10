@@ -72,7 +72,7 @@ jobs:
 
       - name: Run builtin tests
         continue-on-error: true
-        run: ./tests/builtins/run_builtin_tests.sh
+        run: ./tests/builtins/run_builtin_tests.sh --verbose
 
   integration-tests:
     name: Integration Tests
@@ -90,4 +90,4 @@ jobs:
 
       - name: Run integration tests
         continue-on-error: true
-        run: ./tests/builtins/integration/run_integration_tests.sh
+        run: ./tests/builtins/integration/run_integration_tests.sh --verbose
