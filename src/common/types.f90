@@ -153,7 +153,7 @@ module shell_types
     type(redirection_t) :: redirections(10)
     integer :: num_redirections = 0
     ! Prefix assignments (VAR=value command)
-    character(len=256) :: prefix_assignments(10) = ''  ! VAR=value pairs
+    character(len=MAX_TOKEN_LEN) :: prefix_assignments(10) = ''  ! VAR=value pairs
     integer :: num_prefix_assignments = 0
     ! Skip expansion flag (words already expanded in pipeline)
     logical :: skip_expansion = .false.
@@ -209,9 +209,9 @@ module shell_types
     logical :: condition_met = .false.
     logical :: in_else_branch = .false.
     logical :: should_execute = .true.
-    character(len=256) :: loop_variable = ''  ! for 'for' loops
-    character(len=256) :: for_list = ''       ! space-separated list for 'for' loops
-    character(len=256), allocatable :: for_values(:)  ! parsed for-loop values
+    character(len=MAX_TOKEN_LEN) :: loop_variable = ''  ! for 'for' loops
+    character(len=MAX_TOKEN_LEN) :: for_list = ''       ! space-separated list for 'for' loops
+    character(len=MAX_TOKEN_LEN), allocatable :: for_values(:)  ! parsed for-loop values
     integer :: for_index = 0         ! current index in for loop
     integer :: for_count = 0         ! total count of for loop values
     character(len=1024) :: condition_cmd = ''  ! while condition command (must match control_flow usage)
