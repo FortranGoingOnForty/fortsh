@@ -82,6 +82,7 @@ contains
                 trim(cmd_name) == 'config' .or. &
                 trim(cmd_name) == 'alias' .or. &
                 trim(cmd_name) == 'unalias' .or. &
+                trim(cmd_name) == 'abbr' .or. &
                 trim(cmd_name) == 'help' .or. &
                 trim(cmd_name) == 'perf' .or. &
                 trim(cmd_name) == 'memory' .or. &
