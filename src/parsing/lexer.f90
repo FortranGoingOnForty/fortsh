@@ -683,10 +683,17 @@ contains
           end if
           pos = pos + 1
         else if (ch == '(' .or. ch == ')') then
+          ! Inside [[ ]], keep parens as part of word (regex patterns, grouping)
+          if (in_double_bracket_context) then
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+            end if
+            pos = pos + 1
           ! Parentheses: Keep ONLY if inside $(( or $(
           ! Check if current token ends with $ (for x=$(cmd) or just $(cmd))
           ! NOTE: Only for '(' - ')' after $ (like $$) should end the word
-          if (ch == '(' .and. token_len >= 1 .and. current_token(token_len:token_len) == '$') then
+          else if (ch == '(' .and. token_len >= 1 .and. current_token(token_len:token_len) == '$') then
             ! Just added $, now seeing ( - this is $( substitution - keep both
             if (token_len < MAX_TOKEN_LEN) then
               token_len = token_len + 1
