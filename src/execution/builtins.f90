@@ -3457,21 +3457,50 @@ contains
         return
       end if
 
-      ! Print all variables with declare syntax
-      do i = 1, shell%num_variables
-        if (len_trim(shell%variables(i)%name) > 0) then
-          block
-            character(len=16) :: flags
-            flags = '-'
-            if (shell%variables(i)%is_integer) flags = trim(flags) // 'i'
-            if (shell%variables(i)%readonly) flags = trim(flags) // 'r'
-            if (shell%variables(i)%exported) flags = trim(flags) // 'x'
-            if (flags == '-') flags = '--'
-            write(output_unit, '(a)') 'declare ' // trim(flags) // ' ' // &
-                trim(shell%variables(i)%name) // '="' // trim(shell%variables(i)%value) // '"'
-          end block
-        end if
-      end do
+      ! Print variables with declare syntax
+      if (arg_idx <= cmd%num_tokens) then
+        ! Print specific named variables
+        do j = arg_idx, cmd%num_tokens
+          var_name = trim(cmd%tokens(j))
+          found = .false.
+          do i = 1, shell%num_variables
+            if (trim(shell%variables(i)%name) == var_name) then
+              block
+                character(len=16) :: flags
+                flags = '-'
+                if (shell%variables(i)%is_integer) flags = trim(flags) // 'i'
+                if (shell%variables(i)%readonly) flags = trim(flags) // 'r'
+                if (shell%variables(i)%exported) flags = trim(flags) // 'x'
+                if (flags == '-') flags = '--'
+                write(output_unit, '(a)') 'declare ' // trim(flags) // ' ' // &
+                    trim(shell%variables(i)%name) // '="' // trim(shell%variables(i)%value) // '"'
+              end block
+              found = .true.
+              exit
+            end if
+          end do
+          if (.not. found) then
+            write(error_unit, '(a)') 'declare: ' // trim(var_name) // ': not found'
+            shell%last_exit_status = 1
+          end if
+        end do
+      else
+        ! Print all variables
+        do i = 1, shell%num_variables
+          if (len_trim(shell%variables(i)%name) > 0) then
+            block
+              character(len=16) :: flags
+              flags = '-'
+              if (shell%variables(i)%is_integer) flags = trim(flags) // 'i'
+              if (shell%variables(i)%readonly) flags = trim(flags) // 'r'
+              if (shell%variables(i)%exported) flags = trim(flags) // 'x'
+              if (flags == '-') flags = '--'
+              write(output_unit, '(a)') 'declare ' // trim(flags) // ' ' // &
+                  trim(shell%variables(i)%name) // '="' // trim(shell%variables(i)%value) // '"'
+            end block
+          end if
+        end do
+      end if
       shell%last_exit_status = 0
       return
     end if
