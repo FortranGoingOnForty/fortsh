@@ -1189,25 +1189,28 @@ contains
         index_str = token(bracket_pos+1:bracket_end-1)
         var_value = token(eq_pos+1:token_len)
 
-        ! Parse the index (bash uses 0-indexed, convert to 1-indexed)
-        read(index_str, *, iostat=read_status) array_index
-        if (read_status == 0) then
-          array_index = array_index + 1  ! Convert to 1-indexed
-          call set_array_element(shell, trim(var_name), array_index, trim(var_value))
-          shell%last_exit_status = 0
-        else
-          ! Non-numeric index — check for associative array
-          block
-            use variables, only: is_associative_array, set_assoc_array_value
-            if (is_associative_array(shell, trim(var_name))) then
-              call set_assoc_array_value(shell, trim(var_name), trim(index_str), trim(var_value))
+        ! Check associative array first (numeric keys are valid)
+        block
+          use variables, only: is_associative_array, set_assoc_array_value
+          if (is_associative_array(shell, trim(var_name))) then
+            call set_assoc_array_value(shell, trim(var_name), &
+              trim(index_str), trim(var_value))
+            shell%last_exit_status = 0
+          else
+            ! Parse as numeric index (0-indexed → 1-indexed)
+            read(index_str, *, iostat=read_status) array_index
+            if (read_status == 0) then
+              array_index = array_index + 1
+              call set_array_element(shell, trim(var_name), &
+                array_index, trim(var_value))
               shell%last_exit_status = 0
             else
-              write(error_unit, '(a)') 'Error: invalid array index'
+              write(error_unit, '(a)') &
+                'Error: invalid array index'
               shell%last_exit_status = 1
             end if
-          end block
-        end if
+          end if
+        end block
       else
         write(error_unit, '(a)') 'Error: unclosed bracket in array assignment'
         shell%last_exit_status = 1
