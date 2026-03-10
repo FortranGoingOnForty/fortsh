@@ -35,7 +35,7 @@ contains
 
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'printf: usage: printf FORMAT [ARGUMENTS...]'
-      shell%last_exit_status = 1
+      shell%last_exit_status = 2
       return
     end if
 
@@ -742,6 +742,36 @@ contains
       go to 60
 50    output(output_pos:output_pos) = format_str(pos:pos)
 60    continue
+    case ('x')
+      ! Hex escape sequence \xNN
+      block
+        integer :: hval, hd, hc
+        hval = 0
+        hd = 0
+        do while (hd < 2 .and. pos + hd + 1 <= format_len)
+          hc = ichar(format_str(pos+hd+1:pos+hd+1))
+          if (hc >= ichar('0') .and. hc <= ichar('9')) then
+            hval = hval * 16 + hc - ichar('0')
+            hd = hd + 1
+          else if (hc >= ichar('a') .and. hc <= ichar('f')) then
+            hval = hval * 16 + hc - ichar('a') + 10
+            hd = hd + 1
+          else if (hc >= ichar('A') .and. hc <= ichar('F')) then
+            hval = hval * 16 + hc - ichar('A') + 10
+            hd = hd + 1
+          else
+            exit
+          end if
+        end do
+        if (hd > 0) then
+          output(output_pos:output_pos) = achar(mod(hval, 256))
+          pos = pos + hd
+        else
+          output(output_pos:output_pos) = char(92)
+          output_pos = output_pos + 1
+          output(output_pos:output_pos) = 'x'
+        end if
+      end block
     case default
       ! Unknown escape - per POSIX, output both backslash and character
       output(output_pos:output_pos) = char(92)  ! backslash
