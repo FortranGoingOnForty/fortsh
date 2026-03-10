@@ -196,9 +196,22 @@ section "158. AMPERSAND SEMANTICS"
 
 # Background jobs still output to stdout - just test it succeeds
 test_succeeds "& at end" 'echo test &'
-test_output "multiple & commands" 'echo a & echo b & wait; echo done' 'a
-b
-done'
+# Background output order is nondeterministic; check all values are present
+test_output_unordered() {
+    test_name="$1"
+    test_cmd="$2"
+    shift 2
+
+    output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1)
+    for word in "$@"; do
+        if ! echo "$output" | grep -qF "$word"; then
+            fail "$test_name" "output containing '$word'" "$output"
+            return
+        fi
+    done
+    pass "$test_name"
+}
+test_output_unordered "multiple & commands" 'echo a & echo b & wait; echo done' a b done
 
 section "159. BACKGROUND SUBSHELLS"
 
