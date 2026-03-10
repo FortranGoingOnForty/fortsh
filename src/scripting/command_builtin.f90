@@ -477,12 +477,21 @@ contains
     character(len=*), intent(in) :: command_name
     logical :: is_builtin
     
-    character(len=16), parameter :: builtins(25) = [ &
-      'cd       ', 'pwd      ', 'echo     ', 'printf   ', 'read     ', &
-      'export   ', 'unset    ', 'set      ', 'shift    ', 'test     ', &
-      'true     ', 'false    ', 'exit     ', 'return   ', 'break    ', &
-      'continue ', 'source   ', '.        ', 'eval     ', 'exec     ', &
-      'jobs     ', 'fg       ', 'bg       ', 'kill     ', 'wait     ' ]
+    character(len=16), parameter :: builtins(56) = [ &
+      'cd              ', 'pwd             ', 'echo            ', 'printf          ', &
+      'read            ', 'export          ', 'unset           ', 'set             ', &
+      'shift           ', 'test            ', 'true            ', 'false           ', &
+      'exit            ', 'return          ', 'break           ', 'continue        ', &
+      'source          ', '.               ', 'eval            ', 'exec            ', &
+      'jobs            ', 'fg              ', 'bg              ', 'kill            ', &
+      'wait            ', 'declare         ', 'local           ', 'readonly        ', &
+      'alias           ', 'unalias         ', 'type            ', 'command         ', &
+      'hash            ', 'trap            ', 'umask           ', 'ulimit          ', &
+      'times           ', 'let             ', 'getopts         ', 'fc              ', &
+      'help            ', 'defun           ', 'abbr            ', 'which           ', &
+      'history         ', 'shopt           ', 'complete        ', 'compgen         ', &
+      'coproc          ', 'printenv        ', 'pushd           ', 'popd            ', &
+      'dirs            ', 'prevd           ', 'nextd           ', 'dirh            ' ]
     
     integer :: i
     
