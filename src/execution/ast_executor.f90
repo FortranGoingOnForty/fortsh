@@ -1472,7 +1472,7 @@ contains
     integer :: exit_status, i, j, glob_count, word_idx, k, split_count
     integer, parameter :: MAX_GLOB = 256, MAX_SPLIT = 256
     character(len=MAX_TOKEN_LEN), allocatable :: glob_matches(:)
-    character(len=1024), allocatable :: expanded_words(:)  ! 1024 to match positional_params size
+    character(len=MAX_TOKEN_LEN), allocatable :: expanded_words(:)
     character(len=:), allocatable :: expanded_word, ifs_chars
     character(len=MAX_TOKEN_LEN), allocatable :: split_words(:)
     integer :: total_words
@@ -1703,7 +1703,7 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i
-    character(len=1024) :: case_value
+    character(len=MAX_TOKEN_LEN) :: case_value
     integer :: item_idx, pattern_idx
     logical :: matched
     character(len=MAX_TOKEN_LEN) :: pattern
