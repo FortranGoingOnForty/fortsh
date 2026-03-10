@@ -417,7 +417,7 @@ tests:
   match_type: contains
 - name: '105. READONLY AND UNSET INTERACTIONS: export readonly (exit code)'
   steps:
-  - send_line: readonly X=1; export X; sh -c 'echo $X' | grep -c 1
+  - send_line: readonly XP=1; export XP; sh -c 'echo $XP' | grep -c 1
   - send_line: echo "EXIT=$?"
   expect_output: EXIT=0
   match_type: contains
@@ -955,6 +955,6 @@ tests:
   match_type: contains
 - name: '130. EXPORT EDGE CASES: export readonly'
   steps:
-  - send_line: readonly X=ro; export X; sh -c 'echo $X'
+  - send_line: readonly XR=ro; export XR; sh -c 'echo $XR'
   expect_output: ro
   match_type: contains
