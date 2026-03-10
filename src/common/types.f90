@@ -314,6 +314,7 @@ module shell_types
     logical :: in_negation = .false.          ! Suppress errexit for negated pipelines (!)
     logical :: in_command_substitution = .false.  ! Suppress errexit in command substitution
     logical :: in_capture_child = .false.     ! In forked child for output capture (suppress messages)
+    logical :: in_pipeline_child = .false.   ! In forked pipeline child (skip setpgid/tcsetpgrp in execute_external)
     logical :: last_from_and_or = .false.     ! Last result was from an AND-OR list (suppress errexit check)
     ! Command hash table
     type(command_hash_entry_t) :: command_hash(50)
