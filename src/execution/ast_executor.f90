@@ -878,12 +878,6 @@ contains
       end if
     end do
 
-    ! Xtrace: trace all pipeline commands BEFORE forking (deterministic order)
-    ! Child processes will have xtrace suppressed to avoid double-tracing
-    if (shell%option_xtrace) then
-      call ast_trace_pipeline(node, shell)
-    end if
-
     ! Flush all output before forking to prevent buffer duplication
     flush(output_unit)
     flush(error_unit)
@@ -893,9 +887,13 @@ contains
       pids(i) = c_fork()
 
       if (pids(i) == 0) then
-        ! Child process
+        ! Child process — mark as pipeline child so execute_external
+        ! skips setpgid/tcsetpgrp (managed at pipeline level instead)
+        shell%in_pipeline_child = .true.
 
-        ! Reset signal handlers to default (match legacy executor)
+        ! Reset all signal handlers to default for pipeline children.
+        ! Safe now because execute_external skips its own setpgid/tcsetpgrp
+        ! when in_pipeline_child is set, so SIGTTOU won't stop the process.
         block
           type(c_funptr) :: old_handler
           old_handler = c_signal(SIGINT,  c_null_funptr)
@@ -903,17 +901,6 @@ contains
           old_handler = c_signal(SIGTSTP, c_null_funptr)
           old_handler = c_signal(SIGTTIN, c_null_funptr)
           old_handler = c_signal(SIGTTOU, c_null_funptr)
-        end block
-
-        ! Set up process group
-        block
-          integer(c_pid_t) :: my_pgid
-          if (i == 1) then
-            my_pgid = c_getpid()
-          else
-            my_pgid = pids(1)
-          end if
-          ret = c_setpgid(0, my_pgid)
         end block
 
         ! Set up stdin from previous pipe
@@ -930,9 +917,6 @@ contains
         ! Close all pipe fds
         call close_all_pipes(pipefd, num_pipes)
 
-        ! Suppress xtrace in child — parent already traced deterministically
-        shell%option_xtrace = .false.
-
         ! POSIX: Only ignored traps (empty action) are visible in subshells
         ! Remove traps with commands, but keep traps with empty actions (ignore)
         call filter_traps_for_subshell(shell)
@@ -941,110 +925,18 @@ contains
         status = execute_ast_node(node%pipeline%commands(i), shell)
         call c_exit(status)
       end if
-
-      ! Parent: set process group (race-free — both parent and child call setpgid)
-      if (pids(i) > 0) then
-        block
-          integer(c_pid_t) :: pgid
-          if (i == 1) then
-            pgid = pids(1)
-          else
-            pgid = pids(1)
-          end if
-          ret = c_setpgid(pids(i), pgid)
-        end block
-      end if
     end do
 
     ! Parent process - close all pipes
     call close_all_pipes(pipefd, num_pipes)
 
-    if (node%pipeline%background) then
-      ! Background pipeline: add job, don't wait
-      block
-        integer :: job_id
-        character(len=1024) :: job_command
-        job_command = '<background pipeline>'
-        ! Reconstruct command string from first pipeline command words
-        if (associated(node%pipeline%commands(1)%simple_cmd)) then
-          if (node%pipeline%commands(1)%simple_cmd%num_words > 0) then
-            job_command = ''
-            do i = 1, node%pipeline%num_commands
-              if (i > 1) job_command = trim(job_command) // ' | '
-              if (associated(node%pipeline%commands(i)%simple_cmd)) then
-                block
-                  integer :: w
-                  do w = 1, node%pipeline%commands(i)%simple_cmd%num_words
-                    if (w == 1 .and. i == 1) then
-                      job_command = trim(node%pipeline%commands(i)%simple_cmd%words(w))
-                    else if (w == 1) then
-                      job_command = trim(job_command) // trim(node%pipeline%commands(i)%simple_cmd%words(w))
-                    else
-                      job_command = trim(job_command) // ' ' // trim(node%pipeline%commands(i)%simple_cmd%words(w))
-                    end if
-                  end do
-                end block
-              end if
-            end do
-          end if
-        end if
-        job_id = add_job(shell, pids(1), trim(job_command), .false.)
-        if (shell%is_interactive) then
-          write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pids(1)
-        end if
-        shell%last_bg_pid = pids(num_commands)
-      end block
-      exit_status = 0
-    else
-      ! Foreground pipeline: give terminal, wait, restore terminal
-      if (shell%is_interactive) then
-        ret = c_tcsetpgrp(shell%shell_terminal, pids(1))
-      end if
+    ! Wait for all children
+    do i = 1, num_commands
+      status = wait_for_process(pids(i))
+    end do
 
-      ! Wait for all children and collect exit statuses
-      block
-        integer(c_int), target :: wait_status
-        integer, allocatable :: exit_statuses(:)
-        allocate(exit_statuses(num_commands))
-
-        do i = 1, num_commands
-          ! Use plain waitpid (no WUNTRACED) — we want to block until
-          ! each child terminates, not return on stop signals
-          ret = c_waitpid(pids(i), c_loc(wait_status), int(0, c_int))
-          if (ret > 0) then
-            if (WIFEXITED(wait_status)) then
-              exit_statuses(i) = WEXITSTATUS(wait_status)
-            else if (WIFSIGNALED(wait_status)) then
-              exit_statuses(i) = 128 + WTERMSIG(wait_status)
-            else
-              exit_statuses(i) = 1
-            end if
-          else
-            exit_statuses(i) = 1
-          end if
-        end do
-
-        ! POSIX: exit status from last command, or pipefail (rightmost non-zero)
-        if (shell%option_pipefail) then
-          exit_status = 0
-          do i = num_commands, 1, -1
-            if (exit_statuses(i) /= 0) then
-              exit_status = exit_statuses(i)
-              exit
-            end if
-          end do
-        else
-          exit_status = exit_statuses(num_commands)
-        end if
-
-        deallocate(exit_statuses)
-      end block
-
-      ! Restore terminal control to shell
-      if (shell%is_interactive) then
-        ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
-      end if
-    end if
+    ! Exit status is from last command
+    exit_status = extract_exit_status(status)
 
     deallocate(pipefd)
     deallocate(pids)
@@ -2117,8 +2009,8 @@ contains
     integer :: i, ret
 
     do i = 1, num_pipes
-      ret = close(pipefd(1, i))
-      ret = close(pipefd(2, i))
+      ret = c_close(pipefd(1, i))
+      ret = c_close(pipefd(2, i))
     end do
   end subroutine close_all_pipes
 
