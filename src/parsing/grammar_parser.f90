@@ -17,7 +17,7 @@ module grammar_parser
   logical :: last_parse_had_error = .false.
 
   type :: parser_state_t
-    type(token_t) :: tokens(MAX_TOKENS)
+    type(token_t), allocatable :: tokens(:)
     integer :: num_tokens = 0
     integer :: pos = 1
     integer :: current_line = 1  ! Track line number for LINENO
@@ -32,6 +32,7 @@ contains
     character(len=*), intent(in) :: input
     type(command_node_t), pointer :: root
     type(parser_state_t) :: state
+    allocate(state%tokens(MAX_TOKENS))
     state%raw_input = input  ! Save for heredoc parsing
     call tokenize(input, state%tokens, state%num_tokens)
     state%pos = 1
@@ -320,9 +321,10 @@ contains
   function parse_simple_cmd(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, func_body
-    character(len=MAX_TOKEN_LEN) :: words(MAX_TOKENS), func_name, delimiter, merged_word
-    logical :: was_quoted(MAX_TOKENS), was_escaped(MAX_TOKENS)
-    integer :: quote_types(MAX_TOKENS), word_lens(MAX_TOKENS)
+    character(len=MAX_TOKEN_LEN), allocatable :: words(:)
+    character(len=MAX_TOKEN_LEN) :: func_name, delimiter, merged_word
+    logical, allocatable :: was_quoted(:), was_escaped(:)
+    integer, allocatable :: quote_types(:), word_lens(:)
     character(len=MAX_TOKEN_LEN) :: saved_heredoc_delimiter
     logical :: saved_heredoc_quoted
     logical :: saved_heredoc_strip_tabs
@@ -335,6 +337,11 @@ contains
     integer :: assignment_lens(10)
     integer :: num_assignments, eq_pos
     logical :: seen_command
+    allocate(words(MAX_TOKENS))
+    allocate(was_quoted(MAX_TOKENS))
+    allocate(was_escaped(MAX_TOKENS))
+    allocate(quote_types(MAX_TOKENS))
+    allocate(word_lens(MAX_TOKENS))
     num_words = 0
     num_redirects = 0
     num_assignments = 0
