@@ -79,6 +79,10 @@ contains
     end do
   end subroutine
 
+  ! DEPRECATED: Legacy pipeline execution path, only used by FORTSH_USE_OLD_PARSER=1.
+  ! The AST executor (ast_executor.f90::execute_pipeline_node) is the primary pipeline
+  ! implementation with full feature parity. This subroutine will be removed when the
+  ! legacy parser path is retired.
   subroutine execute_pipe_chain(pipeline, start_idx, shell, original_input)
     type(pipeline_t), intent(inout) :: pipeline
     integer, intent(in) :: start_idx
