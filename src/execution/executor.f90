@@ -155,15 +155,16 @@ contains
 
         ! Reset signal handlers to default
         old_handler = c_signal(SIGINT, c_null_funptr)
+        old_handler = c_signal(SIGPIPE, c_null_funptr)
         old_handler = c_signal(SIGTSTP, c_null_funptr)
         old_handler = c_signal(SIGTTIN, c_null_funptr)
         old_handler = c_signal(SIGTTOU, c_null_funptr)
-        
+
         ! Set up pipes
         if (i > start_idx) then
           ret = c_dup2(pipefd(1, i - start_idx), STDIN_FD)
         end if
-        
+
         if (i < end_idx) then
           ret = c_dup2(pipefd(2, i - start_idx + 1), STDOUT_FD)
         end if
@@ -1732,6 +1733,7 @@ contains
 
       ! Reset signal handlers to default
       old_handler = c_signal(SIGINT, c_null_funptr)
+      old_handler = c_signal(SIGPIPE, c_null_funptr)
       old_handler = c_signal(SIGTSTP, c_null_funptr)
       old_handler = c_signal(SIGTTIN, c_null_funptr)
       old_handler = c_signal(SIGTTOU, c_null_funptr)
