@@ -11,7 +11,8 @@ module builtins
   use shell_config
   use aliases
   use shell_options
-  use command_builtin, only: find_command_in_path, builtin_which, builtin_command, find_executable_in_path
+  use command_builtin, only: find_command_in_path, builtin_which, builtin_command, find_executable_in_path, &
+    cmd_builtin_type => builtin_type
   use directory_builtin, only: builtin_pushd, builtin_popd, builtin_dirs
   use performance
   use parser
@@ -190,7 +191,7 @@ contains
     case('shopt')
       call builtin_shopt(cmd, shell)
     case('type')
-      call builtin_type(cmd, shell)
+      call cmd_builtin_type(cmd, shell)
     case('which')
       call builtin_which(cmd, shell)
     case('unset')
