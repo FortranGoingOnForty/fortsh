@@ -881,6 +881,12 @@ contains
 
       if (pids(i) == 0) then
         ! Child process
+        ! Reset SIGPIPE to default so broken pipes terminate silently
+        block
+          type(c_funptr) :: old_handler
+          old_handler = c_signal(SIGPIPE, c_null_funptr)
+        end block
+
         ! Set up stdin from previous pipe
         if (i > 1) then
           pipe_idx = i - 1
