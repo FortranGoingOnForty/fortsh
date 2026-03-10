@@ -585,9 +585,10 @@ contains
     end do
     end if  ! .not. shell%bypass_functions
 
-    ! TEMPORARY: Convert AST simple command back to old command_t format
-    ! This delegates to the existing, battle-tested executor
-    ! TODO: Once new parser is stable, rewrite executor to work directly with AST
+    ! Convert AST simple command to command_t format for legacy executor dispatch.
+    ! Pipeline execution is now handled directly by execute_pipeline_node (Phases 1-6).
+    ! This conversion remains for individual command execution (builtins, externals,
+    ! assignments, aliases, etc.) which still delegates to execute_single.
 
     allocate(temp_pipeline%commands(1))
     temp_pipeline%num_commands = 1
