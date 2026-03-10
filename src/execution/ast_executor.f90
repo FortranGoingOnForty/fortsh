@@ -879,6 +879,12 @@ contains
       end if
     end do
 
+    ! Xtrace: trace all pipeline commands BEFORE forking (deterministic order)
+    ! Child processes will have xtrace suppressed to avoid double-tracing
+    if (shell%option_xtrace) then
+      call ast_trace_pipeline(node, shell)
+    end if
+
     ! Flush all output before forking to prevent buffer duplication
     flush(output_unit)
     flush(error_unit)
@@ -926,6 +932,9 @@ contains
 
         ! Close all pipe fds
         call close_all_pipes(pipefd, num_pipes)
+
+        ! Suppress xtrace in child — parent already traced deterministically
+        shell%option_xtrace = .false.
 
         ! POSIX: Only ignored traps (empty action) are visible in subshells
         ! Remove traps with commands, but keep traps with empty actions (ignore)
