@@ -2142,7 +2142,7 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer, intent(in) :: key
     character :: key_char
-    integer :: repeat_count, i, dbg_unit, ios
+    integer :: repeat_count, i
 
     if (input_state%editing_mode /= EDITING_MODE_VI .or. input_state%vi_mode /= VI_MODE_COMMAND) return
 
