@@ -581,13 +581,22 @@ contains
     end if
 
     if (print_mode) then
-      ! Print all environment variables (inherited from parent + shell-exported)
+      ! Print all environment variables in declare -x format (matches bash export -p)
       i = 0
       do
         env_entry = get_environ_entry(i)
         if (.not. allocated(env_entry) .or. len(env_entry) == 0) exit
-        ! Format: export VAR=value
-        write(output_unit, '(a)') 'export ' // trim(env_entry)
+        ! Format: declare -x VAR="value"
+        block
+          integer :: eqp
+          eqp = index(env_entry, '=')
+          if (eqp > 0) then
+            write(output_unit, '(a)') 'declare -x ' // env_entry(:eqp) // '"' // &
+                trim(env_entry(eqp+1:)) // '"'
+          else
+            write(output_unit, '(a)') 'declare -x ' // trim(env_entry)
+          end if
+        end block
         if (allocated(env_entry)) deallocate(env_entry)
         i = i + 1
       end do
