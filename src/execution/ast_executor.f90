@@ -16,7 +16,7 @@ module ast_executor
   use system_interface
   use job_control
   use glob, only: pattern_matches_no_dotfile_check
-  use shell_options, only: check_errexit
+  use shell_options, only: check_errexit, trace_command
   implicit none
   private
 
@@ -810,9 +810,9 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
     integer :: i, status, ret, pipe_idx
-    integer(c_int), target :: pipefd(2, 10)  ! Up to 10 pipes
-    integer(c_pid_t) :: pids(10)
-    integer :: num_pipes
+    integer(c_int), allocatable, target :: pipefd(:,:)
+    integer(c_pid_t), allocatable :: pids(:)
+    integer :: num_pipes, num_commands
 
     exit_status = 0
 
@@ -847,7 +847,11 @@ contains
     end if
 
     ! Multiple commands - set up pipes
-    num_pipes = node%pipeline%num_commands - 1
+    num_commands = node%pipeline%num_commands
+    num_pipes = num_commands - 1
+
+    allocate(pipefd(2, num_pipes))
+    allocate(pids(num_commands))
 
     ! POSIX: Pre-expand all command words before forking
     ! This ensures expansion errors go to the parent shell's stderr
@@ -867,24 +871,48 @@ contains
       if (c_pipe(c_loc(pipefd(1, i))) /= 0) then
         write(error_unit, '(A)') 'fortsh: pipe creation failed'
         exit_status = 1
+        deallocate(pipefd)
+        deallocate(pids)
         return
       end if
     end do
+
+    ! Xtrace: trace all pipeline commands BEFORE forking (deterministic order)
+    ! Child processes will have xtrace suppressed to avoid double-tracing
+    if (shell%option_xtrace) then
+      call ast_trace_pipeline(node, shell)
+    end if
 
     ! Flush all output before forking to prevent buffer duplication
     flush(output_unit)
     flush(error_unit)
 
     ! Fork and execute each command in the pipeline
-    do i = 1, node%pipeline%num_commands
+    do i = 1, num_commands
       pids(i) = c_fork()
 
       if (pids(i) == 0) then
         ! Child process
-        ! Reset SIGPIPE to default so broken pipes terminate silently
+
+        ! Reset signal handlers to default (match legacy executor)
         block
           type(c_funptr) :: old_handler
+          old_handler = c_signal(SIGINT,  c_null_funptr)
           old_handler = c_signal(SIGPIPE, c_null_funptr)
+          old_handler = c_signal(SIGTSTP, c_null_funptr)
+          old_handler = c_signal(SIGTTIN, c_null_funptr)
+          old_handler = c_signal(SIGTTOU, c_null_funptr)
+        end block
+
+        ! Set up process group
+        block
+          integer(c_pid_t) :: my_pgid
+          if (i == 1) then
+            my_pgid = c_getpid()
+          else
+            my_pgid = pids(1)
+          end if
+          ret = c_setpgid(0, my_pgid)
         end block
 
         ! Set up stdin from previous pipe
@@ -894,12 +922,15 @@ contains
         end if
 
         ! Set up stdout to next pipe
-        if (i < node%pipeline%num_commands) then
+        if (i < num_commands) then
           ret = c_dup2(pipefd(2, i), int(1, c_int))  ! Write to next pipe
         end if
 
         ! Close all pipe fds
         call close_all_pipes(pipefd, num_pipes)
+
+        ! Suppress xtrace in child — parent already traced deterministically
+        shell%option_xtrace = .false.
 
         ! POSIX: Only ignored traps (empty action) are visible in subshells
         ! Remove traps with commands, but keep traps with empty actions (ignore)
@@ -909,18 +940,111 @@ contains
         status = execute_ast_node(node%pipeline%commands(i), shell)
         call c_exit(status)
       end if
+
+      ! Parent: set process group (race-free — both parent and child call setpgid)
+      if (pids(i) > 0) then
+        block
+          integer(c_pid_t) :: pgid
+          if (i == 1) then
+            pgid = pids(1)
+          else
+            pgid = pids(1)
+          end if
+          ret = c_setpgid(pids(i), pgid)
+        end block
+      end if
     end do
 
-    ! Parent process - close all pipes and wait for children
+    ! Parent process - close all pipes
     call close_all_pipes(pipefd, num_pipes)
 
-    ! Wait for all children
-    do i = 1, node%pipeline%num_commands
-      status = wait_for_process(pids(i))
-    end do
+    if (node%pipeline%background) then
+      ! Background pipeline: add job, don't wait
+      block
+        integer :: job_id
+        character(len=1024) :: job_command
+        job_command = '<background pipeline>'
+        ! Reconstruct command string from first pipeline command words
+        if (associated(node%pipeline%commands(1)%simple_cmd)) then
+          if (node%pipeline%commands(1)%simple_cmd%num_words > 0) then
+            job_command = ''
+            do i = 1, node%pipeline%num_commands
+              if (i > 1) job_command = trim(job_command) // ' | '
+              if (associated(node%pipeline%commands(i)%simple_cmd)) then
+                block
+                  integer :: w
+                  do w = 1, node%pipeline%commands(i)%simple_cmd%num_words
+                    if (w == 1 .and. i == 1) then
+                      job_command = trim(node%pipeline%commands(i)%simple_cmd%words(w))
+                    else if (w == 1) then
+                      job_command = trim(job_command) // trim(node%pipeline%commands(i)%simple_cmd%words(w))
+                    else
+                      job_command = trim(job_command) // ' ' // trim(node%pipeline%commands(i)%simple_cmd%words(w))
+                    end if
+                  end do
+                end block
+              end if
+            end do
+          end if
+        end if
+        job_id = add_job(shell, pids(1), trim(job_command), .false.)
+        if (shell%is_interactive) then
+          write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pids(1)
+        end if
+        shell%last_bg_pid = pids(num_commands)
+      end block
+      exit_status = 0
+    else
+      ! Foreground pipeline: give terminal, wait, restore terminal
+      if (shell%is_interactive) then
+        ret = c_tcsetpgrp(shell%shell_terminal, pids(1))
+      end if
 
-    ! Exit status is from last command
-    exit_status = extract_exit_status(status)
+      ! Wait for all children and collect exit statuses
+      block
+        integer(c_int), target :: wait_status
+        integer, allocatable :: exit_statuses(:)
+        allocate(exit_statuses(num_commands))
+
+        do i = 1, num_commands
+          ret = c_waitpid(pids(i), c_loc(wait_status), WUNTRACED)
+          if (ret > 0) then
+            if (WIFEXITED(wait_status)) then
+              exit_statuses(i) = WEXITSTATUS(wait_status)
+            else if (WIFSIGNALED(wait_status)) then
+              exit_statuses(i) = 128 + WTERMSIG(wait_status)
+            else
+              exit_statuses(i) = 1
+            end if
+          else
+            exit_statuses(i) = 1
+          end if
+        end do
+
+        ! POSIX: exit status from last command, or pipefail (rightmost non-zero)
+        if (shell%option_pipefail) then
+          exit_status = 0
+          do i = num_commands, 1, -1
+            if (exit_statuses(i) /= 0) then
+              exit_status = exit_statuses(i)
+              exit
+            end if
+          end do
+        else
+          exit_status = exit_statuses(num_commands)
+        end if
+
+        deallocate(exit_statuses)
+      end block
+
+      ! Restore terminal control to shell
+      if (shell%is_interactive) then
+        ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
+      end if
+    end if
+
+    deallocate(pipefd)
+    deallocate(pids)
 
     ! Handle negation
     if (node%pipeline%negate) then
@@ -1985,7 +2109,7 @@ contains
   ! =====================================
 
   subroutine close_all_pipes(pipefd, num_pipes)
-    integer(c_int), intent(in) :: pipefd(2, 10)
+    integer(c_int), intent(in) :: pipefd(:,:)
     integer, intent(in) :: num_pipes
     integer :: i, ret
 
@@ -1994,6 +2118,33 @@ contains
       ret = close(pipefd(2, i))
     end do
   end subroutine close_all_pipes
+
+  ! Trace all commands in an AST pipeline for xtrace (set -x)
+  subroutine ast_trace_pipeline(node, shell)
+    type(command_node_t), pointer, intent(in) :: node
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, j
+    character(len=2048) :: trace_str
+
+    if (.not. associated(node%pipeline)) return
+    if (.not. associated(node%pipeline%commands)) return
+
+    do i = 1, node%pipeline%num_commands
+      if (node%pipeline%commands(i)%node_type /= CMD_SIMPLE) cycle
+      if (.not. associated(node%pipeline%commands(i)%simple_cmd)) cycle
+      if (node%pipeline%commands(i)%simple_cmd%num_words == 0) cycle
+
+      trace_str = ''
+      do j = 1, node%pipeline%commands(i)%simple_cmd%num_words
+        if (j == 1) then
+          trace_str = trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        else
+          trace_str = trim(trace_str) // ' ' // trim(node%pipeline%commands(i)%simple_cmd%words(j))
+        end if
+      end do
+      call trace_command(shell, trim(trace_str))
+    end do
+  end subroutine ast_trace_pipeline
 
   function wait_for_process(pid) result(status)
     integer(c_pid_t), intent(in) :: pid
