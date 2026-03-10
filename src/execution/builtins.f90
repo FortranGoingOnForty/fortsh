@@ -538,14 +538,46 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
-    logical :: print_mode, found
+    logical :: print_mode, found, unexport_mode
     character(len=:), allocatable :: env_entry
 
     print_mode = .false.
+    unexport_mode = .false.
+    arg_idx = 2
 
-    if (cmd%num_tokens < 2) then
-      ! No arguments: print all exported variables
+    ! Parse options
+    do while (arg_idx <= cmd%num_tokens)
+      if (trim(cmd%tokens(arg_idx)) == '-p') then
+        print_mode = .true.
+        arg_idx = arg_idx + 1
+      else if (trim(cmd%tokens(arg_idx)) == '-n') then
+        unexport_mode = .true.
+        arg_idx = arg_idx + 1
+      else
+        exit
+      end if
+    end do
+
+    if (cmd%num_tokens < 2 .or. (print_mode .and. arg_idx > cmd%num_tokens)) then
+      ! No arguments or -p with no args: print all exported variables
       print_mode = .true.
+    end if
+
+    ! Handle export -n: unexport variables
+    if (unexport_mode) then
+      do i = arg_idx, cmd%num_tokens
+        var_name = trim(cmd%tokens(i))
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == var_name) then
+            shell%variables(j)%exported = .false.
+            ! Remove from environment
+            call unset_environment_var(var_name)
+            exit
+          end if
+        end do
+      end do
+      shell%last_exit_status = 0
+      return
     end if
 
     if (print_mode) then
@@ -563,14 +595,14 @@ contains
       return
     end if
 
-    ! Process each argument
-    do arg_idx = 2, cmd%num_tokens
-      eq_pos = index(cmd%tokens(arg_idx), '=')
+    ! Process each argument (arg_idx already points past parsed options)
+    do i = arg_idx, cmd%num_tokens
+      eq_pos = index(cmd%tokens(i), '=')
 
       if (eq_pos > 0) then
         ! VAR=value form - set and export
-        var_name = cmd%tokens(arg_idx)(:eq_pos-1)
-        var_value = cmd%tokens(arg_idx)(eq_pos+1:)
+        var_name = cmd%tokens(i)(:eq_pos-1)
+        var_value = cmd%tokens(i)(eq_pos+1:)
 
         ! Set as shell variable first
         call set_shell_variable(shell, trim(var_name), trim(var_value))
@@ -590,7 +622,7 @@ contains
         end do
       else
         ! Just VAR - mark existing variable as exported
-        var_name = trim(cmd%tokens(arg_idx))
+        var_name = trim(cmd%tokens(i))
         found = .false.
 
         do j = 1, shell%num_variables
@@ -2968,7 +3000,7 @@ contains
 
   subroutine print_umask_symbolic(mask)
     integer(c_int), intent(in) :: mask
-    character(len=9) :: perm_str
+    character(len=32) :: perm_str
     integer :: u_perm, g_perm, o_perm
 
     ! Extract permissions for user, group, and others
@@ -3561,18 +3593,23 @@ contains
       env_value_ref = pool_get_string(1024)
       call dashboard_track_allocation(MOD_BUILTINS, 1024, 3)
 #endif
+      shell%last_exit_status = 0
       do i = 2, cmd%num_tokens
 #ifdef USE_MEMORY_POOL
         temp_str = get_environment_var(trim(cmd%tokens(i)))
         if (allocated(temp_str) .and. len(temp_str) > 0) then
           env_value_ref%data = temp_str
           write(output_unit, '(a)') trim(env_value_ref%data)
+        else
+          shell%last_exit_status = 1
         end if
         if (allocated(temp_str)) deallocate(temp_str)
 #else
         env_value = get_environment_var(trim(cmd%tokens(i)))
         if (allocated(env_value) .and. len(env_value) > 0) then
           write(output_unit, '(a)') env_value
+        else
+          shell%last_exit_status = 1
         end if
 #endif
       end do
@@ -3580,7 +3617,6 @@ contains
       call pool_release_string(env_value_ref)
       call dashboard_track_deallocation(MOD_BUILTINS, 1024, 3)
 #endif
-      shell%last_exit_status = 0
     end if
   end subroutine
 
