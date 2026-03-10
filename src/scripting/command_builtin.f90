@@ -292,6 +292,19 @@ contains
       if (.not. all_flag) return
     end if
 
+    ! Check if it's an alias (bash checks aliases first)
+    if (.not. path_flag .and. is_shell_alias(shell, command_name)) then
+      if (type_flag) then
+        call write_stdout('alias')
+      else if (is_v_flag) then
+        call write_stdout(trim(command_name))
+      else
+        call write_stdout(trim(command_name) // ' is aliased')
+      end if
+      found_any = .true.
+      if (.not. all_flag) return
+    end if
+
     ! Check if it's a function
     if (.not. path_flag .and. is_shell_function(shell, command_name)) then
       if (type_flag) then
@@ -313,19 +326,6 @@ contains
         call write_stdout(trim(command_name))
       else
         call write_stdout(trim(command_name) // ' is a shell builtin')
-      end if
-      found_any = .true.
-      if (.not. all_flag) return
-    end if
-
-    ! Check if it's an alias
-    if (.not. path_flag .and. is_shell_alias(shell, command_name)) then
-      if (type_flag) then
-        call write_stdout('alias')
-      else if (is_v_flag) then
-        call write_stdout(trim(command_name))
-      else
-        call write_stdout(trim(command_name) // ' is aliased')
       end if
       found_any = .true.
       if (.not. all_flag) return
@@ -530,11 +530,15 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_name
     logical :: is_alias
+    integer :: i
 
-    if (.false.) print *, shell%cwd, command_name  ! Silence unused warning
-
-    ! Simplified - in real implementation would check alias table
     is_alias = .false.
+    do i = 1, shell%num_aliases
+      if (trim(shell%aliases(i)%name) == trim(command_name)) then
+        is_alias = .true.
+        return
+      end if
+    end do
   end function
 
   function find_command_full_path(command_name) result(full_path)
