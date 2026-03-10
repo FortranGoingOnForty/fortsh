@@ -2246,12 +2246,41 @@ contains
         ! Clear from AST executor's function cache
         call unset_ast_function(var_name)
       else
+        ! Check for array element syntax: arr[index]
+        block
+          integer :: bracket_pos, bracket_end, arr_idx, iostat_v
+          character(len=256) :: arr_name, idx_str
+          bracket_pos = index(var_name, '[')
+          if (bracket_pos > 0) then
+            bracket_end = index(var_name, ']')
+            if (bracket_end > bracket_pos) then
+              arr_name = var_name(:bracket_pos-1)
+              idx_str = var_name(bracket_pos+1:bracket_end-1)
+              ! Check for associative array first
+              if (is_associative_array(shell, trim(arr_name))) then
+                call unset_assoc_array_key(shell, &
+                  trim(arr_name), trim(idx_str))
+              else
+                read(idx_str, *, iostat=iostat_v) arr_idx
+                if (iostat_v == 0) then
+                  arr_idx = arr_idx + 1  ! 0→1 based
+                  call set_array_element(shell, &
+                    trim(arr_name), arr_idx, '')
+                end if
+              end if
+              cycle
+            end if
+          end if
+        end block
+
         ! Unset variable
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == var_name) then
             ! Check if variable is readonly
             if (shell%variables(j)%readonly) then
-              write(error_unit, '(a)') 'unset: ' // trim(var_name) // ': cannot unset readonly variable'
+              write(error_unit, '(a)') 'unset: ' // &
+                trim(var_name) // &
+                ': cannot unset readonly variable'
               shell%last_exit_status = 1
               return
             end if
