@@ -1811,6 +1811,18 @@ contains
     function_returned = .false.
 
     if (allocated(function_body)) then
+      ! For defun-style functions (body has no $), append call args
+      if (size(function_body) == 1 .and. cmd%num_tokens > 1 .and. &
+          index(function_body(1), '$') == 0) then
+        block
+          integer :: j
+          do j = 2, cmd%num_tokens
+            function_body(1) = trim(function_body(1)) // &
+                               ' ' // trim(cmd%tokens(j))
+          end do
+        end block
+      end if
+
       ! Execute each line of the function
       do i = 1, size(function_body)
         if (len_trim(function_body(i)) > 0) then
