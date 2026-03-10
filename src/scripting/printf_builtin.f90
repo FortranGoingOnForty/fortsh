@@ -32,6 +32,7 @@ contains
     integer :: arg_index, prev_arg_index, output_len, format_string_len
     integer, allocatable :: arg_lengths(:)
     integer :: i
+    logical :: fmt_error
 
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'printf: usage: printf FORMAT [ARGUMENTS...]'
@@ -77,6 +78,7 @@ contains
     end do
 
     arg_index = 3
+    fmt_error = .false.
 
     ! POSIX behavior: always output format string at least once,
     ! then repeat for any remaining arguments
@@ -84,7 +86,7 @@ contains
       prev_arg_index = arg_index
       call process_printf_format(format_string, format_string_len, cmd%tokens, &
                                   cmd%num_tokens, arg_lengths, arg_index, &
-                                  output_buffer, output_len)
+                                  output_buffer, output_len, fmt_error)
       ! Output exactly output_len characters to preserve trailing spaces
       if (output_len > 0) then
         write(output_unit, '(a)', advance='no') output_buffer(1:output_len)
@@ -95,10 +97,15 @@ contains
     end do
 
     deallocate(arg_lengths)
-    shell%last_exit_status = 0
+    if (fmt_error) then
+      shell%last_exit_status = 1
+    else
+      shell%last_exit_status = 0
+    end if
   end subroutine
 
-  subroutine process_printf_format(format_str, format_str_len, args, num_args, arg_lengths, start_arg, output, output_len)
+  subroutine process_printf_format(format_str, format_str_len, args, num_args, &
+                                     arg_lengths, start_arg, output, output_len, had_error)
     character(len=*), intent(in) :: format_str
     integer, intent(in) :: format_str_len
     character(len=*), intent(in) :: args(:)
@@ -107,9 +114,11 @@ contains
     integer, intent(inout) :: start_arg
     character(len=*), intent(out) :: output
     integer, intent(out) :: output_len
+    logical, intent(inout), optional :: had_error
 
     integer :: pos, output_pos, arg_index, format_len, fmt_len
     integer :: current_arg_len
+    logical :: arg_error
     character :: current_char, next_char
     type(format_info_t) :: fmt_info
     character(len=1024) :: arg_value, formatted_value
@@ -118,6 +127,7 @@ contains
     output_pos = 1
     arg_index = start_arg
     output = ''
+    arg_error = .false.
     ! Use actual format string length to preserve trailing spaces
     format_len = format_str_len
 
@@ -168,7 +178,8 @@ contains
             current_arg_len = 0
           end if
 
-          call format_argument(fmt_info, arg_value, current_arg_len, formatted_value, fmt_len)
+          call format_argument(fmt_info, arg_value, current_arg_len, formatted_value, fmt_len, arg_error)
+          if (arg_error .and. present(had_error)) had_error = .true.
 
           ! Append formatted value to output (use exact length to preserve padding)
           call append_to_output_len(output, output_pos, formatted_value, fmt_len)
@@ -295,7 +306,7 @@ contains
       end if
 
       ! Check for conversion specifier
-      if (index('diouxXeEfFgGaAcspb', c) > 0) then
+      if (index('diouxXeEfFgGaAcspbq', c) > 0) then
         fmt_info%conversion = c
         pos = pos + 1
         return
@@ -306,12 +317,13 @@ contains
     end do
   end subroutine
 
-  subroutine format_argument(fmt_info, arg_value, arg_len, formatted_value, formatted_len)
+  subroutine format_argument(fmt_info, arg_value, arg_len, formatted_value, formatted_len, had_error)
     type(format_info_t), intent(in) :: fmt_info
     character(len=*), intent(in) :: arg_value
     integer, intent(in) :: arg_len  ! Actual length of arg_value (to preserve trailing spaces)
     character(len=*), intent(out) :: formatted_value
     integer, intent(out) :: formatted_len
+    logical, intent(out), optional :: had_error
 
     character(len=1024) :: raw_value, temp_value
     integer :: int_val, status, val_len, pad_len, prec, actual_len
@@ -321,6 +333,7 @@ contains
     formatted_value = ''
     raw_value = ''
     formatted_len = 0
+    if (present(had_error)) had_error = .false.
 
     ! Use provided arg_len to preserve trailing spaces
     actual_len = arg_len
@@ -360,6 +373,8 @@ contains
       if (status == 0) then
         call format_integer(int_val, fmt_info, raw_value)
       else
+        write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+        if (present(had_error)) had_error = .true.
         raw_value = '0'
       end if
 
@@ -373,6 +388,8 @@ contains
           raw_value = '0' // trim(raw_value)
         end if
       else
+        write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+        if (present(had_error)) had_error = .true.
         raw_value = '0'
       end if
 
@@ -386,6 +403,8 @@ contains
           raw_value = '0x' // trim(raw_value)
         end if
       else
+        write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+        if (present(had_error)) had_error = .true.
         raw_value = '0'
       end if
 
@@ -399,6 +418,8 @@ contains
           raw_value = '0X' // trim(raw_value)
         end if
       else
+        write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+        if (present(had_error)) had_error = .true.
         raw_value = '0'
       end if
 
@@ -409,6 +430,8 @@ contains
         if (int_val < 0) int_val = int_val + 2147483647 + 1  ! Approximate unsigned
         write(raw_value, '(I0)') int_val
       else
+        write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+        if (present(had_error)) had_error = .true.
         raw_value = '0'
       end if
 
@@ -420,6 +443,10 @@ contains
       if (status == 0) then
         call format_float_fixed(real_val, prec, raw_value)
       else
+        if (len_trim(arg_value) > 0) then
+          write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+          if (present(had_error)) had_error = .true.
+        end if
         raw_value = '0.' // repeat('0', prec)
       end if
 
@@ -432,6 +459,10 @@ contains
         call format_float_exp(real_val, prec, raw_value)
         raw_value = to_lowercase(raw_value)
       else
+        if (len_trim(arg_value) > 0) then
+          write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+          if (present(had_error)) had_error = .true.
+        end if
         raw_value = '0.' // repeat('0', prec) // 'e+00'
       end if
 
@@ -444,6 +475,10 @@ contains
         call format_float_exp(real_val, prec, raw_value)
         raw_value = to_uppercase(raw_value)
       else
+        if (len_trim(arg_value) > 0) then
+          write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+          if (present(had_error)) had_error = .true.
+        end if
         raw_value = '0.' // repeat('0', prec) // 'E+00'
       end if
 
@@ -464,8 +499,33 @@ contains
           raw_value = to_uppercase(raw_value)
         end if
       else
+        if (len_trim(arg_value) > 0) then
+          write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+          if (present(had_error)) had_error = .true.
+        end if
         raw_value = '0'
       end if
+
+    case ('q')
+      ! Shell-quoted string: escape special characters with backslash
+      block
+        integer :: qi, qo
+        qo = 1
+        raw_value = ''
+        do qi = 1, actual_len
+          select case (arg_value(qi:qi))
+            case (' ', '!', '"', '#', '$', '&', "'", '(', ')', '*', ';', '<', '>', '?', &
+                  '[', '\', ']', '^', '`', '{', '|', '}', '~')
+              raw_value(qo:qo) = '\'
+              qo = qo + 1
+              raw_value(qo:qo) = arg_value(qi:qi)
+            case default
+              raw_value(qo:qo) = arg_value(qi:qi)
+          end select
+          qo = qo + 1
+        end do
+        actual_len = qo - 1
+      end block
 
     case default
       ! Unknown format, treat as string
