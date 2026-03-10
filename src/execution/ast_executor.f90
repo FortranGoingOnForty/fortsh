@@ -813,6 +813,7 @@ contains
     integer :: i, status, ret, pipe_idx
     integer(c_int), allocatable, target :: pipefd(:,:)
     integer(c_pid_t), allocatable :: pids(:)
+    integer(c_pid_t) :: pgid
     integer :: num_pipes, num_commands
 
     exit_status = 0
@@ -891,6 +892,15 @@ contains
         ! skips setpgid/tcsetpgrp (managed at pipeline level instead)
         shell%in_pipeline_child = .true.
 
+        ! Set process group: all pipeline children share the first child's PID
+        ! as their process group. Both child and parent call setpgid (race-free).
+        if (i == 1) then
+          pgid = c_getpid()
+        else
+          pgid = pids(1)
+        end if
+        ret = c_setpgid(0, pgid)
+
         ! Reset all signal handlers to default for pipeline children.
         ! Safe now because execute_external skips its own setpgid/tcsetpgrp
         ! when in_pipeline_child is set, so SIGTTOU won't stop the process.
@@ -924,6 +934,14 @@ contains
         ! Execute command
         status = execute_ast_node(node%pipeline%commands(i), shell)
         call c_exit(status)
+      end if
+
+      ! Parent: set process group (race-free — both parent and child call setpgid)
+      if (pids(i) > 0) then
+        if (i == 1) then
+          pgid = pids(1)
+        end if
+        ret = c_setpgid(pids(i), pgid)
       end if
     end do
 
