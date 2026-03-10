@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        1.3.1
+Version:        1.3.3
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -59,6 +59,17 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Sun Mar 09 2026 mfw <espadon@outlook.com> - 1.3.3-1
+- Redesign Ctrl-R reverse search with fish-style two-line rendering
+- Fix heap corruption (SIGABRT) when accepting search suggestions
+- Fix search mode keybinds: Ctrl-U, Ctrl-W, Alt-Backspace now modify search query
+- Guard all buffer-mutating keybinds during search mode
+- Enter in search accepts for editing instead of executing (fish behavior)
+- Fix prompt duplication and stale cursor tracking on search accept
+- Remove all unused variables across parser, executor, readline, and printf
+- Fix 7 silent truncation bugs: widen buffers for long paths and variable values
+- Convert 8 stack-to-static arrays to heap-allocated (allocatable) for safe recursion
+
 * Sun Mar 09 2026 mfw <espadon@outlook.com> - 1.3.1-1
 - Update --help flag with missing -l/--login option
 - Update help builtin with complete builtin command listing
