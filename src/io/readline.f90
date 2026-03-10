@@ -1260,11 +1260,16 @@ contains
           end if
 
         case(KEY_CTRL_W)
-          ! Kill previous word (exit menu mode first if active)
-          if (module_input_state%in_menu_select) then
-            call exit_menu_select_mode(module_input_state)
+          if (module_input_state%in_search) then
+            ! Delete last word from search query
+            call search_kill_word(module_input_state, prompt)
+          else
+            ! Kill previous word (exit menu mode first if active)
+            if (module_input_state%in_menu_select) then
+              call exit_menu_select_mode(module_input_state)
+            end if
+            call handle_kill_word(module_input_state)
           end if
-          call handle_kill_word(module_input_state)
           
         case(KEY_CTRL_Y)
           ! Yank (paste) killed text
@@ -7028,6 +7033,73 @@ contains
 
     call update_search_display(input_state, prompt)
   end subroutine search_clear_query
+
+  ! Delete last word from search query (Ctrl-W / Alt-Backspace in search mode)
+  subroutine search_kill_word(input_state, prompt)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: prompt
+    character(len=MAX_LINE_LEN) :: search_str
+    integer :: i, new_len
+
+    if (input_state%search_length == 0) return
+
+    call get_search_string(input_state, search_str, input_state%search_length)
+
+    ! Skip trailing spaces
+    new_len = input_state%search_length
+    do while (new_len > 0 .and. search_str(new_len:new_len) == ' ')
+      new_len = new_len - 1
+    end do
+    ! Skip back to previous space or beginning
+    do while (new_len > 0 .and. search_str(new_len:new_len) /= ' ')
+      new_len = new_len - 1
+    end do
+
+    input_state%search_length = new_len
+
+    if (new_len > 0) then
+      ! Re-search with shorter query
+      call get_search_string(input_state, search_str, new_len)
+      input_state%search_match_index = 0
+      if (input_state%search_forward) then
+        do i = 1, command_history%count
+          if (index(command_history%lines(i), trim(search_str(:new_len))) > 0) then
+            input_state%search_match_index = i
+            call state_buffer_set(input_state, command_history%lines(i))
+            input_state%length = len_trim(command_history%lines(i))
+            input_state%cursor_pos = input_state%length
+            exit
+          end if
+        end do
+      else
+        do i = command_history%count, 1, -1
+          if (index(command_history%lines(i), trim(search_str(:new_len))) > 0) then
+            input_state%search_match_index = i
+            call state_buffer_set(input_state, command_history%lines(i))
+            input_state%length = len_trim(command_history%lines(i))
+            input_state%cursor_pos = input_state%length
+            exit
+          end if
+        end do
+      end if
+    else
+      ! Empty query - restore original buffer
+      call state_buffer_restore(input_state)
+#ifdef USE_MEMORY_POOL
+      input_state%length = len_trim(input_state%original_buffer_ref%data)
+#else
+#ifdef USE_C_STRINGS
+      input_state%length = c_string_length(input_state%original_buffer_c)
+#else
+      input_state%length = len_trim(input_state%original_buffer)
+#endif
+#endif
+      input_state%cursor_pos = input_state%length
+      input_state%search_match_index = 0
+    end if
+
+    call update_search_display(input_state, prompt)
+  end subroutine search_kill_word
 
   ! Clean up the status line below the prompt when exiting search mode
   subroutine cleanup_search_status_line()
