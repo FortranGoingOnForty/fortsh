@@ -1008,7 +1008,9 @@ contains
         allocate(exit_statuses(num_commands))
 
         do i = 1, num_commands
-          ret = c_waitpid(pids(i), c_loc(wait_status), WUNTRACED)
+          ! Use plain waitpid (no WUNTRACED) — we want to block until
+          ! each child terminates, not return on stop signals
+          ret = c_waitpid(pids(i), c_loc(wait_status), int(0, c_int))
           if (ret > 0) then
             if (WIFEXITED(wait_status)) then
               exit_statuses(i) = WEXITSTATUS(wait_status)
