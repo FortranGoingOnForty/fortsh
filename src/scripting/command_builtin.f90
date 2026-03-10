@@ -146,7 +146,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     integer :: arg_index, j
-    logical :: path_flag, verbose_flag
+    logical :: path_flag, verbose_flag, big_v_flag
     character(len=256) :: command_name
     type(pipeline_t) :: temp_pipeline
 
@@ -158,6 +158,7 @@ contains
 
     path_flag = .false.
     verbose_flag = .false.
+    big_v_flag = .false.
     arg_index = 2
 
     ! Parse options
@@ -168,6 +169,7 @@ contains
           path_flag = .true.
         case ('-V')
           verbose_flag = .true.
+          big_v_flag = .true.
         case ('-v')
           verbose_flag = .true.
         case ('--')
@@ -193,9 +195,13 @@ contains
     command_name = cmd%tokens(arg_index)
 
     if (verbose_flag) then
-      ! command -v should not print error messages, just return exit code
-      ! Pass v_flag=.true. so it outputs just the path (POSIX format)
-      call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true., .true.)
+      if (big_v_flag) then
+        ! command -V: verbose output like type (e.g., "echo is a shell builtin")
+        call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true., .false.)
+      else
+        ! command -v: minimal output, just the path/name (POSIX format)
+        call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true., .true.)
+      end if
       ! Don't overwrite exit status set by identify_command_type
     else
       ! Execute the command bypassing functions
