@@ -742,8 +742,7 @@ contains
           index(trim(cmd%tokens(1)), '/') == 0) then
         block
           logical :: cmd_found
-          type(command_t) :: handler_cmd
-          integer :: ii, token_len
+          integer :: ii
           character(len=4096) :: path_var, candidate
           character(len=1024) :: path_dir
           integer :: spos, cpos
