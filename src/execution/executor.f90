@@ -2119,6 +2119,7 @@ contains
     end do
 
     ! Get function body
+    allocate(function_body(0))
     function_body = get_function_body(shell, cmd%tokens(1))
 
     function_returned = .false.
