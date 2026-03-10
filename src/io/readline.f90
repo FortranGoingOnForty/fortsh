@@ -1103,6 +1103,8 @@ contains
 
         ! If multi-byte UTF-8 character, insert all bytes with correct visual width
         if (utf8_num_bytes > 1) then
+          ! In search mode, ignore multi-byte characters (search uses ASCII only)
+          if (module_input_state%in_search) cycle
           ! Multi-byte UTF-8 character (emoji, CJK, etc.)
           ! Determine visual width: 3-4 byte UTF-8 is always 2-wide, 2-byte varies
           if (utf8_num_bytes >= 3) then
@@ -1155,8 +1157,8 @@ contains
           end if
 
         case(KEY_CTRL_D)
-          ! Ctrl+D - EOF
-          if (module_input_state%length == 0) then
+          ! Ctrl+D - EOF (no-op in search mode)
+          if (.not. module_input_state%in_search .and. module_input_state%length == 0) then
             iostat = -1
             done = .true.
           end if
@@ -1183,8 +1185,9 @@ contains
           done = .true.
 
         case(KEY_CTRL_X)
-          ! Ctrl+X - Enter process kill mode
-          if (.not. module_input_state%in_process_kill_mode) then
+          ! Ctrl+X - Enter process kill mode (no-op in search mode)
+          if (.not. module_input_state%in_search .and. &
+              .not. module_input_state%in_process_kill_mode) then
             call enter_process_kill_mode(module_input_state)
           end if
 
@@ -1205,19 +1208,24 @@ contains
           end if
           
         case(KEY_TAB)
-          ! Initialize test mode if needed
-          if (.not. test_mode_initialized) call init_test_mode()
-
-          ! Skip completion if explicitly disabled (FORTSH_NO_COMPLETION=1)
-          if (completion_disabled) then
-            ! Completion disabled - do nothing
+          ! No-op in search mode
+          if (module_input_state%in_search) then
             continue
-          else if (module_input_state%in_menu_select) then
-            call handle_menu_navigation(module_input_state, KEY_TAB, done)
           else
-            ! Call separate subroutine to work around macOS ARM64 crash
-            call handle_tab_key_separate(module_input_state)
-            ! All completion logic is now handled in the separate subroutine
+            ! Initialize test mode if needed
+            if (.not. test_mode_initialized) call init_test_mode()
+
+            ! Skip completion if explicitly disabled (FORTSH_NO_COMPLETION=1)
+            if (completion_disabled) then
+              ! Completion disabled - do nothing
+              continue
+            else if (module_input_state%in_menu_select) then
+              call handle_menu_navigation(module_input_state, KEY_TAB, done)
+            else
+              ! Call separate subroutine to work around macOS ARM64 crash
+              call handle_tab_key_separate(module_input_state)
+              ! All completion logic is now handled in the separate subroutine
+            end if
           end if
 
         case(KEY_ESC)
@@ -1225,27 +1233,31 @@ contains
           call handle_escape_sequence(module_input_state, done, prompt)
           
         case(KEY_CTRL_A)
-          ! Home - move to beginning of line
-          call handle_home(module_input_state)
-          
+          ! Home - no-op in search mode
+          if (.not. module_input_state%in_search) call handle_home(module_input_state)
+
         case(KEY_CTRL_E)
-          ! End - move to end of line
-          call handle_end(module_input_state)
-          
+          ! End - no-op in search mode
+          if (.not. module_input_state%in_search) call handle_end(module_input_state)
+
         case(KEY_CTRL_F)
-          ! FZF file browser - insert selection at cursor
-          call launch_fzf_file_browser(module_input_state, prompt)
-          
-        case(KEY_CTRL_B)
-          ! Backward character (same as left arrow)
-          call handle_cursor_left(module_input_state)
-          
-        case(KEY_CTRL_K)
-          ! Kill to end of line (exit menu mode first if active)
-          if (module_input_state%in_menu_select) then
-            call exit_menu_select_mode(module_input_state)
+          ! FZF file browser - no-op in search mode
+          if (.not. module_input_state%in_search) then
+            call launch_fzf_file_browser(module_input_state, prompt)
           end if
-          call handle_kill_to_end(module_input_state)
+
+        case(KEY_CTRL_B)
+          ! Backward character - no-op in search mode
+          if (.not. module_input_state%in_search) call handle_cursor_left(module_input_state)
+
+        case(KEY_CTRL_K)
+          ! Kill to end of line - no-op in search mode
+          if (.not. module_input_state%in_search) then
+            if (module_input_state%in_menu_select) then
+              call exit_menu_select_mode(module_input_state)
+            end if
+            call handle_kill_to_end(module_input_state)
+          end if
 
         case(KEY_CTRL_U)
           if (module_input_state%in_search) then
@@ -1272,12 +1284,13 @@ contains
           end if
           
         case(KEY_CTRL_Y)
-          ! Yank (paste) killed text
-          call handle_yank(module_input_state)
-          
+          ! Yank - no-op in search mode
+          if (.not. module_input_state%in_search) call handle_yank(module_input_state)
+
         case(KEY_CTRL_L)
-          ! Clear screen and redraw (not allowed in menu mode)
-          if (.not. module_input_state%in_menu_select) then
+          ! Clear screen - no-op in search mode or menu mode
+          if (.not. module_input_state%in_search .and. &
+              .not. module_input_state%in_menu_select) then
             call handle_clear_screen(module_input_state, prompt)
           end if
 
@@ -1295,12 +1308,14 @@ contains
           end if
 
         case(KEY_CTRL_H)
-          ! FZF history browser - search and insert from history
-          call launch_fzf_history_browser(module_input_state, prompt)
+          ! FZF history browser - no-op in search mode
+          if (.not. module_input_state%in_search) then
+            call launch_fzf_history_browser(module_input_state, prompt)
+          end if
 
         case(KEY_CTRL_T)
-          ! Transpose characters (swap current char with previous)
-          call handle_transpose_chars(module_input_state)
+          ! Transpose characters - no-op in search mode
+          if (.not. module_input_state%in_search) call handle_transpose_chars(module_input_state)
 
         case(32:126)
           ! Regular printable characters
@@ -5306,6 +5321,10 @@ contains
     ! Try to read the next character
     success = read_single_char(ch1)
     if (.not. success) then
+      ! Bare ESC with no follow-up — accept search result for editing
+      if (input_state%in_search) then
+        call accept_search_for_editing(input_state)
+      end if
       return
     end if
 
@@ -5358,6 +5377,14 @@ contains
       end select
     else
       ! Not '[', so it's an Alt+key combination (ESC followed by character)
+      ! In search mode, only Alt+Backspace is meaningful — everything else is no-op
+      if (input_state%in_search) then
+        if (ch1 == char(127)) then
+          call search_kill_word(input_state, prompt)
+        end if
+        return
+      end if
+
       select case(ch1)
       case('.')
         ! Alt+. - Insert last argument from previous command
@@ -5391,11 +5418,7 @@ contains
         end if
       case(char(127))
         ! Alt+Backspace - Delete word backward (same as Ctrl+W)
-        if (input_state%in_search) then
-          call search_kill_word(input_state, prompt)
-        else
-          call handle_kill_word(input_state)
-        end if
+        call handle_kill_word(input_state)
       case default
         ! Unknown Alt+key combination
         continue
@@ -5549,6 +5572,11 @@ contains
         ! Read the terminating letter
         success = read_single_char(terminator)
         if (.not. success) return
+
+        ! In search mode, consume the sequence but don't act on it
+        if (input_state%in_search) then
+          return
+        end if
 
         ! Check for Ctrl+Right arrow (modifier=5, terminator=C)
         if (modifier == '5' .and. terminator == 'C') then
