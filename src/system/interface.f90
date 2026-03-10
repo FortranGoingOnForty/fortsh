@@ -11,6 +11,7 @@ module system_interface
 #ifdef __APPLE__
   ! macOS/Darwin signal numbers
   integer(c_int), parameter :: SIGINT = 2
+  integer(c_int), parameter :: SIGPIPE = 13
   integer(c_int), parameter :: SIGTSTP = 18
   integer(c_int), parameter :: SIGCHLD = 20
   integer(c_int), parameter :: SIGCONT = 19
@@ -19,6 +20,7 @@ module system_interface
 #else
   ! Linux signal numbers
   integer(c_int), parameter :: SIGINT = 2
+  integer(c_int), parameter :: SIGPIPE = 13
   integer(c_int), parameter :: SIGTSTP = 20
   integer(c_int), parameter :: SIGCHLD = 17
   integer(c_int), parameter :: SIGCONT = 18
