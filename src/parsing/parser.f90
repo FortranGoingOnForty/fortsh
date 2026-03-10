@@ -2490,6 +2490,10 @@ contains
     if (param_expr(1:1) == '!') then
       get_keys = .true.
       var_name = param_expr(2:)
+    else if (len_trim(param_expr) >= 2 .and. &
+             param_expr(1:2) == '\!') then
+      get_keys = .true.
+      var_name = param_expr(3:)
     else if (param_expr(1:1) == '#') then
       is_length = .true.
       var_name = param_expr(2:)
@@ -2518,14 +2522,22 @@ contains
               write(length_str, '(I0)') num_keys
               result_value = trim(length_str)
             else
-              ! For indexed arrays, use get_array_size
+              ! For indexed arrays, count non-empty elements
               array_sz = get_array_size(shell, trim(var_name))
-              write(length_str, '(I0)') array_sz
+              num_keys = 0
+              do array_index = 1, array_sz
+                if (len_trim(get_array_element( &
+                    shell, trim(var_name), &
+                    array_index)) > 0) then
+                  num_keys = num_keys + 1
+                end if
+              end do
+              write(length_str, '(I0)') num_keys
               result_value = trim(length_str)
             end if
             return
           else if (get_keys) then
-            ! ${!arr[@]} - return indices (for indexed) or keys (for associative)
+            ! ${!arr[@]} - return indices or keys
             if (is_associative_array(shell, trim(var_name))) then
               ! Return keys for associative array
               call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
@@ -2534,23 +2546,34 @@ contains
               else
                 result_value = ''
                 do key_idx = 1, num_keys
-                  if (key_idx > 1) result_value = result_value // ' '
-                  result_value = result_value // trim(keys(key_idx))
+                  if (key_idx > 1) then
+                    result_value = result_value // ' '
+                  end if
+                  result_value = result_value // &
+                    trim(keys(key_idx))
                 end do
               end if
               return
             else
-              ! Return indices for indexed array
+              ! Return non-empty indices for indexed array
               array_sz = get_array_size(shell, trim(var_name))
               if (array_sz == 0) then
                 result_value = ''
                 return
               end if
-              ! Build indices with proper spacing
+              result_value = ''
               do array_index = 1, array_sz
-                if (array_index > 1) result_value = result_value // ' '
-                write(length_str, '(i15)') array_index - 1  ! 0-indexed
-                result_value = result_value // trim(length_str)
+                if (len_trim(get_array_element( &
+                    shell, trim(var_name), &
+                    array_index)) > 0) then
+                  if (len_trim(result_value) > 0) then
+                    result_value = result_value // ' '
+                  end if
+                  write(length_str, '(I0)') &
+                    array_index - 1
+                  result_value = result_value // &
+                    trim(length_str)
+                end if
               end do
               return
             end if
@@ -2577,7 +2600,12 @@ contains
           if (is_associative_array(shell, trim(var_name))) then
             ! Associative array access: ${map[key]}
             assoc_value = get_assoc_array_value(shell, trim(var_name), trim(index_str))
-            result_value = trim(assoc_value)
+            if (is_length) then
+              write(length_str, '(I0)') len_trim(assoc_value)
+              result_value = trim(length_str)
+            else
+              result_value = trim(assoc_value)
+            end if
             return
           else
             ! Try numeric index: ${arr[0]}
@@ -2585,7 +2613,16 @@ contains
             if (op_pos == 0) then
               ! Convert from 0-indexed to 1-indexed
               array_index = array_index + 1
-              result_value = trim(get_array_element(shell, trim(var_name), array_index))
+              if (is_length) then
+                ! ${#arr[0]} - return length of element
+                result_value = trim(get_array_element( &
+                  shell, trim(var_name), array_index))
+                write(length_str, '(I0)') len_trim(result_value)
+                result_value = trim(length_str)
+              else
+                result_value = trim(get_array_element( &
+                  shell, trim(var_name), array_index))
+              end if
               return
             else
               ! Non-numeric index for non-associative - might be string key, treat as assoc
