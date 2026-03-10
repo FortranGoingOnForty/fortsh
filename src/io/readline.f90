@@ -5066,7 +5066,7 @@ contains
 
   subroutine handle_process_selection(input_state)
     type(input_state_t), intent(inout) :: input_state
-    character(len=32) :: pid_str
+    character(len=256) :: pid_str
     integer :: colon_pos, iostat
 
     ! Extract PID from selected menu item (format: "PID: process_name")
