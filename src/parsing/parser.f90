@@ -2656,9 +2656,14 @@ contains
           ! Convert offset to integer
           read(offset_str, *, iostat=iostat_val) offset
           if (iostat_val == 0) then
-            ! Fortran uses 1-based indexing, bash uses 0-based
-            offset = offset + 1
-            if (offset < 1) offset = 1
+            ! Handle negative offsets (count from end of string)
+            if (offset < 0) then
+              offset = len_trim(current_value) + offset + 1
+              if (offset < 1) offset = 1
+            else
+              ! Fortran uses 1-based indexing, bash uses 0-based
+              offset = offset + 1
+            end if
 
             if (len_trim(length_str_temp) > 0) then
               read(length_str_temp, *, iostat=iostat_val) str_length
@@ -2685,7 +2690,9 @@ contains
     ! Must check before default value operators since # and % have special meaning
 
     ! Pattern removal from beginning: ${var#pattern} or ${var##pattern}
-    if (index(param_expr, '##') > 0) then
+    ! Skip if there's a / before #/% — that's ${var/pattern} replacement syntax
+    if (index(param_expr, '##') > 0 .and. &
+        (index(param_expr, '/') == 0 .or. index(param_expr, '##') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '##')
       var_name = param_expr(:op_pos-1)
       operation = param_expr(op_pos:op_pos+1)
@@ -2712,7 +2719,8 @@ contains
         result_value = ''
       end if
       return
-    else if (index(param_expr, '#') > 0) then
+    else if (index(param_expr, '#') > 0 .and. &
+             (index(param_expr, '/') == 0 .or. index(param_expr, '#') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '#')
       ! Make sure it's not the # for length (which would be at position 1)
       if (op_pos > 1) then
@@ -2745,7 +2753,8 @@ contains
     end if
 
     ! Pattern removal from end: ${var%pattern} or ${var%%pattern}
-    if (index(param_expr, '%%') > 0) then
+    if (index(param_expr, '%%') > 0 .and. &
+        (index(param_expr, '/') == 0 .or. index(param_expr, '%%') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '%%')
       var_name = param_expr(:op_pos-1)
       operation = param_expr(op_pos:op_pos+1)
@@ -2772,7 +2781,8 @@ contains
         result_value = ''
       end if
       return
-    else if (index(param_expr, '%') > 0) then
+    else if (index(param_expr, '%') > 0 .and. &
+             (index(param_expr, '/') == 0 .or. index(param_expr, '%') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '%')
       var_name = param_expr(:op_pos-1)
       operation = param_expr(op_pos:op_pos)
@@ -2845,7 +2855,35 @@ contains
       end if
 
       if (allocated(current_value)) then
-        result_value = replace_first(current_value, trim(default_value), trim(operation))
+        ! Check for anchor prefix in pattern
+        if (len_trim(default_value) > 0 .and. default_value(1:1) == '#') then
+          ! Anchored at start: ${var/#pat/repl}
+          default_value = default_value(2:)
+          if (len_trim(default_value) == 0) then
+            result_value = trim(operation) // trim(current_value)
+          else if (len_trim(current_value) >= len_trim(default_value) .and. &
+                   current_value(1:len_trim(default_value)) == trim(default_value)) then
+            result_value = trim(operation) // &
+              current_value(len_trim(default_value)+1:len_trim(current_value))
+          else
+            result_value = current_value
+          end if
+        else if (len_trim(default_value) > 0 .and. default_value(1:1) == '%') then
+          ! Anchored at end: ${var/%pat/repl}
+          default_value = default_value(2:)
+          if (len_trim(default_value) == 0) then
+            result_value = trim(current_value) // trim(operation)
+          else if (len_trim(current_value) >= len_trim(default_value) .and. &
+                   current_value(len_trim(current_value)-len_trim(default_value)+1: &
+                                 len_trim(current_value)) == trim(default_value)) then
+            result_value = current_value(1:len_trim(current_value)-len_trim(default_value)) &
+              // trim(operation)
+          else
+            result_value = current_value
+          end if
+        else
+          result_value = replace_first(current_value, trim(default_value), trim(operation))
+        end if
       else
         result_value = ''
       end if
