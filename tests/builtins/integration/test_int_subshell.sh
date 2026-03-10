@@ -36,7 +36,7 @@ compare_output "trap in subshell independent" '(trap "echo sub_bye" EXIT; echo s
 compare_output "parent trap survives subshell" 'trap "echo parent_exit" EXIT; (echo sub); echo main'
 
 section "5. nesting"
-compare_output "double nested subshell" '((echo deep))'
+compare_output "double nested subshell" '( (echo deep) )'
 compare_output "cmd sub inside subshell" '(echo $(echo nested))'
 compare_output "layered scope" '(X=1; (X=2; echo $X); echo $X)'
 compare_output "triple nested cmd sub" 'echo $(echo $(echo triple))'
@@ -49,7 +49,7 @@ compare_output "non-zero exit" '(exit 42); echo $?'
 compare_output "implicit exit status" '(false); echo $?'
 compare_output "OR chain with subshell failure" '(exit 1) || echo recovered'
 compare_output "AND chain with subshell success" '(exit 0) && echo continued'
-compare_output "nested subshell exit status" '((exit 3)); echo $?'
+compare_output "nested subshell exit status" '( (exit 3) ); echo $?'
 compare_output "exit in nested" '(exit 0); (exit 1); echo $?'
 
 section "7. command substitution as implicit subshell"

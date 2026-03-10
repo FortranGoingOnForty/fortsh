@@ -54,7 +54,7 @@ compare_output "negated false status" '! false; echo $?'
 section "6. builtin error handling"
 compare_output "cd failure" 'cd /nonexistent_xyz 2>/dev/null; echo $?'
 compare_output "source failure" 'source /nonexistent_file.sh 2>/dev/null; echo $?'
-compare_output "readonly violation" 'readonly ERX=1; ERX=2 2>/dev/null; echo $?'
+compare_exit "readonly violation" 'readonly ERX=1; ERX=2 2>/dev/null'
 compare_output "unset readonly" 'readonly ERY=1; unset ERY 2>/dev/null; echo $?'
 compare_output "command not found" 'nonexistent_cmd_xyz 2>/dev/null; echo $?'
 compare_output "read with no input" 'read VAR < /dev/null; echo $?'
