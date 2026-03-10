@@ -110,6 +110,7 @@ module command_tree
     type(command_node_t), pointer :: commands(:) => null()    ! Pipeline commands
     integer :: num_commands = 0
     logical :: negate = .false.                               ! ! pipeline
+    logical :: background = .false.                           ! pipeline &
   end type pipeline_data_t
 
   ! =====================================
