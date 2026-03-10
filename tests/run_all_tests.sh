@@ -39,6 +39,7 @@ STOP_ON_FAIL=0
 RUN_POSIX=1
 RUN_MEMORY=0
 RUN_INTERACTIVE=0
+RUN_BUILTINS=0
 SKIP_SLOW=0
 SHOW_PROGRESS=0  # Disabled by default due to output buffering issues
 
@@ -60,10 +61,17 @@ for arg in "$@"; do
             RUN_MEMORY=0
             RUN_INTERACTIVE=1
             ;;
+        --builtins)
+            RUN_POSIX=0
+            RUN_MEMORY=0
+            RUN_INTERACTIVE=0
+            RUN_BUILTINS=1
+            ;;
         --full)
             RUN_POSIX=1
             RUN_MEMORY=0
             RUN_INTERACTIVE=1
+            RUN_BUILTINS=1
             ;;
         --quick)
             SKIP_SLOW=1
@@ -78,6 +86,7 @@ for arg in "$@"; do
             RUN_POSIX=1
             RUN_MEMORY=1
             RUN_INTERACTIVE=1
+            RUN_BUILTINS=1
             ;;
         --help|-h)
             head -n 20 "$0" | grep '^#' | sed 's/^# \?//'
@@ -329,6 +338,21 @@ if [ "$RUN_MEMORY" -eq 1 ]; then
     for suite in $MEMORY_TESTS; do
         run_test_suite "$suite" "Memory"
     done
+fi
+
+# Run builtin tests
+if [ "$RUN_BUILTINS" -eq 1 ]; then
+    printf "${CYAN}${BOLD}══════════════════════════════════════════\n"
+    printf "BUILTIN TESTS\n"
+    printf "══════════════════════════════════════════${NC}\n\n"
+
+    BUILTIN_DIR="$SCRIPT_DIR/builtins"
+    if [ ! -d "$BUILTIN_DIR" ]; then
+        printf "${RED}Builtin test directory not found: %s${NC}\n" "$BUILTIN_DIR"
+        FAILED_SUITES=$((FAILED_SUITES + 1))
+    else
+        run_test_suite "builtins/run_builtin_tests.sh" "Builtins"
+    fi
 fi
 
 # Run interactive PTY tests
