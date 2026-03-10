@@ -402,6 +402,47 @@ contains
 #endif
   end subroutine state_buffer_restore
 
+  ! Get search string into a fixed-length buffer
+  subroutine get_search_string(state, str, slen)
+    type(input_state_t), intent(in) :: state
+    character(len=*), intent(out) :: str
+    integer, intent(in) :: slen
+    integer :: j
+    str = ''
+    if (slen <= 0) return
+#ifdef USE_MEMORY_POOL
+    do j = 1, min(slen, len(str))
+      str(j:j) = state%search_string_ref%data(j:j)
+    end do
+#else
+    do j = 1, min(slen, len(str))
+      str(j:j) = state%search_string(j:j)
+    end do
+#endif
+  end subroutine get_search_string
+
+  ! Set a character in the search string at position pos
+  subroutine set_search_char(state, pos, ch)
+    type(input_state_t), intent(inout) :: state
+    integer, intent(in) :: pos
+    character, intent(in) :: ch
+#ifdef USE_MEMORY_POOL
+    state%search_string_ref%data(pos:pos) = ch
+#else
+    state%search_string(pos:pos) = ch
+#endif
+  end subroutine set_search_char
+
+  ! Clear the search string
+  subroutine clear_search_string(state)
+    type(input_state_t), intent(inout) :: state
+#ifdef USE_MEMORY_POOL
+    state%search_string_ref%data = ''
+#else
+    state%search_string = ''
+#endif
+  end subroutine clear_search_string
+
   ! Clear original buffer
   subroutine state_original_buffer_clear(state)
     type(input_state_t), intent(inout) :: state
@@ -6798,11 +6839,7 @@ contains
       call state_buffer_save(input_state)
       input_state%in_search = .true.
       input_state%search_forward = forward
-#ifdef USE_MEMORY_POOL
-      input_state%search_string_ref%data = ''
-#else
-      input_state%search_string = ''
-#endif
+      call clear_search_string(input_state)
       input_state%search_length = 0
       input_state%search_match_index = 0
     else
@@ -6823,11 +6860,7 @@ contains
 
     if (input_state%search_length == 0) return
 
-#ifdef USE_MEMORY_POOL
-    search_str = input_state%search_string_ref%data(:input_state%search_length)
-#else
-    search_str = input_state%search_string(:input_state%search_length)
-#endif
+    call get_search_string(input_state, search_str, input_state%search_length)
 
     if (input_state%search_forward) then
       ! Forward search - search from current match towards newer history
@@ -6890,13 +6923,8 @@ contains
     ! Add character to search string
     if (input_state%search_length < MAX_LINE_LEN) then
       input_state%search_length = input_state%search_length + 1
-#ifdef USE_MEMORY_POOL
-      input_state%search_string_ref%data(input_state%search_length:input_state%search_length) = ch
-      search_str = input_state%search_string_ref%data(:input_state%search_length)
-#else
-      input_state%search_string(input_state%search_length:input_state%search_length) = ch
-      search_str = input_state%search_string(:input_state%search_length)
-#endif
+      call set_search_char(input_state, input_state%search_length, ch)
+      call get_search_string(input_state, search_str, input_state%search_length)
 
       ! Search through history in the appropriate direction
       if (input_state%search_forward) then
@@ -6938,7 +6966,7 @@ contains
 
       if (input_state%search_length > 0) then
         ! Search again with shorter string
-        search_str = input_state%search_string(:input_state%search_length)
+        call get_search_string(input_state, search_str, input_state%search_length)
 
         if (input_state%search_forward) then
           ! Forward search
