@@ -531,7 +531,6 @@ contains
     integer, intent(out) :: status
 
     character(len=256) :: clean_arg
-    integer :: i
 
     clean_arg = adjustl(arg_value)
     int_val = 0
@@ -604,8 +603,6 @@ contains
     character(len=*), intent(out) :: result
 
     character(len=64) :: fmt_str, temp
-    integer :: e_pos, exp_val
-    character(len=16) :: mantissa, exp_str
 
     write(fmt_str, '(a,i0,a,i0,a)') '(ES', precision+8, '.', precision, ')'
     write(temp, fmt_str) val
