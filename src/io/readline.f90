@@ -6978,10 +6978,18 @@ contains
           end do
         end if
       else
-        ! Empty search - clear buffer
-        call state_buffer_clear(input_state)
-        input_state%length = 0
-        input_state%cursor_pos = 0
+        ! Empty search - restore original buffer on prompt line
+        call state_buffer_restore(input_state)
+#ifdef USE_MEMORY_POOL
+        input_state%length = len_trim(input_state%original_buffer_ref%data)
+#else
+#ifdef USE_C_STRINGS
+        input_state%length = c_string_length(input_state%original_buffer_c)
+#else
+        input_state%length = len_trim(input_state%original_buffer)
+#endif
+#endif
+        input_state%cursor_pos = input_state%length
         input_state%search_match_index = 0
       end if
 
@@ -7017,13 +7025,11 @@ contains
 #endif
     input_state%cursor_pos = input_state%length
     input_state%in_search = .false.
-#ifdef USE_MEMORY_POOL
-    input_state%search_string_ref%data = ''
-#else
-    input_state%search_string = ''
-#endif
+    call clear_search_string(input_state)
     input_state%search_length = 0
     input_state%search_match_index = 0
+
+    call cleanup_search_status_line()
     input_state%dirty = .true.
   end subroutine
 
@@ -7033,19 +7039,12 @@ contains
 
     ! Keep the current buffer (matched command)
     input_state%in_search = .false.
-#ifdef USE_MEMORY_POOL
-    input_state%search_string_ref%data = ''
-#else
-    input_state%search_string = ''
-#endif
+    call clear_search_string(input_state)
     input_state%search_length = 0
     input_state%search_match_index = 0
 
-    ! Clear the search prompt and show normal prompt with result using proper redraw
-    write(output_unit, '(a)', advance='no') char(13) // ESC_CLEAR_LINE
-    flush(output_unit)
-
-    ! Use redraw_line to properly display with syntax highlighting and cursor positioning
+    ! Clean up status line then redraw with normal prompt
+    call cleanup_search_status_line()
     call redraw_line(prompt, input_state)
   end subroutine
 
