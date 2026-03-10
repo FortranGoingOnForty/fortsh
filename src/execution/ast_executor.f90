@@ -948,6 +948,11 @@ contains
     ! Parent process - close all pipes
     call close_all_pipes(pipefd, num_pipes)
 
+    ! Give terminal to the pipeline's process group for interactive foreground
+    if (shell%is_interactive) then
+      ret = c_tcsetpgrp(shell%shell_terminal, pgid)
+    end if
+
     ! Wait for all children
     do i = 1, num_commands
       status = wait_for_process(pids(i))
@@ -955,6 +960,11 @@ contains
 
     ! Exit status is from last command
     exit_status = extract_exit_status(status)
+
+    ! Restore terminal control to the shell's process group
+    if (shell%is_interactive) then
+      ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
+    end if
 
     deallocate(pipefd)
     deallocate(pids)
