@@ -457,11 +457,19 @@ contains
 #ifdef USE_MEMORY_POOL
       if (len(target_dir_ref%data) > 0 .and. target_dir_ref%data(1:1) == '/') then
         ! Absolute path - use it directly (preserves symlinks like /tmp)
+        ! Strip trailing slashes (but keep root /)
         shell%cwd = target_dir_ref%data
+        do while (len_trim(shell%cwd) > 1 .and. shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) == '/')
+          shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) = ' '
+        end do
 #else
       if (len(target_dir) > 0 .and. target_dir(1:1) == '/') then
         ! Absolute path - use it directly (preserves symlinks like /tmp)
+        ! Strip trailing slashes (but keep root /)
         shell%cwd = target_dir
+        do while (len_trim(shell%cwd) > 1 .and. shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) == '/')
+          shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) = ' '
+        end do
 #endif
       else
         ! Relative path - use physical path from getcwd()
@@ -625,7 +633,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, len_token, start_token
-    logical :: first, suppress_newline, write_ok, had_error, interpret_escapes
+    logical :: first, suppress_newline, write_ok, had_error, interpret_escapes, stop_output
     character(len=:), allocatable :: processed
     character(len=MAX_TOKEN_LEN) :: token
 
@@ -645,6 +653,7 @@ contains
 
     first = .true.
     suppress_newline = .false.
+    stop_output = .false.
     interpret_escapes = .false.  ! Bash default: do NOT interpret escapes (use -e to enable)
     start_token = 2
 
@@ -671,9 +680,6 @@ contains
         suppress_newline = .true.
         interpret_escapes = .false.
         start_token = i + 1
-      else if (trim(token) == '--') then
-        start_token = i + 1
-        exit
       else
         ! Not a recognized option, treat as regular argument
         exit
@@ -727,7 +733,8 @@ contains
                 processed = processed // achar(8)  ! Backspace
               case ('c')
                 suppress_newline = .true.
-                exit  ! Stop processing
+                stop_output = .true.
+                exit  ! Stop processing this token
               case ('f')
                 processed = processed // achar(12) ! Form feed
               case ('n')
@@ -740,6 +747,56 @@ contains
                 processed = processed // achar(11) ! Vertical tab
               case ('\')
                 processed = processed // '\'       ! Backslash
+              case ('0')
+                ! Octal escape: \0NNN (up to 3 octal digits after the 0)
+                block
+                  integer :: oval, nd
+                  oval = 0
+                  nd = 0
+                  do while (nd < 3 .and. j + nd + 1 <= len_token)
+                    if (token(j+nd+1:j+nd+1) >= '0' .and. token(j+nd+1:j+nd+1) <= '7') then
+                      oval = oval * 8 + ichar(token(j+nd+1:j+nd+1)) - ichar('0')
+                      nd = nd + 1
+                    else
+                      exit
+                    end if
+                  end do
+                  if (oval >= 0 .and. oval <= 127) then
+                    processed = processed // achar(oval)
+                  else
+                    processed = processed // achar(mod(oval, 256))
+                  end if
+                  j = j + nd  ! skip consumed digits
+                end block
+              case ('x')
+                ! Hex escape: \xNN (up to 2 hex digits)
+                block
+                  integer :: hval, hd, hc
+                  hval = 0
+                  hd = 0
+                  do while (hd < 2 .and. j + hd + 1 <= len_token)
+                    hc = ichar(token(j+hd+1:j+hd+1))
+                    if (hc >= ichar('0') .and. hc <= ichar('9')) then
+                      hval = hval * 16 + hc - ichar('0')
+                      hd = hd + 1
+                    else if (hc >= ichar('a') .and. hc <= ichar('f')) then
+                      hval = hval * 16 + hc - ichar('a') + 10
+                      hd = hd + 1
+                    else if (hc >= ichar('A') .and. hc <= ichar('F')) then
+                      hval = hval * 16 + hc - ichar('A') + 10
+                      hd = hd + 1
+                    else
+                      exit
+                    end if
+                  end do
+                  if (hd > 0) then
+                    processed = processed // achar(mod(hval, 256))
+                    j = j + hd  ! skip consumed digits
+                  else
+                    ! No valid hex digits, output literal \x
+                    processed = processed // '\x'
+                  end if
+                end block
               case default
                 ! Unknown escape - keep literal backslash and character
                 processed = processed // '\' // token(j:j)
@@ -760,7 +817,7 @@ contains
       if (.not. write_ok) had_error = .true.
       first = .false.
 
-      if (suppress_newline) exit
+      if (stop_output) exit
     end do
 
     if (.not. suppress_newline) then
