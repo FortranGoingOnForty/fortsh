@@ -181,8 +181,8 @@ compare_posix_output "glob after set +f" 'set -f; set +f; echo /tmp 2>/dev/null 
 
 section "58. SET -X (XTRACE)"
 
-compare_posix_output "xtrace shows commands" 'set -x; echo test 2>&1 | grep -c echo; set +x'
-compare_posix_output "xtrace in function" 'f() { set -x; echo inner 2>&1; set +x; }; f | grep -c echo'
+compare_posix_output "xtrace shows commands" 'set -x; echo test 2>/tmp/xtrace_$$; set +x; grep -c echo /tmp/xtrace_$$; rm -f /tmp/xtrace_$$'
+compare_posix_output "xtrace in function" 'f() { set -x; echo inner 2>/tmp/xtrace_fn_$$; set +x; }; f; grep -c echo /tmp/xtrace_fn_$$; rm -f /tmp/xtrace_fn_$$'
 
 section "59. SET -V (VERBOSE)"
 
