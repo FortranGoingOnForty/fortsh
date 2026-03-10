@@ -3371,7 +3371,9 @@ contains
     integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: readonly_flag, export_flag, print_mode, print_funcs
-    logical :: array_flag, assoc_array_flag, found
+    logical :: array_flag, assoc_array_flag, found, integer_flag, global_flag
+    character(len=MAX_TOKEN_LEN) :: flag_str
+    integer :: fi
 
     readonly_flag = .false.
     export_flag = .false.
@@ -3379,36 +3381,49 @@ contains
     print_funcs = .false.
     array_flag = .false.
     assoc_array_flag = .false.
+    integer_flag = .false.
+    global_flag = .false.
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all variables
       print_mode = .true.
     end if
 
-    ! Parse options
+    ! Parse options (supports combined flags like -ix, -ri, -rxi)
     arg_idx = 2
     do while (arg_idx <= cmd%num_tokens)
-      if (cmd%tokens(arg_idx)(1:1) == '-') then
-        select case (trim(cmd%tokens(arg_idx)))
-          case ('-r')
-            readonly_flag = .true.
-          case ('-x')
-            export_flag = .true.
-          case ('-p')
-            print_mode = .true.
-          case ('-f')
-            print_funcs = .true.
-            print_mode = .true.
-          case ('-a')
-            array_flag = .true.
-          case ('-A')
-            assoc_array_flag = .true.
-          case default
-            write(error_unit, '(a)') 'declare: invalid option: ' // trim(cmd%tokens(arg_idx))
-            shell%last_exit_status = 1
-            return
-        end select
+      if (cmd%tokens(arg_idx)(1:1) == '-' .and. len_trim(cmd%tokens(arg_idx)) >= 2 .and. &
+          cmd%tokens(arg_idx)(2:2) /= '-') then
+        flag_str = trim(cmd%tokens(arg_idx))
+        do fi = 2, len_trim(flag_str)
+          select case (flag_str(fi:fi))
+            case ('r')
+              readonly_flag = .true.
+            case ('x')
+              export_flag = .true.
+            case ('p')
+              print_mode = .true.
+            case ('f')
+              print_funcs = .true.
+              print_mode = .true.
+            case ('a')
+              array_flag = .true.
+            case ('A')
+              assoc_array_flag = .true.
+            case ('i')
+              integer_flag = .true.
+            case ('g')
+              global_flag = .true.
+            case default
+              write(error_unit, '(a)') 'declare: invalid option: ' // trim(cmd%tokens(arg_idx))
+              shell%last_exit_status = 1
+              return
+          end select
+        end do
         arg_idx = arg_idx + 1
+      else if (trim(cmd%tokens(arg_idx)) == '--') then
+        arg_idx = arg_idx + 1
+        exit
       else
         exit
       end if
@@ -3436,19 +3451,16 @@ contains
       ! Print all variables with declare syntax
       do i = 1, shell%num_variables
         if (len_trim(shell%variables(i)%name) > 0) then
-          if (shell%variables(i)%readonly .and. shell%variables(i)%exported) then
-            write(output_unit, '(a)') 'declare -rx ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
-          else if (shell%variables(i)%readonly) then
-            write(output_unit, '(a)') 'declare -r ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
-          else if (shell%variables(i)%exported) then
-            write(output_unit, '(a)') 'declare -x ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
-          else
-            write(output_unit, '(a)') 'declare -- ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
-          end if
+          block
+            character(len=16) :: flags
+            flags = '-'
+            if (shell%variables(i)%is_integer) flags = trim(flags) // 'i'
+            if (shell%variables(i)%readonly) flags = trim(flags) // 'r'
+            if (shell%variables(i)%exported) flags = trim(flags) // 'x'
+            if (flags == '-') flags = '--'
+            write(output_unit, '(a)') 'declare ' // trim(flags) // ' ' // &
+                trim(shell%variables(i)%name) // '="' // trim(shell%variables(i)%value) // '"'
+          end block
         end if
       end do
       shell%last_exit_status = 0
@@ -3478,6 +3490,17 @@ contains
           end if
         end do
 
+        ! Evaluate arithmetic if integer flag is set
+        if (integer_flag .and. len_trim(var_value) > 0) then
+          block
+            use expansion, only: arithmetic_expansion_shell
+            character(len=1024) :: arith_expr, arith_result
+            arith_expr = '$((' // trim(var_value) // '))'
+            arith_result = arithmetic_expansion_shell(trim(arith_expr), shell)
+            var_value = arith_result
+          end block
+        end if
+
         ! Set the variable
         call set_shell_variable(shell, trim(var_name), trim(var_value))
 
@@ -3485,6 +3508,7 @@ contains
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == trim(var_name)) then
             if (readonly_flag) shell%variables(j)%readonly = .true.
+            if (integer_flag) shell%variables(j)%is_integer = .true.
             if (export_flag) then
               shell%variables(j)%exported = .true.
               if (.not. set_environment_var(trim(var_name), trim(var_value))) then
