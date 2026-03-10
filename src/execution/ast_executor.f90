@@ -957,52 +957,87 @@ contains
     ! Parent process - close all pipes
     call close_all_pipes(pipefd, num_pipes)
 
-    ! Give terminal to the pipeline's process group for interactive foreground
-    if (shell%is_interactive) then
-      ret = c_tcsetpgrp(shell%shell_terminal, pgid)
-    end if
+    if (node%pipeline%background) then
+      ! Background pipeline: add job, don't wait
+      block
+        integer :: job_id
+        character(len=1024) :: job_command
+        job_command = ''
+        ! Reconstruct command string from pipeline words
+        do i = 1, node%pipeline%num_commands
+          if (i > 1) job_command = trim(job_command) // ' | '
+          if (associated(node%pipeline%commands(i)%simple_cmd)) then
+            block
+              integer :: w
+              do w = 1, node%pipeline%commands(i)%simple_cmd%num_words
+                if (w == 1 .and. i == 1) then
+                  job_command = trim(node%pipeline%commands(i)%simple_cmd%words(w))
+                else if (w == 1) then
+                  job_command = trim(job_command) // &
+                    trim(node%pipeline%commands(i)%simple_cmd%words(w))
+                else
+                  job_command = trim(job_command) // ' ' // &
+                    trim(node%pipeline%commands(i)%simple_cmd%words(w))
+                end if
+              end do
+            end block
+          end if
+        end do
+        job_id = add_job(shell, pgid, trim(job_command), .false.)
+        if (shell%is_interactive) then
+          write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pids(1)
+        end if
+        shell%last_bg_pid = pids(num_commands)
+      end block
+      exit_status = 0
+    else
+      ! Foreground pipeline: give terminal, wait, restore terminal
+      if (shell%is_interactive) then
+        ret = c_tcsetpgrp(shell%shell_terminal, pgid)
+      end if
 
-    ! Wait for all children and collect exit statuses
-    block
-      integer(c_int), target :: wait_status
-      integer, allocatable :: exit_statuses(:)
-      allocate(exit_statuses(num_commands))
+      ! Wait for all children and collect exit statuses
+      block
+        integer(c_int), target :: wait_status
+        integer, allocatable :: exit_statuses(:)
+        allocate(exit_statuses(num_commands))
 
-      do i = 1, num_commands
-        ret = c_waitpid(pids(i), c_loc(wait_status), int(0, c_int))
-        if (ret > 0) then
-          if (WIFEXITED(wait_status)) then
-            exit_statuses(i) = WEXITSTATUS(wait_status)
-          else if (WIFSIGNALED(wait_status)) then
-            exit_statuses(i) = 128 + WTERMSIG(wait_status)
+        do i = 1, num_commands
+          ret = c_waitpid(pids(i), c_loc(wait_status), int(0, c_int))
+          if (ret > 0) then
+            if (WIFEXITED(wait_status)) then
+              exit_statuses(i) = WEXITSTATUS(wait_status)
+            else if (WIFSIGNALED(wait_status)) then
+              exit_statuses(i) = 128 + WTERMSIG(wait_status)
+            else
+              exit_statuses(i) = 1
+            end if
           else
             exit_statuses(i) = 1
           end if
-        else
-          exit_statuses(i) = 1
-        end if
-      end do
-
-      ! POSIX default: exit status from last command
-      ! pipefail: rightmost non-zero exit status
-      if (shell%option_pipefail) then
-        exit_status = 0
-        do i = num_commands, 1, -1
-          if (exit_statuses(i) /= 0) then
-            exit_status = exit_statuses(i)
-            exit
-          end if
         end do
-      else
-        exit_status = exit_statuses(num_commands)
+
+        ! POSIX default: exit status from last command
+        ! pipefail: rightmost non-zero exit status
+        if (shell%option_pipefail) then
+          exit_status = 0
+          do i = num_commands, 1, -1
+            if (exit_statuses(i) /= 0) then
+              exit_status = exit_statuses(i)
+              exit
+            end if
+          end do
+        else
+          exit_status = exit_statuses(num_commands)
+        end if
+
+        deallocate(exit_statuses)
+      end block
+
+      ! Restore terminal control to the shell's process group
+      if (shell%is_interactive) then
+        ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
       end if
-
-      deallocate(exit_statuses)
-    end block
-
-    ! Restore terminal control to the shell's process group
-    if (shell%is_interactive) then
-      ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
     end if
 
     deallocate(pipefd)
