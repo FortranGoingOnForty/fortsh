@@ -1383,9 +1383,13 @@ contains
       shell%last_exit_status = 1
     else if (pid == 0) then
       ! Child process
-      ! Set process group
-      pgid = c_getpid()
-      ret = c_setpgid(0, pgid)
+      if (.not. shell%in_pipeline_child) then
+        ! Only set up own process group when NOT in a pipeline child.
+        ! Pipeline children inherit their process group from the AST
+        ! pipeline executor which manages groups at the pipeline level.
+        pgid = c_getpid()
+        ret = c_setpgid(0, pgid)
+      end if
 
       ! Reset signal handlers to default
       old_handler = c_signal(SIGINT, c_null_funptr)
@@ -1410,43 +1414,58 @@ contains
     else
       ! Parent process
       shell%last_pid = pid
-      pgid = pid
-      ret = c_setpgid(pid, pgid)
 
-      if (foreground) then
-        ! Give terminal to child
-        if (shell%is_interactive) then
-          pgid_ret = c_tcsetpgrp(shell%shell_terminal, pgid)
+      if (.not. shell%in_pipeline_child) then
+        ! Only manage process groups and terminal when NOT in a pipeline
+        ! child. The AST pipeline executor handles these at pipeline level.
+        pgid = pid
+        ret = c_setpgid(pid, pgid)
+
+        if (foreground) then
+          ! Give terminal to child
+          if (shell%is_interactive) then
+            pgid_ret = c_tcsetpgrp(shell%shell_terminal, pgid)
+          end if
+
+          ! Wait for child
+          ret = c_waitpid(pid, c_loc(wait_status), WUNTRACED)
+
+          ! Take back terminal
+          if (shell%is_interactive) then
+            pgid_ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
+          end if
+
+          if (ret == pid) then
+            if (WIFEXITED(wait_status)) then
+              shell%last_exit_status = WEXITSTATUS(wait_status)
+            else if (WIFSIGNALED(wait_status)) then
+              ! Process was killed by a signal - exit status is 128 + signal_number
+              shell%last_exit_status = 128 + WTERMSIG(wait_status)
+            else if (WIFSTOPPED(wait_status)) then
+              job_id = add_job(shell, pgid, original_input, .true.)
+              write(output_unit, '(a)') 'Stopped'
+            end if
+          end if
+        else
+          ! Background job
+          job_id = add_job(shell, pgid, original_input, .false.)
+          ! Only print job notification in interactive mode
+          if (shell%is_interactive) then
+            write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pid
+          end if
+          ! Set $! to the background job PID
+          shell%last_bg_pid = pid
         end if
-
-        ! Wait for child
-        ret = c_waitpid(pid, c_loc(wait_status), WUNTRACED)
-
-        ! Take back terminal
-        if (shell%is_interactive) then
-          pgid_ret = c_tcsetpgrp(shell%shell_terminal, shell%shell_pgid)
-        end if
-
+      else
+        ! In pipeline child: just wait for the grandchild, no terminal/pgroup mgmt
+        ret = c_waitpid(pid, c_loc(wait_status), int(0, c_int))
         if (ret == pid) then
           if (WIFEXITED(wait_status)) then
             shell%last_exit_status = WEXITSTATUS(wait_status)
           else if (WIFSIGNALED(wait_status)) then
-            ! Process was killed by a signal - exit status is 128 + signal_number
             shell%last_exit_status = 128 + WTERMSIG(wait_status)
-          else if (WIFSTOPPED(wait_status)) then
-            job_id = add_job(shell, pgid, original_input, .true.)
-            write(output_unit, '(a)') 'Stopped'
           end if
         end if
-      else
-        ! Background job
-        job_id = add_job(shell, pgid, original_input, .false.)
-        ! Only print job notification in interactive mode
-        if (shell%is_interactive) then
-          write(output_unit, '(a,i0,a,i0)') '[', job_id, '] ', pid
-        end if
-        ! Set $! to the background job PID
-        shell%last_bg_pid = pid
       end if
     end if
   end subroutine
