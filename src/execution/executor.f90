@@ -554,6 +554,13 @@ contains
       call expand_tokens(cmd, shell)
     end if
 
+    ! All tokens removed by expansion (e.g., unquoted $(exit 5) expands to nothing)
+    ! Preserve exit status from command substitution and return
+    if (cmd%num_tokens == 0) then
+      call end_timer('execute_single', exec_start_time, total_exec_time)
+      return
+    end if
+
     ! Check if parameter expansion error occurred (${VAR?error})
     if (shell%fatal_expansion_error) then
       ! NOTE: Don't reset flag here - let it propagate to subshell handler
