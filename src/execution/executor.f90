@@ -302,13 +302,11 @@ contains
     integer, intent(in) :: num_processes
     
     integer(c_int), target :: status
-    integer :: i, ret, final_exit_status, first_failure
+    integer :: i, ret
     integer, allocatable :: exit_statuses(:)
-    
+
     allocate(exit_statuses(num_processes))
-    final_exit_status = 0
-    first_failure = 0
-    
+
     ! Wait for all processes and collect their exit statuses
     do i = 1, num_processes
       ret = c_waitpid(pids(i), c_loc(status), WUNTRACED)
@@ -316,26 +314,25 @@ contains
         if (WIFEXITED(status)) then
           exit_statuses(i) = WEXITSTATUS(status)
         else if (WIFSIGNALED(status)) then
-          ! Process was killed by a signal - exit status is 128 + signal_number
           exit_statuses(i) = 128 + WTERMSIG(status)
         else
           exit_statuses(i) = 1
         end if
-
-        ! Track first failure for pipefail option
-        if (exit_statuses(i) /= 0 .and. first_failure == 0) then
-          first_failure = exit_statuses(i)
-        end if
       else
-        exit_statuses(i) = 1  ! Default to failure if wait failed
-        if (first_failure == 0) first_failure = 1
+        exit_statuses(i) = 1
       end if
     end do
-    
-    ! Set exit status according to POSIX rules
+
+    ! Set exit status according to POSIX/bash rules
     if (shell%option_pipefail) then
-      ! pipefail: return exit status of first failing command, or 0 if all succeed
-      shell%last_exit_status = first_failure
+      ! pipefail: return rightmost non-zero exit status (bash-correct semantics)
+      shell%last_exit_status = 0
+      do i = num_processes, 1, -1
+        if (exit_statuses(i) /= 0) then
+          shell%last_exit_status = exit_statuses(i)
+          exit
+        end if
+      end do
     else
       ! Normal: return exit status of last (rightmost) command
       shell%last_exit_status = exit_statuses(num_processes)
