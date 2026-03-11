@@ -2993,45 +2993,27 @@ contains
       ! Expand tokens (errors go to parent stderr)
       call expand_tokens(temp_cmd, shell)
 
-      ! Copy expanded tokens back to AST node
-      ! Reallocate if number of tokens changed
-      if (temp_cmd%num_tokens /= node%pipeline%commands(i)%simple_cmd%num_words) then
-        if (allocated(node%pipeline%commands(i)%simple_cmd%words)) &
-            deallocate(node%pipeline%commands(i)%simple_cmd%words)
-        if (allocated(node%pipeline%commands(i)%simple_cmd%word_lengths)) &
-            deallocate(node%pipeline%commands(i)%simple_cmd%word_lengths)
-        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted)) &
-            deallocate(node%pipeline%commands(i)%simple_cmd%word_was_quoted)
-        if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_escaped)) &
-            deallocate(node%pipeline%commands(i)%simple_cmd%word_was_escaped)
-        if (allocated(node%pipeline%commands(i)%simple_cmd%word_quote_type)) &
-            deallocate(node%pipeline%commands(i)%simple_cmd%word_quote_type)
+      ! Move expanded tokens into AST node — avoids allocating + copying large arrays
+      if (allocated(node%pipeline%commands(i)%simple_cmd%words)) &
+          deallocate(node%pipeline%commands(i)%simple_cmd%words)
+      if (allocated(node%pipeline%commands(i)%simple_cmd%word_lengths)) &
+          deallocate(node%pipeline%commands(i)%simple_cmd%word_lengths)
+      if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_quoted)) &
+          deallocate(node%pipeline%commands(i)%simple_cmd%word_was_quoted)
+      if (allocated(node%pipeline%commands(i)%simple_cmd%word_was_escaped)) &
+          deallocate(node%pipeline%commands(i)%simple_cmd%word_was_escaped)
+      if (allocated(node%pipeline%commands(i)%simple_cmd%word_quote_type)) &
+          deallocate(node%pipeline%commands(i)%simple_cmd%word_quote_type)
 
-        allocate(node%pipeline%commands(i)%simple_cmd%words(temp_cmd%num_tokens))
-        allocate(node%pipeline%commands(i)%simple_cmd%word_lengths(temp_cmd%num_tokens))
-        allocate(node%pipeline%commands(i)%simple_cmd%word_was_quoted(temp_cmd%num_tokens))
-        allocate(node%pipeline%commands(i)%simple_cmd%word_was_escaped(temp_cmd%num_tokens))
-        allocate(node%pipeline%commands(i)%simple_cmd%word_quote_type(temp_cmd%num_tokens))
-        node%pipeline%commands(i)%simple_cmd%num_words = temp_cmd%num_tokens
-      end if
-
-      do j = 1, temp_cmd%num_tokens
-        node%pipeline%commands(i)%simple_cmd%words(j) = temp_cmd%tokens(j)
-        node%pipeline%commands(i)%simple_cmd%word_lengths(j) = temp_cmd%token_lengths(j)
-        node%pipeline%commands(i)%simple_cmd%word_was_quoted(j) = temp_cmd%token_quoted(j)
-        node%pipeline%commands(i)%simple_cmd%word_was_escaped(j) = temp_cmd%token_escaped(j)
-        node%pipeline%commands(i)%simple_cmd%word_quote_type(j) = temp_cmd%token_quote_type(j)
-      end do
+      call move_alloc(temp_cmd%tokens, node%pipeline%commands(i)%simple_cmd%words)
+      call move_alloc(temp_cmd%token_lengths, node%pipeline%commands(i)%simple_cmd%word_lengths)
+      call move_alloc(temp_cmd%token_quoted, node%pipeline%commands(i)%simple_cmd%word_was_quoted)
+      call move_alloc(temp_cmd%token_escaped, node%pipeline%commands(i)%simple_cmd%word_was_escaped)
+      call move_alloc(temp_cmd%token_quote_type, node%pipeline%commands(i)%simple_cmd%word_quote_type)
+      node%pipeline%commands(i)%simple_cmd%num_words = temp_cmd%num_tokens
 
       ! Mark as pre-expanded so executor skips expansion
       node%pipeline%commands(i)%simple_cmd%pre_expanded = .true.
-
-      ! Clean up
-      if (allocated(temp_cmd%tokens)) deallocate(temp_cmd%tokens)
-      if (allocated(temp_cmd%token_quoted)) deallocate(temp_cmd%token_quoted)
-      if (allocated(temp_cmd%token_escaped)) deallocate(temp_cmd%token_escaped)
-      if (allocated(temp_cmd%token_quote_type)) deallocate(temp_cmd%token_quote_type)
-      if (allocated(temp_cmd%token_lengths)) deallocate(temp_cmd%token_lengths)
     end do
   end subroutine pre_expand_pipeline
 
