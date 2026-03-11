@@ -103,9 +103,10 @@ module coprocess
 contains
 
   ! Start a coprocess with optional name
-  function start_coprocess(command, name) result(coproc_id)
+  function start_coprocess(command, name, interactive) result(coproc_id)
     character(len=*), intent(in) :: command
     character(len=*), intent(in), optional :: name
+    logical, intent(in), optional :: interactive
     integer :: coproc_id
     
     integer(c_int) :: pipe_to_child(2), pipe_from_child(2)
@@ -186,7 +187,9 @@ contains
       
       num_coprocs = max(num_coprocs, coproc_id)
       
-      write(output_unit, '(a,a,a,I0)') '[', trim(coproc_name), '] ', pid
+      if (present(interactive) .and. interactive) then
+        write(error_unit, '(a,a,a,I0)') '[', trim(coproc_name), '] ', pid
+      end if
       
     else
       ! Fork failed
