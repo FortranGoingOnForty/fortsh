@@ -2590,7 +2590,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, eq_pos, depth, var_index, fi, start_arg
-    character(len=256) :: var_name, var_value
+    character(len=256) :: var_name
+    character(len=1024) :: var_value
     logical :: integer_flag, readonly_flag, array_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
 
@@ -3682,7 +3683,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
-    character(len=MAX_TOKEN_LEN) :: var_name, var_value
+    character(len=256) :: var_name
+    character(len=1024) :: var_value
     logical :: readonly_flag, export_flag, print_mode, print_funcs
     logical :: array_flag, assoc_array_flag, found, integer_flag, global_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
