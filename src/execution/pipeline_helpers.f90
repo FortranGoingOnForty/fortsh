@@ -131,14 +131,11 @@ contains
     ! Determine IFS characters to use
     ! Interpret escape sequences in IFS (\t -> tab, \n -> newline)
     ! POSIX: When IFS is set to empty, field splitting is disabled
-    ! Check if IFS was explicitly set by the user (exists in variables array)
-    ifs_explicitly_set = .false.
-    do ifs_check_i = 1, shell%num_variables
-      if (trim(shell%variables(ifs_check_i)%name) == 'IFS') then
-        ifs_explicitly_set = .true.
-        exit
-      end if
-    end do
+    ! Check if IFS was explicitly set (including local scope)
+    block
+      use variables, only: is_shell_variable_set
+      ifs_explicitly_set = is_shell_variable_set(shell, 'IFS')
+    end block
 
     if (ifs_explicitly_set) then
       ! IFS is explicitly set - use its value (even if empty)
