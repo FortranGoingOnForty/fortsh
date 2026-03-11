@@ -28,7 +28,7 @@ module prompt_formatting
   public :: expand_prompt, safe_expand_prompt, expand_zsh_colors
   public :: get_ansi_color_code, get_epoch_seconds, increment_prompt_history
   public :: get_git_branch, get_git_status_indicator, is_git_repo
-  public :: invalidate_prompt_cache
+  public :: invalidate_prompt_cache, get_git_ahead_behind, get_venv_name
 
 contains
 
@@ -347,6 +347,16 @@ contains
       case ('G')
         ! Git status indicator (* if dirty, + if staged, clean otherwise)
         replacement = get_git_status_indicator()
+
+      case ('p')
+        ! Git ahead/behind indicator
+        temp = get_git_ahead_behind()
+        replacement = trim(temp)
+
+      case ('P')
+        ! Virtual environment name
+        temp = get_venv_name()
+        replacement = trim(temp)
 
       case ('S')
         ! Seconds since epoch (Unix timestamp)
@@ -1122,5 +1132,84 @@ contains
     cache_ahead_behind_valid = .false.
     cache_venv_valid = .false.
   end subroutine
+
+  ! Get git ahead/behind counts relative to upstream
+  ! Returns: '↑N↓M', '↑N', '↓M', or '' if no upstream or not in git repo
+  function get_git_ahead_behind() result(ab)
+    character(len=:), allocatable :: ab
+    character(len=256) :: output
+    integer :: ahead, behind, iostat
+
+    if (cache_ahead_behind_valid) then
+      ab = trim(cached_git_ahead_behind)
+      return
+    end if
+
+    ! Get ahead/behind counts
+    output = execute_and_capture( &
+      'git rev-list --count --left-right @{upstream}...HEAD 2>/dev/null')
+
+    if (len_trim(output) > 0) then
+      ! Parse "behind<tab>ahead" format
+      read(output, *, iostat=iostat) behind, ahead
+      if (iostat == 0) then
+        if (ahead > 0 .and. behind > 0) then
+          write(output, '(a,i0,a,i0)') char(226)//char(134)//char(145), ahead, &
+            char(226)//char(134)//char(147), behind
+          ab = trim(output)
+        else if (ahead > 0) then
+          write(output, '(a,i0)') char(226)//char(134)//char(145), ahead
+          ab = trim(output)
+        else if (behind > 0) then
+          write(output, '(a,i0)') char(226)//char(134)//char(147), behind
+          ab = trim(output)
+        else
+          ab = ''
+        end if
+      else
+        ab = ''
+      end if
+    else
+      ab = ''
+    end if
+
+    cached_git_ahead_behind = ab
+    cache_ahead_behind_valid = .true.
+  end function
+
+  ! Get virtual environment name from VIRTUAL_ENV
+  ! Returns: '(name)' or '' if no venv active
+  function get_venv_name() result(venv)
+    character(len=:), allocatable :: venv, virtual_env
+    integer :: i, last_slash
+
+    if (cache_venv_valid) then
+      venv = trim(cached_venv_name)
+      return
+    end if
+
+    virtual_env = get_environment_var('VIRTUAL_ENV')
+
+    if (allocated(virtual_env) .and. len_trim(virtual_env) > 0) then
+      ! Extract the last path component (venv directory name)
+      last_slash = 0
+      do i = len_trim(virtual_env), 1, -1
+        if (virtual_env(i:i) == '/') then
+          last_slash = i
+          exit
+        end if
+      end do
+      if (last_slash > 0 .and. last_slash < len_trim(virtual_env)) then
+        venv = '(' // trim(virtual_env(last_slash+1:)) // ')'
+      else
+        venv = '(' // trim(virtual_env) // ')'
+      end if
+    else
+      venv = ''
+    end if
+
+    cached_venv_name = venv
+    cache_venv_valid = .true.
+  end function
 
 end module prompt_formatting
