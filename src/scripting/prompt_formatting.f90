@@ -221,7 +221,7 @@ contains
       ! Directory information
       case ('w')
         ! Current working directory (full path, with ~ for HOME)
-        replacement = get_pretty_path(shell%cwd)
+        replacement = get_pretty_path(shell%cwd, shell)
 
       case ('W')
         ! Basename of current working directory
@@ -386,10 +386,13 @@ contains
   end function
 
   ! Get pretty path with ~ for home directory and intelligent shortening
-  function get_pretty_path(path) result(pretty)
+  function get_pretty_path(path, shell) result(pretty)
     character(len=*), intent(in) :: path
+    type(shell_state_t), intent(in) :: shell
     character(len=:), allocatable :: pretty, home_dir, temp_path
-    integer :: home_len, term_rows, term_cols, max_path_len
+    character(len=:), allocatable :: branch, status, ab, venv
+    integer :: home_len, term_rows, term_cols, max_path_len, overhead
+    integer :: i, ps1_len, first_line_end
     logical :: got_term_size
 
     home_dir = get_environment_var('HOME')
@@ -417,14 +420,70 @@ contains
     ! Get terminal size to determine max path length
     got_term_size = get_terminal_size(term_rows, term_cols)
     if (got_term_size .and. term_cols > 0) then
-      ! Reserve space for prompt elements (username, hostname, etc)
-      ! Calculate based on actual prompt format: user@host :: path [branch] >
-      ! Assume ~50 chars for username, hostname, decorators, git branch
-      max_path_len = term_cols - 50  ! Be conservative to ensure readability
-      if (max_path_len < 15) max_path_len = 15  ! Minimum 15 chars for path
+      ps1_len = len_trim(shell%ps1)
+      if (ps1_len > 0) then
+        ! Find first line boundary in PS1 template
+        first_line_end = 0
+        do i = 1, ps1_len
+          ! Check for literal newline
+          if (shell%ps1(i:i) == char(10) .or. shell%ps1(i:i) == char(13)) then
+            first_line_end = i - 1
+            exit
+          end if
+          ! Check for \n escape sequence
+          if (i < ps1_len .and. shell%ps1(i:i) == '\' .and. shell%ps1(i+1:i+1) == 'n') then
+            first_line_end = i - 1
+            exit
+          end if
+        end do
+        if (first_line_end <= 0) first_line_end = ps1_len
+
+        ! Count literal visible chars (non-escape, non-color chars)
+        overhead = count_literal_chars(shell%ps1(1:first_line_end))
+
+        ! Add widths of detected escape sequences (excluding \w itself)
+        if (has_escape(shell%ps1(1:first_line_end), 'u')) &
+          overhead = overhead + len_trim(shell%username)
+        if (has_escape(shell%ps1(1:first_line_end), 'h')) &
+          overhead = overhead + len_trim(get_short_hostname(shell%hostname))
+        if (has_escape(shell%ps1(1:first_line_end), 'H')) &
+          overhead = overhead + len_trim(shell%hostname)
+        if (has_escape(shell%ps1(1:first_line_end), 'g')) then
+          branch = get_git_branch()
+          overhead = overhead + utf8_visual_width(branch)
+        end if
+        if (has_escape(shell%ps1(1:first_line_end), 'G')) then
+          status = get_git_status_indicator()
+          overhead = overhead + utf8_visual_width(status)
+        end if
+        if (has_escape(shell%ps1(1:first_line_end), 'p')) then
+          ab = get_git_ahead_behind()
+          overhead = overhead + utf8_visual_width(ab)
+        end if
+        if (has_escape(shell%ps1(1:first_line_end), 'P')) then
+          venv = get_venv_name()
+          overhead = overhead + utf8_visual_width(venv)
+        end if
+        ! Time/date escapes
+        if (has_escape(shell%ps1(1:first_line_end), 't')) overhead = overhead + 8
+        if (has_escape(shell%ps1(1:first_line_end), 'T')) overhead = overhead + 8
+        if (has_escape(shell%ps1(1:first_line_end), 'A')) overhead = overhead + 5
+        if (has_escape(shell%ps1(1:first_line_end), '@')) overhead = overhead + 8
+        if (has_escape(shell%ps1(1:first_line_end), 'd')) overhead = overhead + 10
+        if (has_escape(shell%ps1(1:first_line_end), 'D')) overhead = overhead + 10
+        if (has_escape(shell%ps1(1:first_line_end), '$')) overhead = overhead + 1
+        if (has_escape(shell%ps1(1:first_line_end), 's')) &
+          overhead = overhead + len_trim(shell%shell_name)
+        if (has_escape(shell%ps1(1:first_line_end), 'v')) overhead = overhead + 3
+        if (has_escape(shell%ps1(1:first_line_end), 'V')) overhead = overhead + 5
+
+        max_path_len = term_cols - overhead
+      else
+        max_path_len = term_cols - 50
+      end if
+      if (max_path_len < 15) max_path_len = 15
     else
-      ! Fallback if terminal size unavailable - assume narrow terminal
-      max_path_len = 25  ! More aggressive default shortening
+      max_path_len = 25
     end if
 
     ! Shorten path if needed
@@ -1210,6 +1269,88 @@ contains
 
     cached_venv_name = venv
     cache_venv_valid = .true.
+  end function
+
+  ! Check if a prompt template contains a specific escape sequence (\char)
+  function has_escape(template, esc_char) result(found)
+    character(len=*), intent(in) :: template
+    character(len=1), intent(in) :: esc_char
+    logical :: found
+    integer :: i, tlen
+
+    found = .false.
+    tlen = len_trim(template)
+
+    do i = 1, tlen - 1
+      if (template(i:i) == '\' .and. template(i+1:i+1) == esc_char) then
+        found = .true.
+        return
+      end if
+    end do
+  end function
+
+  ! Count visible literal characters in a prompt template
+  ! Skips: \x escape pairs, %F{...}, %K{...}, %f, %k, %B, %b, %U, %u
+  function count_literal_chars(template) result(count)
+    character(len=*), intent(in) :: template
+    integer :: count
+    integer :: i, tlen, brace_end
+
+    count = 0
+    i = 1
+    tlen = len_trim(template)
+
+    do while (i <= tlen)
+      if (template(i:i) == '\' .and. i < tlen) then
+        ! Skip \x escape pair (prompt escape, not a visible char)
+        i = i + 2
+      else if (template(i:i) == '%' .and. i < tlen) then
+        ! Skip zsh-style color sequences
+        select case (template(i+1:i+1))
+          case ('F', 'K')
+            ! %F{...} or %K{...} - skip to closing brace
+            if (i + 2 <= tlen .and. template(i+2:i+2) == '{') then
+              brace_end = index(template(i+3:), '}')
+              if (brace_end > 0) then
+                i = i + 3 + brace_end
+              else
+                i = i + 2
+              end if
+            else
+              i = i + 2
+            end if
+          case ('f', 'k', 'B', 'b', 'U', 'u')
+            ! Color/style resets - skip both chars
+            i = i + 2
+          case ('%')
+            ! %% = literal %
+            count = count + 1
+            i = i + 2
+          case default
+            count = count + 1
+            i = i + 1
+        end select
+      else
+        count = count + 1
+        i = i + 1
+      end if
+    end do
+  end function
+
+  ! Calculate visual width of a UTF-8 string (counts characters, not bytes)
+  function utf8_visual_width(str) result(width)
+    character(len=*), intent(in) :: str
+    integer :: width
+    integer :: i, byte_val
+
+    width = 0
+    do i = 1, len_trim(str)
+      byte_val = iand(iachar(str(i:i)), 255)
+      ! Skip UTF-8 continuation bytes (10xxxxxx = 128-191)
+      if (byte_val < 128 .or. byte_val >= 192) then
+        width = width + 1
+      end if
+    end do
   end function
 
 end module prompt_formatting
