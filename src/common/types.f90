@@ -51,6 +51,7 @@ module shell_types
   integer, parameter :: REDIR_CLOSE = 9   ! n>&-
   integer, parameter :: REDIR_READWRITE = 10  ! <> file (open for read/write)
   integer, parameter :: REDIR_HERE_STRING = 11  ! <<< string (here-string)
+  integer, parameter :: REDIR_HERE_DOC = 12     ! << delimiter (here-document)
 
   type :: redirection_t
     integer :: type = 0           ! REDIR_* constant
