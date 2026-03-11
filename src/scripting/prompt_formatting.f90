@@ -14,10 +14,21 @@ module prompt_formatting
   ! History counter for prompts
   integer, save :: prompt_history_number = 1
 
+  ! Prompt element cache (valid for one prompt expansion cycle)
+  character(len=256), save :: cached_git_branch = ''
+  character(len=64), save :: cached_git_status = ''
+  character(len=64), save :: cached_git_ahead_behind = ''
+  character(len=256), save :: cached_venv_name = ''
+  logical, save :: cache_branch_valid = .false.
+  logical, save :: cache_status_valid = .false.
+  logical, save :: cache_ahead_behind_valid = .false.
+  logical, save :: cache_venv_valid = .false.
+
   ! Public interface
   public :: expand_prompt, safe_expand_prompt, expand_zsh_colors
   public :: get_ansi_color_code, get_epoch_seconds, increment_prompt_history
   public :: get_git_branch, get_git_status_indicator, is_git_repo
+  public :: invalidate_prompt_cache
 
 contains
 
@@ -35,6 +46,8 @@ contains
     integer :: i, j, prompt_len
     integer, parameter :: RESULT_CAPACITY = 1024
     character(len=256) :: replacement  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
+
+    call invalidate_prompt_cache()
 
     result = ''
     j = 1
@@ -104,6 +117,8 @@ contains
     character(len=1024) :: var_expanded  ! Buffer for variable/command expansion
     integer :: i, j, prompt_len, result_capacity
     character(len=:), allocatable :: replacement  ! Heap allocation to avoid stack overflow
+
+    call invalidate_prompt_cache()
 
     ! Allocate replacement buffer on heap
     allocate(character(len=256) :: replacement)
@@ -559,6 +574,11 @@ contains
     character(len=:), allocatable :: branch
     character(len=256) :: output
 
+    if (cache_branch_valid) then
+      branch = trim(cached_git_branch)
+      return
+    end if
+
     ! Try to get branch name using git command
     ! Use git symbolic-ref for speed (faster than git branch)
     output = execute_and_capture('git symbolic-ref --short HEAD 2>/dev/null')
@@ -569,6 +589,9 @@ contains
       ! Not in a git repo or detached HEAD
       branch = ''
     end if
+
+    cached_git_branch = branch
+    cache_branch_valid = .true.
   end function
 
   ! Get git status indicator
@@ -577,10 +600,17 @@ contains
     character(len=:), allocatable :: indicator
     character(len=256) :: output
 
+    if (cache_status_valid) then
+      indicator = trim(cached_git_status)
+      return
+    end if
+
     ! First check if we're in a git repo
     output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
     if (len_trim(output) == 0) then
       indicator = ''  ! Not in a git repo
+      cached_git_status = ''
+      cache_status_valid = .true.
       return
     end if
 
@@ -601,6 +631,9 @@ contains
       ! Clean working tree
       indicator = ''  ! Clean (or use '✓' if you want to show clean status)
     end if
+
+    cached_git_status = indicator
+    cache_status_valid = .true.
   end function
 
   ! Check if current directory is in a git repository
@@ -1081,5 +1114,13 @@ contains
             (ic >= iachar('0') .and. ic <= iachar('9')) .or. &
             c == '_'
   end function
+
+  ! Invalidate prompt element cache (call at start of each prompt expansion)
+  subroutine invalidate_prompt_cache()
+    cache_branch_valid = .false.
+    cache_status_valid = .false.
+    cache_ahead_behind_valid = .false.
+    cache_venv_valid = .false.
+  end subroutine
 
 end module prompt_formatting
