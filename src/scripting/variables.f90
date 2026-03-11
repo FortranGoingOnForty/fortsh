@@ -550,6 +550,22 @@ contains
           index_str = var_name(bracket_pos+1:bracket_end-1)
           var_name = var_name(:bracket_pos-1)
 
+          ! Strip quotes and lexer sentinel chars from array key
+          call strip_quotes(index_str)
+          block
+            character(len=100) :: clean_key
+            integer :: ci, co
+            co = 0
+            clean_key = ''
+            do ci = 1, len_trim(index_str)
+              if (ichar(index_str(ci:ci)) > 3) then
+                co = co + 1
+                clean_key(co:co) = index_str(ci:ci)
+              end if
+            end do
+            index_str = clean_key
+          end block
+
           ! Check if this is an associative array
           if (is_associative_array(shell, trim(var_name))) then
             ! Associative array: use key as-is

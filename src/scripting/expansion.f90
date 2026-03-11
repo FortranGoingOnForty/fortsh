@@ -55,6 +55,9 @@ contains
         array_name = var_name(:bracket_pos-1)
         array_key = var_name(bracket_pos+1:bracket_end-1)
 
+        ! Strip quotes from array subscript (bash strips quotes)
+        call strip_quotes(array_key)
+
         ! Check for special prefixes (! for keys, # for length)
         is_keys_expansion = .false.
         is_length_expansion = .false.
