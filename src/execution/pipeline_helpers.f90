@@ -95,7 +95,7 @@ contains
     use expansion, only: field_split
     type(command_t), intent(inout) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i, j, total_tokens
+    integer :: i, j, total_tokens, temp_cap
     character(len=:), allocatable :: expanded
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     integer, allocatable :: temp_token_lengths(:)  ! Track actual lengths of expanded tokens
@@ -103,18 +103,21 @@ contains
     logical :: is_format_string
     ! Heap-allocated to avoid static storage in recursive context
     character(len=MAX_TOKEN_LEN), allocatable :: split_words(:)
+    integer :: split_cap
     character(len=256) :: ifs_to_use
     integer :: word_count, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
     logical :: is_double_bracket_cmd
     logical :: was_originally_quoted
 
-    allocate(split_words(200))
+    split_cap = 256
+    allocate(split_words(split_cap))
 
     ! Allocate temporary storage for expanded tokens
-    allocate(temp_tokens(max(cmd%num_tokens * 50, 200)))  ! Extra space for brace expansion ({a..z} = 26x)
-    allocate(temp_token_lengths(max(cmd%num_tokens * 50, 200)))
-    allocate(temp_token_quoted(max(cmd%num_tokens * 50, 200)))
+    temp_cap = max(cmd%num_tokens * 10, 256)
+    allocate(temp_tokens(temp_cap))
+    allocate(temp_token_lengths(temp_cap))
+    allocate(temp_token_quoted(temp_cap))
     temp_token_lengths = 0
     temp_token_quoted = .false.
     total_tokens = 0
@@ -193,11 +196,10 @@ contains
         ! "$@" - add each positional parameter as a separate quoted token
         do j = 1, shell%num_positional
           total_tokens = total_tokens + 1
-          if (total_tokens <= size(temp_tokens)) then
-            temp_tokens(total_tokens) = trim(shell%positional_params(j))
-            temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j))
-            temp_token_quoted(total_tokens) = .true.  ! Positional params from "$@" are quoted
-          end if
+          if (total_tokens > temp_cap) call grow_temp_arrays()
+          temp_tokens(total_tokens) = trim(shell%positional_params(j))
+          temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j))
+          temp_token_quoted(total_tokens) = .true.  ! Positional params from "$@" are quoted
         end do
         cycle  ! Skip normal token processing
       end if
@@ -249,24 +251,77 @@ contains
         end block
       else
         ! No quotes or double quotes - perform expansion
-        ! Pass was_quoted flag if token was double-quoted
         block
           use parser, only: expand_variables
+          use expansion, only: expand_braces_to_words
+          logical :: is_double_quoted_token
+          is_double_quoted_token = .false.
           if (allocated(cmd%token_quote_type) .and. &
-              i <= size(cmd%token_quote_type) .and. &
-              cmd%token_quote_type(i) == QUOTE_DOUBLE) then
-            ! For quoted tokens, use token_lengths to preserve trailing whitespace
+              i <= size(cmd%token_quote_type)) then
+            is_double_quoted_token = (cmd%token_quote_type(i) == QUOTE_DOUBLE)
+          end if
+
+          if (is_double_quoted_token) then
+            ! Double-quoted: no brace expansion, preserve trailing whitespace
             if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths)) then
               if (cmd%token_lengths(i) > 0) then
                 call expand_variables(cmd%tokens(i)(1:cmd%token_lengths(i)), expanded, shell, was_quoted_in=.true.)
               else
-                ! Empty double-quoted string "" - expand empty string, not full buffer
                 expanded = ''
               end if
             else
               call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.true.)
             end if
+          else if (index(cmd%tokens(i), '{') > 0 .and. index(cmd%tokens(i), '}') > 0 .and. &
+                   index(cmd%tokens(i), '${') == 0) then
+            ! Unquoted token with braces (not ${...}): expand braces into
+            ! separate words first, then variable-expand each word individually.
+            ! This bypasses MAX_TOKEN_LEN limits and matches bash/zsh behavior.
+            block
+              character(len=MAX_TOKEN_LEN), allocatable :: brace_words(:)
+              character(len=:), allocatable :: var_expanded
+              integer :: bw_count, bw_i
+
+              call expand_braces_to_words(trim(cmd%tokens(i)), brace_words, bw_count)
+
+              if (bw_count > 1) then
+                ! Multiple words from brace expansion — add each as a separate token
+                do bw_i = 1, bw_count
+                  ! Expand variables in each brace word individually
+                  if (index(brace_words(bw_i), '$') > 0 .or. &
+                      index(brace_words(bw_i), '`') > 0) then
+                    call expand_variables(trim(brace_words(bw_i)), var_expanded, shell, was_quoted_in=.false.)
+                    total_tokens = total_tokens + 1
+                    if (total_tokens > temp_cap) call grow_temp_arrays()
+                    if (allocated(var_expanded)) then
+                      temp_tokens(total_tokens) = var_expanded
+                      temp_token_lengths(total_tokens) = len(var_expanded)
+                    else
+                      temp_tokens(total_tokens) = brace_words(bw_i)
+                      temp_token_lengths(total_tokens) = len_trim(brace_words(bw_i))
+                    end if
+                  else
+                    total_tokens = total_tokens + 1
+                    if (total_tokens > temp_cap) call grow_temp_arrays()
+                    temp_tokens(total_tokens) = brace_words(bw_i)
+                    temp_token_lengths(total_tokens) = len_trim(brace_words(bw_i))
+                  end if
+                  temp_token_quoted(total_tokens) = .false.
+                end do
+                deallocate(brace_words)
+                cycle  ! All words already added as separate tokens
+              else
+                ! Single word — fall through to normal variable expansion
+                expanded = trim(brace_words(1))
+                deallocate(brace_words)
+                if (index(expanded, '$') > 0 .or. index(expanded, '`') > 0) then
+                  call expand_variables(expanded, var_expanded, shell, was_quoted_in=.false.)
+                  if (allocated(var_expanded)) expanded = var_expanded
+                end if
+              end if
+            end block
           else
+            ! No braces — standard variable expansion
             call expand_variables(cmd%tokens(i), expanded, shell, was_quoted_in=.false.)
           end if
         end block
@@ -317,6 +372,13 @@ contains
       if (should_split) then
         ! Split the expanded string using IFS characters
         word_count = 0
+        ! Grow split_words if expanded string could produce more words than capacity
+        ! Worst case: every other char is an IFS separator → len/2 + 1 words
+        if (allocated(expanded) .and. len(expanded) / 2 + 1 > split_cap) then
+          deallocate(split_words)
+          split_cap = len(expanded) / 2 + 1
+          allocate(split_words(split_cap))
+        end if
         ! Pass ifs_to_use with exact length - use substring to avoid trailing blanks
         if (ifs_len_to_use > 0) then
           call field_split(expanded, ifs_to_use(1:ifs_len_to_use), split_words, word_count)
@@ -329,12 +391,11 @@ contains
         ! Add all split words as separate tokens
         do j = 1, word_count
           total_tokens = total_tokens + 1
-          if (total_tokens <= size(temp_tokens)) then
-            temp_tokens(total_tokens) = split_words(j)
-            temp_token_lengths(total_tokens) = len_trim(split_words(j))
-            ! Split tokens from unquoted expansion are not quoted
-            temp_token_quoted(total_tokens) = .false.
-          end if
+          if (total_tokens > temp_cap) call grow_temp_arrays()
+          temp_tokens(total_tokens) = split_words(j)
+          temp_token_lengths(total_tokens) = len_trim(split_words(j))
+          ! Split tokens from unquoted expansion are not quoted
+          temp_token_quoted(total_tokens) = .false.
         end do
       else
         ! No IFS chars or shouldn't split, just add as single token
@@ -354,17 +415,16 @@ contains
           end if
         end if
         total_tokens = total_tokens + 1
-        if (total_tokens <= size(temp_tokens)) then
-          temp_tokens(total_tokens) = expanded
-          ! Track actual length of expanded token (use len for allocatable to get real length)
-          if (allocated(expanded)) then
-            temp_token_lengths(total_tokens) = len(expanded)
-          else
-            temp_token_lengths(total_tokens) = 0
-          end if
-          ! Preserve quoted status for trailing whitespace preservation
-          temp_token_quoted(total_tokens) = was_originally_quoted
+        if (total_tokens > temp_cap) call grow_temp_arrays()
+        temp_tokens(total_tokens) = expanded
+        ! Track actual length of expanded token (use len for allocatable to get real length)
+        if (allocated(expanded)) then
+          temp_token_lengths(total_tokens) = len(expanded)
+        else
+          temp_token_lengths(total_tokens) = 0
         end if
+        ! Preserve quoted status for trailing whitespace preservation
+        temp_token_quoted(total_tokens) = was_originally_quoted
       end if
     end do
 
@@ -389,6 +449,30 @@ contains
     deallocate(temp_tokens)
     deallocate(temp_token_lengths)
     deallocate(temp_token_quoted)
+
+  contains
+
+    subroutine grow_temp_arrays()
+      character(len=MAX_TOKEN_LEN), allocatable :: new_tokens(:)
+      integer, allocatable :: new_lengths(:)
+      logical, allocatable :: new_quoted(:)
+      integer :: new_cap
+
+      new_cap = temp_cap * 2
+      allocate(new_tokens(new_cap))
+      allocate(new_lengths(new_cap))
+      allocate(new_quoted(new_cap))
+      new_lengths = 0
+      new_quoted = .false.
+      new_tokens(1:temp_cap) = temp_tokens(1:temp_cap)
+      new_lengths(1:temp_cap) = temp_token_lengths(1:temp_cap)
+      new_quoted(1:temp_cap) = temp_token_quoted(1:temp_cap)
+      call move_alloc(new_tokens, temp_tokens)
+      call move_alloc(new_lengths, temp_token_lengths)
+      call move_alloc(new_quoted, temp_token_quoted)
+      temp_cap = new_cap
+    end subroutine grow_temp_arrays
+
   end subroutine
 
   subroutine expand_command_globs(cmd, shell)
