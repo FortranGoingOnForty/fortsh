@@ -2442,7 +2442,8 @@ contains
   subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
-                         set_shell_variable, is_shell_variable_set, check_nounset
+                         set_shell_variable, is_shell_variable_set, check_nounset, &
+                         strip_quotes
     character(len=*), intent(in) :: param_expr
     character(len=:), allocatable, intent(out) :: result_value
     type(shell_state_t), intent(inout) :: shell
@@ -2596,6 +2597,22 @@ contains
         bracket_end = bracket_pos + bracket_end - 1
         index_str = var_name(bracket_pos+1:bracket_end-1)
         var_name = var_name(:bracket_pos-1)
+
+        ! Strip quotes and lexer sentinel chars from array subscript
+        call strip_quotes(index_str)
+        block
+          character(len=MAX_TOKEN_LEN) :: clean_key
+          integer :: ci, co
+          co = 0
+          clean_key = ''
+          do ci = 1, len_trim(index_str)
+            if (ichar(index_str(ci:ci)) > 3) then
+              co = co + 1
+              clean_key(co:co) = index_str(ci:ci)
+            end if
+          end do
+          index_str = clean_key
+        end block
 
         ! Check for special indices
         if (trim(index_str) == '@' .or. trim(index_str) == '*') then
