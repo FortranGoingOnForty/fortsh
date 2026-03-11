@@ -2761,13 +2761,66 @@ contains
   end subroutine init_token_metadata
 
   subroutine cache_command_path(shell, cmd_name)
-    use command_builtin, only: find_command_full_path
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: cmd_name
     character(len=MAX_PATH_LEN) :: full_path
     integer :: j
 
-    full_path = find_command_full_path(cmd_name)
+    ! Inline PATH search to avoid circular dependency with command_builtin
+    block
+      character(len=:), allocatable :: path_alloc
+      character(len=4096) :: path_var
+      character(len=1024) :: path_comp, candidate
+      integer :: spos, epos, cpos
+      character(kind=c_char), target :: c_path(1025)
+      integer :: ci, acc_status
+      interface
+        function cache_access(pathname, mode) bind(C, name="access")
+          import :: c_char, c_int
+          character(kind=c_char), intent(in) :: pathname(*)
+          integer(c_int), value :: mode
+          integer(c_int) :: cache_access
+        end function
+      end interface
+
+      full_path = ''
+      if (index(cmd_name, '/') > 0) return
+
+      path_alloc = get_environment_var('PATH')
+      if (allocated(path_alloc) .and. len_trim(path_alloc) > 0) then
+        path_var = path_alloc
+      else
+        path_var = '/usr/bin:/bin'
+      end if
+
+      spos = 1
+      do while (spos <= len_trim(path_var))
+        cpos = index(path_var(spos:), ':')
+        if (cpos == 0) then
+          epos = len_trim(path_var)
+        else
+          epos = spos + cpos - 2
+        end if
+        path_comp = path_var(spos:epos)
+        if (len_trim(path_comp) == 0) path_comp = '.'
+
+        write(candidate, '(a,a,a)') trim(path_comp), '/', trim(cmd_name)
+
+        ! Check executable via C access()
+        do ci = 1, len_trim(candidate)
+          c_path(ci) = candidate(ci:ci)
+        end do
+        c_path(len_trim(candidate) + 1) = c_null_char
+        acc_status = cache_access(c_path, int(1, c_int))  ! X_OK = 1
+        if (acc_status == 0) then
+          full_path = candidate
+          exit
+        end if
+
+        if (cpos == 0) exit
+        spos = spos + cpos
+      end do
+    end block
     if (len_trim(full_path) == 0) return
 
     ! Check if already in hash table — update hits
