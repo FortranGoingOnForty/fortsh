@@ -163,6 +163,12 @@ module readline
     character(len=MAX_LINE_LEN) :: suggestion  ! Current suggestion from history (fixed-length to avoid flang-new bug)
     integer :: suggestion_length = 0  ! Length of suggestion
 
+    ! Prefix history search (fish-style up/down arrow with typed prefix)
+    logical :: in_prefix_search = .false.     ! Currently in prefix search mode
+    character(len=MAX_LINE_LEN) :: prefix_search_text  ! Frozen prefix text
+    integer :: prefix_search_len = 0          ! Length of frozen prefix
+    integer :: prefix_search_idx = 0          ! Current match index in history (0 = at present/original)
+
     ! Menu selection support (zsh/fish-style interactive completion)
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
     character(len=MAX_MENU_ITEM_LEN) :: menu_items(MAX_MENU_ITEMS)  ! Completion items for menu (fixed-length to avoid flang-new bug)
@@ -1106,6 +1112,8 @@ contains
         if (utf8_num_bytes > 1) then
           ! In search mode, ignore multi-byte characters (search uses ASCII only)
           if (module_input_state%in_search) cycle
+          ! Cancel prefix search on any typed character
+          if (module_input_state%in_prefix_search) call cancel_prefix_search(module_input_state)
           ! Multi-byte UTF-8 character (emoji, CJK, etc.)
           ! Determine visual width: 3-4 byte UTF-8 is always 2-wide, 2-byte varies
           if (utf8_num_bytes >= 3) then
@@ -1123,6 +1131,11 @@ contains
 
         if (char_code == 27) then
         else if (char_code < 32 .or. char_code == 127) then
+        end if
+
+        ! Cancel prefix search on any key except escape (arrows handled inside escape handler)
+        if (module_input_state%in_prefix_search .and. char_code /= KEY_ESC) then
+          call cancel_prefix_search(module_input_state)
         end if
 
         select case(char_code)
@@ -1417,14 +1430,30 @@ contains
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
-              call highlight_command_line(temp_buf(:module_input_state%length), &
-                                          module_highlighted_buffer, module_highlighted_len, &
-                                          module_input_state%length)
-              if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
-                write(output_unit, '(a)', advance='no') module_highlighted_buffer(:module_highlighted_len)
+
+              ! In prefix search mode, render prefix in reverse video + rest plain
+              if (module_input_state%in_prefix_search .and. module_input_state%prefix_search_idx /= 0) then
+                ! Prefix in reverse video
+                write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                do i_redraw = 1, module_input_state%prefix_search_len
+                  write(output_unit, '(a)', advance='no') temp_buf(i_redraw:i_redraw)
+                end do
+                write(output_unit, '(a)', advance='no') char(27) // '[0m'
+                ! Remainder in plain text
+                if (module_input_state%length > module_input_state%prefix_search_len) then
+                  write(output_unit, '(a)', advance='no') &
+                    temp_buf(module_input_state%prefix_search_len+1:module_input_state%length)
+                end if
               else
-                ! Fallback to plain text (temp_buf already extracted above)
-                write(output_unit, '(a)', advance='no') temp_buf(:module_input_state%length)
+                call highlight_command_line(temp_buf(:module_input_state%length), &
+                                            module_highlighted_buffer, module_highlighted_len, &
+                                            module_input_state%length)
+                if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
+                  write(output_unit, '(a)', advance='no') module_highlighted_buffer(:module_highlighted_len)
+                else
+                  ! Fallback to plain text (temp_buf already extracted above)
+                  write(output_unit, '(a)', advance='no') temp_buf(:module_input_state%length)
+                end if
               end if
 
               ! Display autosuggestion if present (only when cursor is at end)
@@ -5338,6 +5367,7 @@ contains
         if (input_state%in_search) then
           call accept_search_for_editing(input_state)
         else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
           call handle_cursor_right(input_state)
         end if
       case('D')  ! Left arrow
@@ -5345,14 +5375,16 @@ contains
         if (input_state%in_search) then
           call accept_search_for_editing(input_state)
         else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
           call handle_cursor_left(input_state)
         end if
       case('2')
         ! Could be bracketed paste (ESC[200~ or ESC[201~) or extended escape
+        if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
         call handle_paste_or_extended(input_state, done)
       case('1', '3', '4', '5', '6')
         ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C)
-        ! Parse it to check if it's a key we care about
+        if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
         call handle_extended_escape_sequence(input_state, done)
       case default
         ! Unknown escape sequence - ignore it
@@ -5360,6 +5392,7 @@ contains
       end select
     else
       ! Not '[', so it's an Alt+key combination (ESC followed by character)
+      if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
       ! In search mode, only Alt+Backspace is meaningful — everything else is no-op
       if (input_state%in_search) then
         if (ch1 == char(127)) then
@@ -5699,26 +5732,44 @@ contains
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
 
+    ! If there's text on the line and we're not yet in any history mode,
+    ! enter prefix search mode (fish-style)
+    if (.not. input_state%in_history .and. .not. input_state%in_prefix_search &
+        .and. input_state%length > 0) then
+      call state_buffer_save(input_state)
+      ! Freeze the prefix
+      input_state%prefix_search_len = input_state%length
+      input_state%prefix_search_text = ''
+      call state_buffer_get(input_state, input_state%prefix_search_text)
+      input_state%in_prefix_search = .true.
+      input_state%prefix_search_idx = 0  ! 0 = at present
+      ! Clear shadow text — prefix search replaces it
+      input_state%suggestion_length = 0
+      input_state%suggestion = ''
+    end if
 
-    ! If not currently browsing history, save the current input
+    ! Prefix search: find previous match
+    if (input_state%in_prefix_search) then
+      call prefix_search_move(input_state, -1)
+      return
+    end if
+
+    ! Standard history navigation (empty line)
     if (.not. input_state%in_history) then
       call state_buffer_save(input_state)
       input_state%history_pos = command_history%count + 1
       input_state%in_history = .true.
     end if
 
-    ! Move up in history
     if (input_state%history_pos > 1) then
       input_state%history_pos = input_state%history_pos - 1
       call get_history_line(input_state%history_pos, history_line, found)
-
       if (found) then
         call state_buffer_set(input_state, history_line)
         input_state%length = len_trim(history_line)
         input_state%cursor_pos = input_state%length
         input_state%dirty = .true.
       end if
-    else
     end if
   end subroutine
   
@@ -5726,6 +5777,12 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
+
+    ! Prefix search: find next match or return to present
+    if (input_state%in_prefix_search) then
+      call prefix_search_move(input_state, +1)
+      return
+    end if
 
     ! Only navigate down if we're currently in history
     if (.not. input_state%in_history) return
@@ -5758,6 +5815,108 @@ contains
       input_state%in_history = .false.
       input_state%dirty = .true.
     end if
+  end subroutine
+
+  ! --------------------------------------------------------------------------
+  ! Prefix history search: find next/previous history entry matching prefix.
+  ! direction: -1 = backward (older), +1 = forward (newer)
+  ! --------------------------------------------------------------------------
+  subroutine prefix_search_move(input_state, direction)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: direction
+
+    character(len=MAX_LINE_LEN) :: history_line
+    integer :: i, start_idx, hist_len, j
+    logical :: matches, found
+
+    if (command_history%count == 0) return
+
+    ! Search backward (older entries)
+    if (direction < 0) then
+      ! Determine starting point
+      if (input_state%prefix_search_idx == 0) then
+        ! At present — start from most recent
+        start_idx = command_history%count
+      else
+        start_idx = input_state%prefix_search_idx - 1
+      end if
+
+      do i = start_idx, 1, -1
+        call get_history_line(i, history_line, found)
+        if (.not. found) cycle
+        hist_len = len_trim(history_line)
+        if (hist_len <= input_state%prefix_search_len) cycle
+
+        ! Check prefix match character-by-character
+        matches = .true.
+        do j = 1, input_state%prefix_search_len
+          if (history_line(j:j) /= input_state%prefix_search_text(j:j)) then
+            matches = .false.
+            exit
+          end if
+        end do
+
+        if (matches) then
+          input_state%prefix_search_idx = i
+          call state_buffer_set(input_state, history_line)
+          input_state%length = hist_len
+          input_state%cursor_pos = input_state%length
+          input_state%suggestion_length = 0
+          input_state%suggestion = ''
+          input_state%dirty = .true.
+          return
+        end if
+      end do
+      ! No match found — stay where we are
+
+    else
+      ! Search forward (newer entries)
+      if (input_state%prefix_search_idx == 0) return  ! Already at present
+
+      start_idx = input_state%prefix_search_idx + 1
+
+      do i = start_idx, command_history%count
+        call get_history_line(i, history_line, found)
+        if (.not. found) cycle
+        hist_len = len_trim(history_line)
+        if (hist_len <= input_state%prefix_search_len) cycle
+
+        matches = .true.
+        do j = 1, input_state%prefix_search_len
+          if (history_line(j:j) /= input_state%prefix_search_text(j:j)) then
+            matches = .false.
+            exit
+          end if
+        end do
+
+        if (matches) then
+          input_state%prefix_search_idx = i
+          call state_buffer_set(input_state, history_line)
+          input_state%length = hist_len
+          input_state%cursor_pos = input_state%length
+          input_state%suggestion_length = 0
+          input_state%suggestion = ''
+          input_state%dirty = .true.
+          return
+        end if
+      end do
+
+      ! No more forward matches — return to present (original text)
+      call state_buffer_restore(input_state)
+      input_state%length = input_state%prefix_search_len
+      input_state%cursor_pos = input_state%length
+      input_state%prefix_search_idx = 0
+      input_state%dirty = .true.
+      call update_autosuggestion(input_state)
+    end if
+  end subroutine
+
+  ! Cancel prefix search and accept current buffer content
+  subroutine cancel_prefix_search(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    input_state%in_prefix_search = .false.
+    input_state%prefix_search_len = 0
+    input_state%prefix_search_idx = 0
   end subroutine
 
   ! Calculate display width of UTF-8 character
@@ -7655,7 +7814,8 @@ contains
     end if
 
     ! Clear suggestion if buffer is empty or in special modes
-    if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+    if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history &
+        .or. input_state%in_prefix_search) then
       input_state%suggestion = ''
       input_state%suggestion_length = 0
       if (allocated(current_input)) deallocate(current_input)
