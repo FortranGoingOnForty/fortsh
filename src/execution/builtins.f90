@@ -2659,6 +2659,12 @@ contains
         shell%local_vars(depth, var_index)%exported = .false.
         shell%local_vars(depth, var_index)%is_integer = integer_flag
         shell%local_var_counts(depth) = var_index
+
+        ! Special handling: IFS needs shell state update for word splitting
+        if (trim(var_name) == 'IFS') then
+          shell%ifs = trim(var_value)
+          shell%ifs_len = len_trim(var_value)
+        end if
       else
         ! Just declare local: local var (unset or empty)
         var_name = trim(cmd%tokens(i))
@@ -3822,26 +3828,63 @@ contains
           end block
         end if
 
-        ! Set the variable
-        call set_shell_variable(shell, trim(var_name), &
-          trim(var_value))
-
-        ! Apply attributes
-        do j = 1, shell%num_variables
-          if (trim(shell%variables(j)%name) == trim(var_name)) then
-            if (readonly_flag) shell%variables(j)%readonly = .true.
-            if (integer_flag) shell%variables(j)%is_integer = .true.
-            if (export_flag) then
-              shell%variables(j)%exported = .true.
-              if (.not. set_environment_var(trim(var_name), trim(var_value))) then
-                write(error_unit, '(a)') 'declare: failed to export variable'
-                shell%last_exit_status = 1
-                return
+        ! Set the variable — inside functions without -g, use local scope
+        if (shell%function_depth > 0 .and. .not. global_flag) then
+          block
+            integer :: lv_depth, lv_idx
+            lv_depth = shell%function_depth
+            if (lv_depth <= size(shell%local_var_counts)) then
+              ! Check if already exists locally
+              lv_idx = 0
+              do j = 1, shell%local_var_counts(lv_depth)
+                if (trim(shell%local_vars(lv_depth, j)%name) == trim(var_name)) then
+                  lv_idx = j
+                  exit
+                end if
+              end do
+              if (lv_idx == 0) then
+                lv_idx = shell%local_var_counts(lv_depth) + 1
+                if (lv_idx <= size(shell%local_vars, 2)) then
+                  shell%local_var_counts(lv_depth) = lv_idx
+                end if
+              end if
+              if (lv_idx <= size(shell%local_vars, 2)) then
+                shell%local_vars(lv_depth, lv_idx)%name = var_name
+                shell%local_vars(lv_depth, lv_idx)%value = trim(var_value)
+                shell%local_vars(lv_depth, lv_idx)%readonly = readonly_flag
+                shell%local_vars(lv_depth, lv_idx)%exported = export_flag
+                shell%local_vars(lv_depth, lv_idx)%is_integer = integer_flag
               end if
             end if
-            exit
+          end block
+          if (export_flag) then
+            if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+              write(error_unit, '(a)') 'declare: failed to export variable'
+              shell%last_exit_status = 1
+              return
+            end if
           end if
-        end do
+        else
+          call set_shell_variable(shell, trim(var_name), &
+            trim(var_value))
+
+          ! Apply attributes
+          do j = 1, shell%num_variables
+            if (trim(shell%variables(j)%name) == trim(var_name)) then
+              if (readonly_flag) shell%variables(j)%readonly = .true.
+              if (integer_flag) shell%variables(j)%is_integer = .true.
+              if (export_flag) then
+                shell%variables(j)%exported = .true.
+                if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+                  write(error_unit, '(a)') 'declare: failed to export variable'
+                  shell%last_exit_status = 1
+                  return
+                end if
+              end if
+              exit
+            end if
+          end do
+        end if
       else
         ! Just VAR - declare variable or apply attributes
         var_name = trim(cmd%tokens(arg_idx))
