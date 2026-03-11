@@ -308,7 +308,7 @@ contains
     write(unit, '(a)') '> '''
     write(unit, '(a)') ''
     write(unit, '(a)') '# RPROMPT: Right-side prompt (like zsh)'
-    write(unit, '(a)') 'RPROMPT=''%F{240}\S%f'''
+    write(unit, '(a)') 'RPROMPT=''%F{240}\A%f'''
     write(unit, '(a)') ''
     write(unit, '(a)') '# Prompt escape sequences:'
     write(unit, '(a)') '#   \u user  \h host  \w path  \W basename  \$ #/$ by uid'
