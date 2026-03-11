@@ -1255,8 +1255,52 @@ contains
     ! Check if first argument is a signal specifier or -l flag
     if (cmd%tokens(2)(1:1) == '-') then
       if (len_trim(cmd%tokens(2)) > 1) then
+        ! Check for -s flag (signal name as next arg)
+        if (trim(cmd%tokens(2)) == '-s') then
+          if (cmd%num_tokens < 3) then
+            write(error_unit, '(a)') &
+              'kill: -s requires an argument'
+            shell%last_exit_status = 1
+            return
+          end if
+          ! Parse signal name from next argument
+          block
+            character(len=256) :: sig_name
+            sig_name = trim(cmd%tokens(3))
+            select case(sig_name)
+            case('TERM', 'term', 'SIGTERM')
+              signal_num = 15
+            case('KILL', 'kill', 'SIGKILL')
+              signal_num = 9
+            case('INT', 'int', 'SIGINT')
+              signal_num = 2
+            case('STOP', 'stop', 'SIGSTOP')
+              signal_num = 19
+            case('CONT', 'cont', 'SIGCONT')
+              signal_num = 18
+            case('HUP', 'hup', 'SIGHUP')
+              signal_num = 1
+            case('QUIT', 'quit', 'SIGQUIT')
+              signal_num = 3
+            case('USR1', 'usr1', 'SIGUSR1')
+              signal_num = 10
+            case('USR2', 'usr2', 'SIGUSR2')
+              signal_num = 12
+            case default
+              read(sig_name, *, iostat=iostat) signal_num
+              if (iostat /= 0) then
+                write(error_unit, '(a)') &
+                  'kill: invalid signal: ' // &
+                  trim(sig_name)
+                shell%last_exit_status = 1
+                return
+              end if
+            end select
+          end block
+          found_signal = .true.
+          arg_start = 4
         ! Check for -l flag (list signals)
-        if (trim(cmd%tokens(2)) == '-l') then
+        else if (trim(cmd%tokens(2)) == '-l') then
           ! Check if there's a signal number argument
           if (cmd%num_tokens >= 3) then
             ! kill -l <num> - translate signal number to name
@@ -1305,7 +1349,8 @@ contains
           shell%last_exit_status = 0
           return
         end if
-        
+
+        if (.not. found_signal) then
         read(cmd%tokens(2)(2:), *, iostat=iostat) signal_num
         if (iostat /= 0) then
           ! Try named signals
@@ -1332,6 +1377,7 @@ contains
         end if
         found_signal = .true.
         arg_start = 3
+        end if  ! .not. found_signal
       end if
     end if
     
