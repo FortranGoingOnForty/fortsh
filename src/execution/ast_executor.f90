@@ -2214,6 +2214,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i
     character(len=MAX_TOKEN_LEN) :: case_value
+    integer :: case_value_len
     integer :: item_idx, pattern_idx
     logical :: matched
     character(len=MAX_TOKEN_LEN) :: pattern
@@ -2262,9 +2263,31 @@ contains
     block
       use parser, only: expand_variables
       character(len=:), allocatable :: expanded_case_value
-      call expand_variables(trim(node%case_stmt%word), expanded_case_value, shell)
-      case_value = trim(expanded_case_value)
-      if (allocated(expanded_case_value)) deallocate(expanded_case_value)
+      integer :: raw_word_len
+      logical :: needs_expansion
+      raw_word_len = node%case_stmt%word_len
+      if (raw_word_len == 0) raw_word_len = len_trim(node%case_stmt%word)
+      ! Check if word needs expansion (contains $, `, or backtick)
+      needs_expansion = .false.
+      if (raw_word_len > 0) then
+        needs_expansion = (index(node%case_stmt%word(1:raw_word_len), '$') > 0) .or. &
+                         (index(node%case_stmt%word(1:raw_word_len), '`') > 0)
+      end if
+      if (needs_expansion .and. raw_word_len > 0) then
+        call expand_variables(node%case_stmt%word(1:raw_word_len), expanded_case_value, shell)
+        if (allocated(expanded_case_value)) then
+          case_value = expanded_case_value
+          case_value_len = len(expanded_case_value)
+          deallocate(expanded_case_value)
+        else
+          case_value = node%case_stmt%word
+          case_value_len = raw_word_len
+        end if
+      else
+        ! No expansion needed — use raw word directly (preserves spaces)
+        case_value = node%case_stmt%word
+        case_value_len = raw_word_len
+      end if
     end block
 
     ! Try to match against each case item
@@ -2279,7 +2302,8 @@ contains
         call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), trim(case_value))
+        ! Use case_value_len to preserve whitespace-only values (trim would destroy them)
+        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), case_value(1:case_value_len))
 
         if (matched) exit
       end do
