@@ -168,6 +168,7 @@ module readline
     character(len=MAX_LINE_LEN) :: prefix_search_text  ! Frozen prefix text
     integer :: prefix_search_len = 0          ! Length of frozen prefix
     integer :: prefix_search_idx = 0          ! Current match index in history (0 = at present/original)
+    logical :: prefix_search_flash = .false.  ! Transient: flash reverse video on no-match
 
     ! Menu selection support (zsh/fish-style interactive completion)
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
@@ -1432,13 +1433,18 @@ contains
               call state_buffer_get(module_input_state, temp_buf)
 
               ! In prefix search mode, render prefix in reverse video + rest plain
-              if (module_input_state%in_prefix_search .and. module_input_state%prefix_search_idx /= 0) then
+              if (module_input_state%in_prefix_search .and. &
+                  (module_input_state%prefix_search_idx /= 0 .or. module_input_state%prefix_search_flash)) then
                 ! Prefix in reverse video
                 write(output_unit, '(a)', advance='no') char(27) // '[7m'
                 do i_redraw = 1, module_input_state%prefix_search_len
                   write(output_unit, '(a)', advance='no') temp_buf(i_redraw:i_redraw)
                 end do
                 write(output_unit, '(a)', advance='no') char(27) // '[0m'
+                ! Clear flash flag after rendering (transient — one frame only)
+                if (module_input_state%prefix_search_flash) then
+                  module_input_state%prefix_search_flash = .false.
+                end if
                 ! Remainder in plain text
                 if (module_input_state%length > module_input_state%prefix_search_len) then
                   write(output_unit, '(a)', advance='no') &
@@ -5867,7 +5873,9 @@ contains
           return
         end if
       end do
-      ! No match found — stay where we are
+      ! No match found — flash reverse video to indicate no match
+      input_state%prefix_search_flash = .true.
+      input_state%dirty = .true.
 
     else
       ! Search forward (newer entries)
@@ -5917,6 +5925,7 @@ contains
     input_state%in_prefix_search = .false.
     input_state%prefix_search_len = 0
     input_state%prefix_search_idx = 0
+    input_state%prefix_search_flash = .false.
   end subroutine
 
   ! Calculate display width of UTF-8 character
