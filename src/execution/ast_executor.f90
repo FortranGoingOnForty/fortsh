@@ -2043,6 +2043,11 @@ contains
                index(node%for_loop%words(i), '`') > 0) then
         ! Word contained expansion - split on IFS
         call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
+      else if (index(node%for_loop%words(i), '{') > 0 .and. &
+               index(node%for_loop%words(i), '}') > 0 .and. &
+               allocated(expanded_word) .and. len(expanded_word) > len_trim(node%for_loop%words(i))) then
+        ! Brace expansion produced multiple words - split on spaces
+        call split_on_ifs(trim(expanded_word), ' ', split_words, split_count)
       else
         ! Literal word (no expansion) - do not split on IFS
         split_words(1) = trim(expanded_word)
