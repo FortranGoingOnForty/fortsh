@@ -7582,6 +7582,7 @@ contains
     integer :: num_completions, last_space_pos, i, j
     integer :: common_prefix_len, input_len
     character(len=MAX_LINE_LEN) :: suggestion_text
+    logical :: matches
 
     ! Clear any existing suggestion
     input_state%suggestion = ''
@@ -7619,9 +7620,19 @@ contains
       ! Build suggestion: remove the part user already typed
       suggestion_text = trim(completions(1))
       if (len_trim(suggestion_text) > len_trim(last_word)) then
-        ! Copy the part that extends beyond what user typed
-        input_state%suggestion = suggestion_text(len_trim(last_word)+1:len_trim(suggestion_text))
-        input_state%suggestion_length = len_trim(suggestion_text) - len_trim(last_word)
+        ! Verify completion is a genuine prefix extension of last_word
+        ! (fuzzy matches that don't start with last_word produce garbage suggestions)
+        matches = .true.
+        do i = 1, len_trim(last_word)
+          if (suggestion_text(i:i) /= last_word(i:i)) then
+            matches = .false.
+            exit
+          end if
+        end do
+        if (matches) then
+          input_state%suggestion = suggestion_text(len_trim(last_word)+1:len_trim(suggestion_text))
+          input_state%suggestion_length = len_trim(suggestion_text) - len_trim(last_word)
+        end if
       end if
     else if (num_completions > 1) then
       ! Multiple completions - find common prefix
@@ -7639,9 +7650,19 @@ contains
       end do
 
       ! If common prefix is longer than what user typed, suggest the difference
+      ! Verify the common prefix actually starts with last_word
       if (common_prefix_len > len_trim(last_word)) then
-        input_state%suggestion = completions(1)(len_trim(last_word)+1:common_prefix_len)
-        input_state%suggestion_length = common_prefix_len - len_trim(last_word)
+        matches = .true.
+        do i = 1, len_trim(last_word)
+          if (completions(1)(i:i) /= last_word(i:i)) then
+            matches = .false.
+            exit
+          end if
+        end do
+        if (matches) then
+          input_state%suggestion = completions(1)(len_trim(last_word)+1:common_prefix_len)
+          input_state%suggestion_length = common_prefix_len - len_trim(last_word)
+        end if
       end if
     end if
   end subroutine try_path_suggestion
