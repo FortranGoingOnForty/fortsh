@@ -138,10 +138,10 @@ contains
     comps(2) = 'src/io/suggestions.f90'
     res = compute_path_suggestion('src/i', 5, comps, 2)
 
-    ! Common prefix is 'src/io/' (7 chars), last_word is 5, so suggestion = 'o/'
-    call assert_eq_int('path/multi_common: length', 2, res%length)
-    call assert_eq_str('path/multi_common: text', 'o/', res%text, res%length)
-    call assert_eq_int('path/multi_common: source', SUGGEST_PATH, res%source)
+    ! Fish-style: suggest first prefix-matching completion's full remainder
+    call assert_eq_int('path/multi_first: length', 14, res%length)
+    call assert_eq_str('path/multi_first: text', 'o/readline.f90', res%text, res%length)
+    call assert_eq_int('path/multi_first: source', SUGGEST_PATH, res%source)
   end subroutine
 
   subroutine test_path_multiple_no_common_extension()
@@ -152,8 +152,10 @@ contains
     comps(2) = 'abd'
     res = compute_path_suggestion('ab', 2, comps, 2)
 
-    ! Common prefix is 'ab' (2 chars) = same as last_word, no extension
-    call assert_eq_int('path/multi_no_ext: length=0', 0, res%length)
+    ! Fish-style: suggest first prefix match remainder ('abc' -> 'c')
+    call assert_eq_int('path/multi_first_short: length', 1, res%length)
+    call assert_eq_str('path/multi_first_short: text', 'c', res%text, res%length)
+    call assert_eq_int('path/multi_first_short: source', SUGGEST_PATH, res%source)
   end subroutine
 
   subroutine test_path_multiple_non_prefix_rejected()

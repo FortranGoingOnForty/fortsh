@@ -7837,14 +7837,7 @@ contains
       current_input(j:j) = state_buffer_get_char(input_state, j)
     end do
 
-    ! Priority 1: path-based suggestion
-    call try_path_suggestion(current_input(1:input_state%length), input_state)
-    if (input_state%suggestion_length > 0) then
-      if (allocated(current_input)) deallocate(current_input)
-      return
-    end if
-
-    ! Priority 2: history-based suggestion (delegated to suggestions module)
+    ! Priority 1: history-based suggestion (fish-style: history first)
     if (command_history%count > 0 .and. allocated(command_history%lines)) then
       hist_result = compute_history_suggestion( &
         current_input, input_state%length, &
@@ -7856,8 +7849,13 @@ contains
           input_state%suggestion(j:j) = hist_result%text(j:j)
         end do
         input_state%suggestion_length = hist_result%length
+        if (allocated(current_input)) deallocate(current_input)
+        return
       end if
     end if
+
+    ! Priority 2: path-based suggestion (fallback when no history match)
+    call try_path_suggestion(current_input(1:input_state%length), input_state)
 
     if (allocated(current_input)) deallocate(current_input)
   end subroutine

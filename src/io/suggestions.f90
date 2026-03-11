@@ -29,9 +29,9 @@ contains
   ! --------------------------------------------------------------------------
   ! Compute a path-based suggestion from completion results.
   !
-  ! Given the last word the user typed and an array of completions returned
-  ! by the file scanner, returns the remaining suffix to suggest. Only
-  ! completions that are genuine prefix extensions of last_word are accepted.
+  ! Fish-style: pick the FIRST prefix-matching completion and suggest its
+  ! full remainder. This works for both single and multiple completions,
+  ! and correctly handles paths ending in / (where common prefix = last_word).
   ! --------------------------------------------------------------------------
   function compute_path_suggestion(last_word, last_word_len, &
       completions, num_completions) result(res)
@@ -41,7 +41,7 @@ contains
     integer, intent(in) :: num_completions
     type(suggestion_result_t) :: res
 
-    integer :: i, j, common_prefix_len, comp_len
+    integer :: i, j, comp_len
     logical :: is_prefix
 
     res%text = ''
@@ -50,59 +50,29 @@ contains
 
     if (last_word_len == 0 .or. num_completions == 0) return
 
-    if (num_completions == 1) then
-      ! Single completion — suggest the remainder if it's a prefix extension
-      comp_len = len_trim(completions(1))
-      if (comp_len > last_word_len) then
-        ! Verify prefix match character-by-character
-        is_prefix = .true.
-        do i = 1, last_word_len
-          if (completions(1)(i:i) /= last_word(i:i)) then
-            is_prefix = .false.
-            exit
-          end if
-        end do
-        if (is_prefix) then
-          res%length = min(comp_len - last_word_len, SUGGEST_BUF_LEN)
-          do i = 1, res%length
-            res%text(i:i) = completions(1)(last_word_len + i : last_word_len + i)
-          end do
-          res%source = SUGGEST_PATH
-        end if
-      end if
-    else
-      ! Multiple completions — find common prefix, then suggest the difference
-      common_prefix_len = len_trim(completions(1))
+    ! Find the first completion that is a strict prefix extension of last_word
+    do i = 1, num_completions
+      comp_len = len_trim(completions(i))
+      if (comp_len <= last_word_len) cycle
 
-      do i = 2, num_completions
-        comp_len = len_trim(completions(i))
-        do j = 1, min(common_prefix_len, comp_len)
-          if (completions(1)(j:j) /= completions(i)(j:j)) then
-            common_prefix_len = j - 1
-            exit
-          end if
-        end do
-        if (common_prefix_len == 0) exit
+      ! Verify prefix match character-by-character
+      is_prefix = .true.
+      do j = 1, last_word_len
+        if (completions(i)(j:j) /= last_word(j:j)) then
+          is_prefix = .false.
+          exit
+        end if
       end do
 
-      if (common_prefix_len > last_word_len) then
-        ! Verify the common prefix starts with last_word
-        is_prefix = .true.
-        do i = 1, last_word_len
-          if (completions(1)(i:i) /= last_word(i:i)) then
-            is_prefix = .false.
-            exit
-          end if
+      if (is_prefix) then
+        res%length = min(comp_len - last_word_len, SUGGEST_BUF_LEN)
+        do j = 1, res%length
+          res%text(j:j) = completions(i)(last_word_len + j : last_word_len + j)
         end do
-        if (is_prefix) then
-          res%length = min(common_prefix_len - last_word_len, SUGGEST_BUF_LEN)
-          do i = 1, res%length
-            res%text(i:i) = completions(1)(last_word_len + i : last_word_len + i)
-          end do
-          res%source = SUGGEST_PATH
-        end if
+        res%source = SUGGEST_PATH
+        return
       end if
-    end if
+    end do
   end function compute_path_suggestion
 
   ! --------------------------------------------------------------------------
