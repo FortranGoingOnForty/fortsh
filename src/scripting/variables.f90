@@ -177,6 +177,11 @@ contains
         if (depth <= size(shell%local_var_counts)) then
           do i = 1, shell%local_var_counts(depth)
             if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+              ! value_len=-1 means explicitly unset local (shadows global)
+              if (shell%local_vars(depth, i)%value_len == -1) then
+                value = ''
+                return
+              end if
               value = shell%local_vars(depth, i)%value
               return
             end if
@@ -322,7 +327,12 @@ contains
         if (depth <= size(shell%local_var_counts)) then
           do i = 1, shell%local_var_counts(depth)
             if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
-              is_set = .true.
+              ! value_len=-1 means explicitly unset local (shadows global)
+              if (shell%local_vars(depth, i)%value_len == -1) then
+                is_set = .false.
+              else
+                is_set = .true.
+              end if
               return
             end if
           end do
@@ -379,7 +389,12 @@ contains
         if (depth <= size(shell%local_var_counts)) then
           do i = 1, shell%local_var_counts(depth)
             if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
-              var_len = len_trim(shell%local_vars(depth, i)%value)
+              ! value_len=-1 means explicitly unset local
+              if (shell%local_vars(depth, i)%value_len == -1) then
+                var_len = 0
+              else
+                var_len = len_trim(shell%local_vars(depth, i)%value)
+              end if
               return
             end if
           end do
@@ -989,14 +1004,19 @@ contains
     character(len=*), intent(in) :: name
     integer, intent(in) :: index
     character(len=1024) :: value
-    integer :: i
-    
+    integer :: i, actual_index
+
     value = ''
-    
+
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
-        if (index >= 1 .and. index <= shell%variables(i)%array_size) then
-          value = shell%variables(i)%array_values(index)
+        actual_index = index
+        ! Bash: negative indices count from end (-1 = last element)
+        if (actual_index < 0) then
+          actual_index = shell%variables(i)%array_size + actual_index + 1
+        end if
+        if (actual_index >= 1 .and. actual_index <= shell%variables(i)%array_size) then
+          value = shell%variables(i)%array_values(actual_index)
         end if
         return
       end if

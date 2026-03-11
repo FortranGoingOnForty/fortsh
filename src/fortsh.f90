@@ -1121,6 +1121,34 @@ contains
       if (shell%function_return_pending .and. shell%source_depth > 0) exit
     end do
 
+    ! Fire RETURN trap if set (after sourced script finishes)
+    block
+      use signal_handling, only: get_trap_command, TRAP_RETURN
+      use ast_executor, only: execute_ast_node
+      character(len=4096) :: src_return_cmd
+      src_return_cmd = get_trap_command(shell, TRAP_RETURN)
+      if (len_trim(src_return_cmd) > 0 .and. &
+          .not. shell%executing_trap) then
+        block
+          type(command_node_t), pointer :: trap_node
+          integer :: saved_status_src
+          logical :: saved_bypass_src
+          saved_status_src = shell%last_exit_status
+          saved_bypass_src = shell%bypass_functions
+          shell%bypass_functions = .false.
+          shell%executing_trap = .true.
+          trap_node => parse_command_line(trim(src_return_cmd))
+          if (associated(trap_node)) then
+            exit_code = execute_ast_node(trap_node, shell)
+            call destroy_command_node(trap_node)
+          end if
+          shell%executing_trap = .false.
+          shell%bypass_functions = saved_bypass_src
+          shell%last_exit_status = saved_status_src
+        end block
+      end if
+    end block
+
     ! Decrement source depth
     shell%source_depth = shell%source_depth - 1
 

@@ -260,6 +260,7 @@ contains
       if (shell%traps(i)%signal == signum .and. shell%traps(i)%active) then
         ! Update existing trap
         shell%traps(i)%command = command
+        shell%traps(i)%inherited = .false.
         found = .true.
         exit
       else if (.not. shell%traps(i)%active .and. free_slot == -1) then

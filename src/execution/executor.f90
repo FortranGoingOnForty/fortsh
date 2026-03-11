@@ -801,7 +801,12 @@ contains
 
     ! === ERROR TRAP HOOK ===
     ! Execute ERR trap if command failed (after command execution)
-    if (shell%last_exit_status /= 0) then
+    ! POSIX: ERR trap suppressed in same contexts as errexit:
+    ! - || / && lists, if/while/until conditions, negation (!)
+    if (shell%last_exit_status /= 0 .and. &
+        .not. shell%evaluating_condition .and. &
+        .not. shell%in_and_or_list .and. &
+        .not. shell%in_negation) then
       trap_executed = execute_trap(shell, TRAP_ERR, shell%last_exit_status)
 
       ! If a trap command was queued, execute it now

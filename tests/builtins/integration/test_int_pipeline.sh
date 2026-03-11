@@ -16,7 +16,7 @@ compare_output "type in pipeline" 'type echo | head -1'
 compare_output "printf format in pipeline" 'printf "%d\n" 3 1 2 | sort -n'
 compare_output "set outputs to pipeline" 'X=hello; set | grep "^X=" | head -1'
 compare_output "declare -p in pipeline" 'X=42; declare -p X 2>/dev/null | head -1'
-compare_output "export -p in pipeline" 'export EX=val; export -p | grep EX | head -1'
+compare_output "export -p in pipeline" 'export EX=val; export -p | grep "^declare -x EX=" | head -1'
 compare_output "alias in pipeline" 'alias myalias="echo test" 2>/dev/null; alias | grep myalias | head -1; unalias myalias 2>/dev/null'
 
 section "2. builtins as pipeline sink"

@@ -132,7 +132,7 @@ contains
   ! permanent: if true, don't save original fd (for exec redirections)
   subroutine apply_single_redirection(redir, success, noclobber, permanent)
     use iso_c_binding, only: c_int
-    use system_interface, only: file_exists
+    use system_interface, only: file_exists, file_is_regular
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
     logical, intent(in), optional :: noclobber
@@ -168,7 +168,7 @@ contains
       case (REDIR_OUT)
         ! > file (redirect stdout to file)
         ! Check noclobber option (set -C) - prevents overwriting existing files
-        if (check_noclobber .and. .not. redir%force_clobber .and. file_exists(trim(redir%filename))) then
+        if (check_noclobber .and. .not. redir%force_clobber .and. file_is_regular(trim(redir%filename))) then
           write(error_unit, '(a)') 'fortsh: cannot overwrite existing file: ' // trim(redir%filename)
           success = .false.
           return
@@ -236,7 +236,7 @@ contains
       case (REDIR_FD_OUT)
         ! n> file (redirect fd n to file)
         ! Check noclobber option (set -C)
-        if (check_noclobber .and. .not. redir%force_clobber .and. file_exists(trim(redir%filename))) then
+        if (check_noclobber .and. .not. redir%force_clobber .and. file_is_regular(trim(redir%filename))) then
           write(error_unit, '(a)') 'fortsh: cannot overwrite existing file: ' // trim(redir%filename)
           success = .false.
           return

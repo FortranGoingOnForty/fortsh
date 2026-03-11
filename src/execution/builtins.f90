@@ -1370,20 +1370,50 @@ contains
         if (iostat /= 0) then
           ! Try named signals
           select case(trim(cmd%tokens(2)(2:)))
-          case('TERM', 'term')
-            signal_num = 15
-          case('KILL', 'kill') 
-            signal_num = 9
-          case('INT', 'int')
-            signal_num = 2
-          case('STOP', 'stop')
-            signal_num = 19
-          case('CONT', 'cont')
-            signal_num = 18
-          case('HUP', 'hup')
+          case('HUP', 'hup', 'SIGHUP')
             signal_num = 1
-          case('QUIT', 'quit')
+          case('INT', 'int', 'SIGINT')
+            signal_num = 2
+          case('QUIT', 'quit', 'SIGQUIT')
             signal_num = 3
+          case('ILL', 'ill', 'SIGILL')
+            signal_num = 4
+          case('TRAP', 'trap', 'SIGTRAP')
+            signal_num = 5
+          case('ABRT', 'abrt', 'SIGABRT')
+            signal_num = 6
+          case('BUS', 'bus', 'SIGBUS')
+            signal_num = 7
+          case('FPE', 'fpe', 'SIGFPE')
+            signal_num = 8
+          case('KILL', 'kill', 'SIGKILL')
+            signal_num = 9
+          case('USR1', 'usr1', 'SIGUSR1')
+            signal_num = 10
+          case('SEGV', 'segv', 'SIGSEGV')
+            signal_num = 11
+          case('USR2', 'usr2', 'SIGUSR2')
+            signal_num = 12
+          case('PIPE', 'pipe', 'SIGPIPE')
+            signal_num = 13
+          case('ALRM', 'alrm', 'SIGALRM')
+            signal_num = 14
+          case('TERM', 'term', 'SIGTERM')
+            signal_num = 15
+          case('STKFLT', 'stkflt', 'SIGSTKFLT')
+            signal_num = 16
+          case('CHLD', 'chld', 'SIGCHLD')
+            signal_num = 17
+          case('CONT', 'cont', 'SIGCONT')
+            signal_num = 18
+          case('STOP', 'stop', 'SIGSTOP')
+            signal_num = 19
+          case('TSTP', 'tstp', 'SIGTSTP')
+            signal_num = 20
+          case('TTIN', 'ttin', 'SIGTTIN')
+            signal_num = 21
+          case('TTOU', 'ttou', 'SIGTTOU')
+            signal_num = 22
           case default
             write(error_unit, '(a)') 'kill: invalid signal specification'
             shell%last_exit_status = 1
@@ -2360,32 +2390,62 @@ contains
           end if
         end block
 
-        ! Unset variable
-        do j = 1, shell%num_variables
-          if (trim(shell%variables(j)%name) == var_name) then
-            ! Check if variable is readonly
-            if (shell%variables(j)%readonly) then
-              write(error_unit, '(a)') 'unset: ' // &
-                trim(var_name) // &
-                ': cannot unset readonly variable'
-              shell%last_exit_status = 1
-              return
+        ! Unset variable - check local scope first
+        block
+          logical :: found_local
+          integer :: lv_depth, lv_i
+          found_local = .false.
+          if (shell%function_depth > 0) then
+            lv_depth = shell%function_depth
+            if (lv_depth <= size(shell%local_var_counts)) then
+              do lv_i = 1, shell%local_var_counts(lv_depth)
+                if (trim(shell%local_vars(lv_depth, lv_i)%name) &
+                    == trim(var_name)) then
+                  if (shell%local_vars(lv_depth, lv_i)%readonly) then
+                    write(error_unit, '(a)') 'unset: ' // &
+                      trim(var_name) // &
+                      ': cannot unset readonly variable'
+                    shell%last_exit_status = 1
+                    return
+                  end if
+                  ! Mark local variable as unset (value_len=-1 sentinel)
+                  ! This keeps it shadowing the global but treated as unset
+                  shell%local_vars(lv_depth, lv_i)%value = ''
+                  shell%local_vars(lv_depth, lv_i)%value_len = -1
+                  found_local = .true.
+                  exit
+                end if
+              end do
             end if
-            ! Unset from environment if exported
-            if (shell%variables(j)%exported) then
-              call unset_environment_var(var_name)
-            end if
-            shell%variables(j)%name = ''
-            shell%variables(j)%value = ''
-            shell%variables(j)%is_array = .false.
-            shell%variables(j)%is_assoc_array = .false.
-            shell%variables(j)%readonly = .false.
-            shell%variables(j)%exported = .false.
-            shell%variables(j)%array_size = 0
-            shell%variables(j)%assoc_size = 0
-            exit
           end if
-        end do
+          if (.not. found_local) then
+            do j = 1, shell%num_variables
+              if (trim(shell%variables(j)%name) == var_name) then
+                ! Check if variable is readonly
+                if (shell%variables(j)%readonly) then
+                  write(error_unit, '(a)') 'unset: ' // &
+                    trim(var_name) // &
+                    ': cannot unset readonly variable'
+                  shell%last_exit_status = 1
+                  return
+                end if
+                ! Unset from environment if exported
+                if (shell%variables(j)%exported) then
+                  call unset_environment_var(var_name)
+                end if
+                shell%variables(j)%name = ''
+                shell%variables(j)%value = ''
+                shell%variables(j)%is_array = .false.
+                shell%variables(j)%is_assoc_array = .false.
+                shell%variables(j)%readonly = .false.
+                shell%variables(j)%exported = .false.
+                shell%variables(j)%array_size = 0
+                shell%variables(j)%assoc_size = 0
+                exit
+              end if
+            end do
+          end if
+        end block
       end if
     end do
     
@@ -2613,6 +2673,15 @@ contains
             end if
             call set_array_variable(shell, trim(var_name), &
               arr_elems, ne)
+            ! Track array in local_vars for cleanup on function return
+            var_index = shell%local_var_counts(depth) + 1
+            if (var_index <= size(shell%local_vars, 2)) then
+              shell%local_var_counts(depth) = var_index
+              shell%local_vars(depth, var_index)%name = trim(var_name)
+              shell%local_vars(depth, var_index)%value = ''
+              shell%local_vars(depth, var_index)%value_len = 0
+              shell%local_vars(depth, var_index)%is_array = .true.
+            end if
           end block
           cycle
         end if
@@ -2645,6 +2714,12 @@ contains
         shell%local_vars(depth, var_index)%exported = .false.
         shell%local_vars(depth, var_index)%is_integer = integer_flag
         shell%local_var_counts(depth) = var_index
+
+        ! Special handling: IFS needs shell state update for word splitting
+        if (trim(var_name) == 'IFS') then
+          shell%ifs = trim(var_value)
+          shell%ifs_len = len_trim(var_value)
+        end if
       else
         ! Just declare local: local var (unset or empty)
         var_name = trim(cmd%tokens(i))
@@ -3808,26 +3883,63 @@ contains
           end block
         end if
 
-        ! Set the variable
-        call set_shell_variable(shell, trim(var_name), &
-          trim(var_value))
-
-        ! Apply attributes
-        do j = 1, shell%num_variables
-          if (trim(shell%variables(j)%name) == trim(var_name)) then
-            if (readonly_flag) shell%variables(j)%readonly = .true.
-            if (integer_flag) shell%variables(j)%is_integer = .true.
-            if (export_flag) then
-              shell%variables(j)%exported = .true.
-              if (.not. set_environment_var(trim(var_name), trim(var_value))) then
-                write(error_unit, '(a)') 'declare: failed to export variable'
-                shell%last_exit_status = 1
-                return
+        ! Set the variable — inside functions without -g, use local scope
+        if (shell%function_depth > 0 .and. .not. global_flag) then
+          block
+            integer :: lv_depth, lv_idx
+            lv_depth = shell%function_depth
+            if (lv_depth <= size(shell%local_var_counts)) then
+              ! Check if already exists locally
+              lv_idx = 0
+              do j = 1, shell%local_var_counts(lv_depth)
+                if (trim(shell%local_vars(lv_depth, j)%name) == trim(var_name)) then
+                  lv_idx = j
+                  exit
+                end if
+              end do
+              if (lv_idx == 0) then
+                lv_idx = shell%local_var_counts(lv_depth) + 1
+                if (lv_idx <= size(shell%local_vars, 2)) then
+                  shell%local_var_counts(lv_depth) = lv_idx
+                end if
+              end if
+              if (lv_idx <= size(shell%local_vars, 2)) then
+                shell%local_vars(lv_depth, lv_idx)%name = var_name
+                shell%local_vars(lv_depth, lv_idx)%value = trim(var_value)
+                shell%local_vars(lv_depth, lv_idx)%readonly = readonly_flag
+                shell%local_vars(lv_depth, lv_idx)%exported = export_flag
+                shell%local_vars(lv_depth, lv_idx)%is_integer = integer_flag
               end if
             end if
-            exit
+          end block
+          if (export_flag) then
+            if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+              write(error_unit, '(a)') 'declare: failed to export variable'
+              shell%last_exit_status = 1
+              return
+            end if
           end if
-        end do
+        else
+          call set_shell_variable(shell, trim(var_name), &
+            trim(var_value))
+
+          ! Apply attributes
+          do j = 1, shell%num_variables
+            if (trim(shell%variables(j)%name) == trim(var_name)) then
+              if (readonly_flag) shell%variables(j)%readonly = .true.
+              if (integer_flag) shell%variables(j)%is_integer = .true.
+              if (export_flag) then
+                shell%variables(j)%exported = .true.
+                if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+                  write(error_unit, '(a)') 'declare: failed to export variable'
+                  shell%last_exit_status = 1
+                  return
+                end if
+              end if
+              exit
+            end if
+          end do
+        end if
       else
         ! Just VAR - declare variable or apply attributes
         var_name = trim(cmd%tokens(arg_idx))

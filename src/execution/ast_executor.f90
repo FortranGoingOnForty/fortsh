@@ -666,6 +666,82 @@ contains
           end if
         end block
 
+        ! Fire RETURN trap if set (before cleanup, while still in function scope)
+        block
+          use signal_handling, only: get_trap_command, TRAP_RETURN
+          character(len=4096) :: return_trap_cmd
+          return_trap_cmd = get_trap_command(shell, TRAP_RETURN)
+          if (len_trim(return_trap_cmd) > 0 .and. &
+              .not. shell%executing_trap) then
+            block
+              use grammar_parser, only: parse_command_line
+              use command_tree, only: destroy_command_node
+              type(command_node_t), pointer :: trap_node
+              integer :: saved_status_rt
+              logical :: saved_bypass_rt
+              saved_status_rt = shell%last_exit_status
+              saved_bypass_rt = shell%bypass_functions
+              shell%bypass_functions = .false.
+              shell%executing_trap = .true.
+              trap_node => parse_command_line(trim(return_trap_cmd))
+              if (associated(trap_node)) then
+                exit_status = execute_ast_node(trap_node, shell)
+                call destroy_command_node(trap_node)
+              end if
+              shell%executing_trap = .false.
+              shell%bypass_functions = saved_bypass_rt
+              shell%last_exit_status = saved_status_rt
+            end block
+          end if
+        end block
+
+        ! Clean up local variables for this function scope
+        if (shell%function_depth > 0 .and. &
+            shell%function_depth <= size(shell%local_var_counts)) then
+          ! Check if IFS was local — restore from global variables
+          block
+            integer :: lv_idx, gv_idx
+            logical :: had_local_ifs, found_global_ifs
+            had_local_ifs = .false.
+            do lv_idx = 1, shell%local_var_counts(shell%function_depth)
+              if (trim(shell%local_vars(shell%function_depth, lv_idx)%name) == 'IFS') then
+                had_local_ifs = .true.
+              end if
+              ! Clean up local arrays from global variable storage
+              if (shell%local_vars(shell%function_depth, lv_idx)%is_array) then
+                do gv_idx = 1, shell%num_variables
+                  if (trim(shell%variables(gv_idx)%name) == &
+                      trim(shell%local_vars(shell%function_depth, lv_idx)%name)) then
+                    shell%variables(gv_idx)%name = ''
+                    shell%variables(gv_idx)%value = ''
+                    shell%variables(gv_idx)%is_array = .false.
+                    shell%variables(gv_idx)%array_size = 0
+                    exit
+                  end if
+                end do
+              end if
+            end do
+            shell%local_var_counts(shell%function_depth) = 0
+            if (had_local_ifs) then
+              ! Look up IFS from global variables array, bypassing local scope
+              found_global_ifs = .false.
+              do gv_idx = 1, shell%num_variables
+                if (trim(shell%variables(gv_idx)%name) == 'IFS') then
+                  shell%ifs = shell%variables(gv_idx)%value
+                  shell%ifs_len = shell%variables(gv_idx)%value_len
+                  found_global_ifs = .true.
+                  exit
+                end if
+              end do
+              if (.not. found_global_ifs) then
+                ! IFS was never explicitly set globally — restore default
+                shell%ifs = ' ' // char(9) // char(10)
+                shell%ifs_len = 3
+              end if
+            end if
+          end block
+        end if
+
         ! Decrement function depth
         shell%function_depth = shell%function_depth - 1
 
@@ -946,6 +1022,11 @@ contains
       call restore_fds()
     end if
 
+    ! Check for pending signals and dispatch their trap handlers
+    if (.not. shell%executing_trap) then
+      call dispatch_pending_signals(shell)
+    end if
+
     ! If a trap command was queued, execute it now (unless we're already executing a trap)
     if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap) then
       call execute_pending_trap(shell)
@@ -1183,6 +1264,16 @@ contains
           end if
         end do
 
+        ! Populate PIPESTATUS array (bash extension)
+        block
+          use variables, only: set_array_variable
+          character(len=16) :: pipestatus_vals(num_commands)
+          do i = 1, num_commands
+            write(pipestatus_vals(i), '(I0)') exit_statuses(i)
+          end do
+          call set_array_variable(shell, 'PIPESTATUS', pipestatus_vals, num_commands)
+        end block
+
         ! POSIX default: exit status from last command
         ! pipefail: rightmost non-zero exit status
         if (shell%option_pipefail) then
@@ -1217,6 +1308,10 @@ contains
         exit_status = 0
       end if
     end if
+
+    ! POSIX: Check errexit after pipeline execution (e.g., pipefail + errexit)
+    shell%last_exit_status = exit_status
+    call check_errexit(shell, exit_status)
 
   end function execute_pipeline_node
 
@@ -2000,6 +2095,11 @@ contains
                index(node%for_loop%words(i), '`') > 0) then
         ! Word contained expansion - split on IFS
         call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
+      else if (index(node%for_loop%words(i), '{') > 0 .and. &
+               index(node%for_loop%words(i), '}') > 0 .and. &
+               allocated(expanded_word) .and. len(expanded_word) > len_trim(node%for_loop%words(i))) then
+        ! Brace expansion produced multiple words - split on spaces
+        call split_on_ifs(trim(expanded_word), ' ', split_words, split_count)
       else
         ! Literal word (no expansion) - do not split on IFS
         split_words(1) = trim(expanded_word)
@@ -2164,13 +2264,14 @@ contains
       end block
     end if
 
-    ! Get the value to match (expand variables)
-    ! Note: Don't trim - the value might BE whitespace (e.g., " " in case " " in ...)
-    case_value = node%case_stmt%word
-    ! If it starts with $, expand it
-    if (len_trim(case_value) > 0 .and. case_value(1:1) == '$') then
-      case_value = get_shell_variable(shell, trim(case_value(2:)))
-    end if
+    ! Get the value to match (expand variables, command substitution, etc.)
+    block
+      use parser, only: expand_variables
+      character(len=:), allocatable :: expanded_case_value
+      call expand_variables(trim(node%case_stmt%word), expanded_case_value, shell)
+      case_value = trim(expanded_case_value)
+      if (allocated(expanded_case_value)) deallocate(expanded_case_value)
+    end block
 
     ! Try to match against each case item
     do item_idx = 1, node%case_stmt%num_items
@@ -2184,8 +2285,7 @@ contains
         call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        ! Note: Don't trim case_value - it might BE whitespace
-        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), case_value)
+        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), trim(case_value))
 
         if (matched) exit
       end do
@@ -2378,6 +2478,9 @@ contains
     if (cache_idx > 0) then
       function_ast_cache(cache_idx)%name = trim(node%function_def%name)
       function_ast_cache(cache_idx)%body => node%function_def%body
+      ! Detach body from parent AST so destroy_command_node won't free it
+      ! The function cache now owns this subtree
+      nullify(node%function_def%body)
     end if
 
     ! Also register in shell state for compatibility
@@ -2532,6 +2635,22 @@ contains
     shell%last_exit_status = saved_status
   end subroutine execute_pending_trap
 
+  ! Check for pending signals and dispatch their trap handlers
+  subroutine dispatch_pending_signals(shell)
+    use signal_handling, only: get_pending_trap_signals, execute_trap
+    type(shell_state_t), intent(inout) :: shell
+    integer :: pending_sigs(32), sig_count, si
+    logical :: trap_executed
+
+    call get_pending_trap_signals(pending_sigs, sig_count)
+    do si = 1, sig_count
+      trap_executed = execute_trap(shell, pending_sigs(si))
+      if (trap_executed .and. len_trim(shell%pending_trap_command) > 0) then
+        call execute_pending_trap(shell)
+      end if
+    end do
+  end subroutine dispatch_pending_signals
+
   ! Process sourced files inline (for dot command in lists)
   subroutine process_source_inline_ast(shell)
     use grammar_parser, only: parse_command_line
@@ -2604,6 +2723,33 @@ contains
       ! Stop execution if return was called from sourced script
       if (shell%function_return_pending .and. shell%source_depth > 0) exit
     end do
+
+    ! Fire RETURN trap if set (after sourced script finishes)
+    block
+      use signal_handling, only: get_trap_command, TRAP_RETURN
+      character(len=4096) :: src_return_cmd
+      src_return_cmd = get_trap_command(shell, TRAP_RETURN)
+      if (len_trim(src_return_cmd) > 0 .and. &
+          .not. shell%executing_trap) then
+        block
+          type(command_node_t), pointer :: trap_node
+          integer :: saved_status_src
+          logical :: saved_bypass_src
+          saved_status_src = shell%last_exit_status
+          saved_bypass_src = shell%bypass_functions
+          shell%bypass_functions = .false.
+          shell%executing_trap = .true.
+          trap_node => parse_command_line(trim(src_return_cmd))
+          if (associated(trap_node)) then
+            exit_code = execute_ast_node(trap_node, shell)
+            call destroy_command_node(trap_node)
+          end if
+          shell%executing_trap = .false.
+          shell%bypass_functions = saved_bypass_src
+          shell%last_exit_status = saved_status_src
+        end block
+      end if
+    end block
 
     ! Decrement source depth
     shell%source_depth = shell%source_depth - 1

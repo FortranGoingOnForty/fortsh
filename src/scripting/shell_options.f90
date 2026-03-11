@@ -122,24 +122,21 @@ contains
         cycle
       end if
       
-      ! Handle single-letter options
-      if (len_trim(option_name) == 1) then
-        select case (option_name(1:1))
+      ! Handle options — iterate over each character to support combined flags like -eo
+      block
+        integer :: fi
+        logical :: had_error
+        character(len=256) :: long_opt_name
+        had_error = .false.
+        fi = 1
+        do while (fi <= len_trim(option_name))
+          select case (option_name(fi:fi))
           case ('e')
             shell%option_errexit = enable_option
-            if (enable_option .and. shell%option_verbose) then
-              write(output_unit, '(a)') 'set: errexit enabled'
-            end if
           case ('u')
             shell%option_nounset = enable_option
-            if (enable_option .and. shell%option_verbose) then
-              write(output_unit, '(a)') 'set: nounset enabled'
-            end if
           case ('n')
             shell%option_noexec = enable_option
-            if (enable_option .and. shell%option_verbose) then
-              write(output_unit, '(a)') 'set: noexec enabled (syntax check mode)'
-            end if
           case ('v')
             shell%option_verbose = enable_option
           case ('x')
@@ -153,15 +150,14 @@ contains
           case ('f')
             shell%option_noglob = enable_option
           case ('o')
-            ! POSIX: set -o without argument lists all options
+            ! -o requires the next argument as the option name
             if (i >= cmd%num_tokens) then
               call list_shell_options(shell)
               shell%last_exit_status = 0
             else
-              ! Handle -o followed by option name (should be separate argument)
               i = i + 1
-              option_name = trim(cmd%tokens(i))
-              select case (trim(option_name))
+              long_opt_name = trim(cmd%tokens(i))
+              select case (trim(long_opt_name))
                 case ('allexport')
                   shell%option_allexport = enable_option
                 case ('braceexpand')
@@ -221,18 +217,18 @@ contains
                 case ('xtrace')
                   shell%option_xtrace = enable_option
                 case default
-                  write(error_unit, '(a)') 'set: unknown option: ' // trim(option_name)
+                  write(error_unit, '(a)') 'set: unknown option: ' // trim(long_opt_name)
                   shell%last_exit_status = 1
               end select
             end if
           case default
-            write(error_unit, '(a)') 'set: unknown option: -' // option_name(1:1)
+            write(error_unit, '(a)') 'set: unknown option: -' // option_name(fi:fi)
+            had_error = .true.
             shell%last_exit_status = 1
-        end select
-      else
-        write(error_unit, '(a)') 'set: unknown option: ' // trim(option_str)
-        shell%last_exit_status = 1
-      end if
+          end select
+          fi = fi + 1
+        end do
+      end block
       
       ! Always increment 
       i = i + 1
@@ -332,8 +328,29 @@ contains
         else if (shell%variables(i)%is_assoc_array) then
           write(output_unit, '(a)') trim(shell%variables(i)%name) // '=(associative array)'
         else
-          write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
-                                   '"' // trim(shell%variables(i)%value) // '"'
+          ! Bash: only quote values containing special chars, using single quotes
+          block
+            character(len=:), allocatable :: val
+            logical :: needs_quote
+            integer :: vi
+            val = trim(shell%variables(i)%value)
+            needs_quote = .false.
+            do vi = 1, len(val)
+              select case(val(vi:vi))
+              case(' ', char(9), char(10), '"', "'", '\', '$', '`', &
+                   '!', '(', ')', '{', '}', '[', ']', '|', '&', ';', &
+                   '<', '>', '?', '*', '#', '~')
+                needs_quote = .true.
+                exit
+              end select
+            end do
+            if (needs_quote) then
+              write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
+                                       "'" // val // "'"
+            else
+              write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // val
+            end if
+          end block
         end if
       end if
     end do
