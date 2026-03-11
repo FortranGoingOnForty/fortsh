@@ -2666,21 +2666,101 @@ contains
             end if
           else
             ! ${arr[@]} or ${map[@]} - return all elements/values
-            if (is_associative_array(shell, trim(var_name))) then
-              ! Return all values for associative array
-              call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
+            ! Check for slice syntax: ${arr[@]:offset:length}
+            block
+              character(len=256) :: slice_spec
+              integer :: slice_offset, slice_length, elem_count
+              integer :: sc_pos, elem_i, elem_start, word_i
+              logical :: has_slice
+              character(len=256) :: all_elems(200)
+
+              has_slice = .false.
+              slice_spec = ''
+              if (bracket_end < len_trim(param_expr)) then
+                slice_spec = param_expr(bracket_end+1:)
+                if (len_trim(slice_spec) > 0 .and. &
+                    slice_spec(1:1) == ':') then
+                  has_slice = .true.
+                end if
+              end if
+
+              if (is_associative_array(shell, &
+                  trim(var_name))) then
+                call get_assoc_array_keys(shell, &
+                  trim(var_name), keys, num_keys)
+                result_value = ''
+                do key_idx = 1, num_keys
+                  if (key_idx > 1) &
+                    result_value = result_value // ' '
+                  assoc_value = get_assoc_array_value( &
+                    shell, trim(var_name), &
+                    trim(keys(key_idx)))
+                  result_value = result_value // &
+                    trim(assoc_value)
+                end do
+                if (.not. has_slice) return
+              else
+                result_value = trim( &
+                  get_array_all_elements(shell, &
+                    trim(var_name)))
+                if (.not. has_slice) return
+              end if
+
+              ! Apply slice: parse :offset or :offset:length
+              block
+                character(len=256) :: off_str, len_str
+                integer :: ios1, ios2
+                slice_spec = slice_spec(2:)  ! skip :
+                sc_pos = index(trim(slice_spec), ':')
+                if (sc_pos > 0) then
+                  off_str = slice_spec(:sc_pos-1)
+                  len_str = slice_spec(sc_pos+1:)
+                  read(off_str, *, iostat=ios1) slice_offset
+                  read(len_str, *, iostat=ios2) slice_length
+                  if (ios2 /= 0) slice_length = 999
+                else
+                  off_str = slice_spec
+                  read(off_str, *, iostat=ios1) slice_offset
+                  slice_length = 999
+                end if
+                if (ios1 /= 0) return
+              end block
+
+              ! Split result into words then select slice
+              elem_count = 0
+              elem_start = 1
+              do elem_i = 1, len_trim(result_value)
+                if (result_value(elem_i:elem_i) == ' ') then
+                  if (elem_i > elem_start) then
+                    elem_count = elem_count + 1
+                    all_elems(elem_count) = &
+                      result_value(elem_start:elem_i-1)
+                  end if
+                  elem_start = elem_i + 1
+                end if
+              end do
+              if (elem_start <= len_trim(result_value)) then
+                elem_count = elem_count + 1
+                all_elems(elem_count) = &
+                  result_value(elem_start: &
+                    len_trim(result_value))
+              end if
+
+              ! Build sliced result
               result_value = ''
-              do key_idx = 1, num_keys
-                if (key_idx > 1) result_value = result_value // ' '
-                assoc_value = get_assoc_array_value(shell, trim(var_name), trim(keys(key_idx)))
-                result_value = result_value // trim(assoc_value)
+              word_i = 0
+              do elem_i = 1, elem_count
+                if (elem_i - 1 >= slice_offset .and. &
+                    word_i < slice_length) then
+                  if (word_i > 0) &
+                    result_value = result_value // ' '
+                  result_value = result_value // &
+                    trim(all_elems(elem_i))
+                  word_i = word_i + 1
+                end if
               end do
               return
-            else
-              ! Return all elements for indexed array
-              result_value = trim(get_array_all_elements(shell, trim(var_name)))
-              return
-            end if
+            end block
           end if
         else
           ! Check if this is an associative array
