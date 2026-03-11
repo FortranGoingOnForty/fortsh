@@ -435,16 +435,17 @@ contains
     end if
   end function
 
-  ! Intelligently shorten a path by abbreviating parent directories
-  ! Example: ~/very/long/path/to/project -> ~/v/l/p/t/project
+  ! Intelligently shorten a path by progressively abbreviating parent directories
+  ! Pass 1: ~/ver/lon/pat/to/project (3-char parents)
+  ! Pass 2: ~/v/l/p/t/project       (1-char parents)
   function shorten_path(path, max_length) result(shortened)
     character(len=*), intent(in) :: path
     integer, intent(in) :: max_length
     character(len=:), allocatable :: shortened
     character(len=256), allocatable :: components(:)
-    integer :: num_components, i, slash_pos, start_pos, components_capacity
+    integer :: num_components, i, slash_pos, comp_start, components_capacity
     character(len=:), allocatable :: result
-    integer :: result_len, result_capacity
+    integer :: result_len, result_capacity, abbrev_len, use_len, comp_len
 
     ! If path is already short enough, return as-is
     if (len_trim(path) <= max_length) then
@@ -456,97 +457,96 @@ contains
     components_capacity = 50
     allocate(components(components_capacity))
 
-    ! Allocate result buffer - initialize with spaces
+    ! Allocate result buffer
     result_capacity = 512
     allocate(character(len=result_capacity) :: result)
-    result = repeat(' ', result_capacity)  ! Initialize properly
 
     ! Split path into components
     num_components = 0
-    start_pos = 1
+    comp_start = 1
 
-    do while (start_pos <= len_trim(path))
-      slash_pos = index(path(start_pos:), '/')
+    do while (comp_start <= len_trim(path))
+      slash_pos = index(path(comp_start:), '/')
       if (slash_pos > 0) then
-        slash_pos = slash_pos + start_pos - 1
-        if (slash_pos > start_pos) then
+        slash_pos = slash_pos + comp_start - 1
+        if (slash_pos > comp_start) then
           num_components = num_components + 1
-          ! Grow array if needed
           if (num_components > components_capacity) then
             call grow_components_array(components, components_capacity)
           end if
-          components(num_components) = path(start_pos:slash_pos-1)
+          components(num_components) = path(comp_start:slash_pos-1)
         end if
-        start_pos = slash_pos + 1
+        comp_start = slash_pos + 1
       else
-        ! Last component
-        if (start_pos <= len_trim(path)) then
+        if (comp_start <= len_trim(path)) then
           num_components = num_components + 1
-          ! Grow array if needed
           if (num_components > components_capacity) then
             call grow_components_array(components, components_capacity)
           end if
-          components(num_components) = path(start_pos:)
+          components(num_components) = path(comp_start:)
         end if
         exit
       end if
     end do
 
-    ! Build shortened path
-    result_len = 0
-
-    ! Handle leading ~ or /
+    ! Determine component start index (skip ~ component)
     if (len_trim(path) > 0 .and. path(1:1) == '~') then
-      result(1:1) = '~'
-      result_len = 1
-      start_pos = 2  ! Skip the ~ component
-    else if (len_trim(path) > 0 .and. path(1:1) == '/') then
-      result(1:1) = '/'
-      result_len = 1
-      start_pos = 1
+      comp_start = 2
     else
-      start_pos = 1
+      comp_start = 1
     end if
 
-    ! Shorten all components except the last one
-    do i = start_pos, num_components - 1
-      if (len_trim(components(i)) > 0) then
+    ! Two-pass progressive shortening: 3-char parents, then 1-char parents
+    do abbrev_len = 3, 1, -2
+      result = repeat(' ', result_capacity)
+      result_len = 0
+
+      ! Write leading prefix
+      if (len_trim(path) > 0 .and. path(1:1) == '~') then
+        result(1:1) = '~'
+        result_len = 1
+      else if (len_trim(path) > 0 .and. path(1:1) == '/') then
+        result(1:1) = '/'
+        result_len = 1
+      end if
+
+      ! Build shortened parent components
+      do i = comp_start, num_components - 1
+        comp_len = len_trim(components(i))
+        if (comp_len > 0) then
+          if (result_len > 0 .and. result(result_len:result_len) /= '/') then
+            result_len = result_len + 1
+            result(result_len:result_len) = '/'
+          end if
+          ! Abbreviate parent to abbrev_len chars
+          use_len = min(abbrev_len, comp_len)
+          result(result_len+1:result_len+use_len) = components(i)(1:use_len)
+          result_len = result_len + use_len
+        end if
+      end do
+
+      ! Always show last component in full
+      if (num_components > 0) then
         if (result_len > 0 .and. result(result_len:result_len) /= '/') then
           result_len = result_len + 1
-          if (result_len > result_capacity) then
-            call grow_string_buffer(result, result_capacity, result_capacity * 2)
-          end if
           result(result_len:result_len) = '/'
         end if
-        ! Use first character of each parent directory
-        result_len = result_len + 1
-        if (result_len > result_capacity) then
-          call grow_string_buffer(result, result_capacity, result_capacity * 2)
-        end if
-        result(result_len:result_len) = components(i)(1:1)
+        comp_len = len_trim(components(num_components))
+        result(result_len+1:result_len+comp_len) = trim(components(num_components))
+        result_len = result_len + comp_len
+      end if
+
+      ! If this pass fits or we're at minimum abbreviation, use it
+      if (result_len <= max_length .or. abbrev_len == 1) then
+        shortened = result(1:result_len)
+        if (allocated(components)) deallocate(components)
+        if (allocated(result)) deallocate(result)
+        return
       end if
     end do
 
-    ! Always show the last component in full (the current directory name)
-    if (num_components > 0) then
-      if (result_len > 0 .and. result(result_len:result_len) /= '/') then
-        result_len = result_len + 1
-        if (result_len > result_capacity) then
-          call grow_string_buffer(result, result_capacity, result_capacity * 2)
-        end if
-        result(result_len:result_len) = '/'
-      end if
-      if (result_len + len_trim(components(num_components)) > result_capacity) then
-        call grow_string_buffer(result, result_capacity, result_len + len_trim(components(num_components)) + 256)
-      end if
-      result(result_len+1:result_len+len_trim(components(num_components))) = &
-        trim(components(num_components))
-      result_len = result_len + len_trim(components(num_components))
-    end if
-
+    ! Fallback (should not reach here)
     shortened = result(1:result_len)
-
-    ! Clean up
     if (allocated(components)) deallocate(components)
     if (allocated(result)) deallocate(result)
   end function
