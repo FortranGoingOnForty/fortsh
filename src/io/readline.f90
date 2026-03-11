@@ -3266,24 +3266,8 @@ contains
       file_pattern = trim(prefix)
     end if
 
-    ! Add directory navigation options ONLY when explicitly requested
-    ! Don't add ./ when user is trying to complete dotfiles like .fortshrc
-    if (len_trim(file_pattern) == 0) then
-      ! Empty pattern - offer . and ..
-      if (num_completions < MAX_LOCAL_COMPLETIONS) then
-        num_completions = num_completions + 1
-        if (trim(dir_path) == '.') then
-          completions(num_completions) = './'
-        else
-          completions(num_completions) = trim(dir_path) // '/./'
-        end if
-      end if
-
-      ! Don't add ../ - not based on user input
-    end if
-    ! Otherwise, let scan_directory handle ALL matches including dotfiles
-
-    ! Get actual filesystem entries
+    ! scan_directory handles all matches including dotfiles when pattern is empty
+    ! (. and .. are filtered in scan_directory at lines 3363-3369)
     call scan_directory(dir_path, file_pattern, completions, num_completions)
   end subroutine
 
