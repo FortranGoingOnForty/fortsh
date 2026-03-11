@@ -2876,8 +2876,28 @@ contains
     expanded = word
     result_buf = ''
 
-    ! Find opening brace
-    brace_start = index(word, '{')
+    ! Find opening brace that is NOT part of ${...} parameter expansion
+    brace_start = 0
+    pos = 1
+    do while (pos <= len_trim(word))
+      if (word(pos:pos) == '{') then
+        ! Skip if preceded by $ (this is ${...} parameter expansion)
+        if (pos > 1 .and. word(pos-1:pos-1) == '$') then
+          ! Skip past matching closing brace
+          depth = 1
+          pos = pos + 1
+          do while (pos <= len_trim(word) .and. depth > 0)
+            if (word(pos:pos) == '{') depth = depth + 1
+            if (word(pos:pos) == '}') depth = depth - 1
+            pos = pos + 1
+          end do
+          cycle
+        end if
+        brace_start = pos
+        exit
+      end if
+      pos = pos + 1
+    end do
     if (brace_start == 0) return
 
     ! Find MATCHING closing brace by counting depth (supports nested braces)
