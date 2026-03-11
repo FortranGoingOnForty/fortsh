@@ -303,7 +303,7 @@ contains
     end if
 
     ! Check if it's a builtin command
-    if (is_builtin(cmd)) then
+    if (is_builtin_v2(cmd, len_trim(cmd))) then
       valid = .true.
       call add_to_cache(cmd, .true.)
       return
@@ -318,31 +318,6 @@ contains
 
     ! Not found
     call add_to_cache(cmd, .false.)
-  end function
-
-  ! Check if command is a shell builtin
-  function is_builtin(command) result(is_built)
-    character(len=*), intent(in) :: command
-    logical :: is_built
-
-    character(len=len(command)) :: cmd
-
-    cmd = trim(command)
-    is_built = .false.
-
-    ! Check common builtins
-    select case(cmd)
-      case('cd', 'echo', 'pwd', 'exit', 'export', 'set', 'unset', &
-           'alias', 'unalias', 'source', 'history', 'jobs', 'fg', 'bg', &
-           'kill', 'wait', 'read', 'printf', 'test', '[', 'type', &
-           'command', 'builtin', 'declare', 'local', 'return', 'shift', &
-           'break', 'continue', 'if', 'then', 'else', 'elif', 'fi', &
-           'for', 'while', 'until', 'do', 'done', 'case', 'esac', &
-           'function', 'select', 'time', 'coproc', 'let', 'eval', &
-           'exec', 'trap', 'ulimit', 'umask', 'getopts', 'hash', &
-           'help', 'fc', 'complete', 'compgen')
-        is_built = .true.
-    end select
   end function
 
   ! Check if command exists in PATH
