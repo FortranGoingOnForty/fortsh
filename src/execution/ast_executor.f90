@@ -663,12 +663,10 @@ contains
         ! Clean up local variables for this function scope
         if (shell%function_depth > 0 .and. &
             shell%function_depth <= size(shell%local_var_counts)) then
-          ! Check if IFS was local — restore previous value
+          ! Check if IFS was local — restore from global variables
           block
-            use variables, only: get_shell_variable
-            integer :: lv_idx
-            logical :: had_local_ifs
-            character(len=1024) :: prev_ifs
+            integer :: lv_idx, gv_idx
+            logical :: had_local_ifs, found_global_ifs
             had_local_ifs = .false.
             do lv_idx = 1, shell%local_var_counts(shell%function_depth)
               if (trim(shell%local_vars(shell%function_depth, lv_idx)%name) == 'IFS') then
@@ -678,12 +676,18 @@ contains
             end do
             shell%local_var_counts(shell%function_depth) = 0
             if (had_local_ifs) then
-              prev_ifs = get_shell_variable(shell, 'IFS')
-              if (len_trim(prev_ifs) > 0) then
-                shell%ifs = trim(prev_ifs)
-                shell%ifs_len = len_trim(prev_ifs)
-              else
-                ! Restore default IFS
+              ! Look up IFS from global variables array, bypassing local scope
+              found_global_ifs = .false.
+              do gv_idx = 1, shell%num_variables
+                if (trim(shell%variables(gv_idx)%name) == 'IFS') then
+                  shell%ifs = shell%variables(gv_idx)%value
+                  shell%ifs_len = shell%variables(gv_idx)%value_len
+                  found_global_ifs = .true.
+                  exit
+                end if
+              end do
+              if (.not. found_global_ifs) then
+                ! IFS was never explicitly set globally — restore default
                 shell%ifs = ' ' // char(9) // char(10)
                 shell%ifs_len = 3
               end if
