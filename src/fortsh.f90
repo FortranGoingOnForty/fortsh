@@ -7,6 +7,7 @@ program fortran_shell
   use signal_handler
   use signal_handling
   use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash
+  use lexer, only: tokenize
   use grammar_parser  ! New grammar-aware parser
   use ast_executor, only: execute_ast, register_trap_evaluator
   use command_tree    ! Command tree for new parser
@@ -28,7 +29,7 @@ program fortran_shell
 
   type(shell_state_t), allocatable :: shell
   type(pipeline_t) :: pipeline
-  character(len=1024) :: input_line, proc_subst_line
+  character(len=16384) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, history_expanded
   character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
   character(len=1024) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
@@ -382,6 +383,29 @@ program fortran_shell
     ! Handle line continuation (backslash-newline)
     input_line = remove_line_continuations(input_line)
 
+    ! Check for unclosed compound commands (if/fi, do/done, case/esac)
+    do while (needs_compound_continuation(input_line))
+      if (shell%is_interactive) then
+        ! Full readline with PS2 prompt expansion
+        prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
+        call readline_enhanced(prompt_str, proc_subst_line, iostat)
+      else
+        ! Non-interactive: just read next line
+        read(input_unit, '(a)', iostat=iostat) proc_subst_line
+      end if
+
+      ! Check for EOF during compound continuation
+      if (iostat /= 0) then
+        if (shell%is_interactive) then
+          write(output_unit, '(a)') ''
+        end if
+        exit
+      end if
+
+      ! Append the continuation line with a newline character
+      input_line = trim(input_line) // char(10) // trim(proc_subst_line)
+    end do
+
     ! Expand history (!!, !n, !string, etc.) if needed
     if (needs_history_expansion(input_line)) then
       history_expanded = expand_history(input_line)
@@ -677,6 +701,45 @@ contains
     end do
   end function
 
+  ! Check if input has unclosed compound commands that need more lines
+  ! Uses the lexer to properly distinguish keywords from arguments
+  function needs_compound_continuation(input) result(needs_more)
+    character(len=*), intent(in) :: input
+    logical :: needs_more
+    type(token_t) :: tokens(MAX_TOKENS)
+    integer :: num_tokens, i
+    integer :: if_depth, do_depth, case_depth
+
+    needs_more = .false.
+
+    ! Tokenize the input using the lexer
+    call tokenize(input, tokens, num_tokens)
+
+    if_depth = 0
+    do_depth = 0
+    case_depth = 0
+
+    do i = 1, num_tokens
+      if (tokens(i)%token_type /= TOKEN_KEYWORD) cycle
+      select case (trim(tokens(i)%value))
+      case ('if')
+        if_depth = if_depth + 1
+      case ('fi')
+        if_depth = if_depth - 1
+      case ('do')
+        do_depth = do_depth + 1
+      case ('done')
+        do_depth = do_depth - 1
+      case ('case')
+        case_depth = case_depth + 1
+      case ('esac')
+        case_depth = case_depth - 1
+      end select
+    end do
+
+    needs_more = (if_depth > 0 .or. do_depth > 0 .or. case_depth > 0)
+  end function
+
   ! Pre-process heredocs in -c commands
   ! Extracts heredoc content and stores it for later use
   function preprocess_heredocs_for_c(input, shell) result(output)
@@ -939,7 +1002,8 @@ contains
     use command_tree, only: destroy_command_node, command_node_t
     use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line, proc_subst_line, continuation_line, converted_line
+    character(len=16384) :: input_line, proc_subst_line, converted_line
+    character(len=1024) :: continuation_line
     integer :: file_unit, iostat, i, brace_depth, func_line_count, exit_code
     type(pipeline_t) :: pipeline
     type(command_node_t), pointer :: ast_root
@@ -992,6 +1056,17 @@ contains
 
       ! If EOF was reached during continuation, exit
       if (iostat /= 0) exit
+
+      ! Check for unclosed compound commands (if/fi, do/done, case/esac)
+      do while (needs_compound_continuation(input_line))
+        read(file_unit, '(a)', iostat=iostat) continuation_line
+        if (iostat /= 0) exit  ! End of file during compound command
+        ! Skip comment-only continuation lines but still append them
+        input_line = trim(input_line) // char(10) // trim(continuation_line)
+      end do
+
+      ! If EOF was reached during compound continuation, still try to parse what we have
+      ! (the parser will report a syntax error for incomplete commands)
 
       ! NOTE: Function definitions are now handled by the AST parser
       ! The old special handling has been removed to ensure functions are properly
