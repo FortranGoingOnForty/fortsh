@@ -2495,13 +2495,50 @@ contains
         var_name = cmd%tokens(i)(:eq_pos-1)
         var_value = cmd%tokens(i)(eq_pos+1:)
 
+        ! Handle array initialization: local -a arr=(a b c)
+        if (array_flag .and. len_trim(var_value) > 0 .and. &
+            var_value(1:1) == '(') then
+          block
+            use variables, only: set_array_variable
+            character(len=256) :: arr_elems(100)
+            integer :: ne, k, es
+            character(len=:), allocatable :: content
+            content = trim(var_value)
+            if (content(len(content):len(content)) == ')') then
+              content = content(2:len(content)-1)
+            else
+              content = content(2:)
+            end if
+            ne = 0
+            es = 1
+            do k = 1, len_trim(content)
+              if (content(k:k) == ' ') then
+                if (k > es) then
+                  ne = ne + 1
+                  arr_elems(ne) = content(es:k-1)
+                end if
+                es = k + 1
+              end if
+            end do
+            if (es <= len_trim(content)) then
+              ne = ne + 1
+              arr_elems(ne) = content(es:len_trim(content))
+            end if
+            call set_array_variable(shell, trim(var_name), &
+              arr_elems, ne)
+          end block
+          cycle
+        end if
+
         ! Evaluate arithmetic if integer flag is set
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
             character(len=1024) :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
-            arith_result = arithmetic_expansion_shell(trim(arith_expr), shell)
+            arith_result = &
+              arithmetic_expansion_shell( &
+                trim(arith_expr), shell)
             var_value = arith_result
           end block
         end if
