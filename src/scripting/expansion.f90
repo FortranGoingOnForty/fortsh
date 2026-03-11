@@ -2989,7 +2989,7 @@ contains
         if (start_val <= end_val) then
           current_val = start_val
           do while (current_val <= end_val)
-            write(num_str, '(i15)') current_val
+            write(num_str, '(I0)') current_val
             if (len_trim(result_buf) > 0) then
               result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else
@@ -3001,7 +3001,7 @@ contains
           ! Descending range
           current_val = start_val
           do while (current_val >= end_val)
-            write(num_str, '(i15)') current_val
+            write(num_str, '(I0)') current_val
             if (len_trim(result_buf) > 0) then
               result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
             else
