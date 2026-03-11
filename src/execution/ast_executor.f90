@@ -2158,13 +2158,14 @@ contains
       end block
     end if
 
-    ! Get the value to match (expand variables)
-    ! Note: Don't trim - the value might BE whitespace (e.g., " " in case " " in ...)
-    case_value = node%case_stmt%word
-    ! If it starts with $, expand it
-    if (len_trim(case_value) > 0 .and. case_value(1:1) == '$') then
-      case_value = get_shell_variable(shell, trim(case_value(2:)))
-    end if
+    ! Get the value to match (expand variables, command substitution, etc.)
+    block
+      use parser, only: expand_variables
+      character(len=:), allocatable :: expanded_case_value
+      call expand_variables(trim(node%case_stmt%word), expanded_case_value, shell)
+      case_value = trim(expanded_case_value)
+      if (allocated(expanded_case_value)) deallocate(expanded_case_value)
+    end block
 
     ! Try to match against each case item
     do item_idx = 1, node%case_stmt%num_items
@@ -2178,8 +2179,7 @@ contains
         call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        ! Note: Don't trim case_value - it might BE whitespace
-        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), case_value)
+        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), trim(case_value))
 
         if (matched) exit
       end do
