@@ -389,35 +389,48 @@ release: clean $(TARGET)
 	@echo "Release build complete! Binary size: $$(du -h $(TARGET) | cut -f1)"
 
 # Test suite targets
-test-integration: $(TARGET)
-	@echo "Running integration tests..."
-	chmod +x tests/integration_test.sh
-	./tests/integration_test.sh
 
-test-parity: $(TARGET)
-	@echo "Running bash parity tests..."
-	chmod +x tests/bash_parity_test.sh
-	FORTSH_BIN=$(TARGET) ./tests/bash_parity_test.sh
-
+# POSIX compliance: single canonical test script (fastest)
 test-posix: $(TARGET)
 	@echo "Running POSIX compliance tests..."
-	chmod +x tests/posix_compliance_test.sh
 	FORTSH_BIN=$(TARGET) ./tests/posix_compliance_test.sh
 
-test-features: $(TARGET)
-	@echo "Running feature test suite..."
-	chmod +x tests/feature_test_suite.sh
-	./tests/feature_test_suite.sh
+# Full POSIX suite: all shell-based POSIX test scripts via the comprehensive runner
+test-posix-full: $(TARGET)
+	@echo "Running full POSIX compliance test suite..."
+	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --posix-only
 
-test-all: test-integration test-parity test-posix
-	@echo ""
-	@echo "=========================================="
-	@echo "ALL TEST SUITES COMPLETED"
-	@echo "=========================================="
-	@echo "✓ Integration tests"
-	@echo "✓ Bash parity tests"
-	@echo "✓ POSIX compliance tests"
-	@echo "=========================================="
+# Quick POSIX suite: skip slow coverage/untested suites
+test-posix-quick: $(TARGET)
+	@echo "Running quick POSIX compliance tests..."
+	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --posix-only --quick
+
+# Interactive PTY tests (requires Python venv with pexpect)
+test-interactive: $(TARGET)
+	@echo "Running interactive PTY tests..."
+	@if [ ! -d tests/interactive/.venv ] && [ ! -d tests/interactive/venv ]; then \
+		echo "Setting up Python virtual environment..."; \
+		python3 -m venv tests/interactive/.venv; \
+		. tests/interactive/.venv/bin/activate && pip install -r tests/interactive/requirements.txt; \
+	fi
+	@if [ -f tests/interactive/.venv/bin/activate ]; then \
+		. tests/interactive/.venv/bin/activate && cd tests/interactive && python run_tests.py; \
+	elif [ -f tests/interactive/venv/bin/activate ]; then \
+		. tests/interactive/venv/bin/activate && cd tests/interactive && python run_tests.py; \
+	else \
+		echo "Error: Python venv not found. Run: cd tests/interactive && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"; \
+		exit 1; \
+	fi
+
+# Full test run: POSIX + interactive (no memory rebuild)
+test-full: $(TARGET)
+	@echo "Running full test suite (POSIX + interactive)..."
+	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --full
+
+# Everything including memory pool tests (SLOW: rebuilds fortsh)
+test-all: $(TARGET)
+	@echo "Running all test suites..."
+	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --all
 
 # Help target
 help:
@@ -442,14 +455,14 @@ help:
 	@echo "  USE_C_STRINGS=1 make - Enable C strings in fortsh (experimental)"
 	@echo ""
 	@echo "Test targets:"
-	@echo "  test          - Run basic functionality test"
-	@echo "  test-all      - Run all test suites (integration, parity, POSIX)"
-	@echo "  test-integration - Run integration tests"
-	@echo "  test-parity   - Run bash parity tests"
-	@echo "  test-posix    - Run POSIX compliance tests"
-	@echo "  test-features - Run feature test suite"
-	@echo "  smoke-test    - Run quick smoke tests"
-	@echo "  check         - Run comprehensive checks"
+	@echo "  test            - Run basic functionality test"
+	@echo "  test-posix      - Run core POSIX compliance tests (~1 min)"
+	@echo "  test-posix-full - Run all POSIX test suites (~3 min)"
+	@echo "  test-posix-quick- Run fast POSIX tests, skip coverage (~30s)"
+	@echo "  test-interactive- Run interactive PTY tests (~2 min)"
+	@echo "  test-full       - Run POSIX + interactive tests (~5 min)"
+	@echo "  test-all        - Run everything incl. memory tests (SLOW)"
+	@echo "  check           - Run comprehensive checks"
 	@echo ""
 	@echo "Installation targets:"
 	@echo "  install       - Install fortsh to /usr/local/bin"
