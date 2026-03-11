@@ -2657,6 +2657,15 @@ contains
             end if
             call set_array_variable(shell, trim(var_name), &
               arr_elems, ne)
+            ! Track array in local_vars for cleanup on function return
+            var_index = shell%local_var_counts(depth) + 1
+            if (var_index <= size(shell%local_vars, 2)) then
+              shell%local_var_counts(depth) = var_index
+              shell%local_vars(depth, var_index)%name = trim(var_name)
+              shell%local_vars(depth, var_index)%value = ''
+              shell%local_vars(depth, var_index)%value_len = 0
+              shell%local_vars(depth, var_index)%is_array = .true.
+            end if
           end block
           cycle
         end if
