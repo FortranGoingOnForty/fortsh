@@ -281,7 +281,174 @@ contains
               character(len=MAX_TOKEN_LEN), allocatable :: brace_words(:)
               character(len=:), allocatable :: var_expanded
               integer :: bw_count, bw_i
+              ! Fast-path variables for range detection
+              integer :: br_open, br_close, br_dots, br_dots2, br_step
+              integer :: br_start, br_end, br_cur, br_count
+              integer :: br_sc, br_ec, br_cc
+              character(len=:), allocatable :: br_prefix, br_suffix
+              character(len=16) :: br_num
+              integer :: br_nlen, br_plen, br_slen
+              logical :: br_fast
 
+              br_fast = .false.
+              ! Try fast path: simple {N..M} or {N..M..S} or {a..z} with optional prefix/suffix
+              ! Must have exactly one { and one } with no nesting or $
+              br_open = index(trim(cmd%tokens(i)), '{')
+              br_close = index(trim(cmd%tokens(i)), '}', back=.true.)
+              if (br_open > 0 .and. br_close > br_open .and. &
+                  index(cmd%tokens(i)(br_open+1:br_close-1), '{') == 0 .and. &
+                  index(cmd%tokens(i)(br_open+1:br_close-1), ',') == 0) then
+                br_dots = index(cmd%tokens(i)(br_open+1:br_close-1), '..')
+                if (br_dots > 0) then
+                  br_dots = br_open + br_dots  ! absolute position
+                  ! Extract prefix and suffix
+                  if (br_open > 1) then
+                    br_prefix = cmd%tokens(i)(1:br_open-1)
+                  else
+                    br_prefix = ''
+                  end if
+                  if (br_close < len_trim(cmd%tokens(i))) then
+                    br_suffix = cmd%tokens(i)(br_close+1:len_trim(cmd%tokens(i)))
+                  else
+                    br_suffix = ''
+                  end if
+                  br_plen = len(br_prefix)
+                  br_slen = len(br_suffix)
+
+                  ! Check for step: second .. after the first
+                  br_dots2 = index(cmd%tokens(i)(br_dots+2:br_close-1), '..')
+                  br_step = 1
+                  if (br_dots2 > 0) then
+                    br_dots2 = br_dots + 1 + br_dots2  ! absolute position
+                    read(cmd%tokens(i)(br_dots2+2:br_close-1), *, iostat=bw_i) br_step
+                    if (bw_i /= 0) br_step = 1
+                  else
+                    br_dots2 = 0
+                  end if
+
+                  ! Try numeric range
+                  if (br_dots2 > 0) then
+                    read(cmd%tokens(i)(br_open+1:br_dots-1), *, iostat=bw_i) br_start
+                  else
+                    read(cmd%tokens(i)(br_open+1:br_dots-1), *, iostat=bw_i) br_start
+                  end if
+                  if (bw_i == 0) then
+                    if (br_dots2 > 0) then
+                      read(cmd%tokens(i)(br_dots+2:br_dots2-1), *, iostat=bw_i) br_end
+                    else
+                      read(cmd%tokens(i)(br_dots+2:br_close-1), *, iostat=bw_i) br_end
+                    end if
+                  end if
+
+                  if (bw_i == 0) then
+                    ! Numeric range — generate tokens directly
+                    br_fast = .true.
+                    if (br_start <= br_end) then
+                      br_count = (br_end - br_start) / br_step + 1
+                    else
+                      br_count = (br_start - br_end) / br_step + 1
+                    end if
+                    ! Pre-grow to avoid repeated doubling
+                    if (total_tokens + br_count > temp_cap) &
+                      call grow_temp_arrays(total_tokens + br_count)
+                    br_cur = br_start
+                    if (br_start <= br_end) then
+                      do while (br_cur <= br_end)
+                        write(br_num, '(I0)') br_cur
+                        br_nlen = len_trim(br_num)
+                        total_tokens = total_tokens + 1
+                        if (br_plen > 0 .and. br_slen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen) // br_suffix
+                        else if (br_plen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen)
+                        else if (br_slen > 0) then
+                          temp_tokens(total_tokens) = br_num(1:br_nlen) // br_suffix
+                        else
+                          temp_tokens(total_tokens) = br_num(1:br_nlen)
+                        end if
+                        temp_token_lengths(total_tokens) = br_plen + br_nlen + br_slen
+                        temp_token_quoted(total_tokens) = .false.
+                        br_cur = br_cur + br_step
+                      end do
+                    else
+                      do while (br_cur >= br_end)
+                        write(br_num, '(I0)') br_cur
+                        br_nlen = len_trim(br_num)
+                        total_tokens = total_tokens + 1
+                        if (br_plen > 0 .and. br_slen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen) // br_suffix
+                        else if (br_plen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen)
+                        else if (br_slen > 0) then
+                          temp_tokens(total_tokens) = br_num(1:br_nlen) // br_suffix
+                        else
+                          temp_tokens(total_tokens) = br_num(1:br_nlen)
+                        end if
+                        temp_token_lengths(total_tokens) = br_plen + br_nlen + br_slen
+                        temp_token_quoted(total_tokens) = .false.
+                        br_cur = br_cur - br_step
+                      end do
+                    end if
+                    cycle
+                  else if (len_trim(cmd%tokens(i)(br_open+1:br_dots-1)) == 1 .and. &
+                           ((br_dots2 > 0 .and. len_trim(cmd%tokens(i)(br_dots+2:br_dots2-1)) == 1) .or. &
+                            (br_dots2 == 0 .and. len_trim(cmd%tokens(i)(br_dots+2:br_close-1)) == 1))) then
+                    ! Alpha range — generate tokens directly
+                    br_fast = .true.
+                    br_sc = ichar(cmd%tokens(i)(br_open+1:br_open+1))
+                    if (br_dots2 > 0) then
+                      br_ec = ichar(cmd%tokens(i)(br_dots+2:br_dots+2))
+                    else
+                      br_ec = ichar(cmd%tokens(i)(br_dots+2:br_dots+2))
+                    end if
+                    if (br_sc <= br_ec) then
+                      br_count = (br_ec - br_sc) / br_step + 1
+                    else
+                      br_count = (br_sc - br_ec) / br_step + 1
+                    end if
+                    if (total_tokens + br_count > temp_cap) &
+                      call grow_temp_arrays(total_tokens + br_count)
+                    br_cc = br_sc
+                    if (br_sc <= br_ec) then
+                      do while (br_cc <= br_ec)
+                        total_tokens = total_tokens + 1
+                        if (br_plen > 0 .and. br_slen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // char(br_cc) // br_suffix
+                        else if (br_plen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // char(br_cc)
+                        else if (br_slen > 0) then
+                          temp_tokens(total_tokens) = char(br_cc) // br_suffix
+                        else
+                          temp_tokens(total_tokens) = char(br_cc)
+                        end if
+                        temp_token_lengths(total_tokens) = br_plen + 1 + br_slen
+                        temp_token_quoted(total_tokens) = .false.
+                        br_cc = br_cc + br_step
+                      end do
+                    else
+                      do while (br_cc >= br_ec)
+                        total_tokens = total_tokens + 1
+                        if (br_plen > 0 .and. br_slen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // char(br_cc) // br_suffix
+                        else if (br_plen > 0) then
+                          temp_tokens(total_tokens) = br_prefix // char(br_cc)
+                        else if (br_slen > 0) then
+                          temp_tokens(total_tokens) = char(br_cc) // br_suffix
+                        else
+                          temp_tokens(total_tokens) = char(br_cc)
+                        end if
+                        temp_token_lengths(total_tokens) = br_plen + 1 + br_slen
+                        temp_token_quoted(total_tokens) = .false.
+                        br_cc = br_cc - br_step
+                      end do
+                    end if
+                    cycle
+                  end if
+                end if
+              end if
+
+              ! General brace expansion fallback (comma lists, nested braces)
+              if (.not. br_fast) then
               call expand_braces_to_words(trim(cmd%tokens(i)), brace_words, bw_count)
 
               if (bw_count > 1) then
@@ -318,6 +485,7 @@ contains
                   call expand_variables(expanded, var_expanded, shell, was_quoted_in=.false.)
                   if (allocated(var_expanded)) expanded = var_expanded
                 end if
+              end if
               end if
             end block
           else
@@ -428,37 +596,72 @@ contains
       end if
     end do
 
-    ! Replace command tokens with expanded ones
+    ! Replace command tokens with expanded ones — use move_alloc to avoid
+    ! allocating + copying a second massive array for large expansions.
+    ! temp_tokens may be oversized (next power of 2) but that waste is far
+    ! cheaper than allocating + copying hundreds of MB.
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(total_tokens))
-    do i = 1, total_tokens
-      cmd%tokens(i) = temp_tokens(i)
-    end do
+    call move_alloc(temp_tokens, cmd%tokens)
     cmd%num_tokens = total_tokens
 
-    ! Update token_lengths with actual expanded lengths
+    ! Update token_lengths and token_quoted — move to avoid extra allocation
     if (allocated(cmd%token_lengths)) deallocate(cmd%token_lengths)
-    allocate(cmd%token_lengths(total_tokens))
-    cmd%token_lengths(1:total_tokens) = temp_token_lengths(1:total_tokens)
+    call move_alloc(temp_token_lengths, cmd%token_lengths)
 
-    ! Update token_quoted to preserve original quoted status
     if (allocated(cmd%token_quoted)) deallocate(cmd%token_quoted)
-    allocate(cmd%token_quoted(total_tokens))
-    cmd%token_quoted(1:total_tokens) = temp_token_quoted(1:total_tokens)
+    call move_alloc(temp_token_quoted, cmd%token_quoted)
 
-    deallocate(temp_tokens)
-    deallocate(temp_token_lengths)
-    deallocate(temp_token_quoted)
+    ! Resize token_quote_type and token_escaped to match expanded token count
+    if (allocated(cmd%token_quote_type)) then
+      block
+        integer, allocatable :: old_qt(:)
+        integer :: old_qt_size
+        old_qt_size = size(cmd%token_quote_type)
+        if (old_qt_size < total_tokens) then
+          allocate(old_qt(old_qt_size))
+          old_qt = cmd%token_quote_type
+          deallocate(cmd%token_quote_type)
+          allocate(cmd%token_quote_type(total_tokens))
+          cmd%token_quote_type = 0
+          cmd%token_quote_type(1:old_qt_size) = old_qt(1:old_qt_size)
+          deallocate(old_qt)
+        end if
+      end block
+    end if
+    if (allocated(cmd%token_escaped)) then
+      block
+        logical, allocatable :: old_esc(:)
+        integer :: old_esc_size
+        old_esc_size = size(cmd%token_escaped)
+        if (old_esc_size < total_tokens) then
+          allocate(old_esc(old_esc_size))
+          old_esc = cmd%token_escaped
+          deallocate(cmd%token_escaped)
+          allocate(cmd%token_escaped(total_tokens))
+          cmd%token_escaped = .false.
+          cmd%token_escaped(1:old_esc_size) = old_esc(1:old_esc_size)
+          deallocate(old_esc)
+        end if
+      end block
+    end if
+
+    ! temp_tokens, temp_token_lengths, temp_token_quoted moved above via move_alloc
 
   contains
 
-    subroutine grow_temp_arrays()
+    subroutine grow_temp_arrays(min_cap)
+      integer, intent(in), optional :: min_cap
       character(len=MAX_TOKEN_LEN), allocatable :: new_tokens(:)
       integer, allocatable :: new_lengths(:)
       logical, allocatable :: new_quoted(:)
       integer :: new_cap
 
       new_cap = temp_cap * 2
+      if (present(min_cap)) then
+        do while (new_cap < min_cap)
+          new_cap = new_cap * 2
+        end do
+      end if
       allocate(new_tokens(new_cap))
       allocate(new_lengths(new_cap))
       allocate(new_quoted(new_cap))
