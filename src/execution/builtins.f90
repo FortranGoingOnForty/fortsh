@@ -3894,11 +3894,6 @@ contains
 
     ! Get history count
     history_count = get_history_count()
-    if (history_count == 0) then
-      write(error_unit, '(a)') 'fc: no commands in history'
-      shell%last_exit_status = 1
-      return
-    end if
 
     ! Parse options
     do while (arg_idx <= cmd%num_tokens)
@@ -3974,6 +3969,17 @@ contains
           end if
         end if
       end if
+    end if
+
+    ! Handle empty history - list mode succeeds silently, other modes fail
+    if (history_count == 0) then
+      if (list_mode) then
+        shell%last_exit_status = 0
+      else
+        write(error_unit, '(a)') 'fc: no commands in history'
+        shell%last_exit_status = 1
+      end if
+      return
     end if
 
     ! Set defaults if not specified
