@@ -1240,6 +1240,20 @@ contains
         ! Extract elements between parentheses
         var_value = token(paren_start+1:paren_end-1)
 
+        ! Expand command substitutions and variables
+        if (index(trim(var_value), '$') > 0 .or. &
+            index(trim(var_value), '`') > 0) then
+          block
+            use parser, only: expand_variables
+            character(len=:), allocatable :: arr_exp
+            call expand_variables(trim(var_value), &
+              arr_exp, shell)
+            if (allocated(arr_exp)) then
+              var_value = arr_exp
+            end if
+          end block
+        end if
+
         ! Split by spaces to get array elements
         num_elements = 0
         call split_array_elements(var_value, array_elements, num_elements)
