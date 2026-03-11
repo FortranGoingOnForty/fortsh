@@ -345,18 +345,16 @@ contains
         replacement = get_git_branch()
 
       case ('G')
-        ! Git status indicator (* if dirty, + if staged, clean otherwise)
+        ! Git status indicator (✓ clean, ✗ dirty, + staged, ± both)
         replacement = get_git_status_indicator()
 
       case ('p')
-        ! Git ahead/behind indicator
-        temp = get_git_ahead_behind()
-        replacement = trim(temp)
+        ! Git ahead/behind upstream (e.g. ↑2↓1)
+        replacement = get_git_ahead_behind()
 
       case ('P')
-        ! Virtual environment name
-        temp = get_venv_name()
-        replacement = trim(temp)
+        ! Python virtual environment name (from VIRTUAL_ENV)
+        replacement = get_venv_name()
 
       case ('S')
         ! Seconds since epoch (Unix timestamp)
@@ -676,11 +674,14 @@ contains
     cache_branch_valid = .true.
   end function
 
-  ! Get git status indicator
-  ! Returns: '*' if dirty, '+' if staged changes, '✓' if clean, '' if not git repo
+  ! Get git status indicator with Unicode symbols
+  ! Returns: '✓' if clean, '✗' if dirty (unstaged), '+' if staged, '±' if both
+  ! Returns '' if not in a git repo
   function get_git_status_indicator() result(indicator)
     character(len=:), allocatable :: indicator
-    character(len=256) :: output
+    character(len=4096) :: output
+    logical :: has_staged, has_unstaged
+    integer :: i, line_start
 
     if (cache_status_valid) then
       indicator = trim(cached_git_status)
@@ -690,32 +691,168 @@ contains
     ! First check if we're in a git repo
     output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
     if (len_trim(output) == 0) then
-      indicator = ''  ! Not in a git repo
+      indicator = ''
       cached_git_status = ''
       cache_status_valid = .true.
       return
     end if
 
     ! Check for uncommitted changes (both staged and unstaged)
-    ! Using git status --porcelain for machine-readable output
     output = execute_and_capture('git status --porcelain 2>/dev/null')
 
-    if (len_trim(output) > 0) then
-      ! There are changes
-      ! Check if any are staged (lines starting with A, M, D, R, C in first column)
-      if (index(output, 'A ') > 0 .or. index(output, 'M ') > 0 .or. &
-          index(output, 'D ') > 0 .or. index(output, 'R ') > 0) then
-        indicator = '+'  ! Staged changes
-      else
-        indicator = '*'  ! Unstaged changes
-      end if
-    else
+    if (len_trim(output) == 0) then
       ! Clean working tree
-      indicator = ''  ! Clean (or use '✓' if you want to show clean status)
+      indicator = char(226) // char(156) // char(147)  ! ✓ (U+2713)
+      cached_git_status = indicator
+      cache_status_valid = .true.
+      return
+    end if
+
+    ! Parse porcelain output: first column = index (staged), second = worktree
+    has_staged = .false.
+    has_unstaged = .false.
+    line_start = 1
+    do i = 1, len_trim(output)
+      if (i == line_start .and. i + 1 <= len_trim(output)) then
+        ! First char: staged status (non-space and non-? means staged)
+        if (output(i:i) /= ' ' .and. output(i:i) /= '?') has_staged = .true.
+        ! Second char: unstaged status (non-space means unstaged)
+        if (output(i+1:i+1) /= ' ') has_unstaged = .true.
+      end if
+      if (output(i:i) == char(10)) line_start = i + 1
+    end do
+    ! Handle untracked files (lines starting with ??)
+    if (index(output, '??') > 0) has_unstaged = .true.
+
+    if (has_staged .and. has_unstaged) then
+      indicator = char(194) // char(177)  ! ± (U+00B1)
+    else if (has_staged) then
+      indicator = '+'
+    else
+      indicator = char(226) // char(156) // char(151)  ! ✗ (U+2717)
     end if
 
     cached_git_status = indicator
     cache_status_valid = .true.
+  end function
+
+  ! Get git ahead/behind tracking info
+  ! Returns e.g. '↑2↓1' for 2 ahead, 1 behind; '↑3' for 3 ahead; '' if up to date or no upstream
+  function get_git_ahead_behind() result(info)
+    character(len=:), allocatable :: info
+    character(len=256) :: output
+    integer :: ahead, behind, dot_pos, space_pos, iostat
+
+    if (cache_ahead_behind_valid) then
+      info = trim(cached_git_ahead_behind)
+      return
+    end if
+
+    info = ''
+
+    ! Get ahead/behind counts in one shot
+    output = execute_and_capture('git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null')
+    if (len_trim(output) == 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    ! Output format: "ahead\tbehind"
+    ! Find the tab separator
+    space_pos = 0
+    do dot_pos = 1, len_trim(output)
+      if (output(dot_pos:dot_pos) == char(9) .or. output(dot_pos:dot_pos) == ' ') then
+        space_pos = dot_pos
+        exit
+      end if
+    end do
+    if (space_pos == 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    read(output(1:space_pos-1), *, iostat=iostat) ahead
+    if (iostat /= 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+    read(output(space_pos+1:), *, iostat=iostat) behind
+    if (iostat /= 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    if (ahead == 0 .and. behind == 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    if (ahead > 0) then
+      block
+        character(len=16) :: num_str
+        write(num_str, '(i0)') ahead
+        ! ↑ = U+2191 = E2 86 91
+        info = char(226) // char(134) // char(145) // trim(num_str)
+      end block
+    end if
+    if (behind > 0) then
+      block
+        character(len=16) :: num_str
+        write(num_str, '(i0)') behind
+        ! ↓ = U+2193 = E2 86 93
+        info = info // char(226) // char(134) // char(147) // trim(num_str)
+      end block
+    end if
+
+    cached_git_ahead_behind = info
+    cache_ahead_behind_valid = .true.
+  end function
+
+  ! Get Python virtual environment name from VIRTUAL_ENV
+  ! Returns '(name)' if in a venv (e.g. '(.venv)'), '' if not
+  function get_venv_name() result(name)
+    character(len=:), allocatable :: name
+    character(len=4096) :: venv_path
+    integer :: i, last_sep, path_len
+    character(len=:), allocatable :: basename
+
+    if (cache_venv_valid) then
+      name = trim(cached_venv_name)
+      return
+    end if
+
+    call get_environment_variable('VIRTUAL_ENV', venv_path, status=i)
+    if (i /= 0 .or. len_trim(venv_path) == 0) then
+      name = ''
+      cached_venv_name = ''
+      cache_venv_valid = .true.
+      return
+    end if
+
+    ! Extract basename (last component of path)
+    path_len = len_trim(venv_path)
+    ! Strip trailing slash if present
+    if (venv_path(path_len:path_len) == '/') path_len = path_len - 1
+
+    last_sep = 0
+    do i = 1, path_len
+      if (venv_path(i:i) == '/') last_sep = i
+    end do
+
+    if (last_sep > 0 .and. last_sep < path_len) then
+      basename = venv_path(last_sep+1:path_len)
+    else
+      basename = trim(venv_path(1:path_len))
+    end if
+
+    name = '(' // basename // ')'
+    cached_venv_name = name
+    cache_venv_valid = .true.
   end function
 
   ! Check if current directory is in a git repository
@@ -1204,85 +1341,6 @@ contains
     cache_ahead_behind_valid = .false.
     cache_venv_valid = .false.
   end subroutine
-
-  ! Get git ahead/behind counts relative to upstream
-  ! Returns: '↑N↓M', '↑N', '↓M', or '' if no upstream or not in git repo
-  function get_git_ahead_behind() result(ab)
-    character(len=:), allocatable :: ab
-    character(len=256) :: output
-    integer :: ahead, behind, iostat
-
-    if (cache_ahead_behind_valid) then
-      ab = trim(cached_git_ahead_behind)
-      return
-    end if
-
-    ! Get ahead/behind counts
-    output = execute_and_capture( &
-      'git rev-list --count --left-right @{upstream}...HEAD 2>/dev/null')
-
-    if (len_trim(output) > 0) then
-      ! Parse "behind<tab>ahead" format
-      read(output, *, iostat=iostat) behind, ahead
-      if (iostat == 0) then
-        if (ahead > 0 .and. behind > 0) then
-          write(output, '(a,i0,a,i0)') char(226)//char(134)//char(145), ahead, &
-            char(226)//char(134)//char(147), behind
-          ab = trim(output)
-        else if (ahead > 0) then
-          write(output, '(a,i0)') char(226)//char(134)//char(145), ahead
-          ab = trim(output)
-        else if (behind > 0) then
-          write(output, '(a,i0)') char(226)//char(134)//char(147), behind
-          ab = trim(output)
-        else
-          ab = ''
-        end if
-      else
-        ab = ''
-      end if
-    else
-      ab = ''
-    end if
-
-    cached_git_ahead_behind = ab
-    cache_ahead_behind_valid = .true.
-  end function
-
-  ! Get virtual environment name from VIRTUAL_ENV
-  ! Returns: '(name)' or '' if no venv active
-  function get_venv_name() result(venv)
-    character(len=:), allocatable :: venv, virtual_env
-    integer :: i, last_slash
-
-    if (cache_venv_valid) then
-      venv = trim(cached_venv_name)
-      return
-    end if
-
-    virtual_env = get_environment_var('VIRTUAL_ENV')
-
-    if (allocated(virtual_env) .and. len_trim(virtual_env) > 0) then
-      ! Extract the last path component (venv directory name)
-      last_slash = 0
-      do i = len_trim(virtual_env), 1, -1
-        if (virtual_env(i:i) == '/') then
-          last_slash = i
-          exit
-        end if
-      end do
-      if (last_slash > 0 .and. last_slash < len_trim(virtual_env)) then
-        venv = '(' // trim(virtual_env(last_slash+1:)) // ')'
-      else
-        venv = '(' // trim(virtual_env) // ')'
-      end if
-    else
-      venv = ''
-    end if
-
-    cached_venv_name = venv
-    cache_venv_valid = .true.
-  end function
 
   ! Check if a prompt template contains a specific escape sequence (\char)
   function has_escape(template, esc_char) result(found)

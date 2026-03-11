@@ -602,11 +602,17 @@ contains
         shell%function_depth = shell%function_depth + 1
 
         ! Execute function body
-        if (associated(function_ast_cache(func_idx)%body)) then
-          exit_status = execute_ast_node(function_ast_cache(func_idx)%body, shell)
-        else
-          exit_status = 0
-        end if
+        ! Save body pointer locally so unset -f during execution can't
+        ! invalidate the pointer through the cache (Fortran aliasing)
+        block
+          type(command_node_t), pointer :: func_body
+          func_body => function_ast_cache(func_idx)%body
+          if (associated(func_body)) then
+            exit_status = execute_ast_node(func_body, shell)
+          else
+            exit_status = 0
+          end if
+        end block
 
         ! Decrement function depth
         shell%function_depth = shell%function_depth - 1
@@ -2298,8 +2304,11 @@ contains
   subroutine process_source_inline_ast(shell)
     use grammar_parser, only: parse_command_line
     use command_tree, only: destroy_command_node
+    use parser, only: has_unclosed_quote, ends_with_continuation_backslash, &
+                      needs_compound_continuation, remove_line_continuations
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line
+    character(len=16384) :: input_line
+    character(len=1024) :: continuation_line
     integer :: file_unit, iostat
     type(command_node_t), pointer :: ast_root
     integer :: exit_code
@@ -2325,6 +2334,26 @@ contains
 
       ! Skip empty lines and comments
       if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+
+      ! Check for unclosed quotes or backslash continuation
+      do while (has_unclosed_quote(input_line) .or. ends_with_continuation_backslash(input_line))
+        read(file_unit, '(a)', iostat=iostat) continuation_line
+        if (iostat /= 0) exit
+        input_line = trim(input_line) // char(10) // trim(continuation_line)
+      end do
+
+      ! Handle line continuation (backslash-newline)
+      input_line = remove_line_continuations(input_line)
+
+      ! If EOF was reached during continuation, exit
+      if (iostat /= 0) exit
+
+      ! Check for unclosed compound commands (if/fi, do/done, case/esac, {/})
+      do while (needs_compound_continuation(input_line))
+        read(file_unit, '(a)', iostat=iostat) continuation_line
+        if (iostat /= 0) exit
+        input_line = trim(input_line) // char(10) // trim(continuation_line)
+      end do
 
       ! Parse and execute using AST parser
       ast_root => parse_command_line(trim(input_line))
