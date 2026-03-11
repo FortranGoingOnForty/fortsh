@@ -865,6 +865,22 @@ contains
         end if
         temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
 
+        ! For dup redirections with filename (variable-expanded fd),
+        ! parse the expanded filename as fd number
+        if ((temp_redirect%type == REDIR_DUP_OUT .or. &
+            temp_redirect%type == REDIR_DUP_IN) .and. &
+            allocated(temp_redirect%filename)) then
+          block
+            integer :: dup_fd, dup_ios
+            read(temp_redirect%filename, *, &
+              iostat=dup_ios) dup_fd
+            if (dup_ios == 0) then
+              temp_redirect%target_fd = dup_fd
+              deallocate(temp_redirect%filename)
+            end if
+          end block
+        end if
+
         call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
         if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
         if (.not. redir_success) then
