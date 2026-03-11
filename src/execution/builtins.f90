@@ -1150,9 +1150,8 @@ contains
 
       select case(arg)
       case('-c', '--clear')
-        ! Clear history
+        ! Clear history (silent like bash)
         call clear_history()
-        write(output_unit, '(a)') 'Command history cleared.'
         shell%last_exit_status = 0
         return
 
