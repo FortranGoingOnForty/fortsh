@@ -355,10 +355,33 @@ contains
               ! Check if this is an array assignment: VAR=(...)
               if (value_len >= 2 .and. assign_value(1:1) == '(' .and. &
                   assign_value(value_len:value_len) == ')') then
-                ! Array assignment - delegate to handle_array_assignment
+                ! Array assignment - expand variables/command substitutions first
                 block
                   use variables, only: handle_array_assignment
-                  call handle_array_assignment(shell, trim(assign_name), assign_value(1:value_len))
+                  character(len=:), allocatable :: arr_expanded
+                  character(len=4096) :: arr_buf
+                  if (index(assign_value(1:value_len), '$') > 0 &
+                      .or. index(assign_value(1:value_len), &
+                      '`') > 0) then
+                    ! Expand content inside parens, then re-wrap
+                    call expand_variables( &
+                      assign_value(2:value_len-1), &
+                      arr_expanded, shell)
+                    if (allocated(arr_expanded)) then
+                      arr_buf = '(' // arr_expanded // ')'
+                      call handle_array_assignment(shell, &
+                        trim(assign_name), &
+                        trim(arr_buf))
+                    else
+                      call handle_array_assignment(shell, &
+                        trim(assign_name), &
+                        assign_value(1:value_len))
+                    end if
+                  else
+                    call handle_array_assignment(shell, &
+                      trim(assign_name), &
+                      assign_value(1:value_len))
+                  end if
                 end block
               ! Expand variables and command substitutions in the value
               else if (index(assign_value, '$') > 0 .or. index(assign_value, '~') > 0) then
