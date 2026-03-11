@@ -511,7 +511,9 @@ contains
     end if
 
     ! Check for alias expansion (before function/builtin/external lookup)
+    ! Aliases only expand in interactive mode or with shopt expand_aliases
     if (node%simple_cmd%num_words >= 1 .and. &
+        (shell%is_interactive .or. shell%shopt_expand_aliases) .and. &
         .not. shell%bypass_aliases .and. .not. shell%executing_trap) then
       block
         character(len=MAX_TOKEN_LEN) :: first_word

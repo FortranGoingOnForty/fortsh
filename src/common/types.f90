@@ -371,6 +371,7 @@ module shell_types
     logical :: shopt_nocasematch = .false.     ! nocasematch (case insensitive regex)
     logical :: shopt_extglob = .false.         ! extglob (extended patterns)
     logical :: shopt_dotglob = .false.         ! dotglob (include hidden files)
+    logical :: shopt_expand_aliases = .false.  ! expand_aliases (non-interactive alias expansion)
     ! Special process variables
     integer(c_pid_t) :: shell_pid = 0          ! $$ (shell process ID)
     integer(c_pid_t) :: last_bg_pid = 0        ! $! (last background process)
