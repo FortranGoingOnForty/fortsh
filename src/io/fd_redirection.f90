@@ -403,6 +403,52 @@ contains
           success = .false.
         end if
 
+      case (REDIR_HERE_DOC)
+        ! << delimiter (here-document) - redirect heredoc content to stdin
+        if (allocated(redir%filename)) then
+          block
+            integer(c_int) :: read_fd, write_fd
+            character(len=:), allocatable, target :: content
+            integer(c_intptr_t) :: bytes_written
+
+            ! Create pipe for heredoc
+            if (.not. create_pipe(read_fd, write_fd)) then
+              write(error_unit, '(a)') &
+                'fortsh: cannot create pipe for heredoc'
+              success = .false.
+            else
+              ! Write content to pipe (content already has newlines)
+              content = redir%filename
+              bytes_written = c_write(write_fd, &
+                c_loc(content), &
+                int(len(content), c_size_t))
+              if (bytes_written < 0) then
+                write(error_unit, '(a)') &
+                  'fortsh: error writing to heredoc pipe'
+                success = .false.
+              end if
+
+              ! Close write end
+              if (c_close(write_fd) < 0) then
+              end if
+
+              ! Redirect stdin from read end
+              if (.not. is_permanent) call save_fd(FD_STDIN)
+              if (c_dup2(read_fd, FD_STDIN) < 0) then
+                success = .false.
+              end if
+
+              ! Close original read fd
+              if (c_close(read_fd) < 0) then
+              end if
+            end if
+          end block
+        else
+          write(error_unit, '(a)') &
+            'fortsh: heredoc missing content'
+          success = .false.
+        end if
+
       case default
         write(error_unit, '(a,i15)') 'fortsh: unknown redirection type: ', redir%type
         success = .false.
