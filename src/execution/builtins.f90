@@ -3633,19 +3633,60 @@ contains
           end if
         end do
 
+        ! Handle array initialization: declare -a arr=(a b c)
+        if (array_flag .and. len_trim(var_value) > 0 .and. &
+            var_value(1:1) == '(') then
+          block
+            use variables, only: set_array_variable
+            character(len=256) :: arr_elems(100)
+            integer :: num_elems, k, elem_start
+            character(len=:), allocatable :: content
+            ! Strip parentheses
+            content = trim(var_value)
+            if (content(len(content):len(content)) == ')') then
+              content = content(2:len(content)-1)
+            else
+              content = content(2:)
+            end if
+            ! Split on spaces
+            num_elems = 0
+            elem_start = 1
+            do k = 1, len_trim(content)
+              if (content(k:k) == ' ') then
+                if (k > elem_start) then
+                  num_elems = num_elems + 1
+                  arr_elems(num_elems) = content(elem_start:k-1)
+                end if
+                elem_start = k + 1
+              end if
+            end do
+            if (elem_start <= len_trim(content)) then
+              num_elems = num_elems + 1
+              arr_elems(num_elems) = &
+                content(elem_start:len_trim(content))
+            end if
+            call set_array_variable(shell, trim(var_name), &
+              arr_elems, num_elems)
+          end block
+          arg_idx = arg_idx + 1
+          cycle
+        end if
+
         ! Evaluate arithmetic if integer flag is set
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
             character(len=1024) :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
-            arith_result = arithmetic_expansion_shell(trim(arith_expr), shell)
+            arith_result = &
+              arithmetic_expansion_shell(trim(arith_expr), shell)
             var_value = arith_result
           end block
         end if
 
         ! Set the variable
-        call set_shell_variable(shell, trim(var_name), trim(var_value))
+        call set_shell_variable(shell, trim(var_name), &
+          trim(var_value))
 
         ! Apply attributes
         do j = 1, shell%num_variables
@@ -3691,10 +3732,13 @@ contains
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == var_name) then
             if (readonly_flag) shell%variables(j)%readonly = .true.
+            if (integer_flag) shell%variables(j)%is_integer = .true.
             if (export_flag) then
               shell%variables(j)%exported = .true.
-              if (.not. set_environment_var(var_name, trim(shell%variables(j)%value))) then
-                write(error_unit, '(a)') 'declare: failed to export variable'
+              if (.not. set_environment_var(var_name, &
+                  trim(shell%variables(j)%value))) then
+                write(error_unit, '(a)') &
+                  'declare: failed to export variable'
                 shell%last_exit_status = 1
                 return
               end if
@@ -3709,11 +3753,16 @@ contains
           call set_shell_variable(shell, var_name, '')
           do j = 1, shell%num_variables
             if (trim(shell%variables(j)%name) == var_name) then
-              if (readonly_flag) shell%variables(j)%readonly = .true.
+              if (readonly_flag) &
+                shell%variables(j)%readonly = .true.
+              if (integer_flag) &
+                shell%variables(j)%is_integer = .true.
               if (export_flag) then
                 shell%variables(j)%exported = .true.
-                if (.not. set_environment_var(var_name, '')) then
-                  write(error_unit, '(a)') 'declare: failed to export variable'
+                if (.not. set_environment_var(var_name, &
+                    '')) then
+                  write(error_unit, '(a)') &
+                    'declare: failed to export variable'
                   shell%last_exit_status = 1
                   return
                 end if
