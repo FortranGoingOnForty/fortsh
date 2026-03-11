@@ -989,14 +989,19 @@ contains
     character(len=*), intent(in) :: name
     integer, intent(in) :: index
     character(len=1024) :: value
-    integer :: i
-    
+    integer :: i, actual_index
+
     value = ''
-    
+
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
-        if (index >= 1 .and. index <= shell%variables(i)%array_size) then
-          value = shell%variables(i)%array_values(index)
+        actual_index = index
+        ! Bash: negative indices count from end (-1 = last element)
+        if (actual_index < 0) then
+          actual_index = shell%variables(i)%array_size + actual_index + 1
+        end if
+        if (actual_index >= 1 .and. actual_index <= shell%variables(i)%array_size) then
+          value = shell%variables(i)%array_values(actual_index)
         end if
         return
       end if

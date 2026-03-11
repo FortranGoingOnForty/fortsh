@@ -2795,8 +2795,8 @@ contains
             ! Try numeric index: ${arr[0]}
             read(index_str, *, iostat=op_pos) array_index
             if (op_pos == 0) then
-              ! Convert from 0-indexed to 1-indexed
-              array_index = array_index + 1
+              ! Convert from 0-indexed to 1-indexed (negative indices handled by get_array_element)
+              if (array_index >= 0) array_index = array_index + 1
               if (is_length) then
                 ! ${#arr[0]} - return length of element
                 result_value = trim(get_array_element( &
