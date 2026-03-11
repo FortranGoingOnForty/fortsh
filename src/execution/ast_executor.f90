@@ -602,11 +602,17 @@ contains
         shell%function_depth = shell%function_depth + 1
 
         ! Execute function body
-        if (associated(function_ast_cache(func_idx)%body)) then
-          exit_status = execute_ast_node(function_ast_cache(func_idx)%body, shell)
-        else
-          exit_status = 0
-        end if
+        ! Save body pointer locally so unset -f during execution can't
+        ! invalidate the pointer through the cache (Fortran aliasing)
+        block
+          type(command_node_t), pointer :: func_body
+          func_body => function_ast_cache(func_idx)%body
+          if (associated(func_body)) then
+            exit_status = execute_ast_node(func_body, shell)
+          else
+            exit_status = 0
+          end if
+        end block
 
         ! Decrement function depth
         shell%function_depth = shell%function_depth - 1
