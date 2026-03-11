@@ -41,6 +41,7 @@ contains
     shell%shopt_nocasematch = .false.
     shell%shopt_extglob = .false.
     shell%shopt_dotglob = .false.
+    shell%shopt_expand_aliases = .false.
   end subroutine
 
   ! Handle 'set' builtin command for POSIX options
@@ -296,6 +297,8 @@ contains
         shell%shopt_extglob = enable
       case ('dotglob')
         shell%shopt_dotglob = enable
+      case ('expand_aliases')
+        shell%shopt_expand_aliases = enable
       case default
         write(error_unit, '(a)') 'shopt: unknown option: ' // trim(option_name)
         shell%last_exit_status = 1
@@ -313,6 +316,7 @@ contains
     write(output_unit, '(a,a)') 'shopt ', merge('-s nocasematch ', '-u nocasematch ', shell%shopt_nocasematch)
     write(output_unit, '(a,a)') 'shopt ', merge('-s extglob     ', '-u extglob     ', shell%shopt_extglob)
     write(output_unit, '(a,a)') 'shopt ', merge('-s dotglob     ', '-u dotglob     ', shell%shopt_dotglob)
+    write(output_unit, '(a,a)') 'shopt ', merge('-s expand_aliases', '-u expand_aliases', shell%shopt_expand_aliases)
   end subroutine
 
   ! Show shell variables (simplified version for 'set' without args)

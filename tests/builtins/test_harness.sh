@@ -72,11 +72,14 @@ normalize_shell_name() {
                               -e 's/fortsh: /SHELL: /g'
 }
 
+# Per-test timeout (seconds) — prevents hanging tests from blocking CI
+TEST_TIMEOUT="${TEST_TIMEOUT:-10}"
+
 # Helper: compare output against bash
 compare_output() {
     test_name="$1"; command="$2"
-    expected=$(bash -c "$command" 2>&1)
-    actual=$("$FORTSH_BIN" -c "$command" 2>&1)
+    expected=$(timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1)
+    actual=$(timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1)
     norm_expected=$(normalize_shell_name "$expected")
     norm_actual=$(normalize_shell_name "$actual")
     if [ "$norm_expected" = "$norm_actual" ]; then pass "$test_name"
@@ -86,8 +89,8 @@ compare_output() {
 # Helper: compare exit code only
 compare_exit() {
     test_name="$1"; command="$2"
-    bash -c "$command" >/dev/null 2>&1; expected=$?
-    "$FORTSH_BIN" -c "$command" >/dev/null 2>&1; actual=$?
+    timeout "$TEST_TIMEOUT" bash -c "$command" >/dev/null 2>&1; expected=$?
+    timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" >/dev/null 2>&1; actual=$?
     if [ "$expected" = "$actual" ]; then pass "$test_name"
     else fail "$test_name" "exit $expected" "exit $actual"; fi
 }
@@ -95,8 +98,8 @@ compare_exit() {
 # Helper: compare both output and exit code
 compare_both() {
     test_name="$1"; command="$2"
-    expected_out=$(bash -c "$command" 2>&1); expected_exit=$?
-    actual_out=$("$FORTSH_BIN" -c "$command" 2>&1); actual_exit=$?
+    expected_out=$(timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1); expected_exit=$?
+    actual_out=$(timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1); actual_exit=$?
     norm_expected=$(normalize_shell_name "$expected_out")
     norm_actual=$(normalize_shell_name "$actual_out")
     if [ "$norm_expected" = "$norm_actual" ] && [ "$expected_exit" = "$actual_exit" ]; then
@@ -109,7 +112,7 @@ compare_both() {
 # Helper: check fortsh output matches expected string
 check_output() {
     test_name="$1"; command="$2"; expected="$3"
-    actual=$("$FORTSH_BIN" -c "$command" 2>&1)
+    actual=$(timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1)
     if [ "$actual" = "$expected" ]; then pass "$test_name"
     else fail "$test_name" "$expected" "$actual"; fi
 }
@@ -117,7 +120,7 @@ check_output() {
 # Helper: check fortsh exit code matches expected
 check_exit() {
     test_name="$1"; command="$2"; expected="$3"
-    "$FORTSH_BIN" -c "$command" >/dev/null 2>&1; actual=$?
+    timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" >/dev/null 2>&1; actual=$?
     if [ "$actual" = "$expected" ]; then pass "$test_name"
     else fail "$test_name" "exit $expected" "exit $actual"; fi
 }

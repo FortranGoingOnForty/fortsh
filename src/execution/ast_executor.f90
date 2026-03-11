@@ -510,6 +510,44 @@ contains
       ! If we get here, exec has arguments, so fall through to normal execution
     end if
 
+    ! Check for alias expansion (before function/builtin/external lookup)
+    ! Aliases only expand in interactive mode or with shopt expand_aliases
+    if (node%simple_cmd%num_words >= 1 .and. &
+        (shell%is_interactive .or. shell%shopt_expand_aliases) .and. &
+        .not. shell%bypass_aliases .and. .not. shell%executing_trap) then
+      block
+        character(len=MAX_TOKEN_LEN) :: first_word
+        integer :: alias_i
+        first_word = trim(node%simple_cmd%words(1))
+        do alias_i = 1, shell%num_aliases
+          if (trim(shell%aliases(alias_i)%name) == trim(first_word)) then
+            ! Found alias — rebuild command line with expansion and re-parse
+            block
+              use grammar_parser, only: parse_command_line
+              use command_tree, only: destroy_command_node
+              character(len=4096) :: expanded_line
+              type(command_node_t), pointer :: alias_ast
+              integer :: word_i
+              expanded_line = trim(shell%aliases(alias_i)%command)
+              ! Append remaining arguments
+              do word_i = 2, node%simple_cmd%num_words
+                expanded_line = trim(expanded_line) // ' ' // &
+                  trim(node%simple_cmd%words(word_i))
+              end do
+              alias_ast => parse_command_line(trim(expanded_line))
+              if (associated(alias_ast)) then
+                shell%bypass_aliases = .true.
+                exit_status = execute_ast_node(alias_ast, shell)
+                shell%bypass_aliases = .false.
+                call destroy_command_node(alias_ast)
+              end if
+            end block
+            return
+          end if
+        end do
+      end block
+    end if
+
     ! Check if this is a function call (unless bypass_functions is set)
     if (node%simple_cmd%num_words >= 1) then
       cmd_name = trim(node%simple_cmd%words(1))
