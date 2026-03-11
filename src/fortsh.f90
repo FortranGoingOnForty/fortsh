@@ -706,13 +706,14 @@ contains
   function needs_compound_continuation(input) result(needs_more)
     character(len=*), intent(in) :: input
     logical :: needs_more
-    type(token_t) :: tokens(MAX_TOKENS)
+    type(token_t), allocatable :: tokens(:)
     integer :: num_tokens, i
     integer :: if_depth, do_depth, case_depth
 
     needs_more = .false.
 
     ! Tokenize the input using the lexer
+    allocate(tokens(MAX_TOKENS))
     call tokenize(input, tokens, num_tokens)
 
     if_depth = 0
