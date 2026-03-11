@@ -1772,6 +1772,110 @@ contains
         cycle  ! Skip normal expansion for this word
       end if
 
+      ! Special handling for quoted "${arr[@]}" - each array element becomes a separate word
+      if (allocated(node%for_loop%words_was_quoted) .and. &
+          i <= size(node%for_loop%words_was_quoted) .and. &
+          node%for_loop%words_was_quoted(i)) then
+        block
+          use variables, only: get_array_size, &
+            is_associative_array, get_assoc_array_keys, &
+            get_assoc_array_value
+          character(len=:), allocatable :: wrd
+          character(len=256) :: arr_name
+          character(len=256) :: akeys(200)
+          integer :: nk, ai, bstart, bend
+          logical :: is_keys_expansion
+          wrd = trim(node%for_loop%words(i))
+          is_keys_expansion = .false.
+          ! Match ${name[@]} or ${!name[@]} pattern
+          if (len(wrd) > 5 .and. wrd(1:2) == '${' &
+              .and. wrd(len(wrd)-3:) == '[@]}') &
+          then
+            if (wrd(3:3) == '!' .or. &
+                (len(wrd) > 6 .and. &
+                 wrd(3:4) == '\!')) then
+              is_keys_expansion = .true.
+              if (wrd(3:3) == '!') then
+                arr_name = wrd(4:len(wrd)-4)
+              else
+                arr_name = wrd(5:len(wrd)-4)
+              end if
+            else
+              arr_name = wrd(3:len(wrd)-4)
+            end if
+            if (is_keys_expansion) then
+              ! ${!name[@]} - expand keys as separate words
+              if (is_associative_array(shell, &
+                  trim(arr_name))) then
+                call get_assoc_array_keys(shell, &
+                  trim(arr_name), akeys, nk)
+                do ai = 1, nk
+                  if (total_words < MAX_TOKEN_LEN) then
+                    total_words = total_words + 1
+                    expanded_words(total_words) = &
+                      akeys(ai)
+                  end if
+                end do
+                cycle
+              else
+                ! Regular array keys = indices
+                nk = get_array_size(shell, &
+                  trim(arr_name))
+                do ai = 0, nk - 1
+                  if (total_words < MAX_TOKEN_LEN) then
+                    block
+                      character(len=20) :: idx_str
+                      total_words = total_words + 1
+                      write(idx_str, '(i0)') ai
+                      expanded_words(total_words) = &
+                        trim(idx_str)
+                    end block
+                  end if
+                end do
+                if (nk > 0) cycle
+              end if
+            else if (is_associative_array(shell, &
+                trim(arr_name))) then
+              call get_assoc_array_keys(shell, &
+                trim(arr_name), akeys, nk)
+              do ai = 1, nk
+                if (total_words < MAX_TOKEN_LEN) then
+                  total_words = total_words + 1
+                  expanded_words(total_words) = &
+                    get_assoc_array_value(shell, &
+                    trim(arr_name), trim(akeys(ai)))
+                end if
+              end do
+              cycle
+            else
+              nk = get_array_size(shell, trim(arr_name))
+              if (nk > 0) then
+                do ai = 1, shell%num_variables
+                  if (trim(shell%variables(ai)%name) &
+                      == trim(arr_name) .and. &
+                      shell%variables(ai)%is_array) then
+                    do bstart = 1, nk
+                      if (total_words < MAX_TOKEN_LEN &
+                          .and. len_trim( &
+                          shell%variables(ai) &
+                          %array_values(bstart)) > 0) &
+                      then
+                        total_words = total_words + 1
+                        expanded_words(total_words) = &
+                          shell%variables(ai) &
+                          %array_values(bstart)
+                      end if
+                    end do
+                    exit
+                  end if
+                end do
+                cycle
+              end if
+            end if
+          end if
+        end block
+      end if
+
       ! First expand variables (e.g., $*, $@, $var)
       ! Pass the quoted status so expand_variables can handle it correctly
       if (allocated(node%for_loop%words_was_quoted) .and. i <= size(node%for_loop%words_was_quoted)) then
