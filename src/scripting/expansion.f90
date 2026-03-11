@@ -2868,7 +2868,7 @@ contains
     character(len=:), allocatable :: expanded
     integer :: brace_start, brace_end, dot_pos, depth, pos
     character(len=:), allocatable :: prefix, brace_content, suffix, item
-    character(1024) :: result_buf
+    character(len=:), allocatable :: result_buf
     integer :: i, start_val, end_val, step_val, current_val
     integer :: start_char, end_char, current_char
     integer :: last_pos, second_dot
@@ -2878,6 +2878,7 @@ contains
 
     expanded = word
     result_buf = ''
+
 
     ! Find opening brace that is NOT part of ${...} parameter expansion
     brace_start = 0
@@ -3098,6 +3099,57 @@ contains
     end if
 
   end function expand_braces
+
+  ! --------------------------------------------------------------------------
+  ! Expand braces and return results as separate words in an allocatable array.
+  ! This avoids the MAX_TOKEN_LEN bottleneck of the space-separated string
+  ! approach and matches bash/zsh behavior for arbitrarily large expansions.
+  ! --------------------------------------------------------------------------
+  subroutine expand_braces_to_words(word, words, word_count)
+    character(len=*), intent(in) :: word
+    character(len=MAX_TOKEN_LEN), allocatable, intent(out) :: words(:)
+    integer, intent(out) :: word_count
+
+    character(len=:), allocatable :: expanded, wrd
+    integer :: i, wstart, cap
+
+    ! Use existing expand_braces which returns space-separated result
+    expanded = expand_braces(word)
+
+    ! Count words to allocate exact size
+    word_count = 0
+    if (len(expanded) == 0) then
+      allocate(words(1))
+      words(1) = word
+      word_count = 1
+      return
+    end if
+
+    ! Count spaces to estimate word count
+    cap = 1
+    do i = 1, len(expanded)
+      if (expanded(i:i) == ' ') cap = cap + 1
+    end do
+
+    allocate(words(cap))
+    word_count = 0
+    wstart = 1
+
+    do i = 1, len(expanded) + 1
+      if (i > len(expanded) .or. expanded(i:i) == ' ') then
+        if (i > wstart) then
+          word_count = word_count + 1
+          words(word_count) = expanded(wstart:i - 1)
+        end if
+        wstart = i + 1
+      end if
+    end do
+
+    if (word_count == 0) then
+      word_count = 1
+      words(1) = word
+    end if
+  end subroutine expand_braces_to_words
 
   ! Helper function to recursively expand all braces in space-separated results
   function recursive_expand_all_braces(input) result(output)
