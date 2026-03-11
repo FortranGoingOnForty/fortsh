@@ -99,6 +99,8 @@ contains
         if (.not. set_environment_var('PATH', value(1:actual_len))) then
           ! Silently ignore errors
         end if
+        ! Clear hash table when PATH changes (bash behavior)
+        shell%num_hashed_commands = 0
         ! Don't return - continue to store in variables array too
       case ('HISTFILE')
         shell%histfile = value
@@ -548,6 +550,22 @@ contains
           index_str = var_name(bracket_pos+1:bracket_end-1)
           var_name = var_name(:bracket_pos-1)
 
+          ! Strip quotes and lexer sentinel chars from array key
+          call strip_quotes(index_str)
+          block
+            character(len=100) :: clean_key
+            integer :: ci, co
+            co = 0
+            clean_key = ''
+            do ci = 1, len_trim(index_str)
+              if (ichar(index_str(ci:ci)) > 3) then
+                co = co + 1
+                clean_key(co:co) = index_str(ci:ci)
+              end if
+            end do
+            index_str = clean_key
+          end block
+
           ! Check if this is an associative array
           if (is_associative_array(shell, trim(var_name))) then
             ! Associative array: use key as-is
@@ -990,17 +1008,21 @@ contains
     character(len=*), intent(in) :: name
     character(len=4096) :: result_str
     integer :: i, j, pos
+    logical :: first
 
     result_str = ''
     pos = 1
+    first = .true.
 
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
         do j = 1, shell%variables(i)%array_size
-          if (j > 1) then
+          if (len_trim(shell%variables(i)%array_values(j)) == 0) cycle
+          if (.not. first) then
             result_str(pos:pos) = ' '
             pos = pos + 1
           end if
+          first = .false.
           result_str(pos:pos+len_trim(shell%variables(i)%array_values(j))-1) = &
             trim(shell%variables(i)%array_values(j))
           pos = pos + len_trim(shell%variables(i)%array_values(j))
@@ -1148,6 +1170,31 @@ contains
         num_keys = min(shell%variables(i)%assoc_size, size(keys))
         do j = 1, num_keys
           keys(j) = shell%variables(i)%assoc_entries(j)%key
+        end do
+        return
+      end if
+    end do
+  end subroutine
+
+  subroutine unset_assoc_array_key(shell, array_name, key)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: array_name, key
+    integer :: i, j, k
+
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(array_name) .and. &
+          shell%variables(i)%is_assoc_array) then
+        do j = 1, shell%variables(i)%assoc_size
+          if (trim(shell%variables(i)%assoc_entries(j)%key) == trim(key)) then
+            ! Shift remaining entries down
+            do k = j, shell%variables(i)%assoc_size - 1
+              shell%variables(i)%assoc_entries(k) = &
+                shell%variables(i)%assoc_entries(k+1)
+            end do
+            shell%variables(i)%assoc_size = &
+              shell%variables(i)%assoc_size - 1
+            return
+          end if
         end do
         return
       end if

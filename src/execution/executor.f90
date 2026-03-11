@@ -1189,25 +1189,46 @@ contains
         index_str = token(bracket_pos+1:bracket_end-1)
         var_value = token(eq_pos+1:token_len)
 
-        ! Parse the index (bash uses 0-indexed, convert to 1-indexed)
-        read(index_str, *, iostat=read_status) array_index
-        if (read_status == 0) then
-          array_index = array_index + 1  ! Convert to 1-indexed
-          call set_array_element(shell, trim(var_name), array_index, trim(var_value))
-          shell%last_exit_status = 0
-        else
-          ! Non-numeric index — check for associative array
-          block
-            use variables, only: is_associative_array, set_assoc_array_value
-            if (is_associative_array(shell, trim(var_name))) then
-              call set_assoc_array_value(shell, trim(var_name), trim(index_str), trim(var_value))
+        ! Strip quotes and lexer sentinel chars from array subscript
+        block
+          use variables, only: strip_quotes
+          character(len=100) :: clean_key
+          integer :: ci, co
+          call strip_quotes(index_str)
+          ! Remove sentinel chars (char(1), char(2), char(3))
+          co = 0
+          clean_key = ''
+          do ci = 1, len_trim(index_str)
+            if (ichar(index_str(ci:ci)) > 3) then
+              co = co + 1
+              clean_key(co:co) = index_str(ci:ci)
+            end if
+          end do
+          index_str = clean_key
+        end block
+
+        ! Check associative array first (numeric keys are valid)
+        block
+          use variables, only: is_associative_array, set_assoc_array_value
+          if (is_associative_array(shell, trim(var_name))) then
+            call set_assoc_array_value(shell, trim(var_name), &
+              trim(index_str), trim(var_value))
+            shell%last_exit_status = 0
+          else
+            ! Parse as numeric index (0-indexed → 1-indexed)
+            read(index_str, *, iostat=read_status) array_index
+            if (read_status == 0) then
+              array_index = array_index + 1
+              call set_array_element(shell, trim(var_name), &
+                array_index, trim(var_value))
               shell%last_exit_status = 0
             else
-              write(error_unit, '(a)') 'Error: invalid array index'
+              write(error_unit, '(a)') &
+                'Error: invalid array index'
               shell%last_exit_status = 1
             end if
-          end block
-        end if
+          end if
+        end block
       else
         write(error_unit, '(a)') 'Error: unclosed bracket in array assignment'
         shell%last_exit_status = 1
@@ -1218,7 +1239,16 @@ contains
     ! Get variable name (before =)
     var_name = token(:eq_pos-1)
 
-    ! Check if it's an array literal: arr=(...)
+    ! Check for += append syntax: arr+=(...)
+    block
+      logical :: is_append
+      is_append = .false.
+      if (eq_pos >= 2 .and. token(eq_pos-1:eq_pos-1) == '+') then
+        is_append = .true.
+        var_name = token(:eq_pos-2)
+      end if
+
+    ! Check if it's an array literal: arr=(...) or arr+=(...)
     paren_start = eq_pos + 1
     if (paren_start <= token_len .and. token(paren_start:paren_start) == '(') then
       ! Array literal
@@ -1228,12 +1258,39 @@ contains
         ! Extract elements between parentheses
         var_value = token(paren_start+1:paren_end-1)
 
+        ! Expand command substitutions and variables
+        if (index(trim(var_value), '$') > 0 .or. &
+            index(trim(var_value), '`') > 0) then
+          block
+            use parser, only: expand_variables
+            character(len=:), allocatable :: arr_exp
+            call expand_variables(trim(var_value), &
+              arr_exp, shell)
+            if (allocated(arr_exp)) then
+              var_value = arr_exp
+            end if
+          end block
+        end if
+
         ! Split by spaces to get array elements
         num_elements = 0
         call split_array_elements(var_value, array_elements, num_elements)
 
-        ! Set as array variable
-        call set_array_variable(shell, trim(var_name), array_elements, num_elements)
+        if (is_append) then
+          ! Append to existing array
+          block
+            integer :: existing_size, k
+            existing_size = get_array_size(shell, trim(var_name))
+            do k = 1, num_elements
+              call set_array_element(shell, trim(var_name), &
+                existing_size + k, trim(array_elements(k)))
+            end do
+          end block
+        else
+          ! Set as array variable
+          call set_array_variable(shell, trim(var_name), &
+            array_elements, num_elements)
+        end if
         shell%last_exit_status = 0
       else
         write(error_unit, '(a)') 'Error: unclosed array literal'
@@ -1274,15 +1331,45 @@ contains
 
         ! Strip outer quotes if present (old parser keeps quotes in tokens)
         if (actual_value_len >= 2) then
-          if ((var_value(1:1) == '"' .and. var_value(actual_value_len:actual_value_len) == '"') .or. &
-              (var_value(1:1) == "'" .and. var_value(actual_value_len:actual_value_len) == "'")) then
+          if ((var_value(1:1) == '"' .and. &
+               var_value(actual_value_len:actual_value_len) == '"') &
+              .or. (var_value(1:1) == "'" .and. &
+               var_value(actual_value_len:actual_value_len) == "'")) &
+              then
             ! Remove quotes and adjust length
             var_value = var_value(2:actual_value_len-1)
             actual_value_len = actual_value_len - 2
           end if
         end if
 
-        call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
+        ! Check for integer attribute: evaluate as arithmetic
+        block
+          logical :: is_int_var
+          is_int_var = .false.
+          do i = 1, shell%num_variables
+            if (trim(shell%variables(i)%name) == &
+                trim(var_name)) then
+              is_int_var = shell%variables(i)%is_integer
+              exit
+            end if
+          end do
+          if (is_int_var .and. actual_value_len > 0) then
+            block
+              use expansion, only: arithmetic_expansion_shell
+              character(len=1024) :: arith_expr, arith_result
+              arith_expr = '$((' // &
+                var_value(:actual_value_len) // '))'
+              arith_result = &
+                arithmetic_expansion_shell( &
+                  trim(arith_expr), shell)
+              var_value = arith_result
+              actual_value_len = len_trim(var_value)
+            end block
+          end if
+        end block
+
+        call var_set_shell_variable(shell, trim(var_name), &
+          var_value, actual_value_len)
         ! Set exit status to 0 for simple assignments without expansions
         ! But don't overwrite error status from readonly violation
         if (shell%last_exit_status /= 127) then
@@ -1307,8 +1394,8 @@ contains
       ! POSIX: Exit status of assignment is from last command substitution
       ! Only set to 0 if no expansion was performed (i.e., no command substitution)
       ! Don't overwrite exit status when there was a command substitution
-      ! The exit status was already set by execute_command_and_capture
     end if
+    end block
   end subroutine
 
   ! Split array elements by spaces (respecting quotes)
@@ -1423,6 +1510,12 @@ contains
     else
       ! Parent process
       shell%last_pid = pid
+
+      ! Auto-populate hash table (hashall)
+      if (shell%option_hashall .and. &
+          index(trim(cmd%tokens(1)), '/') == 0) then
+        call cache_command_path(shell, trim(cmd%tokens(1)))
+      end if
 
       if (.not. shell%in_pipeline_child) then
         ! Only manage process groups and terminal when NOT in a pipeline
@@ -1811,6 +1904,18 @@ contains
     function_returned = .false.
 
     if (allocated(function_body)) then
+      ! For defun-style functions (body has no $), append call args
+      if (size(function_body) == 1 .and. cmd%num_tokens > 1 .and. &
+          index(function_body(1), '$') == 0) then
+        block
+          integer :: j
+          do j = 2, cmd%num_tokens
+            function_body(1) = trim(function_body(1)) // &
+                               ' ' // trim(cmd%tokens(j))
+          end do
+        end block
+      end if
+
       ! Execute each line of the function
       do i = 1, size(function_body)
         if (len_trim(function_body(i)) > 0) then
@@ -2654,5 +2759,92 @@ contains
       end if
     end do
   end subroutine init_token_metadata
+
+  subroutine cache_command_path(shell, cmd_name)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: cmd_name
+    character(len=MAX_PATH_LEN) :: full_path
+    integer :: j
+
+    ! Inline PATH search to avoid circular dependency with command_builtin
+    block
+      character(len=:), allocatable :: path_alloc
+      character(len=4096) :: path_var
+      character(len=1024) :: path_comp, candidate
+      integer :: spos, epos, cpos
+      character(kind=c_char), target :: c_path(1025)
+      integer :: ci, acc_status
+      interface
+        function cache_access(pathname, mode) bind(C, name="access")
+          import :: c_char, c_int
+          character(kind=c_char), intent(in) :: pathname(*)
+          integer(c_int), value :: mode
+          integer(c_int) :: cache_access
+        end function
+      end interface
+
+      full_path = ''
+      if (index(cmd_name, '/') > 0) return
+
+      path_alloc = get_environment_var('PATH')
+      if (allocated(path_alloc) .and. len_trim(path_alloc) > 0) then
+        path_var = path_alloc
+      else
+        path_var = '/usr/bin:/bin'
+      end if
+
+      spos = 1
+      do while (spos <= len_trim(path_var))
+        cpos = index(path_var(spos:), ':')
+        if (cpos == 0) then
+          epos = len_trim(path_var)
+        else
+          epos = spos + cpos - 2
+        end if
+        path_comp = path_var(spos:epos)
+        if (len_trim(path_comp) == 0) path_comp = '.'
+
+        write(candidate, '(a,a,a)') trim(path_comp), '/', trim(cmd_name)
+
+        ! Check executable via C access()
+        do ci = 1, len_trim(candidate)
+          c_path(ci) = candidate(ci:ci)
+        end do
+        c_path(len_trim(candidate) + 1) = c_null_char
+        acc_status = cache_access(c_path, int(1, c_int))  ! X_OK = 1
+        if (acc_status == 0) then
+          full_path = candidate
+          exit
+        end if
+
+        if (cpos == 0) exit
+        spos = spos + cpos
+      end do
+    end block
+    if (len_trim(full_path) == 0) return
+
+    ! Check if already in hash table — update hits
+    do j = 1, shell%num_hashed_commands
+      if (trim(shell%command_hash(j)%command_name) == &
+          cmd_name) then
+        shell%command_hash(j)%hits = &
+          shell%command_hash(j)%hits + 1
+        return
+      end if
+    end do
+
+    ! Add new entry
+    if (shell%num_hashed_commands < &
+        size(shell%command_hash)) then
+      shell%num_hashed_commands = &
+        shell%num_hashed_commands + 1
+      shell%command_hash(shell%num_hashed_commands) &
+        %command_name = cmd_name
+      shell%command_hash(shell%num_hashed_commands) &
+        %full_path = full_path
+      shell%command_hash(shell%num_hashed_commands) &
+        %hits = 1
+    end if
+  end subroutine cache_command_path
 
 end module executor

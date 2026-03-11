@@ -5,7 +5,7 @@ TEST_PREFIX="[set-shopt]"
 section "1. set options"
 compare_exit "set -e exits on error" 'set -e; false'
 compare_output "set -e does not exit on conditional" 'set -e; if false; then echo no; fi; echo ok'
-compare_output "set -u errors on unset var" 'set -u; echo ${NONEXISTENT_XYZ_999} 2>&1 || true'
+compare_exit "set -u errors on unset var" 'set -u; echo ${NONEXISTENT_XYZ_999} 2>/dev/null'
 compare_exit "set -u triggers failure for unset" 'set -u; echo $NONEXISTENT_XYZ_999 2>/dev/null'
 compare_exit "set -o pipefail catches pipe failure" 'set -o pipefail; false | true'
 compare_output "set -o pipefail success" 'set -o pipefail; true | true; echo $?'

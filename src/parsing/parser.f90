@@ -2325,9 +2325,86 @@ contains
     do
       pos = index(output, trim(pattern))
       if (pos == 0) exit
-      temp = output(:pos-1) // trim(replacement) // output(pos+len_trim(pattern):)
+      temp = output(:pos-1) // trim(replacement) // &
+        output(pos+len_trim(pattern):)
       output = temp
     end do
+  end function
+
+  ! Glob-aware replace all: ${var//pattern/replacement}
+  function glob_replace_all(text, pattern, replacement) result(output)
+    character(len=*), intent(in) :: text, pattern, replacement
+    character(len=:), allocatable :: output
+    integer :: i, t_len, match_len, best_len
+
+    ! If pattern has no glob chars, use fast exact matching
+    if (index(pattern, '*') == 0 .and. index(pattern, '?') == 0 &
+        .and. index(pattern, '[') == 0) then
+      output = replace_all(text, pattern, replacement)
+      return
+    end if
+
+    output = ''
+    t_len = len_trim(text)
+    i = 1
+    do while (i <= t_len)
+      ! Try matching pattern at position i with increasing lengths
+      best_len = 0
+      do match_len = 1, t_len - i + 1
+        if (pattern_matches_no_dotfile_check(pattern, &
+            text(i:i+match_len-1))) then
+          best_len = match_len
+        end if
+      end do
+      if (best_len > 0) then
+        output = output // replacement
+        i = i + best_len
+      else
+        output = output // text(i:i)
+        i = i + 1
+      end if
+    end do
+  end function
+
+  ! Glob-aware replace first: ${var/pattern/replacement}
+  function glob_replace_first(text, pattern, replacement) &
+      result(output)
+    character(len=*), intent(in) :: text, pattern, replacement
+    character(len=:), allocatable :: output
+    integer :: i, t_len, match_len, best_len
+
+    ! If pattern has no glob chars, use fast exact matching
+    if (index(pattern, '*') == 0 .and. index(pattern, '?') == 0 &
+        .and. index(pattern, '[') == 0) then
+      block
+        integer :: pos
+        pos = index(text, trim(pattern))
+        if (pos > 0) then
+          output = text(:pos-1) // trim(replacement) // &
+            text(pos+len_trim(pattern):)
+        else
+          output = text
+        end if
+      end block
+      return
+    end if
+
+    t_len = len_trim(text)
+    do i = 1, t_len
+      best_len = 0
+      do match_len = 1, t_len - i + 1
+        if (pattern_matches_no_dotfile_check(pattern, &
+            text(i:i+match_len-1))) then
+          best_len = match_len
+        end if
+      end do
+      if (best_len > 0) then
+        output = text(:i-1) // replacement // &
+          text(i+best_len:len_trim(text))
+        return
+      end if
+    end do
+    output = text
   end function
 
   ! Convert to uppercase
@@ -2367,7 +2444,8 @@ contains
   subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
-                         set_shell_variable, is_shell_variable_set, check_nounset
+                         set_shell_variable, is_shell_variable_set, check_nounset, &
+                         strip_quotes
     character(len=*), intent(in) :: param_expr
     character(len=:), allocatable, intent(out) :: result_value
     type(shell_state_t), intent(inout) :: shell
@@ -2492,14 +2570,28 @@ contains
     if (param_expr(1:1) == '!') then
       get_keys = .true.
       var_name = param_expr(2:)
+    else if (len_trim(param_expr) >= 2 .and. &
+             param_expr(1:2) == '\!') then
+      get_keys = .true.
+      var_name = param_expr(3:)
     else if (param_expr(1:1) == '#') then
       is_length = .true.
       var_name = param_expr(2:)
     end if
 
     ! Check for array syntax: var[index] or var[@] or var[*]
+    ! But NOT if there's a / before [ (indicates pattern replacement)
     bracket_pos = index(var_name, '[')
     is_array_access = (bracket_pos > 0)
+    if (is_array_access) then
+      block
+        integer :: slash_pos
+        slash_pos = index(var_name, '/')
+        if (slash_pos > 0 .and. slash_pos < bracket_pos) then
+          is_array_access = .false.
+        end if
+      end block
+    end if
 
     if (is_array_access) then
       bracket_end = index(var_name(bracket_pos:), ']')
@@ -2507,6 +2599,22 @@ contains
         bracket_end = bracket_pos + bracket_end - 1
         index_str = var_name(bracket_pos+1:bracket_end-1)
         var_name = var_name(:bracket_pos-1)
+
+        ! Strip quotes and lexer sentinel chars from array subscript
+        call strip_quotes(index_str)
+        block
+          character(len=MAX_TOKEN_LEN) :: clean_key
+          integer :: ci, co
+          co = 0
+          clean_key = ''
+          do ci = 1, len_trim(index_str)
+            if (ichar(index_str(ci:ci)) > 3) then
+              co = co + 1
+              clean_key(co:co) = index_str(ci:ci)
+            end if
+          end do
+          index_str = clean_key
+        end block
 
         ! Check for special indices
         if (trim(index_str) == '@' .or. trim(index_str) == '*') then
@@ -2520,14 +2628,22 @@ contains
               write(length_str, '(I0)') num_keys
               result_value = trim(length_str)
             else
-              ! For indexed arrays, use get_array_size
+              ! For indexed arrays, count non-empty elements
               array_sz = get_array_size(shell, trim(var_name))
-              write(length_str, '(I0)') array_sz
+              num_keys = 0
+              do array_index = 1, array_sz
+                if (len_trim(get_array_element( &
+                    shell, trim(var_name), &
+                    array_index)) > 0) then
+                  num_keys = num_keys + 1
+                end if
+              end do
+              write(length_str, '(I0)') num_keys
               result_value = trim(length_str)
             end if
             return
           else if (get_keys) then
-            ! ${!arr[@]} - return indices (for indexed) or keys (for associative)
+            ! ${!arr[@]} - return indices or keys
             if (is_associative_array(shell, trim(var_name))) then
               ! Return keys for associative array
               call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
@@ -2536,50 +2652,146 @@ contains
               else
                 result_value = ''
                 do key_idx = 1, num_keys
-                  if (key_idx > 1) result_value = result_value // ' '
-                  result_value = result_value // trim(keys(key_idx))
+                  if (key_idx > 1) then
+                    result_value = result_value // ' '
+                  end if
+                  result_value = result_value // &
+                    trim(keys(key_idx))
                 end do
               end if
               return
             else
-              ! Return indices for indexed array
+              ! Return non-empty indices for indexed array
               array_sz = get_array_size(shell, trim(var_name))
               if (array_sz == 0) then
                 result_value = ''
                 return
               end if
-              ! Build indices with proper spacing
+              result_value = ''
               do array_index = 1, array_sz
-                if (array_index > 1) result_value = result_value // ' '
-                write(length_str, '(i15)') array_index - 1  ! 0-indexed
-                result_value = result_value // trim(length_str)
+                if (len_trim(get_array_element( &
+                    shell, trim(var_name), &
+                    array_index)) > 0) then
+                  if (len_trim(result_value) > 0) then
+                    result_value = result_value // ' '
+                  end if
+                  write(length_str, '(I0)') &
+                    array_index - 1
+                  result_value = result_value // &
+                    trim(length_str)
+                end if
               end do
               return
             end if
           else
             ! ${arr[@]} or ${map[@]} - return all elements/values
-            if (is_associative_array(shell, trim(var_name))) then
-              ! Return all values for associative array
-              call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
+            ! Check for slice syntax: ${arr[@]:offset:length}
+            block
+              character(len=256) :: slice_spec
+              integer :: slice_offset, slice_length, elem_count
+              integer :: sc_pos, elem_i, elem_start, word_i
+              logical :: has_slice
+              character(len=256) :: all_elems(200)
+
+              has_slice = .false.
+              slice_spec = ''
+              if (bracket_end < len_trim(param_expr)) then
+                slice_spec = param_expr(bracket_end+1:)
+                if (len_trim(slice_spec) > 0 .and. &
+                    slice_spec(1:1) == ':') then
+                  has_slice = .true.
+                end if
+              end if
+
+              if (is_associative_array(shell, &
+                  trim(var_name))) then
+                call get_assoc_array_keys(shell, &
+                  trim(var_name), keys, num_keys)
+                result_value = ''
+                do key_idx = 1, num_keys
+                  if (key_idx > 1) &
+                    result_value = result_value // ' '
+                  assoc_value = get_assoc_array_value( &
+                    shell, trim(var_name), &
+                    trim(keys(key_idx)))
+                  result_value = result_value // &
+                    trim(assoc_value)
+                end do
+                if (.not. has_slice) return
+              else
+                result_value = trim( &
+                  get_array_all_elements(shell, &
+                    trim(var_name)))
+                if (.not. has_slice) return
+              end if
+
+              ! Apply slice: parse :offset or :offset:length
+              block
+                character(len=256) :: off_str, len_str
+                integer :: ios1, ios2
+                slice_spec = slice_spec(2:)  ! skip :
+                sc_pos = index(trim(slice_spec), ':')
+                if (sc_pos > 0) then
+                  off_str = slice_spec(:sc_pos-1)
+                  len_str = slice_spec(sc_pos+1:)
+                  read(off_str, *, iostat=ios1) slice_offset
+                  read(len_str, *, iostat=ios2) slice_length
+                  if (ios2 /= 0) slice_length = 999
+                else
+                  off_str = slice_spec
+                  read(off_str, *, iostat=ios1) slice_offset
+                  slice_length = 999
+                end if
+                if (ios1 /= 0) return
+              end block
+
+              ! Split result into words then select slice
+              elem_count = 0
+              elem_start = 1
+              do elem_i = 1, len_trim(result_value)
+                if (result_value(elem_i:elem_i) == ' ') then
+                  if (elem_i > elem_start) then
+                    elem_count = elem_count + 1
+                    all_elems(elem_count) = &
+                      result_value(elem_start:elem_i-1)
+                  end if
+                  elem_start = elem_i + 1
+                end if
+              end do
+              if (elem_start <= len_trim(result_value)) then
+                elem_count = elem_count + 1
+                all_elems(elem_count) = &
+                  result_value(elem_start: &
+                    len_trim(result_value))
+              end if
+
+              ! Build sliced result
               result_value = ''
-              do key_idx = 1, num_keys
-                if (key_idx > 1) result_value = result_value // ' '
-                assoc_value = get_assoc_array_value(shell, trim(var_name), trim(keys(key_idx)))
-                result_value = result_value // trim(assoc_value)
+              word_i = 0
+              do elem_i = 1, elem_count
+                if (elem_i - 1 >= slice_offset .and. &
+                    word_i < slice_length) then
+                  if (word_i > 0) &
+                    result_value = result_value // ' '
+                  result_value = result_value // &
+                    trim(all_elems(elem_i))
+                  word_i = word_i + 1
+                end if
               end do
               return
-            else
-              ! Return all elements for indexed array
-              result_value = trim(get_array_all_elements(shell, trim(var_name)))
-              return
-            end if
+            end block
           end if
         else
           ! Check if this is an associative array
           if (is_associative_array(shell, trim(var_name))) then
             ! Associative array access: ${map[key]}
             assoc_value = get_assoc_array_value(shell, trim(var_name), trim(index_str))
-            result_value = trim(assoc_value)
+            if (is_length) then
+              write(length_str, '(I0)') len_trim(assoc_value)
+              result_value = trim(length_str)
+            else
+              result_value = trim(assoc_value)
+            end if
             return
           else
             ! Try numeric index: ${arr[0]}
@@ -2587,7 +2799,16 @@ contains
             if (op_pos == 0) then
               ! Convert from 0-indexed to 1-indexed
               array_index = array_index + 1
-              result_value = trim(get_array_element(shell, trim(var_name), array_index))
+              if (is_length) then
+                ! ${#arr[0]} - return length of element
+                result_value = trim(get_array_element( &
+                  shell, trim(var_name), array_index))
+                write(length_str, '(I0)') len_trim(result_value)
+                result_value = trim(length_str)
+              else
+                result_value = trim(get_array_element( &
+                  shell, trim(var_name), array_index))
+              end if
               return
             else
               ! Non-numeric index for non-associative - might be string key, treat as assoc
@@ -2658,9 +2879,14 @@ contains
           ! Convert offset to integer
           read(offset_str, *, iostat=iostat_val) offset
           if (iostat_val == 0) then
-            ! Fortran uses 1-based indexing, bash uses 0-based
-            offset = offset + 1
-            if (offset < 1) offset = 1
+            ! Handle negative offsets (count from end of string)
+            if (offset < 0) then
+              offset = len_trim(current_value) + offset + 1
+              if (offset < 1) offset = 1
+            else
+              ! Fortran uses 1-based indexing, bash uses 0-based
+              offset = offset + 1
+            end if
 
             if (len_trim(length_str_temp) > 0) then
               read(length_str_temp, *, iostat=iostat_val) str_length
@@ -2687,7 +2913,9 @@ contains
     ! Must check before default value operators since # and % have special meaning
 
     ! Pattern removal from beginning: ${var#pattern} or ${var##pattern}
-    if (index(param_expr, '##') > 0) then
+    ! Skip if there's a / before #/% — that's ${var/pattern} replacement syntax
+    if (index(param_expr, '##') > 0 .and. &
+        (index(param_expr, '/') == 0 .or. index(param_expr, '##') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '##')
       var_name = param_expr(:op_pos-1)
       operation = param_expr(op_pos:op_pos+1)
@@ -2714,7 +2942,8 @@ contains
         result_value = ''
       end if
       return
-    else if (index(param_expr, '#') > 0) then
+    else if (index(param_expr, '#') > 0 .and. &
+             (index(param_expr, '/') == 0 .or. index(param_expr, '#') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '#')
       ! Make sure it's not the # for length (which would be at position 1)
       if (op_pos > 1) then
@@ -2747,7 +2976,8 @@ contains
     end if
 
     ! Pattern removal from end: ${var%pattern} or ${var%%pattern}
-    if (index(param_expr, '%%') > 0) then
+    if (index(param_expr, '%%') > 0 .and. &
+        (index(param_expr, '/') == 0 .or. index(param_expr, '%%') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '%%')
       var_name = param_expr(:op_pos-1)
       operation = param_expr(op_pos:op_pos+1)
@@ -2774,7 +3004,8 @@ contains
         result_value = ''
       end if
       return
-    else if (index(param_expr, '%') > 0) then
+    else if (index(param_expr, '%') > 0 .and. &
+             (index(param_expr, '/') == 0 .or. index(param_expr, '%') < index(param_expr, '/'))) then
       op_pos = index(param_expr, '%')
       var_name = param_expr(:op_pos-1)
       operation = param_expr(op_pos:op_pos)
@@ -2823,7 +3054,8 @@ contains
       end if
 
       if (allocated(current_value)) then
-        result_value = replace_all(current_value, trim(default_value), trim(operation))
+        result_value = glob_replace_all(current_value, &
+          trim(default_value), trim(operation))
       else
         result_value = ''
       end if
@@ -2847,7 +3079,36 @@ contains
       end if
 
       if (allocated(current_value)) then
-        result_value = replace_first(current_value, trim(default_value), trim(operation))
+        ! Check for anchor prefix in pattern
+        if (len_trim(default_value) > 0 .and. default_value(1:1) == '#') then
+          ! Anchored at start: ${var/#pat/repl}
+          default_value = default_value(2:)
+          if (len_trim(default_value) == 0) then
+            result_value = trim(operation) // trim(current_value)
+          else if (len_trim(current_value) >= len_trim(default_value) .and. &
+                   current_value(1:len_trim(default_value)) == trim(default_value)) then
+            result_value = trim(operation) // &
+              current_value(len_trim(default_value)+1:len_trim(current_value))
+          else
+            result_value = current_value
+          end if
+        else if (len_trim(default_value) > 0 .and. default_value(1:1) == '%') then
+          ! Anchored at end: ${var/%pat/repl}
+          default_value = default_value(2:)
+          if (len_trim(default_value) == 0) then
+            result_value = trim(current_value) // trim(operation)
+          else if (len_trim(current_value) >= len_trim(default_value) .and. &
+                   current_value(len_trim(current_value)-len_trim(default_value)+1: &
+                                 len_trim(current_value)) == trim(default_value)) then
+            result_value = current_value(1:len_trim(current_value)-len_trim(default_value)) &
+              // trim(operation)
+          else
+            result_value = current_value
+          end if
+        else
+          result_value = glob_replace_first(current_value, &
+            trim(default_value), trim(operation))
+        end if
       else
         result_value = ''
       end if

@@ -16,10 +16,12 @@ check_output "defun function uses dollar-1" 'defun greet echo "hi $1"; greet ali
 section "3. defun overwrite and unset"
 check_output "defun overwrites existing function" 'defun f echo old; defun f echo new; f' "new"
 check_output "unset -f removes defun function" 'defun f echo test; unset -f f; f 2>/dev/null; echo $?' "127"
-check_output "type shows defun as function" 'defun myfunc echo hi; type myfunc 2>/dev/null | head -1'
+check_output "type shows defun as function" 'defun myfunc echo hi; type myfunc 2>/dev/null | head -1' "myfunc is a function"
 
 section "4. defun edge cases"
 check_output "defun with special chars in body" 'defun f echo "hello world"; f' "hello world"
-check_output "defun called multiple times" 'defun f echo ok; f; f; f'
+check_output "defun called multiple times" 'defun f echo ok; f; f; f' "ok
+ok
+ok"
 
 print_summary

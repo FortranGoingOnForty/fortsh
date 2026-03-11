@@ -9,8 +9,8 @@ export FORTSH_BIN
 
 section "1. declare/export/readonly interaction"
 compare_output "declare -x is export" 'declare -x BDX=exported; echo $BDX'
-compare_output "declare -r is readonly" 'declare -r BDR=readonly; BDR=other 2>/dev/null; echo $BDR'
-compare_output "export then readonly" 'export BER=val; readonly BER; BER=other 2>/dev/null; echo $BER'
+compare_output "declare -r is readonly" 'declare -r BDR=readonly; { BDR=other; } 2>/dev/null; echo $BDR'
+compare_output "export then readonly" 'export BER=val; readonly BER; { BER=other; } 2>/dev/null; echo $BER'
 compare_output "declare -ix integer export" 'declare -ix BDI=5; echo $BDI'
 compare_output "declare -a then export" 'declare -a BDA=(1 2 3); export BDA; echo ${BDA[@]}'
 compare_output "readonly then unset fails" 'readonly BRU=val; unset BRU 2>/dev/null; echo $? $BRU'

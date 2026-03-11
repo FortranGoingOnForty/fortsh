@@ -355,10 +355,33 @@ contains
               ! Check if this is an array assignment: VAR=(...)
               if (value_len >= 2 .and. assign_value(1:1) == '(' .and. &
                   assign_value(value_len:value_len) == ')') then
-                ! Array assignment - delegate to handle_array_assignment
+                ! Array assignment - expand variables/command substitutions first
                 block
                   use variables, only: handle_array_assignment
-                  call handle_array_assignment(shell, trim(assign_name), assign_value(1:value_len))
+                  character(len=:), allocatable :: arr_expanded
+                  character(len=4096) :: arr_buf
+                  if (index(assign_value(1:value_len), '$') > 0 &
+                      .or. index(assign_value(1:value_len), &
+                      '`') > 0) then
+                    ! Expand content inside parens, then re-wrap
+                    call expand_variables( &
+                      assign_value(2:value_len-1), &
+                      arr_expanded, shell)
+                    if (allocated(arr_expanded)) then
+                      arr_buf = '(' // arr_expanded // ')'
+                      call handle_array_assignment(shell, &
+                        trim(assign_name), &
+                        trim(arr_buf))
+                    else
+                      call handle_array_assignment(shell, &
+                        trim(assign_name), &
+                        assign_value(1:value_len))
+                    end if
+                  else
+                    call handle_array_assignment(shell, &
+                      trim(assign_name), &
+                      assign_value(1:value_len))
+                  end if
                 end block
               ! Expand variables and command substitutions in the value
               else if (index(assign_value, '$') > 0 .or. index(assign_value, '~') > 0) then
@@ -370,21 +393,50 @@ contains
                 end if
               else
                 ! Preserve whitespace in value by passing explicit length
-                ! Strip sentinel characters that may be embedded from lexer processing
+                ! Strip sentinel characters that may be embedded
                 block
                   character(len=1024) :: clean_value
                   integer :: src_i, dst_i
+                  logical :: is_int_var
                   clean_value = ''
                   dst_i = 1
                   do src_i = 1, value_len
                     if (assign_value(src_i:src_i) /= char(2) .and. &
-                        assign_value(src_i:src_i) /= char(3) .and. &
-                        assign_value(src_i:src_i) /= char(1)) then
-                      clean_value(dst_i:dst_i) = assign_value(src_i:src_i)
+                        assign_value(src_i:src_i) /= char(3) &
+                        .and. &
+                        assign_value(src_i:src_i) /= char(1)) &
+                        then
+                      clean_value(dst_i:dst_i) = &
+                        assign_value(src_i:src_i)
                       dst_i = dst_i + 1
                     end if
                   end do
-                  call set_shell_variable(shell, trim(assign_name), clean_value, dst_i - 1)
+                  ! Check integer attribute
+                  is_int_var = .false.
+                  do src_i = 1, shell%num_variables
+                    if (trim(shell%variables(src_i)%name) &
+                        == trim(assign_name)) then
+                      is_int_var = &
+                        shell%variables(src_i)%is_integer
+                      exit
+                    end if
+                  end do
+                  if (is_int_var .and. dst_i > 1) then
+                    block
+                      use expansion, only: &
+                        arithmetic_expansion_shell
+                      character(len=1024) :: ae, ar
+                      ae = '$((' // &
+                        clean_value(1:dst_i-1) // '))'
+                      ar = arithmetic_expansion_shell( &
+                        trim(ae), shell)
+                      clean_value = ar
+                      dst_i = len_trim(ar) + 1
+                    end block
+                  end if
+                  call set_shell_variable(shell, &
+                    trim(assign_name), clean_value, &
+                    dst_i - 1)
                 end block
               end if
 
@@ -776,14 +828,64 @@ contains
         temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
         if (allocated(node%simple_cmd%redirects(i)%filename)) then
           ! Expand variables in redirect filename (e.g., /tmp/file$$)
-          call expand_variables(trim(node%simple_cmd%redirects(i)%filename), expanded_filename, shell)
-          if (allocated(expanded_filename)) then
-            allocate(temp_redirect%filename, source=expanded_filename)
+          ! For here-strings, preserve trailing whitespace
+          if (temp_redirect%type == REDIR_HERE_STRING) then
+            block
+              character(len=:), allocatable :: hs_content
+              integer :: hs_len
+              hs_len = len(node%simple_cmd%redirects(i)%filename)
+              if (index(node%simple_cmd%redirects(i)%filename, &
+                  '$') > 0 .or. &
+                  index(node%simple_cmd%redirects(i)%filename, &
+                  '`') > 0) then
+                call expand_variables( &
+                  node%simple_cmd%redirects(i)%filename, &
+                  expanded_filename, shell)
+                if (allocated(expanded_filename)) then
+                  allocate(temp_redirect%filename, &
+                    source=expanded_filename)
+                else
+                  allocate(temp_redirect%filename, &
+                    source= &
+                    node%simple_cmd%redirects(i)%filename)
+                end if
+              else
+                allocate(temp_redirect%filename, &
+                  source= &
+                  node%simple_cmd%redirects(i)%filename)
+              end if
+            end block
           else
-            allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(i)%filename))
+            call expand_variables( &
+              trim(node%simple_cmd%redirects(i)%filename), &
+              expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              allocate(temp_redirect%filename, &
+                source=expanded_filename)
+            else
+              allocate(temp_redirect%filename, &
+                source=trim( &
+                  node%simple_cmd%redirects(i)%filename))
+            end if
           end if
         end if
         temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
+
+        ! For dup redirections with filename (variable-expanded fd),
+        ! parse the expanded filename as fd number
+        if ((temp_redirect%type == REDIR_DUP_OUT .or. &
+            temp_redirect%type == REDIR_DUP_IN) .and. &
+            allocated(temp_redirect%filename)) then
+          block
+            integer :: dup_fd, dup_ios
+            read(temp_redirect%filename, *, &
+              iostat=dup_ios) dup_fd
+            if (dup_ios == 0) then
+              temp_redirect%target_fd = dup_fd
+              deallocate(temp_redirect%filename)
+            end if
+          end block
+        end if
 
         call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
         if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
@@ -1517,7 +1619,7 @@ contains
   recursive function execute_while_node(node, shell) result(exit_status)
     use control_flow, only: push_control_block, pop_control_block, BLOCK_WHILE, BLOCK_UNTIL
     use fd_redirection, only: apply_single_redirection, restore_fds
-    use parser, only: expand_variables
+    use parser, only: expand_variables, read_heredoc
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, cond_status, i
@@ -1536,23 +1638,46 @@ contains
     if (has_redirects) then
       block
         character(len=:), allocatable :: expanded_filename
+        character(len=:), allocatable :: heredoc_content
         do i = 1, node%num_redirects
           temp_redirect%type = node%redirects(i)%type
           temp_redirect%fd = node%redirects(i)%fd
           temp_redirect%target_fd = node%redirects(i)%target_fd
-          if (allocated(node%redirects(i)%filename)) then
-            call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+
+          if (temp_redirect%type == REDIR_HERE_DOC) then
+            ! Heredoc: filename holds delimiter, retrieve content
+            if (allocated(node%redirects(i)%filename)) then
+              call read_heredoc( &
+                trim(node%redirects(i)%filename), &
+                heredoc_content, shell)
+              if (allocated(heredoc_content)) then
+                allocate(temp_redirect%filename, &
+                  source=heredoc_content)
+                deallocate(heredoc_content)
+              else
+                allocate(temp_redirect%filename, source='')
+              end if
+            end if
+          else if (allocated(node%redirects(i)%filename)) then
+            call expand_variables( &
+              trim(node%redirects(i)%filename), &
+              expanded_filename, shell)
             if (allocated(expanded_filename)) then
-              allocate(temp_redirect%filename, source=trim(expanded_filename))
+              allocate(temp_redirect%filename, &
+                source=trim(expanded_filename))
               deallocate(expanded_filename)
             else
-              allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+              allocate(temp_redirect%filename, &
+                source=trim(node%redirects(i)%filename))
             end if
           end if
-          temp_redirect%force_clobber = node%redirects(i)%force_clobber
+          temp_redirect%force_clobber = &
+            node%redirects(i)%force_clobber
 
-          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
-          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+          call apply_single_redirection(temp_redirect, &
+            redir_success, shell%option_noclobber)
+          if (allocated(temp_redirect%filename)) &
+            deallocate(temp_redirect%filename)
           if (.not. redir_success) then
             call restore_fds()
             exit_status = 1
@@ -1747,6 +1872,110 @@ contains
           end if
         end do
         cycle  ! Skip normal expansion for this word
+      end if
+
+      ! Special handling for quoted "${arr[@]}" - each array element becomes a separate word
+      if (allocated(node%for_loop%words_was_quoted) .and. &
+          i <= size(node%for_loop%words_was_quoted) .and. &
+          node%for_loop%words_was_quoted(i)) then
+        block
+          use variables, only: get_array_size, &
+            is_associative_array, get_assoc_array_keys, &
+            get_assoc_array_value
+          character(len=:), allocatable :: wrd
+          character(len=256) :: arr_name
+          character(len=256) :: akeys(200)
+          integer :: nk, ai, bstart, bend
+          logical :: is_keys_expansion
+          wrd = trim(node%for_loop%words(i))
+          is_keys_expansion = .false.
+          ! Match ${name[@]} or ${!name[@]} pattern
+          if (len(wrd) > 5 .and. wrd(1:2) == '${' &
+              .and. wrd(len(wrd)-3:) == '[@]}') &
+          then
+            if (wrd(3:3) == '!' .or. &
+                (len(wrd) > 6 .and. &
+                 wrd(3:4) == '\!')) then
+              is_keys_expansion = .true.
+              if (wrd(3:3) == '!') then
+                arr_name = wrd(4:len(wrd)-4)
+              else
+                arr_name = wrd(5:len(wrd)-4)
+              end if
+            else
+              arr_name = wrd(3:len(wrd)-4)
+            end if
+            if (is_keys_expansion) then
+              ! ${!name[@]} - expand keys as separate words
+              if (is_associative_array(shell, &
+                  trim(arr_name))) then
+                call get_assoc_array_keys(shell, &
+                  trim(arr_name), akeys, nk)
+                do ai = 1, nk
+                  if (total_words < MAX_TOKEN_LEN) then
+                    total_words = total_words + 1
+                    expanded_words(total_words) = &
+                      akeys(ai)
+                  end if
+                end do
+                cycle
+              else
+                ! Regular array keys = indices
+                nk = get_array_size(shell, &
+                  trim(arr_name))
+                do ai = 0, nk - 1
+                  if (total_words < MAX_TOKEN_LEN) then
+                    block
+                      character(len=20) :: idx_str
+                      total_words = total_words + 1
+                      write(idx_str, '(i0)') ai
+                      expanded_words(total_words) = &
+                        trim(idx_str)
+                    end block
+                  end if
+                end do
+                if (nk > 0) cycle
+              end if
+            else if (is_associative_array(shell, &
+                trim(arr_name))) then
+              call get_assoc_array_keys(shell, &
+                trim(arr_name), akeys, nk)
+              do ai = 1, nk
+                if (total_words < MAX_TOKEN_LEN) then
+                  total_words = total_words + 1
+                  expanded_words(total_words) = &
+                    get_assoc_array_value(shell, &
+                    trim(arr_name), trim(akeys(ai)))
+                end if
+              end do
+              cycle
+            else
+              nk = get_array_size(shell, trim(arr_name))
+              if (nk > 0) then
+                do ai = 1, shell%num_variables
+                  if (trim(shell%variables(ai)%name) &
+                      == trim(arr_name) .and. &
+                      shell%variables(ai)%is_array) then
+                    do bstart = 1, nk
+                      if (total_words < MAX_TOKEN_LEN &
+                          .and. len_trim( &
+                          shell%variables(ai) &
+                          %array_values(bstart)) > 0) &
+                      then
+                        total_words = total_words + 1
+                        expanded_words(total_words) = &
+                          shell%variables(ai) &
+                          %array_values(bstart)
+                      end if
+                    end do
+                    exit
+                  end if
+                end do
+                cycle
+              end if
+            end if
+          end if
+        end block
       end if
 
       ! First expand variables (e.g., $*, $@, $var)
@@ -2041,6 +2270,9 @@ contains
       if (shell%fatal_expansion_error .and. status == 127) then
         status = 1
       end if
+      ! Fire EXIT trap before subshell exits
+      shell%last_exit_status = status
+      call run_exit_trap_in_subshell(shell)
       call c_exit(status)
     else if (pid > 0) then
       ! Parent - wait for subshell
@@ -2631,5 +2863,29 @@ contains
       end if
     end do
   end subroutine filter_traps_for_subshell
+
+  subroutine run_exit_trap_in_subshell(shell)
+    use trap_dispatch, only: eval_trap_string
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, trap_exit_code
+
+    if (shell%executing_trap .or. shell%exit_trap_executed) return
+
+    ! Find EXIT trap (signal 0) that was set in this subshell
+    do i = 1, shell%num_traps
+      if (shell%traps(i)%signal == 0 .and. &
+          shell%traps(i)%active .and. &
+          .not. shell%traps(i)%inherited .and. &
+          len_trim(shell%traps(i)%command) > 0) then
+        shell%exit_trap_executed = .true.
+        shell%executing_trap = .true.
+        call eval_trap_string( &
+          trim(shell%traps(i)%command), &
+          shell, trap_exit_code)
+        shell%executing_trap = .false.
+        return
+      end if
+    end do
+  end subroutine run_exit_trap_in_subshell
 
 end module ast_executor

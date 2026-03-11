@@ -64,12 +64,22 @@ section() {
     printf "\n${BLUE}==========================================\n%s\n==========================================${NC}\n" "$1"
 }
 
+# Normalize shell name prefixes in error messages for comparison
+normalize_shell_name() {
+    printf '%s\n' "$1" | sed -e 's/bash: line [0-9]*: /SHELL: /g' \
+                              -e 's/fortsh: line [0-9]*: /SHELL: /g' \
+                              -e 's/bash: /SHELL: /g' \
+                              -e 's/fortsh: /SHELL: /g'
+}
+
 # Helper: compare output against bash
 compare_output() {
     test_name="$1"; command="$2"
     expected=$(bash -c "$command" 2>&1)
     actual=$("$FORTSH_BIN" -c "$command" 2>&1)
-    if [ "$expected" = "$actual" ]; then pass "$test_name"
+    norm_expected=$(normalize_shell_name "$expected")
+    norm_actual=$(normalize_shell_name "$actual")
+    if [ "$norm_expected" = "$norm_actual" ]; then pass "$test_name"
     else fail "$test_name" "$expected" "$actual"; fi
 }
 
@@ -87,7 +97,9 @@ compare_both() {
     test_name="$1"; command="$2"
     expected_out=$(bash -c "$command" 2>&1); expected_exit=$?
     actual_out=$("$FORTSH_BIN" -c "$command" 2>&1); actual_exit=$?
-    if [ "$expected_out" = "$actual_out" ] && [ "$expected_exit" = "$actual_exit" ]; then
+    norm_expected=$(normalize_shell_name "$expected_out")
+    norm_actual=$(normalize_shell_name "$actual_out")
+    if [ "$norm_expected" = "$norm_actual" ] && [ "$expected_exit" = "$actual_exit" ]; then
         pass "$test_name"
     else
         fail "$test_name" "out='$expected_out' exit=$expected_exit" "out='$actual_out' exit=$actual_exit"

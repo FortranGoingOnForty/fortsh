@@ -407,7 +407,10 @@ contains
           ! This ends with = , check if next token is the value
           call advance(state)
           next_tok = current_token(state)
-          if (next_tok%token_type == TOKEN_WORD) then
+          ! Only merge VAR= with next token if they are adjacent (no whitespace).
+          ! "IFS= read" should be empty-value assignment + command, not "IFS=read".
+          if (next_tok%token_type == TOKEN_WORD .and. &
+              next_tok%start_pos == tok%end_pos + 1) then
             ! Merge: VAR= + value → VAR=value
             ! For quoted tokens, preserve whitespace by using actual token length
             if (next_tok%quoted) then
@@ -634,7 +637,16 @@ contains
                 call advance(state)
               else
                 ! Regular filename for other redirects
-                allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+                ! For here-strings, preserve trailing whitespace
+                if (redirects(num_redirects)%type == &
+                    REDIR_HERE_STRING .and. &
+                    tok%value_length > 0) then
+                  allocate(redirects(num_redirects)%filename, &
+                    source=tok%value(1:tok%value_length))
+                else
+                  allocate(redirects(num_redirects)%filename, &
+                    source=trim(tok%value))
+                end if
                 call advance(state)
               end if
             end if
@@ -1199,6 +1211,12 @@ contains
         case('<<<')
           redirects(num_redirects)%type = REDIR_HERE_STRING
           redirects(num_redirects)%fd = 0  ! stdin
+        case('<<')
+          redirects(num_redirects)%type = REDIR_HERE_DOC
+          redirects(num_redirects)%fd = 0  ! stdin
+        case('<<-')
+          redirects(num_redirects)%type = REDIR_HERE_DOC
+          redirects(num_redirects)%fd = 0  ! stdin
         case default
           num_redirects = num_redirects - 1
           exit
@@ -1229,7 +1247,15 @@ contains
           call advance(state)
           tok = current_token(state)
         else
-          allocate(redirects(num_redirects)%filename, source=trim(tok%value))
+          if (redirects(num_redirects)%type == &
+              REDIR_HERE_STRING .and. &
+              tok%value_length > 0) then
+            allocate(redirects(num_redirects)%filename, &
+              source=tok%value(1:tok%value_length))
+          else
+            allocate(redirects(num_redirects)%filename, &
+              source=trim(tok%value))
+          end if
           call advance(state)
           tok = current_token(state)
         end if

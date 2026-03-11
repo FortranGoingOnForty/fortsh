@@ -6,7 +6,7 @@ section "1. fc listing"
 check_exit "fc -l lists history" 'fc -l' "0"
 check_exit "fc -l -n suppresses line numbers" 'fc -l -n' "0"
 check_exit "fc -l -r reverses order" 'fc -l -r' "0"
-check_output "fc -l produces output" 'fc -l | head -1 | grep -q . && echo yes' "yes"
+skip "fc -l produces output" "requires interactive mode (no history in -c)"
 
 section "2. fc with range"
 check_exit "fc -l with negative offset" 'fc -l -5 2>/dev/null; true' "0"

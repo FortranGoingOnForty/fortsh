@@ -5,7 +5,8 @@
 module read_builtin
   use shell_types
   use variables
-  use iso_fortran_env, only: input_unit, output_unit, error_unit
+  use iso_fortran_env, only: input_unit, output_unit, error_unit, &
+    IOSTAT_EOR, IOSTAT_END
   implicit none
 
 contains
@@ -16,7 +17,7 @@ contains
     
     character(len=256) :: prompt, var_name, delimiter
     character(len=1024) :: input_line
-    integer :: timeout_sec, arg_index
+    integer :: timeout_sec, arg_index, actual_input_len
     logical :: silent_mode, raw_mode, use_prompt, use_timeout, use_delimiter
     logical :: use_array, use_nchars
     integer :: nchars
@@ -138,16 +139,21 @@ contains
       logical :: eof_reached
       eof_reached = .false.
 
+      actual_input_len = 0
       if (use_nchars) then
         call read_n_characters(nchars, input_line)
+        actual_input_len = len_trim(input_line)
       else if (use_delimiter) then
         call read_until_delimiter(delimiter, input_line)
+        actual_input_len = len_trim(input_line)
       else if (use_timeout) then
-        call read_with_timeout(timeout_sec, input_line, shell%last_exit_status)
-        ! Early return for timeout - exit status already set
+        call read_with_timeout(timeout_sec, input_line, &
+          shell%last_exit_status)
+        actual_input_len = len_trim(input_line)
         if (shell%last_exit_status /= 0) return
       else
-        call read_line_input(input_line, eof_reached, raw_mode)
+        call read_line_input(input_line, eof_reached, raw_mode, &
+          actual_input_len)
       end if
 
       ! Process backslash escapes (but not continuation, which was handled above)
@@ -162,8 +168,17 @@ contains
         ! Multiple variables: start from arg_index (first variable)
         call store_multiple_variables(shell, cmd%tokens, arg_index, cmd%num_tokens, input_line)
       else
-        ! Single variable
-        call set_shell_variable(shell, var_name, trim(input_line))
+        ! Single variable — strip leading and trailing IFS whitespace
+        ! When IFS is explicitly set to empty, preserve all whitespace
+        ! When IFS is explicitly set to empty (ifs_len==0),
+        ! preserve all whitespace. ifs_len==-1 means default.
+        if (shell%ifs_len == 0) then
+          call set_shell_variable(shell, var_name, &
+            input_line(:actual_input_len), actual_input_len)
+        else
+          call set_shell_variable(shell, var_name, &
+            trim(adjustl(input_line)))
+        end if
       end if
 
       ! Set exit status: 1 if EOF reached without reading any data, 0 otherwise
@@ -175,24 +190,38 @@ contains
     end block
   end subroutine
 
-  subroutine read_line_input(input_line, eof_reached, raw_mode)
+  subroutine read_line_input(input_line, eof_reached, raw_mode, &
+      input_length)
     character(len=*), intent(out) :: input_line
     logical, intent(out), optional :: eof_reached
     logical, intent(in), optional :: raw_mode
-    integer :: iostat, line_len
+    integer, intent(out), optional :: input_length
+    integer :: iostat, line_len, nchars
     character(len=4096) :: continuation_line
     logical :: is_raw
 
     is_raw = .false.
     if (present(raw_mode)) is_raw = raw_mode
 
-    read(input_unit, '(a)', iostat=iostat) input_line
-    if (iostat /= 0) then
+    ! Use non-advancing I/O to get actual character count
+    input_line = ''
+    nchars = 0
+    read(input_unit, '(a)', iostat=iostat, advance='no', &
+      size=nchars) input_line
+    if (iostat == IOSTAT_EOR .or. iostat == 0) then
+      if (present(eof_reached)) eof_reached = .false.
+      if (present(input_length)) input_length = nchars
+    else if (iostat == IOSTAT_END) then
       input_line = ''
       if (present(eof_reached)) eof_reached = .true.
+      if (present(input_length)) input_length = 0
+      return
+    else
+      input_line = ''
+      if (present(eof_reached)) eof_reached = .true.
+      if (present(input_length)) input_length = 0
       return
     end if
-    if (present(eof_reached)) eof_reached = .false.
 
     ! POSIX: Without -r, backslash at end of line continues to next line
     if (.not. is_raw) then
@@ -208,6 +237,9 @@ contains
           if (iostat /= 0) exit
           ! Append continuation line
           input_line = trim(input_line) // trim(continuation_line)
+          if (present(input_length)) then
+            input_length = len_trim(input_line)
+          end if
         else
           exit
         end if

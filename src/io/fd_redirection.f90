@@ -44,6 +44,17 @@ module fd_redirection
       integer(c_size_t), value :: count
       integer(c_intptr_t) :: c_write
     end function c_write
+
+    function c_get_errno() bind(C, name="fortsh_get_errno")
+      use iso_c_binding
+      integer(c_int) :: c_get_errno
+    end function c_get_errno
+
+    function c_strerror(errnum) bind(C, name="fortsh_strerror")
+      use iso_c_binding
+      integer(c_int), value :: errnum
+      type(c_ptr) :: c_strerror
+    end function c_strerror
   end interface
 
   ! File access flags (from fcntl.h) - use local names to avoid conflicts
@@ -78,6 +89,30 @@ module fd_redirection
   integer :: num_saved_fds = 0
 
 contains
+
+  function get_errno_message() result(msg)
+    use iso_c_binding
+    character(len=256) :: msg
+    type(c_ptr) :: cptr
+    character(kind=c_char), pointer :: cstr(:)
+    integer :: errno_val, slen, ci
+    errno_val = c_get_errno()
+    cptr = c_strerror(errno_val)
+    if (.not. c_associated(cptr)) then
+      msg = 'Unknown error'
+      return
+    end if
+    call c_f_pointer(cptr, cstr, [256])
+    slen = 0
+    do ci = 1, 256
+      if (cstr(ci) == c_null_char) exit
+      slen = slen + 1
+    end do
+    msg = ''
+    do ci = 1, slen
+      msg(ci:ci) = cstr(ci)
+    end do
+  end function get_errno_message
 
   ! Apply all redirections for a command
   subroutine apply_redirections(cmd, success)
@@ -118,7 +153,7 @@ contains
         filename_c = trim(redir%filename) // c_null_char
         file_fd = c_open(filename_c, FD_FD_O_RDONLY, 0)
         if (file_fd < 0) then
-          write(error_unit, '(a)') 'fortsh: cannot open ' // trim(redir%filename) // ': No such file or directory'
+          write(error_unit, '(a)') 'fortsh: ' // trim(redir%filename) // ': ' // trim(get_errno_message())
           success = .false.
           return
         end if
@@ -144,7 +179,7 @@ contains
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
-          write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
+          write(error_unit, '(a)') 'fortsh: ' // trim(redir%filename) // ': ' // trim(get_errno_message())
           success = .false.
           return
         end if
@@ -163,7 +198,7 @@ contains
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
-          write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
+          write(error_unit, '(a)') 'fortsh: ' // trim(redir%filename) // ': ' // trim(get_errno_message())
           success = .false.
           return
         end if
@@ -180,7 +215,7 @@ contains
         filename_c = trim(redir%filename) // c_null_char
         file_fd = c_open(filename_c, 0, 0)
         if (file_fd < 0) then
-          write(error_unit, '(a)') 'fortsh: cannot open ' // trim(redir%filename)
+          write(error_unit, '(a)') 'fortsh: ' // trim(redir%filename) // ': ' // trim(get_errno_message())
           success = .false.
           return
         end if
@@ -212,7 +247,7 @@ contains
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_TRUNC)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
-          write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
+          write(error_unit, '(a)') 'fortsh: ' // trim(redir%filename) // ': ' // trim(get_errno_message())
           success = .false.
           return
         end if
@@ -234,7 +269,7 @@ contains
         flags = ior(ior(FD_O_WRONLY, FD_O_CREAT), FD_O_APPEND)
         file_fd = c_open(filename_c, flags, mode)
         if (file_fd < 0) then
-          write(error_unit, '(a)') 'fortsh: cannot create ' // trim(redir%filename)
+          write(error_unit, '(a)') 'fortsh: ' // trim(redir%filename) // ': ' // trim(get_errno_message())
           success = .false.
           return
         end if
@@ -296,7 +331,7 @@ contains
           flags = ior(FD_O_RDWR, FD_O_CREAT)
           file_fd = c_open(filename_c, flags, 420)  ! mode 0644
           if (file_fd < 0) then
-            write(error_unit, '(3a)') 'fortsh: cannot open file: ', trim(redir%filename)
+            write(error_unit, '(a)') 'fortsh: ' // trim(redir%filename) // ': ' // trim(get_errno_message())
             success = .false.
           else
             if (redir%fd < 0) then
@@ -339,7 +374,7 @@ contains
               success = .false.
             else
               ! Write content to pipe (with trailing newline)
-              content = trim(redir%filename) // char(10)
+              content = redir%filename // char(10)
               bytes_written = c_write(write_fd, c_loc(content), int(len(content), c_size_t))
               if (bytes_written < 0) then
                 write(error_unit, '(a)') 'fortsh: error writing to here-string pipe'
@@ -365,6 +400,52 @@ contains
           end block
         else
           write(error_unit, '(a)') 'fortsh: here-string missing content'
+          success = .false.
+        end if
+
+      case (REDIR_HERE_DOC)
+        ! << delimiter (here-document) - redirect heredoc content to stdin
+        if (allocated(redir%filename)) then
+          block
+            integer(c_int) :: read_fd, write_fd
+            character(len=:), allocatable, target :: content
+            integer(c_intptr_t) :: bytes_written
+
+            ! Create pipe for heredoc
+            if (.not. create_pipe(read_fd, write_fd)) then
+              write(error_unit, '(a)') &
+                'fortsh: cannot create pipe for heredoc'
+              success = .false.
+            else
+              ! Write content to pipe (content already has newlines)
+              content = redir%filename
+              bytes_written = c_write(write_fd, &
+                c_loc(content), &
+                int(len(content), c_size_t))
+              if (bytes_written < 0) then
+                write(error_unit, '(a)') &
+                  'fortsh: error writing to heredoc pipe'
+                success = .false.
+              end if
+
+              ! Close write end
+              if (c_close(write_fd) < 0) then
+              end if
+
+              ! Redirect stdin from read end
+              if (.not. is_permanent) call save_fd(FD_STDIN)
+              if (c_dup2(read_fd, FD_STDIN) < 0) then
+                success = .false.
+              end if
+
+              ! Close original read fd
+              if (c_close(read_fd) < 0) then
+              end if
+            end if
+          end block
+        else
+          write(error_unit, '(a)') &
+            'fortsh: heredoc missing content'
           success = .false.
         end if
 

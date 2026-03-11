@@ -48,7 +48,7 @@ section "6. readonly scope"
 compare_output "readonly visible in functions" 'readonly SRV=fixed; f() { echo $SRV; }; f'
 compare_output "readonly visible in subshells" 'readonly SRS=fixed; (echo $SRS)'
 compare_output "readonly from function persists" 'f() { readonly SRF=in_func; }; f; echo $SRF'
-compare_output "readonly blocks reassignment" 'readonly SRB=fixed; SRB=other 2>/dev/null; echo $SRB'
+compare_output "readonly blocks reassignment" 'readonly SRB=fixed; { SRB=other; } 2>/dev/null; echo $SRB'
 compare_output "readonly blocks unset" 'readonly SRU=fixed; unset SRU 2>/dev/null; echo $SRU'
 
 section "7. variable cleanup"

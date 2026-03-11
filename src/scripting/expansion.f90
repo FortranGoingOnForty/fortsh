@@ -55,6 +55,9 @@ contains
         array_name = var_name(:bracket_pos-1)
         array_key = var_name(bracket_pos+1:bracket_end-1)
 
+        ! Strip quotes from array subscript (bash strips quotes)
+        call strip_quotes(array_key)
+
         ! Check for special prefixes (! for keys, # for length)
         is_keys_expansion = .false.
         is_length_expansion = .false.
@@ -241,8 +244,37 @@ contains
         end if
 
         var_value = get_shell_variable(shell, trim(operation))
-        call pattern_replace(trim(var_value), trim(pattern), trim(replacement), &
-                            replace_all, expanded)
+
+        ! Check for anchor prefix in pattern
+        if (len_trim(pattern) > 0 .and. pattern(1:1) == '#') then
+          ! Anchored at start: ${var/#pat/repl}
+          pattern = pattern(2:)
+          if (len_trim(pattern) == 0) then
+            ! Empty pattern with # anchor: prepend replacement
+            expanded = trim(replacement) // trim(var_value)
+          else if (len_trim(var_value) >= len_trim(pattern) .and. &
+                   var_value(1:len_trim(pattern)) == trim(pattern)) then
+            expanded = trim(replacement) // var_value(len_trim(pattern)+1:len_trim(var_value))
+          else
+            expanded = var_value
+          end if
+        else if (len_trim(pattern) > 0 .and. pattern(1:1) == '%') then
+          ! Anchored at end: ${var/%pat/repl}
+          pattern = pattern(2:)
+          if (len_trim(pattern) == 0) then
+            ! Empty pattern with % anchor: append replacement
+            expanded = trim(var_value) // trim(replacement)
+          else if (len_trim(var_value) >= len_trim(pattern) .and. &
+                   var_value(len_trim(var_value)-len_trim(pattern)+1:len_trim(var_value)) == &
+                   trim(pattern)) then
+            expanded = var_value(1:len_trim(var_value)-len_trim(pattern)) // trim(replacement)
+          else
+            expanded = var_value
+          end if
+        else
+          call pattern_replace(trim(var_value), trim(pattern), trim(replacement), &
+                              replace_all, expanded)
+        end if
         return
       end if
     end if
@@ -352,16 +384,21 @@ contains
           var_value = get_shell_variable(shell, trim(operation))
 
           if (len_trim(param1) > 0) then
-            read(param1, *) offset
+            read(param1, *, iostat=i) offset
+            if (i /= 0) offset = 0
+            ! Handle negative offsets (count from end)
+            if (offset < 0) offset = len_trim(var_value) + offset
+            if (offset < 0) offset = 0
             if (len_trim(param2) > 0) then
-              read(param2, *) length
-              if (offset >= 0 .and. offset < len_trim(var_value)) then
+              read(param2, *, iostat=i) length
+              if (i /= 0) length = 0
+              if (offset < len_trim(var_value)) then
                 i = min(length, len_trim(var_value) - offset)
                 expanded = var_value(offset+1:offset+i)
               end if
             else
-              if (offset >= 0 .and. offset < len_trim(var_value)) then
-                expanded = var_value(offset+1:)
+              if (offset < len_trim(var_value)) then
+                expanded = var_value(offset+1:len_trim(var_value))
               end if
             end if
           else
@@ -2842,8 +2879,28 @@ contains
     expanded = word
     result_buf = ''
 
-    ! Find opening brace
-    brace_start = index(word, '{')
+    ! Find opening brace that is NOT part of ${...} parameter expansion
+    brace_start = 0
+    pos = 1
+    do while (pos <= len_trim(word))
+      if (word(pos:pos) == '{') then
+        ! Skip if preceded by $ (this is ${...} parameter expansion)
+        if (pos > 1 .and. word(pos-1:pos-1) == '$') then
+          ! Skip past matching closing brace
+          depth = 1
+          pos = pos + 1
+          do while (pos <= len_trim(word) .and. depth > 0)
+            if (word(pos:pos) == '{') depth = depth + 1
+            if (word(pos:pos) == '}') depth = depth - 1
+            pos = pos + 1
+          end do
+          cycle
+        end if
+        brace_start = pos
+        exit
+      end if
+      pos = pos + 1
+    end do
     if (brace_start == 0) return
 
     ! Find MATCHING closing brace by counting depth (supports nested braces)

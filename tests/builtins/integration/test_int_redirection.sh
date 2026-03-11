@@ -77,7 +77,7 @@ compare_output "test with file redirect" "echo content > $TEST_TMPDIR/rtst; test
 compare_output "declare -p redirect" "X=42; declare -p X > $TEST_TMPDIR/rdecl 2>/dev/null; cat $TEST_TMPDIR/rdecl 2>/dev/null"
 
 section "7. noclobber"
-compare_output "noclobber prevents overwrite" "echo first > $TEST_TMPDIR/noclob; set -C; echo second > $TEST_TMPDIR/noclob 2>/dev/null; echo \$?; set +C; cat $TEST_TMPDIR/noclob"
+compare_output "noclobber prevents overwrite" "echo first > $TEST_TMPDIR/noclob; set -C; { echo second > $TEST_TMPDIR/noclob; } 2>/dev/null; echo \$?; set +C; cat $TEST_TMPDIR/noclob"
 compare_output "noclobber allows append" "echo first > $TEST_TMPDIR/noclob2; set -C; echo second >> $TEST_TMPDIR/noclob2; set +C; cat $TEST_TMPDIR/noclob2"
 compare_output "noclobber force override" "echo first > $TEST_TMPDIR/noclob3; set -C; echo second >| $TEST_TMPDIR/noclob3; set +C; cat $TEST_TMPDIR/noclob3"
 

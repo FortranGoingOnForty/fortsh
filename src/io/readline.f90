@@ -1755,7 +1755,8 @@ contains
     integer :: i
     
     if (command_history%count == 0) then
-      write(output_unit, '(a)') 'No commands in history.'
+      ! Bash is silent when history is empty
+      return
     else
       do i = 1, command_history%count
         write(output_unit, '(i4,2x,a)') i, trim(command_history%lines(i))
@@ -1775,8 +1776,13 @@ contains
     integer, intent(in) :: max_lines
     integer :: unit, iostat, i, start_index
 
-    ! Don't save if no history
-    if (command_history%count == 0) return
+    ! Create empty file if no history (matches bash behavior)
+    if (command_history%count == 0) then
+      open(newunit=unit, file=trim(filepath), status='replace', &
+           action='write', iostat=iostat)
+      if (iostat == 0) close(unit)
+      return
+    end if
 
     ! Calculate starting index based on max_lines
     if (max_lines > 0 .and. command_history%count > max_lines) then

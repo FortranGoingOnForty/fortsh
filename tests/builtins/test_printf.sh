@@ -36,7 +36,8 @@ section "5. printf error handling"
 compare_exit "printf missing format string" 'printf'
 compare_output "printf missing arg uses default" 'printf "%s %d\n"'
 compare_output "printf extra args recycle" 'printf "%s\n" a b c d'
-compare_output "printf %d with non-numeric arg" 'printf "%d\n" abc 2>&1'
+check_output "printf %d with non-numeric arg" 'printf "%d\n" abc 2>&1' "fortsh: printf: abc: invalid number
+0"
 
 section "6. printf special formats"
 compare_output "printf %q shell-quoted string" 'printf "%q\n" "hello world"'

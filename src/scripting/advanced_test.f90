@@ -133,9 +133,9 @@ contains
     call expand_test_operand(shell, right, expanded_right)
 
     select case (trim(operator))
-    ! String comparisons
+    ! String comparisons (use wildcard match for [[ ]] glob support)
     case ('=', '==')
-      result_bool = (trim(expanded_left) == trim(expanded_right))
+      result_bool = wildcard_match(trim(expanded_left), trim(expanded_right))
     case ('!=')
       result_bool = (trim(expanded_left) /= trim(expanded_right))
     case ('<')
@@ -209,13 +209,32 @@ contains
           if (i < num_tokens) then
             if (tokens(i) /= '&&' .and. tokens(i) /= '||' .and. tokens(i) /= ']]') then
               ! Syntax error: unexpected token after binary test
-              ! This catches cases like [[ x =~ foo bar ]] where "bar" is invalid
               result_bool = .false.
               return
             end if
           end if
+        else if (is_unary_test_operator(tokens(i)) .and. &
+                 i + 1 < num_tokens) then
+          ! Unary operator with argument: -z str, -n str, -e file, etc.
+          block
+            character(len=256) :: expanded_arg
+            call expand_test_operand(shell, tokens(i+1), expanded_arg)
+            select case (trim(tokens(i)))
+            case ('-z')
+              next_result = (len_trim(expanded_arg) == 0)
+            case ('-n')
+              next_result = (len_trim(expanded_arg) > 0)
+            case ('-e', '-f', '-d', '-r', '-w', '-x', '-s', '-L', &
+                  '-h', '-p', '-b', '-c', '-g', '-u', '-k', '-G', &
+                  '-O', '-S')
+              next_result = file_test(expanded_arg, tokens(i))
+            case default
+              next_result = .false.
+            end select
+          end block
+          i = i + 2
         else
-          ! Unary test
+          ! Simple unary test (non-empty string check)
           next_result = evaluate_unary_test(shell, tokens(i))
           i = i + 1
         end if
@@ -610,12 +629,25 @@ contains
   function is_test_operator(op) result(is_op)
     character(len=*), intent(in) :: op
     logical :: is_op
-    
+
     is_op = (op == '=' .or. op == '==' .or. op == '!=' .or. &
              op == '<' .or. op == '>' .or. op == '=~' .or. op == '!~' .or. &
              op == '-eq' .or. op == '-ne' .or. op == '-lt' .or. op == '-le' .or. &
              op == '-gt' .or. op == '-ge' .or. op == '-ef' .or. op == '-nt' .or. &
              op == '-ot')
+  end function
+
+  function is_unary_test_operator(op) result(is_op)
+    character(len=*), intent(in) :: op
+    logical :: is_op
+
+    is_op = (op == '-z' .or. op == '-n' .or. &
+             op == '-e' .or. op == '-f' .or. op == '-d' .or. &
+             op == '-r' .or. op == '-w' .or. op == '-x' .or. &
+             op == '-s' .or. op == '-L' .or. op == '-h' .or. &
+             op == '-p' .or. op == '-b' .or. op == '-c' .or. &
+             op == '-g' .or. op == '-u' .or. op == '-k' .or. &
+             op == '-G' .or. op == '-O' .or. op == '-S')
   end function
 
   subroutine expand_test_operand(shell, operand, expanded)

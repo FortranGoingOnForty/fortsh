@@ -51,6 +51,7 @@ module shell_types
   integer, parameter :: REDIR_CLOSE = 9   ! n>&-
   integer, parameter :: REDIR_READWRITE = 10  ! <> file (open for read/write)
   integer, parameter :: REDIR_HERE_STRING = 11  ! <<< string (here-string)
+  integer, parameter :: REDIR_HERE_DOC = 12     ! << delimiter (here-document)
 
   type :: redirection_t
     integer :: type = 0           ! REDIR_* constant
@@ -191,6 +192,7 @@ module shell_types
     logical :: is_assoc_array = .false.
     logical :: readonly = .false.      ! Variable is read-only
     logical :: exported = .false.      ! Variable is exported to environment
+    logical :: is_integer = .false.    ! Variable has integer attribute (declare -i)
     character(len=1024), allocatable :: array_values(:)
     integer :: array_size = 0
     type(assoc_array_entry_t), allocatable :: assoc_entries(:)

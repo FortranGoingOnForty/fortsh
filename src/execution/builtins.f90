@@ -11,7 +11,8 @@ module builtins
   use shell_config
   use aliases
   use shell_options
-  use command_builtin, only: find_command_in_path, builtin_which, builtin_command, find_executable_in_path
+  use command_builtin, only: find_command_in_path, builtin_which, builtin_command, find_executable_in_path, &
+    cmd_builtin_type => builtin_type
   use directory_builtin, only: builtin_pushd, builtin_popd, builtin_dirs
   use performance
   use parser
@@ -81,6 +82,7 @@ contains
                 trim(cmd_name) == 'config' .or. &
                 trim(cmd_name) == 'alias' .or. &
                 trim(cmd_name) == 'unalias' .or. &
+                trim(cmd_name) == 'abbr' .or. &
                 trim(cmd_name) == 'help' .or. &
                 trim(cmd_name) == 'perf' .or. &
                 trim(cmd_name) == 'memory' .or. &
@@ -190,7 +192,7 @@ contains
     case('shopt')
       call builtin_shopt(cmd, shell)
     case('type')
-      call builtin_type(cmd, shell)
+      call cmd_builtin_type(cmd, shell)
     case('which')
       call builtin_which(cmd, shell)
     case('unset')
@@ -456,11 +458,19 @@ contains
 #ifdef USE_MEMORY_POOL
       if (len(target_dir_ref%data) > 0 .and. target_dir_ref%data(1:1) == '/') then
         ! Absolute path - use it directly (preserves symlinks like /tmp)
+        ! Strip trailing slashes (but keep root /)
         shell%cwd = target_dir_ref%data
+        do while (len_trim(shell%cwd) > 1 .and. shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) == '/')
+          shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) = ' '
+        end do
 #else
       if (len(target_dir) > 0 .and. target_dir(1:1) == '/') then
         ! Absolute path - use it directly (preserves symlinks like /tmp)
+        ! Strip trailing slashes (but keep root /)
         shell%cwd = target_dir
+        do while (len_trim(shell%cwd) > 1 .and. shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) == '/')
+          shell%cwd(len_trim(shell%cwd):len_trim(shell%cwd)) = ' '
+        end do
 #endif
       else
         ! Relative path - use physical path from getcwd()
@@ -529,24 +539,65 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
-    logical :: print_mode, found
+    logical :: print_mode, found, unexport_mode
     character(len=:), allocatable :: env_entry
 
     print_mode = .false.
+    unexport_mode = .false.
+    arg_idx = 2
 
-    if (cmd%num_tokens < 2) then
-      ! No arguments: print all exported variables
+    ! Parse options
+    do while (arg_idx <= cmd%num_tokens)
+      if (trim(cmd%tokens(arg_idx)) == '-p') then
+        print_mode = .true.
+        arg_idx = arg_idx + 1
+      else if (trim(cmd%tokens(arg_idx)) == '-n') then
+        unexport_mode = .true.
+        arg_idx = arg_idx + 1
+      else
+        exit
+      end if
+    end do
+
+    if (cmd%num_tokens < 2 .or. (print_mode .and. arg_idx > cmd%num_tokens)) then
+      ! No arguments or -p with no args: print all exported variables
       print_mode = .true.
     end if
 
+    ! Handle export -n: unexport variables
+    if (unexport_mode) then
+      do i = arg_idx, cmd%num_tokens
+        var_name = trim(cmd%tokens(i))
+        do j = 1, shell%num_variables
+          if (trim(shell%variables(j)%name) == var_name) then
+            shell%variables(j)%exported = .false.
+            ! Remove from environment
+            call unset_environment_var(var_name)
+            exit
+          end if
+        end do
+      end do
+      shell%last_exit_status = 0
+      return
+    end if
+
     if (print_mode) then
-      ! Print all environment variables (inherited from parent + shell-exported)
+      ! Print all environment variables in declare -x format (matches bash export -p)
       i = 0
       do
         env_entry = get_environ_entry(i)
         if (.not. allocated(env_entry) .or. len(env_entry) == 0) exit
-        ! Format: export VAR=value
-        write(output_unit, '(a)') 'export ' // trim(env_entry)
+        ! Format: declare -x VAR="value"
+        block
+          integer :: eqp
+          eqp = index(env_entry, '=')
+          if (eqp > 0) then
+            write(output_unit, '(a)') 'declare -x ' // env_entry(:eqp) // '"' // &
+                trim(env_entry(eqp+1:)) // '"'
+          else
+            write(output_unit, '(a)') 'declare -x ' // trim(env_entry)
+          end if
+        end block
         if (allocated(env_entry)) deallocate(env_entry)
         i = i + 1
       end do
@@ -554,14 +605,14 @@ contains
       return
     end if
 
-    ! Process each argument
-    do arg_idx = 2, cmd%num_tokens
-      eq_pos = index(cmd%tokens(arg_idx), '=')
+    ! Process each argument (arg_idx already points past parsed options)
+    do i = arg_idx, cmd%num_tokens
+      eq_pos = index(cmd%tokens(i), '=')
 
       if (eq_pos > 0) then
         ! VAR=value form - set and export
-        var_name = cmd%tokens(arg_idx)(:eq_pos-1)
-        var_value = cmd%tokens(arg_idx)(eq_pos+1:)
+        var_name = cmd%tokens(i)(:eq_pos-1)
+        var_value = cmd%tokens(i)(eq_pos+1:)
 
         ! Set as shell variable first
         call set_shell_variable(shell, trim(var_name), trim(var_value))
@@ -581,7 +632,7 @@ contains
         end do
       else
         ! Just VAR - mark existing variable as exported
-        var_name = trim(cmd%tokens(arg_idx))
+        var_name = trim(cmd%tokens(i))
         found = .false.
 
         do j = 1, shell%num_variables
@@ -638,7 +689,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, len_token, start_token
-    logical :: first, suppress_newline, write_ok, had_error, interpret_escapes
+    logical :: first, suppress_newline, write_ok, had_error, interpret_escapes, stop_output
     character(len=:), allocatable :: processed
     character(len=MAX_TOKEN_LEN) :: token
 
@@ -658,6 +709,7 @@ contains
 
     first = .true.
     suppress_newline = .false.
+    stop_output = .false.
     interpret_escapes = .false.  ! Bash default: do NOT interpret escapes (use -e to enable)
     start_token = 2
 
@@ -684,9 +736,6 @@ contains
         suppress_newline = .true.
         interpret_escapes = .false.
         start_token = i + 1
-      else if (trim(token) == '--') then
-        start_token = i + 1
-        exit
       else
         ! Not a recognized option, treat as regular argument
         exit
@@ -740,7 +789,8 @@ contains
                 processed = processed // achar(8)  ! Backspace
               case ('c')
                 suppress_newline = .true.
-                exit  ! Stop processing
+                stop_output = .true.
+                exit  ! Stop processing this token
               case ('f')
                 processed = processed // achar(12) ! Form feed
               case ('n')
@@ -753,6 +803,56 @@ contains
                 processed = processed // achar(11) ! Vertical tab
               case ('\')
                 processed = processed // '\'       ! Backslash
+              case ('0')
+                ! Octal escape: \0NNN (up to 3 octal digits after the 0)
+                block
+                  integer :: oval, nd
+                  oval = 0
+                  nd = 0
+                  do while (nd < 3 .and. j + nd + 1 <= len_token)
+                    if (token(j+nd+1:j+nd+1) >= '0' .and. token(j+nd+1:j+nd+1) <= '7') then
+                      oval = oval * 8 + ichar(token(j+nd+1:j+nd+1)) - ichar('0')
+                      nd = nd + 1
+                    else
+                      exit
+                    end if
+                  end do
+                  if (oval >= 0 .and. oval <= 127) then
+                    processed = processed // achar(oval)
+                  else
+                    processed = processed // achar(mod(oval, 256))
+                  end if
+                  j = j + nd  ! skip consumed digits
+                end block
+              case ('x')
+                ! Hex escape: \xNN (up to 2 hex digits)
+                block
+                  integer :: hval, hd, hc
+                  hval = 0
+                  hd = 0
+                  do while (hd < 2 .and. j + hd + 1 <= len_token)
+                    hc = ichar(token(j+hd+1:j+hd+1))
+                    if (hc >= ichar('0') .and. hc <= ichar('9')) then
+                      hval = hval * 16 + hc - ichar('0')
+                      hd = hd + 1
+                    else if (hc >= ichar('a') .and. hc <= ichar('f')) then
+                      hval = hval * 16 + hc - ichar('a') + 10
+                      hd = hd + 1
+                    else if (hc >= ichar('A') .and. hc <= ichar('F')) then
+                      hval = hval * 16 + hc - ichar('A') + 10
+                      hd = hd + 1
+                    else
+                      exit
+                    end if
+                  end do
+                  if (hd > 0) then
+                    processed = processed // achar(mod(hval, 256))
+                    j = j + hd  ! skip consumed digits
+                  else
+                    ! No valid hex digits, output literal \x
+                    processed = processed // '\x'
+                  end if
+                end block
               case default
                 ! Unknown escape - keep literal backslash and character
                 processed = processed // '\' // token(j:j)
@@ -773,7 +873,7 @@ contains
       if (.not. write_ok) had_error = .true.
       first = .false.
 
-      if (suppress_newline) exit
+      if (stop_output) exit
     end do
 
     if (.not. suppress_newline) then
@@ -800,6 +900,7 @@ contains
       show_pids = .true.
     end if
     
+    call update_job_status(shell)
     call list_jobs(shell, show_pids)
     shell%last_exit_status = 0
   end subroutine
@@ -1064,9 +1165,8 @@ contains
 
       select case(arg)
       case('-c', '--clear')
-        ! Clear history
+        ! Clear history (silent like bash)
         call clear_history()
-        write(output_unit, '(a)') 'Command history cleared.'
         shell%last_exit_status = 0
         return
 
@@ -1170,8 +1270,52 @@ contains
     ! Check if first argument is a signal specifier or -l flag
     if (cmd%tokens(2)(1:1) == '-') then
       if (len_trim(cmd%tokens(2)) > 1) then
+        ! Check for -s flag (signal name as next arg)
+        if (trim(cmd%tokens(2)) == '-s') then
+          if (cmd%num_tokens < 3) then
+            write(error_unit, '(a)') &
+              'kill: -s requires an argument'
+            shell%last_exit_status = 1
+            return
+          end if
+          ! Parse signal name from next argument
+          block
+            character(len=256) :: sig_name
+            sig_name = trim(cmd%tokens(3))
+            select case(sig_name)
+            case('TERM', 'term', 'SIGTERM')
+              signal_num = 15
+            case('KILL', 'kill', 'SIGKILL')
+              signal_num = 9
+            case('INT', 'int', 'SIGINT')
+              signal_num = 2
+            case('STOP', 'stop', 'SIGSTOP')
+              signal_num = 19
+            case('CONT', 'cont', 'SIGCONT')
+              signal_num = 18
+            case('HUP', 'hup', 'SIGHUP')
+              signal_num = 1
+            case('QUIT', 'quit', 'SIGQUIT')
+              signal_num = 3
+            case('USR1', 'usr1', 'SIGUSR1')
+              signal_num = 10
+            case('USR2', 'usr2', 'SIGUSR2')
+              signal_num = 12
+            case default
+              read(sig_name, *, iostat=iostat) signal_num
+              if (iostat /= 0) then
+                write(error_unit, '(a)') &
+                  'kill: invalid signal: ' // &
+                  trim(sig_name)
+                shell%last_exit_status = 1
+                return
+              end if
+            end select
+          end block
+          found_signal = .true.
+          arg_start = 4
         ! Check for -l flag (list signals)
-        if (trim(cmd%tokens(2)) == '-l') then
+        else if (trim(cmd%tokens(2)) == '-l') then
           ! Check if there's a signal number argument
           if (cmd%num_tokens >= 3) then
             ! kill -l <num> - translate signal number to name
@@ -1220,7 +1364,8 @@ contains
           shell%last_exit_status = 0
           return
         end if
-        
+
+        if (.not. found_signal) then
         read(cmd%tokens(2)(2:), *, iostat=iostat) signal_num
         if (iostat /= 0) then
           ! Try named signals
@@ -1247,6 +1392,7 @@ contains
         end if
         found_signal = .true.
         arg_start = 3
+        end if  ! .not. found_signal
       end if
     end if
     
@@ -1269,7 +1415,11 @@ contains
             shell%last_exit_status = 1
             cycle
           end if
-          target_pid = -target_pid  ! Kill entire process group
+          ! In non-interactive mode, processes may not have
+          ! their own group; kill PID directly if so
+          if (shell%is_interactive) then
+            target_pid = -target_pid  ! Kill process group
+          end if
         else
           write(error_unit, '(a)') 'kill: invalid job specification'
           shell%last_exit_status = 1
@@ -1306,15 +1456,25 @@ contains
     
     if (cmd%num_tokens == 1) then
       ! Wait for all background jobs
-      do i = 1, MAX_JOBS
-        if (shell%jobs(i)%job_id > 0 .and. &
-            shell%jobs(i)%state == JOB_RUNNING) then
-          ret = c_waitpid(shell%jobs(i)%pgid, c_loc(wait_status), 0)
-          if (WIFEXITED(wait_status) .or. WIFSIGNALED(wait_status)) then
-            shell%jobs(i)%state = JOB_DONE
+      block
+        integer :: done_ids(MAX_JOBS), num_done, di
+        num_done = 0
+        do i = 1, MAX_JOBS
+          if (shell%jobs(i)%job_id > 0 .and. &
+              shell%jobs(i)%state == JOB_RUNNING) then
+            ret = c_waitpid(shell%jobs(i)%pgid, &
+              c_loc(wait_status), 0)
+            if (WIFEXITED(wait_status) .or. &
+                WIFSIGNALED(wait_status)) then
+              num_done = num_done + 1
+              done_ids(num_done) = shell%jobs(i)%job_id
+            end if
           end if
-        end if
-      end do
+        end do
+        do di = 1, num_done
+          call remove_job(shell, done_ids(di))
+        end do
+      end block
       shell%last_exit_status = 0
     else
       ! Wait for specific job or PID
@@ -1649,9 +1809,9 @@ contains
           ! Show specific abbreviation
           abbr_short = trim(cmd%tokens(2))
           abbr_expanded = get_abbreviation(abbr_short)
-          if (len(abbr_expanded) > 0) then
-            write(output_unit, '(a)') 'abbr ' // trim(abbr_short) // &
-                                     '=' // "'" // trim(abbr_expanded) // "'"
+          if (len_trim(abbr_expanded) > 0) then
+            write(output_unit, '(a)') trim(abbr_short) // &
+                                     ' = ' // trim(abbr_expanded)
           else
             write(error_unit, '(a)') 'abbr: ' // trim(abbr_short) // ': not found'
             shell%last_exit_status = 1
@@ -1955,14 +2115,13 @@ contains
     end if
 
     call add_function(shell, func_name, function_body, 1)
-    write(output_unit, '(a)') 'Function ' // trim(func_name) // ' defined'
     shell%last_exit_status = 0
   end subroutine
 
   ! Coprocess built-in command: coproc [NAME] command [args]
   subroutine builtin_coproc(cmd, shell)
     use coprocess, only: start_coprocess, coprocs
-    use variables, only: set_array_element
+    use variables, only: set_array_element, set_shell_variable
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -1991,18 +2150,29 @@ contains
     ! Build command string from remaining tokens
     command_str = ''
     do i = cmd_start_idx, cmd%num_tokens
-      if (i > cmd_start_idx) command_str = trim(command_str) // ' '
-      command_str = trim(command_str) // trim(cmd%tokens(i))
+      if (i > cmd_start_idx) then
+        command_str = trim(command_str) // ' ' // trim(cmd%tokens(i))
+      else
+        command_str = trim(cmd%tokens(i))
+      end if
     end do
 
     ! Start the coprocess
-    coproc_id = start_coprocess(trim(command_str), trim(coproc_name))
+    coproc_id = start_coprocess(trim(command_str), trim(coproc_name), shell%is_interactive)
 
     if (coproc_id < 0) then
       write(error_unit, '(a)') 'coproc: failed to start coprocess'
       shell%last_exit_status = 1
       return
     end if
+
+    ! Set NAME_PID variable (e.g., COPROC_PID)
+    block
+      character(len=16) :: pid_str
+      write(pid_str, '(I0)') coprocs(coproc_id)%pid
+      call set_shell_variable(shell, &
+        trim(coproc_name) // '_PID', trim(pid_str))
+    end block
 
     ! Create array variables: NAME[0] = read_fd, NAME[1] = write_fd
     write(fd_str, '(I0)') coprocs(coproc_id)%read_fd
@@ -2163,12 +2333,41 @@ contains
         ! Clear from AST executor's function cache
         call unset_ast_function(var_name)
       else
+        ! Check for array element syntax: arr[index]
+        block
+          integer :: bracket_pos, bracket_end, arr_idx, iostat_v
+          character(len=256) :: arr_name, idx_str
+          bracket_pos = index(var_name, '[')
+          if (bracket_pos > 0) then
+            bracket_end = index(var_name, ']')
+            if (bracket_end > bracket_pos) then
+              arr_name = var_name(:bracket_pos-1)
+              idx_str = var_name(bracket_pos+1:bracket_end-1)
+              ! Check for associative array first
+              if (is_associative_array(shell, trim(arr_name))) then
+                call unset_assoc_array_key(shell, &
+                  trim(arr_name), trim(idx_str))
+              else
+                read(idx_str, *, iostat=iostat_v) arr_idx
+                if (iostat_v == 0) then
+                  arr_idx = arr_idx + 1  ! 0→1 based
+                  call set_array_element(shell, &
+                    trim(arr_name), arr_idx, '')
+                end if
+              end if
+              cycle
+            end if
+          end if
+        end block
+
         ! Unset variable
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == var_name) then
             ! Check if variable is readonly
             if (shell%variables(j)%readonly) then
-              write(error_unit, '(a)') 'unset: ' // trim(var_name) // ': cannot unset readonly variable'
+              write(error_unit, '(a)') 'unset: ' // &
+                trim(var_name) // &
+                ': cannot unset readonly variable'
               shell%last_exit_status = 1
               return
             end if
@@ -2202,6 +2401,13 @@ contains
     logical :: print_mode, found
 
     print_mode = .false.
+    arg_idx = 2
+
+    ! Parse -p flag
+    if (cmd%num_tokens >= 2 .and. trim(cmd%tokens(2)) == '-p') then
+      print_mode = .true.
+      arg_idx = 3
+    end if
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all readonly variables
@@ -2242,11 +2448,11 @@ contains
         ! HOSTNAME - system hostname (bash compatibility)
         write(output_unit, '(a)') 'readonly HOSTNAME="' // trim(shell%hostname) // '"'
       end block
-      ! Print user-defined readonly variables
+      ! Print user-defined readonly variables in declare -r format
       do i = 1, shell%num_variables
         if (shell%variables(i)%readonly .and. len_trim(shell%variables(i)%name) > 0) then
-          write(output_unit, '(a)') 'readonly ' // trim(shell%variables(i)%name) // '=' // &
-                                   trim(shell%variables(i)%value)
+          write(output_unit, '(a)') 'declare -r ' // trim(shell%variables(i)%name) // '="' // &
+                                   trim(shell%variables(i)%value) // '"'
         end if
       end do
       shell%last_exit_status = 0
@@ -2323,8 +2529,10 @@ contains
   subroutine builtin_local(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: i, eq_pos, depth, var_index
+    integer :: i, eq_pos, depth, var_index, fi, start_arg
     character(len=256) :: var_name, var_value
+    logical :: integer_flag, readonly_flag, array_flag
+    character(len=MAX_TOKEN_LEN) :: flag_str
 
     ! Check if we're inside a function
     if (shell%function_depth == 0) then
@@ -2341,14 +2549,86 @@ contains
       return
     end if
 
+    ! Parse flags
+    integer_flag = .false.
+    readonly_flag = .false.
+    array_flag = .false.
+    start_arg = 2
+    do while (start_arg <= cmd%num_tokens)
+      if (cmd%tokens(start_arg)(1:1) == '-' .and. len_trim(cmd%tokens(start_arg)) >= 2 .and. &
+          index(cmd%tokens(start_arg), '=') == 0) then
+        flag_str = trim(cmd%tokens(start_arg))
+        do fi = 2, len_trim(flag_str)
+          select case (flag_str(fi:fi))
+            case ('i'); integer_flag = .true.
+            case ('r'); readonly_flag = .true.
+            case ('a'); array_flag = .true.
+            case default
+              ! Ignore unknown flags
+          end select
+        end do
+        start_arg = start_arg + 1
+      else
+        exit
+      end if
+    end do
+
     ! Process each variable assignment
-    do i = 2, cmd%num_tokens
+    do i = start_arg, cmd%num_tokens
       eq_pos = index(cmd%tokens(i), '=')
 
       if (eq_pos > 0) then
         ! Variable assignment: local var=value
         var_name = cmd%tokens(i)(:eq_pos-1)
         var_value = cmd%tokens(i)(eq_pos+1:)
+
+        ! Handle array initialization: local -a arr=(a b c)
+        if (array_flag .and. len_trim(var_value) > 0 .and. &
+            var_value(1:1) == '(') then
+          block
+            use variables, only: set_array_variable
+            character(len=256) :: arr_elems(100)
+            integer :: ne, k, es
+            character(len=:), allocatable :: content
+            content = trim(var_value)
+            if (content(len(content):len(content)) == ')') then
+              content = content(2:len(content)-1)
+            else
+              content = content(2:)
+            end if
+            ne = 0
+            es = 1
+            do k = 1, len_trim(content)
+              if (content(k:k) == ' ') then
+                if (k > es) then
+                  ne = ne + 1
+                  arr_elems(ne) = content(es:k-1)
+                end if
+                es = k + 1
+              end if
+            end do
+            if (es <= len_trim(content)) then
+              ne = ne + 1
+              arr_elems(ne) = content(es:len_trim(content))
+            end if
+            call set_array_variable(shell, trim(var_name), &
+              arr_elems, ne)
+          end block
+          cycle
+        end if
+
+        ! Evaluate arithmetic if integer flag is set
+        if (integer_flag .and. len_trim(var_value) > 0) then
+          block
+            use expansion, only: arithmetic_expansion_shell
+            character(len=1024) :: arith_expr, arith_result
+            arith_expr = '$((' // trim(var_value) // '))'
+            arith_result = &
+              arithmetic_expansion_shell( &
+                trim(arith_expr), shell)
+            var_value = arith_result
+          end block
+        end if
 
         ! Find or create local variable slot
         var_index = shell%local_var_counts(depth) + 1
@@ -2361,8 +2641,9 @@ contains
         ! Store local variable
         shell%local_vars(depth, var_index)%name = var_name
         shell%local_vars(depth, var_index)%value = var_value
-        shell%local_vars(depth, var_index)%readonly = .false.
+        shell%local_vars(depth, var_index)%readonly = readonly_flag
         shell%local_vars(depth, var_index)%exported = .false.
+        shell%local_vars(depth, var_index)%is_integer = integer_flag
         shell%local_var_counts(depth) = var_index
       else
         ! Just declare local: local var (unset or empty)
@@ -2713,6 +2994,32 @@ contains
           shell%last_exit_status = 1
           return
         end if
+      else if (trim(cmd%tokens(2)) == '-t') then
+        ! Print cached path for specified commands
+        if (cmd%num_tokens < 3) then
+          write(error_unit, '(a)') 'hash: -t requires an argument'
+          shell%last_exit_status = 1
+          return
+        end if
+        shell%last_exit_status = 0
+        do i = 3, cmd%num_tokens
+          block
+            logical :: found_in_hash
+            found_in_hash = .false.
+            do j = 1, shell%num_hashed_commands
+              if (trim(shell%command_hash(j)%command_name) == trim(cmd%tokens(i))) then
+                write(output_unit, '(a)') trim(shell%command_hash(j)%full_path)
+                found_in_hash = .true.
+                exit
+              end if
+            end do
+            if (.not. found_in_hash) then
+              write(error_unit, '(a,a,a)') 'hash: ', trim(cmd%tokens(i)), ': not found'
+              shell%last_exit_status = 1
+            end if
+          end block
+        end do
+        return
       else if (trim(cmd%tokens(2)) == '-p') then
         path_mode = .true.
         if (cmd%num_tokens < 4) then
@@ -2926,7 +3233,7 @@ contains
 
   subroutine print_umask_symbolic(mask)
     integer(c_int), intent(in) :: mask
-    character(len=9) :: perm_str
+    character(len=32) :: perm_str
     integer :: u_perm, g_perm, o_perm
 
     ! Extract permissions for user, group, and others
@@ -3029,6 +3336,38 @@ contains
         resource = RLIMIT_AS
         limit_name = 'virtual memory'
         i = i + 1
+      else if (len_trim(arg) == 3 .and. arg(1:1) == '-' .and. &
+              (arg(2:2) == 'S' .or. arg(2:2) == 'H')) then
+        ! Combined flags like -Sn, -Hn, -Ss, -Hs, etc.
+        if (arg(2:2) == 'S') then
+          set_soft = .true.
+          set_hard = .false.
+        else
+          set_hard = .true.
+          set_soft = .false.
+        end if
+        select case (arg(3:3))
+          case ('c'); resource = RLIMIT_CORE; limit_name = 'core file size'
+          case ('d'); resource = RLIMIT_DATA; limit_name = 'data seg size'
+          case ('f'); resource = RLIMIT_FSIZE; limit_name = 'file size'
+          case ('l'); resource = RLIMIT_MEMLOCK; limit_name = 'max locked memory'
+          case ('m'); resource = RLIMIT_RSS; limit_name = 'max memory size'
+          case ('n'); resource = RLIMIT_NOFILE; limit_name = 'open files'
+          case ('s'); resource = RLIMIT_STACK; limit_name = 'stack size'
+          case ('t'); resource = RLIMIT_CPU; limit_name = 'cpu time'
+          case ('u'); resource = RLIMIT_NPROC; limit_name = 'max user processes'
+          case ('v'); resource = RLIMIT_AS; limit_name = 'virtual memory'
+          case default
+            write(error_unit, '(a)') 'ulimit: invalid option: ' // trim(arg)
+            shell%last_exit_status = 1
+            return
+        end select
+        i = i + 1
+      else if (arg(1:1) == '-') then
+        ! Unknown flag
+        write(error_unit, '(a)') 'ulimit: invalid option: ' // trim(arg)
+        shell%last_exit_status = 2
+        return
       else
         ! This is the value to set
         value_str = arg
@@ -3116,7 +3455,7 @@ contains
         else
           display_value = limit_value
         end if
-        write(output_unit, '(i15)') display_value
+        write(output_unit, '(i0)') display_value
       end if
     end subroutine
 
@@ -3162,7 +3501,8 @@ contains
         else
           val = r%rlim_cur
         end if
-        write(str, '(i15)') val
+        write(str, '(i20)') val
+        str = adjustl(str)
       end if
     end function
 
@@ -3269,7 +3609,9 @@ contains
     integer :: eq_pos, i, j, arg_idx
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: readonly_flag, export_flag, print_mode, print_funcs
-    logical :: array_flag, assoc_array_flag, found
+    logical :: array_flag, assoc_array_flag, found, integer_flag, global_flag
+    character(len=MAX_TOKEN_LEN) :: flag_str
+    integer :: fi
 
     readonly_flag = .false.
     export_flag = .false.
@@ -3277,36 +3619,49 @@ contains
     print_funcs = .false.
     array_flag = .false.
     assoc_array_flag = .false.
+    integer_flag = .false.
+    global_flag = .false.
 
     if (cmd%num_tokens < 2) then
       ! No arguments: print all variables
       print_mode = .true.
     end if
 
-    ! Parse options
+    ! Parse options (supports combined flags like -ix, -ri, -rxi)
     arg_idx = 2
     do while (arg_idx <= cmd%num_tokens)
-      if (cmd%tokens(arg_idx)(1:1) == '-') then
-        select case (trim(cmd%tokens(arg_idx)))
-          case ('-r')
-            readonly_flag = .true.
-          case ('-x')
-            export_flag = .true.
-          case ('-p')
-            print_mode = .true.
-          case ('-f')
-            print_funcs = .true.
-            print_mode = .true.
-          case ('-a')
-            array_flag = .true.
-          case ('-A')
-            assoc_array_flag = .true.
-          case default
-            write(error_unit, '(a)') 'declare: invalid option: ' // trim(cmd%tokens(arg_idx))
-            shell%last_exit_status = 1
-            return
-        end select
+      if (cmd%tokens(arg_idx)(1:1) == '-' .and. len_trim(cmd%tokens(arg_idx)) >= 2 .and. &
+          cmd%tokens(arg_idx)(2:2) /= '-') then
+        flag_str = trim(cmd%tokens(arg_idx))
+        do fi = 2, len_trim(flag_str)
+          select case (flag_str(fi:fi))
+            case ('r')
+              readonly_flag = .true.
+            case ('x')
+              export_flag = .true.
+            case ('p')
+              print_mode = .true.
+            case ('f')
+              print_funcs = .true.
+              print_mode = .true.
+            case ('a')
+              array_flag = .true.
+            case ('A')
+              assoc_array_flag = .true.
+            case ('i')
+              integer_flag = .true.
+            case ('g')
+              global_flag = .true.
+            case default
+              write(error_unit, '(a)') 'declare: invalid option: ' // trim(cmd%tokens(arg_idx))
+              shell%last_exit_status = 1
+              return
+          end select
+        end do
         arg_idx = arg_idx + 1
+      else if (trim(cmd%tokens(arg_idx)) == '--') then
+        arg_idx = arg_idx + 1
+        exit
       else
         exit
       end if
@@ -3331,24 +3686,50 @@ contains
         return
       end if
 
-      ! Print all variables with declare syntax
-      do i = 1, shell%num_variables
-        if (len_trim(shell%variables(i)%name) > 0) then
-          if (shell%variables(i)%readonly .and. shell%variables(i)%exported) then
-            write(output_unit, '(a)') 'declare -rx ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
-          else if (shell%variables(i)%readonly) then
-            write(output_unit, '(a)') 'declare -r ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
-          else if (shell%variables(i)%exported) then
-            write(output_unit, '(a)') 'declare -x ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
-          else
-            write(output_unit, '(a)') 'declare -- ' // trim(shell%variables(i)%name) // '=' // &
-                                     trim(shell%variables(i)%value)
+      ! Print variables with declare syntax
+      if (arg_idx <= cmd%num_tokens) then
+        ! Print specific named variables
+        do j = arg_idx, cmd%num_tokens
+          var_name = trim(cmd%tokens(j))
+          found = .false.
+          do i = 1, shell%num_variables
+            if (trim(shell%variables(i)%name) == var_name) then
+              block
+                character(len=16) :: flags
+                flags = '-'
+                if (shell%variables(i)%is_integer) flags = trim(flags) // 'i'
+                if (shell%variables(i)%readonly) flags = trim(flags) // 'r'
+                if (shell%variables(i)%exported) flags = trim(flags) // 'x'
+                if (flags == '-') flags = '--'
+                write(output_unit, '(a)') 'declare ' // trim(flags) // ' ' // &
+                    trim(shell%variables(i)%name) // '="' // trim(shell%variables(i)%value) // '"'
+              end block
+              found = .true.
+              exit
+            end if
+          end do
+          if (.not. found) then
+            write(error_unit, '(a)') 'declare: ' // trim(var_name) // ': not found'
+            shell%last_exit_status = 1
           end if
-        end if
-      end do
+        end do
+      else
+        ! Print all variables
+        do i = 1, shell%num_variables
+          if (len_trim(shell%variables(i)%name) > 0) then
+            block
+              character(len=16) :: flags
+              flags = '-'
+              if (shell%variables(i)%is_integer) flags = trim(flags) // 'i'
+              if (shell%variables(i)%readonly) flags = trim(flags) // 'r'
+              if (shell%variables(i)%exported) flags = trim(flags) // 'x'
+              if (flags == '-') flags = '--'
+              write(output_unit, '(a)') 'declare ' // trim(flags) // ' ' // &
+                  trim(shell%variables(i)%name) // '="' // trim(shell%variables(i)%value) // '"'
+            end block
+          end if
+        end do
+      end if
       shell%last_exit_status = 0
       return
     end if
@@ -3376,13 +3757,66 @@ contains
           end if
         end do
 
+        ! Handle array initialization: declare -a arr=(a b c)
+        if (array_flag .and. len_trim(var_value) > 0 .and. &
+            var_value(1:1) == '(') then
+          block
+            use variables, only: set_array_variable
+            character(len=256) :: arr_elems(100)
+            integer :: num_elems, k, elem_start
+            character(len=:), allocatable :: content
+            ! Strip parentheses
+            content = trim(var_value)
+            if (content(len(content):len(content)) == ')') then
+              content = content(2:len(content)-1)
+            else
+              content = content(2:)
+            end if
+            ! Split on spaces
+            num_elems = 0
+            elem_start = 1
+            do k = 1, len_trim(content)
+              if (content(k:k) == ' ') then
+                if (k > elem_start) then
+                  num_elems = num_elems + 1
+                  arr_elems(num_elems) = content(elem_start:k-1)
+                end if
+                elem_start = k + 1
+              end if
+            end do
+            if (elem_start <= len_trim(content)) then
+              num_elems = num_elems + 1
+              arr_elems(num_elems) = &
+                content(elem_start:len_trim(content))
+            end if
+            call set_array_variable(shell, trim(var_name), &
+              arr_elems, num_elems)
+          end block
+          arg_idx = arg_idx + 1
+          cycle
+        end if
+
+        ! Evaluate arithmetic if integer flag is set
+        if (integer_flag .and. len_trim(var_value) > 0) then
+          block
+            use expansion, only: arithmetic_expansion_shell
+            character(len=1024) :: arith_expr, arith_result
+            arith_expr = '$((' // trim(var_value) // '))'
+            arith_result = &
+              arithmetic_expansion_shell(trim(arith_expr), shell)
+            var_value = arith_result
+          end block
+        end if
+
         ! Set the variable
-        call set_shell_variable(shell, trim(var_name), trim(var_value))
+        call set_shell_variable(shell, trim(var_name), &
+          trim(var_value))
 
         ! Apply attributes
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == trim(var_name)) then
             if (readonly_flag) shell%variables(j)%readonly = .true.
+            if (integer_flag) shell%variables(j)%is_integer = .true.
             if (export_flag) then
               shell%variables(j)%exported = .true.
               if (.not. set_environment_var(trim(var_name), trim(var_value))) then
@@ -3422,10 +3856,13 @@ contains
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == var_name) then
             if (readonly_flag) shell%variables(j)%readonly = .true.
+            if (integer_flag) shell%variables(j)%is_integer = .true.
             if (export_flag) then
               shell%variables(j)%exported = .true.
-              if (.not. set_environment_var(var_name, trim(shell%variables(j)%value))) then
-                write(error_unit, '(a)') 'declare: failed to export variable'
+              if (.not. set_environment_var(var_name, &
+                  trim(shell%variables(j)%value))) then
+                write(error_unit, '(a)') &
+                  'declare: failed to export variable'
                 shell%last_exit_status = 1
                 return
               end if
@@ -3440,11 +3877,16 @@ contains
           call set_shell_variable(shell, var_name, '')
           do j = 1, shell%num_variables
             if (trim(shell%variables(j)%name) == var_name) then
-              if (readonly_flag) shell%variables(j)%readonly = .true.
+              if (readonly_flag) &
+                shell%variables(j)%readonly = .true.
+              if (integer_flag) &
+                shell%variables(j)%is_integer = .true.
               if (export_flag) then
                 shell%variables(j)%exported = .true.
-                if (.not. set_environment_var(var_name, '')) then
-                  write(error_unit, '(a)') 'declare: failed to export variable'
+                if (.not. set_environment_var(var_name, &
+                    '')) then
+                  write(error_unit, '(a)') &
+                    'declare: failed to export variable'
                   shell%last_exit_status = 1
                   return
                 end if
@@ -3491,18 +3933,23 @@ contains
       env_value_ref = pool_get_string(1024)
       call dashboard_track_allocation(MOD_BUILTINS, 1024, 3)
 #endif
+      shell%last_exit_status = 0
       do i = 2, cmd%num_tokens
 #ifdef USE_MEMORY_POOL
         temp_str = get_environment_var(trim(cmd%tokens(i)))
         if (allocated(temp_str) .and. len(temp_str) > 0) then
           env_value_ref%data = temp_str
           write(output_unit, '(a)') trim(env_value_ref%data)
+        else
+          shell%last_exit_status = 1
         end if
         if (allocated(temp_str)) deallocate(temp_str)
 #else
         env_value = get_environment_var(trim(cmd%tokens(i)))
         if (allocated(env_value) .and. len(env_value) > 0) then
           write(output_unit, '(a)') env_value
+        else
+          shell%last_exit_status = 1
         end if
 #endif
       end do
@@ -3510,7 +3957,6 @@ contains
       call pool_release_string(env_value_ref)
       call dashboard_track_deallocation(MOD_BUILTINS, 1024, 3)
 #endif
-      shell%last_exit_status = 0
     end if
   end subroutine
 
@@ -3536,11 +3982,6 @@ contains
 
     ! Get history count
     history_count = get_history_count()
-    if (history_count == 0) then
-      write(error_unit, '(a)') 'fc: no commands in history'
-      shell%last_exit_status = 1
-      return
-    end if
 
     ! Parse options
     do while (arg_idx <= cmd%num_tokens)
@@ -3616,6 +4057,17 @@ contains
           end if
         end if
       end if
+    end if
+
+    ! Handle empty history - list mode succeeds silently, other modes fail
+    if (history_count == 0) then
+      if (list_mode) then
+        shell%last_exit_status = 0
+      else
+        write(error_unit, '(a)') 'fc: no commands in history'
+        shell%last_exit_status = 1
+      end if
+      return
     end if
 
     ! Set defaults if not specified
@@ -3979,8 +4431,15 @@ contains
 
     ! Handle list flag
     if (list_flag) then
-      call list_completion_specs()
-      shell%last_exit_status = 0
+      block
+        logical :: has_specs
+        call list_completion_specs(has_specs)
+        if (has_specs) then
+          shell%last_exit_status = 0
+        else
+          shell%last_exit_status = 1
+        end if
+      end block
       return
     end if
 
@@ -4152,7 +4611,7 @@ contains
     spec%use_filenames = .false.
     spec%nospace = .false.
     spec%plusdirs = .false.
-    spec%nosort = .false.
+    spec%nosort = .true.  ! compgen preserves input order (no sorting)
 
     if (len_trim(word_list_arg) > 0) then
       call parse_word_list(word_list_arg, spec)

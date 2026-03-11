@@ -146,7 +146,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     integer :: arg_index, j
-    logical :: path_flag, verbose_flag
+    logical :: path_flag, verbose_flag, big_v_flag
     character(len=256) :: command_name
     type(pipeline_t) :: temp_pipeline
 
@@ -158,6 +158,7 @@ contains
 
     path_flag = .false.
     verbose_flag = .false.
+    big_v_flag = .false.
     arg_index = 2
 
     ! Parse options
@@ -168,6 +169,7 @@ contains
           path_flag = .true.
         case ('-V')
           verbose_flag = .true.
+          big_v_flag = .true.
         case ('-v')
           verbose_flag = .true.
         case ('--')
@@ -193,9 +195,13 @@ contains
     command_name = cmd%tokens(arg_index)
 
     if (verbose_flag) then
-      ! command -v should not print error messages, just return exit code
-      ! Pass v_flag=.true. so it outputs just the path (POSIX format)
-      call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true., .true.)
+      if (big_v_flag) then
+        ! command -V: verbose output like type (e.g., "echo is a shell builtin")
+        call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true., .false.)
+      else
+        ! command -v: minimal output, just the path/name (POSIX format)
+        call identify_command_type(shell, command_name, .false., path_flag, .false., .false., .true., .true.)
+      end if
       ! Don't overwrite exit status set by identify_command_type
     else
       ! Execute the command bypassing functions
@@ -286,6 +292,20 @@ contains
       if (.not. all_flag) return
     end if
 
+    ! Check if it's an alias (bash only reports aliases in interactive mode)
+    if (.not. path_flag .and. shell%is_interactive .and. &
+        is_shell_alias(shell, command_name)) then
+      if (type_flag) then
+        call write_stdout('alias')
+      else if (is_v_flag) then
+        call write_stdout(trim(command_name))
+      else
+        call write_stdout(trim(command_name) // ' is aliased')
+      end if
+      found_any = .true.
+      if (.not. all_flag) return
+    end if
+
     ! Check if it's a function
     if (.not. path_flag .and. is_shell_function(shell, command_name)) then
       if (type_flag) then
@@ -312,19 +332,6 @@ contains
       if (.not. all_flag) return
     end if
 
-    ! Check if it's an alias
-    if (.not. path_flag .and. is_shell_alias(shell, command_name)) then
-      if (type_flag) then
-        call write_stdout('alias')
-      else if (is_v_flag) then
-        call write_stdout(trim(command_name))
-      else
-        call write_stdout(trim(command_name) // ' is aliased')
-      end if
-      found_any = .true.
-      if (.not. all_flag) return
-    end if
-
     ! Search in PATH
     if (find_executable_in_path(shell, command_name, full_path)) then
       if (type_flag) then
@@ -338,7 +345,7 @@ contains
     end if
     
     if (.not. found_any) then
-      if (.not. suppress_errors) then
+      if (.not. suppress_errors .and. .not. type_flag) then
         write(error_unit, '(a,a,a)') trim(command_name), ': not found'
       end if
       shell%last_exit_status = 1
@@ -471,12 +478,21 @@ contains
     character(len=*), intent(in) :: command_name
     logical :: is_builtin
     
-    character(len=16), parameter :: builtins(25) = [ &
-      'cd       ', 'pwd      ', 'echo     ', 'printf   ', 'read     ', &
-      'export   ', 'unset    ', 'set      ', 'shift    ', 'test     ', &
-      'true     ', 'false    ', 'exit     ', 'return   ', 'break    ', &
-      'continue ', 'source   ', '.        ', 'eval     ', 'exec     ', &
-      'jobs     ', 'fg       ', 'bg       ', 'kill     ', 'wait     ' ]
+    character(len=16), parameter :: builtins(56) = [ &
+      'cd              ', 'pwd             ', 'echo            ', 'printf          ', &
+      'read            ', 'export          ', 'unset           ', 'set             ', &
+      'shift           ', 'test            ', 'true            ', 'false           ', &
+      'exit            ', 'return          ', 'break           ', 'continue        ', &
+      'source          ', '.               ', 'eval            ', 'exec            ', &
+      'jobs            ', 'fg              ', 'bg              ', 'kill            ', &
+      'wait            ', 'declare         ', 'local           ', 'readonly        ', &
+      'alias           ', 'unalias         ', 'type            ', 'command         ', &
+      'hash            ', 'trap            ', 'umask           ', 'ulimit          ', &
+      'times           ', 'let             ', 'getopts         ', 'fc              ', &
+      'help            ', 'defun           ', 'abbr            ', 'which           ', &
+      'history         ', 'shopt           ', 'complete        ', 'compgen         ', &
+      'coproc          ', 'printenv        ', 'pushd           ', 'popd            ', &
+      'dirs            ', 'prevd           ', 'nextd           ', 'dirh            ' ]
     
     integer :: i
     
@@ -515,11 +531,15 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: command_name
     logical :: is_alias
+    integer :: i
 
-    if (.false.) print *, shell%cwd, command_name  ! Silence unused warning
-
-    ! Simplified - in real implementation would check alias table
     is_alias = .false.
+    do i = 1, shell%num_aliases
+      if (trim(shell%aliases(i)%name) == trim(command_name)) then
+        is_alias = .true.
+        return
+      end if
+    end do
   end function
 
   function find_command_full_path(command_name) result(full_path)

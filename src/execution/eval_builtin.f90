@@ -3,6 +3,7 @@ module eval_builtin
   use grammar_parser, only: parse_command_line
   use command_tree, only: command_node_t
   use ast_executor, only: execute_ast
+  use aliases, only: expand_alias, is_alias, get_alias
   implicit none
 
 contains
@@ -26,15 +27,48 @@ contains
       eval_command = trim(eval_command) // ' ' // trim(cmd%tokens(i))
     end do
 
+    ! Expand aliases in the eval command
+    ! eval should always expand aliases (like interactive mode)
+    call expand_eval_aliases(shell, eval_command)
+
     ! Parse and execute the eval command using AST parser
     ast_root => parse_command_line(trim(eval_command))
     if (associated(ast_root)) then
       exit_code = execute_ast(ast_root, shell)
       shell%last_exit_status = exit_code
+    else if (len_trim(eval_command) == 0) then
+      ! Empty command is a no-op, not an error
+      shell%last_exit_status = 0
     else
       ! Parse error - set failure status
       shell%last_exit_status = 1
     end if
   end subroutine execute_eval
+
+  subroutine expand_eval_aliases(shell, command)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(inout) :: command
+    character(len=256) :: first_word
+    character(len=:), allocatable :: alias_value
+    integer :: space_pos
+
+    ! Extract first word
+    space_pos = index(trim(command), ' ')
+    if (space_pos > 0) then
+      first_word = command(:space_pos-1)
+    else
+      first_word = trim(command)
+    end if
+
+    ! Check if it's an alias
+    if (is_alias(shell, trim(first_word))) then
+      alias_value = get_alias(shell, trim(first_word))
+      if (space_pos > 0) then
+        command = trim(alias_value) // command(space_pos:)
+      else
+        command = trim(alias_value)
+      end if
+    end if
+  end subroutine expand_eval_aliases
 
 end module eval_builtin
