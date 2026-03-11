@@ -2875,10 +2875,9 @@ contains
     logical :: is_numeric, is_alpha, has_step, found_comma
     character(16) :: num_str
     character(len=:), allocatable :: start_str, end_str, step_str
+    integer :: buf_pos, buf_cap, num_len, plen, slen, num_values, max_digits
 
     expanded = word
-    result_buf = ''
-
 
     ! Find opening brace that is NOT part of ${...} parameter expansion
     brace_start = 0
@@ -2986,68 +2985,162 @@ contains
       end if
 
       if (is_numeric) then
-        ! Numeric range expansion
+        ! Numeric range expansion — O(n) with pre-allocated buffer
+        if (start_val <= end_val) then
+          num_values = (end_val - start_val) / step_val + 1
+        else
+          num_values = (start_val - end_val) / step_val + 1
+        end if
+        plen = len_trim(prefix)
+        slen = len_trim(suffix)
+        ! Conservative estimate: max digits for any value in range + sign
+        max_digits = 12  ! enough for any 32-bit integer
+        buf_cap = num_values * (plen + max_digits + slen + 1)
+        allocate(character(len=buf_cap) :: result_buf)
+        buf_pos = 1
+
         if (start_val <= end_val) then
           current_val = start_val
           do while (current_val <= end_val)
             write(num_str, '(I0)') current_val
-            if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
-            else
-              result_buf = trim(prefix) // trim(num_str) // trim(suffix)
+            num_len = len_trim(num_str)
+            if (buf_pos > 1) then
+              result_buf(buf_pos:buf_pos) = ' '
+              buf_pos = buf_pos + 1
+            end if
+            if (plen > 0) then
+              result_buf(buf_pos:buf_pos+plen-1) = prefix(1:plen)
+              buf_pos = buf_pos + plen
+            end if
+            result_buf(buf_pos:buf_pos+num_len-1) = num_str(1:num_len)
+            buf_pos = buf_pos + num_len
+            if (slen > 0) then
+              result_buf(buf_pos:buf_pos+slen-1) = suffix(1:slen)
+              buf_pos = buf_pos + slen
             end if
             current_val = current_val + step_val
           end do
         else
-          ! Descending range
           current_val = start_val
           do while (current_val >= end_val)
             write(num_str, '(I0)') current_val
-            if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(num_str) // trim(suffix)
-            else
-              result_buf = trim(prefix) // trim(num_str) // trim(suffix)
+            num_len = len_trim(num_str)
+            if (buf_pos > 1) then
+              result_buf(buf_pos:buf_pos) = ' '
+              buf_pos = buf_pos + 1
+            end if
+            if (plen > 0) then
+              result_buf(buf_pos:buf_pos+plen-1) = prefix(1:plen)
+              buf_pos = buf_pos + plen
+            end if
+            result_buf(buf_pos:buf_pos+num_len-1) = num_str(1:num_len)
+            buf_pos = buf_pos + num_len
+            if (slen > 0) then
+              result_buf(buf_pos:buf_pos+slen-1) = suffix(1:slen)
+              buf_pos = buf_pos + slen
             end if
             current_val = current_val - step_val
           end do
         end if
-        expanded = trim(result_buf)
+        expanded = result_buf(1:buf_pos-1)
         ! Recursively expand if result still contains braces
         if (index(expanded, '{') > 0) then
           expanded = recursive_expand_all_braces(expanded)
         end if
         return
       else if (is_alpha) then
-        ! Alphabetic range expansion
+        ! Alphabetic range expansion — O(n) with pre-allocated buffer
+        plen = len_trim(prefix)
+        slen = len_trim(suffix)
+        if (start_char <= end_char) then
+          num_values = (end_char - start_char) / step_val + 1
+        else
+          num_values = (start_char - end_char) / step_val + 1
+        end if
+        buf_cap = num_values * (plen + 1 + slen + 1)
+        allocate(character(len=buf_cap) :: result_buf)
+        buf_pos = 1
+
         if (start_char <= end_char) then
           current_char = start_char
           do while (current_char <= end_char)
-            if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // trim(prefix) // char(current_char) // trim(suffix)
-            else
-              result_buf = trim(prefix) // char(current_char) // trim(suffix)
+            if (buf_pos > 1) then
+              result_buf(buf_pos:buf_pos) = ' '
+              buf_pos = buf_pos + 1
+            end if
+            if (plen > 0) then
+              result_buf(buf_pos:buf_pos+plen-1) = prefix(1:plen)
+              buf_pos = buf_pos + plen
+            end if
+            result_buf(buf_pos:buf_pos) = char(current_char)
+            buf_pos = buf_pos + 1
+            if (slen > 0) then
+              result_buf(buf_pos:buf_pos+slen-1) = suffix(1:slen)
+              buf_pos = buf_pos + slen
             end if
             current_char = current_char + step_val
           end do
         else
-          ! Descending range
           current_char = start_char
           do while (current_char >= end_char)
-            if (len_trim(result_buf) > 0) then
-              result_buf = trim(result_buf) // ' ' // trim(prefix) // char(current_char) // trim(suffix)
-            else
-              result_buf = trim(prefix) // char(current_char) // trim(suffix)
+            if (buf_pos > 1) then
+              result_buf(buf_pos:buf_pos) = ' '
+              buf_pos = buf_pos + 1
+            end if
+            if (plen > 0) then
+              result_buf(buf_pos:buf_pos+plen-1) = prefix(1:plen)
+              buf_pos = buf_pos + plen
+            end if
+            result_buf(buf_pos:buf_pos) = char(current_char)
+            buf_pos = buf_pos + 1
+            if (slen > 0) then
+              result_buf(buf_pos:buf_pos+slen-1) = suffix(1:slen)
+              buf_pos = buf_pos + slen
             end if
             current_char = current_char - step_val
           end do
         end if
-        expanded = trim(result_buf)
+        expanded = result_buf(1:buf_pos-1)
         return
       end if
     else
       ! List expansion: {a,b,c} - respect nested braces when finding commas
       ! Only expand if there's at least one comma at depth 0
+
+      ! First pass: count commas to estimate buffer size
       found_comma = .false.
+      num_values = 1
+      depth = 0
+      do i = 1, len_trim(brace_content)
+        if (brace_content(i:i) == '{') then
+          depth = depth + 1
+        else if (brace_content(i:i) == '}') then
+          depth = depth - 1
+        else if (brace_content(i:i) == ',' .and. depth == 0) then
+          found_comma = .true.
+          num_values = num_values + 1
+        end if
+      end do
+
+      ! Only expand if we found at least one comma
+      if (.not. found_comma) then
+        ! No comma found at this level - check if inner content has braces to expand
+        if (index(brace_content, '{') > 0) then
+          item = recursive_expand_all_braces(brace_content)
+          expanded = add_braces_to_words(item, prefix, suffix)
+          return
+        end if
+        return
+      end if
+
+      ! Pre-allocate buffer: each item up to full brace_content length + prefix + suffix + space
+      plen = len_trim(prefix)
+      slen = len_trim(suffix)
+      buf_cap = num_values * (plen + len_trim(brace_content) + slen + 1)
+      allocate(character(len=buf_cap) :: result_buf)
+      buf_pos = 1
+
+      ! Second pass: extract items and write directly
       last_pos = 1
       depth = 0
       do i = 1, len_trim(brace_content)
@@ -3056,41 +3149,48 @@ contains
         else if (brace_content(i:i) == '}') then
           depth = depth - 1
         else if (brace_content(i:i) == ',' .and. depth == 0) then
-          ! Found a comma at depth 0 - extract item
-          found_comma = .true.
           item = brace_content(last_pos:i-1)
-          if (len_trim(result_buf) > 0) then
-            result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(item) // trim(suffix)
-          else
-            result_buf = trim(prefix) // trim(item) // trim(suffix)
+          num_len = len_trim(item)
+          if (buf_pos > 1) then
+            result_buf(buf_pos:buf_pos) = ' '
+            buf_pos = buf_pos + 1
+          end if
+          if (plen > 0) then
+            result_buf(buf_pos:buf_pos+plen-1) = prefix(1:plen)
+            buf_pos = buf_pos + plen
+          end if
+          if (num_len > 0) then
+            result_buf(buf_pos:buf_pos+num_len-1) = item(1:num_len)
+            buf_pos = buf_pos + num_len
+          end if
+          if (slen > 0) then
+            result_buf(buf_pos:buf_pos+slen-1) = suffix(1:slen)
+            buf_pos = buf_pos + slen
           end if
           last_pos = i + 1
         end if
       end do
 
-      ! Only expand if we found at least one comma
-      if (.not. found_comma) then
-        ! No comma found at this level - check if inner content has braces to expand
-        if (index(brace_content, '{') > 0) then
-          ! Inner content has braces - expand them but preserve outer braces
-          ! e.g., {a{1,2}} should become {a1} {a2}
-          item = recursive_expand_all_braces(brace_content)
-          ! Add literal braces around each expanded word
-          expanded = add_braces_to_words(item, prefix, suffix)
-          return
-        end if
-        ! No comma and no inner braces - not a valid brace expansion, return unchanged
-        return
-      end if
-
       ! Don't forget last item
       item = brace_content(last_pos:)
-      if (len_trim(result_buf) > 0) then
-        result_buf = trim(result_buf) // ' ' // trim(prefix) // trim(item) // trim(suffix)
-      else
-        result_buf = trim(prefix) // trim(item) // trim(suffix)
+      num_len = len_trim(item)
+      if (buf_pos > 1) then
+        result_buf(buf_pos:buf_pos) = ' '
+        buf_pos = buf_pos + 1
       end if
-      expanded = trim(result_buf)
+      if (plen > 0) then
+        result_buf(buf_pos:buf_pos+plen-1) = prefix(1:plen)
+        buf_pos = buf_pos + plen
+      end if
+      if (num_len > 0) then
+        result_buf(buf_pos:buf_pos+num_len-1) = item(1:num_len)
+        buf_pos = buf_pos + num_len
+      end if
+      if (slen > 0) then
+        result_buf(buf_pos:buf_pos+slen-1) = suffix(1:slen)
+        buf_pos = buf_pos + slen
+      end if
+      expanded = result_buf(1:buf_pos-1)
       ! Recursively expand if result still contains braces
       if (index(expanded, '{') > 0) then
         expanded = recursive_expand_all_braces(expanded)
