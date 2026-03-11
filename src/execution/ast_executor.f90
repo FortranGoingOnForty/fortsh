@@ -2403,6 +2403,9 @@ contains
     if (cache_idx > 0) then
       function_ast_cache(cache_idx)%name = trim(node%function_def%name)
       function_ast_cache(cache_idx)%body => node%function_def%body
+      ! Detach body from parent AST so destroy_command_node won't free it
+      ! The function cache now owns this subtree
+      nullify(node%function_def%body)
     end if
 
     ! Also register in shell state for compatibility
