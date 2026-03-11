@@ -49,6 +49,10 @@ program fortran_shell
   ! Terminal resize support
   character(len=16) :: cols_str, rows_str
   logical :: success
+  ! RPROMPT embedding for multi-line prompts
+  integer :: newline_pos, first_line_vlen, rprompt_vlen, rprompt_col
+  character(len=16) :: col_str_buf
+  character(len=2048) :: embedded_prompt
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
@@ -327,7 +331,32 @@ program fortran_shell
       rprompt_value = get_shell_variable(shell, 'RPROMPT')
       if (len_trim(rprompt_value) > 0) then
         call safe_expand_prompt(rprompt_value, shell, len(rprompt_value), rprompt_str)
-        call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str))
+
+        ! Check if prompt is multi-line
+        newline_pos = index(trim(prompt_str), char(10))
+        if (newline_pos > 0) then
+          ! Multi-line prompt: embed RPROMPT at end of first line using CHA escape
+          ! This ensures RPROMPT survives readline redraws (unlike cursor movement approach)
+          first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
+          rprompt_vlen = visual_length(trim(rprompt_str))
+          rprompt_col = shell%term_cols - rprompt_vlen + 1
+
+          if (rprompt_col > first_line_vlen + 4) then
+            ! Build: first_line + CHA(col) + rprompt + \n + rest
+            write(col_str_buf, '(I0)') rprompt_col
+            embedded_prompt = prompt_str(1:newline_pos-1) // &
+              char(27) // '[' // trim(col_str_buf) // 'G' // &
+              trim(rprompt_str) // &
+              prompt_str(newline_pos:len_trim(prompt_str))
+            call readline_enhanced(trim(embedded_prompt), input_line, iostat)
+          else
+            ! Not enough space for RPROMPT — skip it
+            call readline_enhanced(trim(prompt_str), input_line, iostat)
+          end if
+        else
+          ! Single-line prompt: pass RPROMPT to readline for its handling
+          call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str))
+        end if
       else
         call readline_enhanced(trim(prompt_str), input_line, iostat)
       end if
