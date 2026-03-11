@@ -292,8 +292,9 @@ contains
       if (.not. all_flag) return
     end if
 
-    ! Check if it's an alias (bash checks aliases first)
-    if (.not. path_flag .and. is_shell_alias(shell, command_name)) then
+    ! Check if it's an alias (bash only reports aliases in interactive mode)
+    if (.not. path_flag .and. shell%is_interactive .and. &
+        is_shell_alias(shell, command_name)) then
       if (type_flag) then
         call write_stdout('alias')
       else if (is_v_flag) then
@@ -344,7 +345,7 @@ contains
     end if
     
     if (.not. found_any) then
-      if (.not. suppress_errors) then
+      if (.not. suppress_errors .and. .not. type_flag) then
         write(error_unit, '(a,a,a)') trim(command_name), ': not found'
       end if
       shell%last_exit_status = 1
