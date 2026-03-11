@@ -272,7 +272,7 @@ contains
     end if
 
     if (shell%jobs(job_index)%state /= JOB_STOPPED) then
-      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' is not stopped'
+      shell%last_exit_status = 1
       return
     end if
 
@@ -311,7 +311,7 @@ contains
     end if
 
     if (shell%jobs(job_index)%state /= JOB_STOPPED) then
-      write(error_unit, '(a,i15,a)') 'Job ', job_id, ' is not stopped'
+      shell%last_exit_status = 1
       return
     end if
 
