@@ -332,8 +332,29 @@ contains
         else if (shell%variables(i)%is_assoc_array) then
           write(output_unit, '(a)') trim(shell%variables(i)%name) // '=(associative array)'
         else
-          write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
-                                   '"' // trim(shell%variables(i)%value) // '"'
+          ! Bash: only quote values containing special chars, using single quotes
+          block
+            character(len=:), allocatable :: val
+            logical :: needs_quote
+            integer :: vi
+            val = trim(shell%variables(i)%value)
+            needs_quote = .false.
+            do vi = 1, len(val)
+              select case(val(vi:vi))
+              case(' ', char(9), char(10), '"', "'", '\', '$', '`', &
+                   '!', '(', ')', '{', '}', '[', ']', '|', '&', ';', &
+                   '<', '>', '?', '*', '#', '~')
+                needs_quote = .true.
+                exit
+              end select
+            end do
+            if (needs_quote) then
+              write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
+                                       "'" // val // "'"
+            else
+              write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // val
+            end if
+          end block
         end if
       end if
     end do
