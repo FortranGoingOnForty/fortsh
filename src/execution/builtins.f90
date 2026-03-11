@@ -1438,15 +1438,25 @@ contains
     
     if (cmd%num_tokens == 1) then
       ! Wait for all background jobs
-      do i = 1, MAX_JOBS
-        if (shell%jobs(i)%job_id > 0 .and. &
-            shell%jobs(i)%state == JOB_RUNNING) then
-          ret = c_waitpid(shell%jobs(i)%pgid, c_loc(wait_status), 0)
-          if (WIFEXITED(wait_status) .or. WIFSIGNALED(wait_status)) then
-            shell%jobs(i)%state = JOB_DONE
+      block
+        integer :: done_ids(MAX_JOBS), num_done, di
+        num_done = 0
+        do i = 1, MAX_JOBS
+          if (shell%jobs(i)%job_id > 0 .and. &
+              shell%jobs(i)%state == JOB_RUNNING) then
+            ret = c_waitpid(shell%jobs(i)%pgid, &
+              c_loc(wait_status), 0)
+            if (WIFEXITED(wait_status) .or. &
+                WIFSIGNALED(wait_status)) then
+              num_done = num_done + 1
+              done_ids(num_done) = shell%jobs(i)%job_id
+            end if
           end if
-        end if
-      end do
+        end do
+        do di = 1, num_done
+          call remove_job(shell, done_ids(di))
+        end do
+      end block
       shell%last_exit_status = 0
     else
       ! Wait for specific job or PID
