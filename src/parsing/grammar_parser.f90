@@ -861,7 +861,7 @@ contains
     type(command_node_t), pointer :: node, case_cmds
     character(len=MAX_TOKEN_LEN) :: word, patterns(10)
     type(case_item_t) :: items(20)
-    integer :: num_items, num_patterns, i
+    integer :: num_items, num_patterns, i, word_len
     type(token_t) :: tok
     nullify(node)
     num_items = 0
@@ -869,6 +869,8 @@ contains
     tok = current_token(state)
     if (tok%token_type /= TOKEN_WORD) return
     word = tok%value
+    word_len = tok%value_length
+    if (word_len == 0) word_len = len_trim(word)
     call advance(state)
     call skip_newlines(state)
     if (.not. expect(state, 'in')) return
@@ -935,7 +937,7 @@ contains
     end do
 
     if (.not. expect(state, 'esac')) return
-    node => create_case_statement(word, items, num_items)
+    node => create_case_statement(word, items, num_items, word_len)
   end function
 
   ! Parse commands in a case item until ;; or esac
