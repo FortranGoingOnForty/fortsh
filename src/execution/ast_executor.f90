@@ -660,6 +660,37 @@ contains
           exit_status = 0
         end if
 
+        ! Clean up local variables for this function scope
+        if (shell%function_depth > 0 .and. &
+            shell%function_depth <= size(shell%local_var_counts)) then
+          ! Check if IFS was local — restore previous value
+          block
+            use variables, only: get_shell_variable
+            integer :: lv_idx
+            logical :: had_local_ifs
+            character(len=1024) :: prev_ifs
+            had_local_ifs = .false.
+            do lv_idx = 1, shell%local_var_counts(shell%function_depth)
+              if (trim(shell%local_vars(shell%function_depth, lv_idx)%name) == 'IFS') then
+                had_local_ifs = .true.
+                exit
+              end if
+            end do
+            shell%local_var_counts(shell%function_depth) = 0
+            if (had_local_ifs) then
+              prev_ifs = get_shell_variable(shell, 'IFS')
+              if (len_trim(prev_ifs) > 0) then
+                shell%ifs = trim(prev_ifs)
+                shell%ifs_len = len_trim(prev_ifs)
+              else
+                ! Restore default IFS
+                shell%ifs = ' ' // char(9) // char(10)
+                shell%ifs_len = 3
+              end if
+            end if
+          end block
+        end if
+
         ! Decrement function depth
         shell%function_depth = shell%function_depth - 1
 
