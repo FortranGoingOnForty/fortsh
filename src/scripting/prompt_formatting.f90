@@ -391,8 +391,9 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=:), allocatable :: pretty, home_dir, temp_path
     character(len=:), allocatable :: branch, status, ab, venv
+    character(len=:), allocatable :: rprompt_val
     integer :: home_len, term_rows, term_cols, max_path_len, overhead
-    integer :: i, ps1_len, first_line_end
+    integer :: i, ps1_len, first_line_end, rprompt_width
     logical :: got_term_size
 
     home_dir = get_environment_var('HOME')
@@ -476,6 +477,18 @@ contains
           overhead = overhead + len_trim(shell%shell_name)
         if (has_escape(shell%ps1(1:first_line_end), 'v')) overhead = overhead + 3
         if (has_escape(shell%ps1(1:first_line_end), 'V')) overhead = overhead + 5
+
+        ! Account for RPROMPT width + minimum gap (readline requires 4-char gap)
+        rprompt_val = get_shell_variable(shell, 'RPROMPT')
+        if (len_trim(rprompt_val) > 0) then
+          rprompt_width = count_literal_chars(rprompt_val)
+          if (has_escape(rprompt_val, 'S')) rprompt_width = rprompt_width + 10
+          if (has_escape(rprompt_val, 't')) rprompt_width = rprompt_width + 8
+          if (has_escape(rprompt_val, 'T')) rprompt_width = rprompt_width + 8
+          if (has_escape(rprompt_val, 'A')) rprompt_width = rprompt_width + 5
+          if (has_escape(rprompt_val, 'D')) rprompt_width = rprompt_width + 10
+          overhead = overhead + rprompt_width + 4  ! 4 = minimum gap
+        end if
 
         max_path_len = term_cols - overhead
       else
