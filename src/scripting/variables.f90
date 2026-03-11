@@ -99,6 +99,8 @@ contains
         if (.not. set_environment_var('PATH', value(1:actual_len))) then
           ! Silently ignore errors
         end if
+        ! Clear hash table when PATH changes (bash behavior)
+        shell%num_hashed_commands = 0
         ! Don't return - continue to store in variables array too
       case ('HISTFILE')
         shell%histfile = value
