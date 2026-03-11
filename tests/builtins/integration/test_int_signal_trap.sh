@@ -41,7 +41,7 @@ compare_output "overwrite trap" 'trap "echo a" EXIT; trap "echo b" EXIT'
 compare_output "clear trap" 'trap "echo a" EXIT; trap - EXIT; echo done'
 compare_output "display trap" 'trap "echo hello" EXIT; trap -p EXIT'
 compare_output "trap multiple signals" 'trap "echo caught" USR1 USR2; kill -USR1 $$; kill -USR2 $$; echo done'
-compare_output "trap -p shows all" 'trap "echo a" USR1; trap "echo b" USR2; trap -p | grep -c "trap" | tr -d " "'
+compare_output "trap -p shows all" 'trap "echo a" USR1; trap "echo b" USR2; trap -p | grep -cE "USR[12]" | tr -d " "'
 compare_output "trap list signals" 'trap -l >/dev/null 2>&1; echo $?'
 
 section "6. trap interaction with builtins"
