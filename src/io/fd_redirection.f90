@@ -374,7 +374,7 @@ contains
               success = .false.
             else
               ! Write content to pipe (with trailing newline)
-              content = trim(redir%filename) // char(10)
+              content = redir%filename // char(10)
               bytes_written = c_write(write_fd, c_loc(content), int(len(content), c_size_t))
               if (bytes_written < 0) then
                 write(error_unit, '(a)') 'fortsh: error writing to here-string pipe'

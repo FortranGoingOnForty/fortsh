@@ -822,11 +822,45 @@ contains
         temp_redirect%target_fd = node%simple_cmd%redirects(i)%target_fd
         if (allocated(node%simple_cmd%redirects(i)%filename)) then
           ! Expand variables in redirect filename (e.g., /tmp/file$$)
-          call expand_variables(trim(node%simple_cmd%redirects(i)%filename), expanded_filename, shell)
-          if (allocated(expanded_filename)) then
-            allocate(temp_redirect%filename, source=expanded_filename)
+          ! For here-strings, preserve trailing whitespace
+          if (temp_redirect%type == REDIR_HERE_STRING) then
+            block
+              character(len=:), allocatable :: hs_content
+              integer :: hs_len
+              hs_len = len(node%simple_cmd%redirects(i)%filename)
+              if (index(node%simple_cmd%redirects(i)%filename, &
+                  '$') > 0 .or. &
+                  index(node%simple_cmd%redirects(i)%filename, &
+                  '`') > 0) then
+                call expand_variables( &
+                  node%simple_cmd%redirects(i)%filename, &
+                  expanded_filename, shell)
+                if (allocated(expanded_filename)) then
+                  allocate(temp_redirect%filename, &
+                    source=expanded_filename)
+                else
+                  allocate(temp_redirect%filename, &
+                    source= &
+                    node%simple_cmd%redirects(i)%filename)
+                end if
+              else
+                allocate(temp_redirect%filename, &
+                  source= &
+                  node%simple_cmd%redirects(i)%filename)
+              end if
+            end block
           else
-            allocate(temp_redirect%filename, source=trim(node%simple_cmd%redirects(i)%filename))
+            call expand_variables( &
+              trim(node%simple_cmd%redirects(i)%filename), &
+              expanded_filename, shell)
+            if (allocated(expanded_filename)) then
+              allocate(temp_redirect%filename, &
+                source=expanded_filename)
+            else
+              allocate(temp_redirect%filename, &
+                source=trim( &
+                  node%simple_cmd%redirects(i)%filename))
+            end if
           end if
         end if
         temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
