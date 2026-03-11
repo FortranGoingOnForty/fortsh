@@ -14,6 +14,8 @@ module parser
 
   ! Export backtick conversion for new parser
   public :: convert_backticks_to_dollar_paren
+  public :: needs_compound_continuation
+  public :: remove_line_continuations
 
 contains
 
@@ -3546,6 +3548,76 @@ contains
     ! If we're not inside quotes and line ends with backslash, need continuation
     ! (prev_char is backslash at this point since it's the last char)
     needs_continuation = .not. in_single_quote .and. .not. in_double_quote
+  end function
+
+  function needs_compound_continuation(input) result(needs_more)
+    use lexer, only: tokenize
+    character(len=*), intent(in) :: input
+    logical :: needs_more
+    type(token_t), allocatable :: tokens(:)
+    integer :: num_tokens, i
+    integer :: if_depth, do_depth, case_depth, brace_depth
+
+    needs_more = .false.
+
+    ! Tokenize the input using the lexer
+    allocate(tokens(MAX_TOKENS))
+    call tokenize(input, tokens, num_tokens)
+
+    if_depth = 0
+    do_depth = 0
+    case_depth = 0
+    brace_depth = 0
+
+    do i = 1, num_tokens
+      if (tokens(i)%token_type /= TOKEN_KEYWORD) cycle
+      select case (trim(tokens(i)%value))
+      case ('if')
+        if_depth = if_depth + 1
+      case ('fi')
+        if_depth = if_depth - 1
+      case ('do')
+        do_depth = do_depth + 1
+      case ('done')
+        do_depth = do_depth - 1
+      case ('case')
+        case_depth = case_depth + 1
+      case ('esac')
+        case_depth = case_depth - 1
+      case ('{')
+        brace_depth = brace_depth + 1
+      case ('}')
+        brace_depth = brace_depth - 1
+      end select
+    end do
+
+    needs_more = (if_depth > 0 .or. do_depth > 0 .or. case_depth > 0 .or. brace_depth > 0)
+  end function
+
+  function remove_line_continuations(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=len(input)) :: output
+    integer :: i, j
+
+    output = ''
+    i = 1
+    j = 1
+
+    do while (i <= len_trim(input))
+      ! Check for backslash followed by newline
+      if (i < len_trim(input) .and. input(i:i) == char(92)) then
+        if (input(i+1:i+1) == char(10)) then
+          ! Skip both the backslash and newline
+          i = i + 2
+          cycle
+        end if
+      end if
+
+      ! Copy character to output
+      output(j:j) = input(i:i)
+      i = i + 1
+      j = j + 1
+    end do
   end function
 
 end module parser
