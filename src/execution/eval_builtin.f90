@@ -60,8 +60,8 @@ contains
       first_word = trim(command)
     end if
 
-    ! Check if it's an alias
-    if (is_alias(shell, trim(first_word))) then
+    ! Check if it's an alias (only expand in interactive mode per POSIX)
+    if (shell%is_interactive .and. is_alias(shell, trim(first_word))) then
       alias_value = get_alias(shell, trim(first_word))
       if (space_pos > 0) then
         command = trim(alias_value) // command(space_pos:)
