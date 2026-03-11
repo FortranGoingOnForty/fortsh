@@ -2218,10 +2218,11 @@ contains
     use fd_redirection, only: apply_single_redirection, restore_fds
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, i
+    integer :: exit_status, i, k
     character(len=MAX_TOKEN_LEN) :: case_value
+    integer :: case_value_len
     integer :: item_idx, pattern_idx
-    logical :: matched
+    logical :: matched, needs_expansion
     character(len=MAX_TOKEN_LEN) :: pattern
     character(len=:), allocatable :: expanded_pattern
     type(redirection_t) :: temp_redirect
@@ -2265,13 +2266,42 @@ contains
     end if
 
     ! Get the value to match (expand variables, command substitution, etc.)
-    block
-      use parser, only: expand_variables
-      character(len=:), allocatable :: expanded_case_value
-      call expand_variables(trim(node%case_stmt%word), expanded_case_value, shell)
-      case_value = trim(expanded_case_value)
-      if (allocated(expanded_case_value)) deallocate(expanded_case_value)
-    end block
+    ! Use word_len to preserve whitespace-only values that len_trim would destroy
+    case_value_len = node%case_stmt%word_len
+    if (case_value_len == 0) case_value_len = len_trim(node%case_stmt%word)
+
+    ! Check if expansion is needed (contains $, `, or quotes)
+    needs_expansion = .false.
+    do k = 1, case_value_len
+      if (node%case_stmt%word(k:k) == '$' .or. &
+          node%case_stmt%word(k:k) == '`' .or. &
+          node%case_stmt%word(k:k) == char(1) .or. &
+          node%case_stmt%word(k:k) == char(2)) then
+        needs_expansion = .true.
+        exit
+      end if
+    end do
+
+    if (needs_expansion) then
+      block
+        character(len=:), allocatable :: expanded_case_value
+        call expand_variables(node%case_stmt%word(1:case_value_len), &
+                              expanded_case_value, shell)
+        if (allocated(expanded_case_value)) then
+          case_value_len = len(expanded_case_value)
+          case_value = ''
+          if (case_value_len > 0) case_value(1:case_value_len) = expanded_case_value
+          deallocate(expanded_case_value)
+        else
+          case_value = ''
+          case_value_len = 0
+        end if
+      end block
+    else
+      case_value = ''
+      if (case_value_len > 0) case_value(1:case_value_len) = &
+        node%case_stmt%word(1:case_value_len)
+    end if
 
     ! Try to match against each case item
     do item_idx = 1, node%case_stmt%num_items
@@ -2285,7 +2315,12 @@ contains
         call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), trim(case_value))
+        if (case_value_len > 0) then
+          matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), &
+                                                     case_value(1:case_value_len))
+        else
+          matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), '')
+        end if
 
         if (matched) exit
       end do

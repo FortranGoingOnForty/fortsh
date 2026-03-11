@@ -167,6 +167,7 @@ module command_tree
   ! =====================================
   type :: case_data_t
     character(len=MAX_TOKEN_LEN) :: word                      ! case $word in
+    integer :: word_len = 0                                   ! Actual word length (preserves whitespace)
     type(case_item_t), allocatable :: items(:)                ! Case items
     integer :: num_items = 0
   end type case_data_t
@@ -312,8 +313,9 @@ contains
     node%for_loop%body => body
   end function create_for_loop
 
-  function create_case_statement(word, items, num_items) result(node)
+  function create_case_statement(word, word_len, items, num_items) result(node)
     character(len=*), intent(in) :: word
+    integer, intent(in) :: word_len
     type(case_item_t), intent(in) :: items(:)
     integer, intent(in) :: num_items
     type(command_node_t), pointer :: node
@@ -322,6 +324,7 @@ contains
     node%node_type = NODE_CASE
     allocate(node%case_stmt)
     node%case_stmt%word = word
+    node%case_stmt%word_len = word_len
     allocate(node%case_stmt%items(num_items))
     node%case_stmt%items = items
     node%case_stmt%num_items = num_items
