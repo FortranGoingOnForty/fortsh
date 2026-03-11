@@ -1165,6 +1165,10 @@ contains
           else if (module_input_state%in_search) then
             call accept_search(module_input_state, prompt)
           else
+            ! Clear shadow text (suggestion) from cursor to end of line before newline
+            if (module_input_state%suggestion_length > 0) then
+              write(output_unit, '(a)', advance='no') char(27) // '[K'
+            end if
             write(output_unit, '()')  ! New line
             done = .true.
           end if
