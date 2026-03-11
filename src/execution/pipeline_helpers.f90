@@ -109,12 +109,12 @@ contains
     logical :: is_double_bracket_cmd
     logical :: was_originally_quoted
 
-    allocate(split_words(30))
+    allocate(split_words(200))
 
     ! Allocate temporary storage for expanded tokens
-    allocate(temp_tokens(cmd%num_tokens * 10))  ! Allocate extra space for brace expansion
-    allocate(temp_token_lengths(cmd%num_tokens * 10))
-    allocate(temp_token_quoted(cmd%num_tokens * 10))
+    allocate(temp_tokens(max(cmd%num_tokens * 50, 200)))  ! Extra space for brace expansion ({a..z} = 26x)
+    allocate(temp_token_lengths(max(cmd%num_tokens * 50, 200)))
+    allocate(temp_token_quoted(max(cmd%num_tokens * 50, 200)))
     temp_token_lengths = 0
     temp_token_quoted = .false.
     total_tokens = 0
