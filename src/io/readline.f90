@@ -8,6 +8,8 @@ module readline
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
   use syntax_highlight, only: highlight_command_line, highlight_single_char, init_syntax_highlighting, MAX_HIGHLIGHT_LEN
   use abbreviations, only: try_expand_abbreviation
+  use suggestions, only: compute_path_suggestion, compute_history_suggestion, &
+                         suggestion_result_t, SUGGEST_NONE
   use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
@@ -7577,12 +7579,10 @@ contains
   subroutine try_path_suggestion(current_input, input_state)
     character(len=*), intent(in) :: current_input
     type(input_state_t), intent(inout) :: input_state
-    character(len=MAX_LINE_LEN) :: last_word, prefix_part
+    character(len=MAX_LINE_LEN) :: last_word
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
-    integer :: num_completions, last_space_pos, i, j
-    integer :: common_prefix_len, input_len
-    character(len=MAX_LINE_LEN) :: suggestion_text
-    logical :: matches
+    integer :: num_completions, last_space_pos, i, input_len, last_word_len
+    type(suggestion_result_t) :: path_result
 
     ! Clear any existing suggestion
     input_state%suggestion = ''
@@ -7602,78 +7602,35 @@ contains
 
     if (last_space_pos > 0) then
       last_word = trim(current_input(last_space_pos+1:))
-      prefix_part = current_input(:last_space_pos)
     else
       last_word = trim(current_input)
-      prefix_part = ''
     end if
 
-    ! Skip if last word is empty
-    if (len_trim(last_word) == 0) return
+    last_word_len = len_trim(last_word)
+    if (last_word_len == 0) return
 
-    ! Always try path completion for the last word (fish-style aggressive suggestions)
-    ! This enables suggestions for things like "cd bi" -> "bin/", "ls bin/fo" -> "bin/fortsh"
-    call complete_files_enhanced(trim(last_word), completions, num_completions)
+    ! Get filesystem completions for the last word
+    call complete_files_enhanced(last_word(1:last_word_len), completions, num_completions)
 
-    ! If exactly one completion, suggest it
-    if (num_completions == 1) then
-      ! Build suggestion: remove the part user already typed
-      suggestion_text = trim(completions(1))
-      if (len_trim(suggestion_text) > len_trim(last_word)) then
-        ! Verify completion is a genuine prefix extension of last_word
-        ! (fuzzy matches that don't start with last_word produce garbage suggestions)
-        matches = .true.
-        do i = 1, len_trim(last_word)
-          if (suggestion_text(i:i) /= last_word(i:i)) then
-            matches = .false.
-            exit
-          end if
-        end do
-        if (matches) then
-          input_state%suggestion = suggestion_text(len_trim(last_word)+1:len_trim(suggestion_text))
-          input_state%suggestion_length = len_trim(suggestion_text) - len_trim(last_word)
-        end if
-      end if
-    else if (num_completions > 1) then
-      ! Multiple completions - find common prefix
-      common_prefix_len = len_trim(completions(1))
+    ! Delegate suggestion selection to the suggestions module
+    path_result = compute_path_suggestion(last_word, last_word_len, completions, num_completions)
 
-      do i = 2, num_completions
-        ! Find how much of completions(1) matches completions(i)
-        do j = 1, min(common_prefix_len, len_trim(completions(i)))
-          if (completions(1)(j:j) /= completions(i)(j:j)) then
-            common_prefix_len = j - 1
-            exit
-          end if
-        end do
-        if (common_prefix_len == 0) exit
+    if (path_result%source /= SUGGEST_NONE) then
+      ! Copy result into input_state character-by-character for flang-new safety
+      input_state%suggestion = ''
+      do i = 1, path_result%length
+        input_state%suggestion(i:i) = path_result%text(i:i)
       end do
-
-      ! If common prefix is longer than what user typed, suggest the difference
-      ! Verify the common prefix actually starts with last_word
-      if (common_prefix_len > len_trim(last_word)) then
-        matches = .true.
-        do i = 1, len_trim(last_word)
-          if (completions(1)(i:i) /= last_word(i:i)) then
-            matches = .false.
-            exit
-          end if
-        end do
-        if (matches) then
-          input_state%suggestion = completions(1)(len_trim(last_word)+1:common_prefix_len)
-          input_state%suggestion_length = common_prefix_len - len_trim(last_word)
-        end if
-      end if
+      input_state%suggestion_length = path_result%length
     end if
   end subroutine try_path_suggestion
 
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, newline_pos, j
-    logical :: matches
+    integer :: j
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
-    character(len=MAX_LINE_LEN), allocatable :: suggestion_candidate
+    type(suggestion_result_t) :: hist_result
 
     ! Disable autosuggestion in test mode - prevents output pollution
     if (.not. test_mode_initialized) call init_test_mode()
@@ -7683,21 +7640,17 @@ contains
       return
     end if
 
-    ! Allocate buffers on heap
+    ! Allocate buffer on heap
     allocate(current_input)
     current_input = ''
-    allocate(suggestion_candidate)
-    suggestion_candidate = ''
 
     ! Defensive check: ensure length and cursor_pos are valid
     if (input_state%length < 0 .or. input_state%length > MAX_LINE_LEN) then
-      ! Corruption detected - reset to safe state
       input_state%length = 0
       input_state%cursor_pos = 0
       input_state%suggestion = ''
       input_state%suggestion_length = 0
       if (allocated(current_input)) deallocate(current_input)
-      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
       return
     end if
 
@@ -7706,7 +7659,6 @@ contains
       input_state%suggestion = ''
       input_state%suggestion_length = 0
       if (allocated(current_input)) deallocate(current_input)
-      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
       return
     end if
 
@@ -7716,86 +7668,29 @@ contains
       current_input(j:j) = state_buffer_get_char(input_state, j)
     end do
 
-    ! Check if user is currently typing a path (last word looks like a path)
-    ! If so, prioritize path completion over history
+    ! Priority 1: path-based suggestion
     call try_path_suggestion(current_input(1:input_state%length), input_state)
     if (input_state%suggestion_length > 0) then
-      ! Path suggestion found - use it instead of history
       if (allocated(current_input)) deallocate(current_input)
-      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
       return
     end if
 
-    ! No path suggestion - search history backwards for matching command
-    do i = command_history%count, 1, -1
-      ! Check if history entry starts with current input
-      if (len_trim(command_history%lines(i)) > input_state%length) then
-        ! Compare character-by-character (avoid substring on allocatable)
-        matches = .true.
-        do j = 1, input_state%length
-          if (command_history%lines(i)(j:j) /= current_input(j:j)) then
-            matches = .false.
-            exit
-          end if
+    ! Priority 2: history-based suggestion (delegated to suggestions module)
+    if (command_history%count > 0 .and. allocated(command_history%lines)) then
+      hist_result = compute_history_suggestion( &
+        current_input, input_state%length, &
+        command_history%lines, command_history%count)
+
+      if (hist_result%source /= SUGGEST_NONE) then
+        input_state%suggestion = ''
+        do j = 1, hist_result%length
+          input_state%suggestion(j:j) = hist_result%text(j:j)
         end do
-
-        if (matches) then
-          ! Found a match! Store the rest as suggestion
-          ! CRITICAL FIX: Stop at first newline to avoid multi-line suggestions (heredocs, etc.)
-          ! Copy remaining part character-by-character (avoid substring)
-          ! CRITICAL FIX 2: Never write beyond MAX_LINE_LEN to prevent heap corruption
-          suggestion_candidate = ''
-          do j = input_state%length + 1, len_trim(command_history%lines(i))
-            ! Bounds check: ensure we don't write beyond MAX_LINE_LEN
-            if (j - input_state%length > MAX_LINE_LEN) exit
-            suggestion_candidate(j - input_state%length:j - input_state%length) = &
-              command_history%lines(i)(j:j)
-          end do
-
-          ! Find first newline character
-          newline_pos = -1  ! Initialize to -1 to indicate not found
-          do j = 1, len_trim(suggestion_candidate)
-            if (suggestion_candidate(j:j) == char(10) .or. suggestion_candidate(j:j) == char(13)) then
-              newline_pos = j - 1
-              exit
-            end if
-          end do
-
-          if (newline_pos >= 0) then
-            ! Found newline - truncate before it (or clear if newline is first char)
-            if (newline_pos > 0) then
-              ! Copy character-by-character to avoid substring
-              ! Ensure we don't exceed MAX_LINE_LEN
-              input_state%suggestion = ''
-              do j = 1, min(newline_pos, MAX_LINE_LEN)
-                input_state%suggestion(j:j) = suggestion_candidate(j:j)
-              end do
-              input_state%suggestion_length = min(newline_pos, MAX_LINE_LEN)
-            else
-              ! Newline is first character - no suggestion
-              input_state%suggestion = ''
-              input_state%suggestion_length = 0
-            end if
-          else
-            ! No newline found, use full suggestion - copy character-by-character
-            ! Ensure we don't exceed MAX_LINE_LEN when copying
-            input_state%suggestion = ''
-            do j = 1, min(len_trim(suggestion_candidate), MAX_LINE_LEN)
-              input_state%suggestion(j:j) = suggestion_candidate(j:j)
-            end do
-            input_state%suggestion_length = min(len_trim(suggestion_candidate), MAX_LINE_LEN)
-          end if
-          if (allocated(current_input)) deallocate(current_input)
-          if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
-          return
-        end if
+        input_state%suggestion_length = hist_result%length
       end if
-    end do
+    end if
 
-    ! No history or path match found - suggestion remains empty
-    ! Deallocate heap-allocated buffers
     if (allocated(current_input)) deallocate(current_input)
-    if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
   end subroutine
 
   ! Accept the current autosuggestion
