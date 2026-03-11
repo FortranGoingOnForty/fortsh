@@ -2225,6 +2225,9 @@ contains
       if (shell%fatal_expansion_error .and. status == 127) then
         status = 1
       end if
+      ! Fire EXIT trap before subshell exits
+      shell%last_exit_status = status
+      call run_exit_trap_in_subshell(shell)
       call c_exit(status)
     else if (pid > 0) then
       ! Parent - wait for subshell
@@ -2792,5 +2795,29 @@ contains
       end if
     end do
   end subroutine filter_traps_for_subshell
+
+  subroutine run_exit_trap_in_subshell(shell)
+    use trap_dispatch, only: eval_trap_string
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i, trap_exit_code
+
+    if (shell%executing_trap .or. shell%exit_trap_executed) return
+
+    ! Find EXIT trap (signal 0) that was set in this subshell
+    do i = 1, shell%num_traps
+      if (shell%traps(i)%signal == 0 .and. &
+          shell%traps(i)%active .and. &
+          .not. shell%traps(i)%inherited .and. &
+          len_trim(shell%traps(i)%command) > 0) then
+        shell%exit_trap_executed = .true.
+        shell%executing_trap = .true.
+        call eval_trap_string( &
+          trim(shell%traps(i)%command), &
+          shell, trap_exit_code)
+        shell%executing_trap = .false.
+        return
+      end if
+    end do
+  end subroutine run_exit_trap_in_subshell
 
 end module ast_executor
