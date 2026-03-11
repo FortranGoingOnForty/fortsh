@@ -1597,7 +1597,7 @@ contains
   recursive function execute_while_node(node, shell) result(exit_status)
     use control_flow, only: push_control_block, pop_control_block, BLOCK_WHILE, BLOCK_UNTIL
     use fd_redirection, only: apply_single_redirection, restore_fds
-    use parser, only: expand_variables
+    use parser, only: expand_variables, read_heredoc
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, cond_status, i
@@ -1616,23 +1616,46 @@ contains
     if (has_redirects) then
       block
         character(len=:), allocatable :: expanded_filename
+        character(len=:), allocatable :: heredoc_content
         do i = 1, node%num_redirects
           temp_redirect%type = node%redirects(i)%type
           temp_redirect%fd = node%redirects(i)%fd
           temp_redirect%target_fd = node%redirects(i)%target_fd
-          if (allocated(node%redirects(i)%filename)) then
-            call expand_variables(trim(node%redirects(i)%filename), expanded_filename, shell)
+
+          if (temp_redirect%type == REDIR_HERE_DOC) then
+            ! Heredoc: filename holds delimiter, retrieve content
+            if (allocated(node%redirects(i)%filename)) then
+              call read_heredoc( &
+                trim(node%redirects(i)%filename), &
+                heredoc_content, shell)
+              if (allocated(heredoc_content)) then
+                allocate(temp_redirect%filename, &
+                  source=heredoc_content)
+                deallocate(heredoc_content)
+              else
+                allocate(temp_redirect%filename, source='')
+              end if
+            end if
+          else if (allocated(node%redirects(i)%filename)) then
+            call expand_variables( &
+              trim(node%redirects(i)%filename), &
+              expanded_filename, shell)
             if (allocated(expanded_filename)) then
-              allocate(temp_redirect%filename, source=trim(expanded_filename))
+              allocate(temp_redirect%filename, &
+                source=trim(expanded_filename))
               deallocate(expanded_filename)
             else
-              allocate(temp_redirect%filename, source=trim(node%redirects(i)%filename))
+              allocate(temp_redirect%filename, &
+                source=trim(node%redirects(i)%filename))
             end if
           end if
-          temp_redirect%force_clobber = node%redirects(i)%force_clobber
+          temp_redirect%force_clobber = &
+            node%redirects(i)%force_clobber
 
-          call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
-          if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
+          call apply_single_redirection(temp_redirect, &
+            redir_success, shell%option_noclobber)
+          if (allocated(temp_redirect%filename)) &
+            deallocate(temp_redirect%filename)
           if (.not. redir_success) then
             call restore_fds()
             exit_status = 1
