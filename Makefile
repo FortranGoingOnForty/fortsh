@@ -155,6 +155,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/execution/command_capture_callback.o \
           $(BUILDDIR)/scripting/expansion.o \
           $(BUILDDIR)/scripting/substitution.o \
+          $(BUILDDIR)/io/suggestions.o \
           $(BUILDDIR)/io/readline.o \
           $(BUILDDIR)/scripting/shell_options.o \
           $(BUILDDIR)/fortsh.o
@@ -319,7 +320,10 @@ $(BUILDDIR)/scripting/completion.o: src/scripting/completion.f90 $(BUILDDIR)/com
 $(BUILDDIR)/io/syntax_highlight.o: src/io/syntax_highlight.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) | $(BUILDDIR)/io
+$(BUILDDIR)/io/suggestions.o: src/io/suggestions.f90 | $(BUILDDIR)/io
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
@@ -608,6 +612,12 @@ $(BUILDDIR)/test_expansion_simple: tests/test_expansion_simple.f90 $(BUILDDIR)/c
 $(BUILDDIR)/test_variables_simple: tests/test_variables_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
 
+$(BUILDDIR)/test_suggestions: tests/test_suggestions.f90 $(BUILDDIR)/io/suggestions.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/suggestions.o -o $@
+
+$(BUILDDIR)/test_syntax_highlight: tests/test_syntax_highlight.f90 $(BUILDDIR)/io/syntax_highlight.o $(CORE_C_OBJS) | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/types.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(CORE_C_OBJS) -o $@
+
 # Individual test targets
 test-memory-pool: $(BUILDDIR)/test_memory_pool
 	@echo "=========================================="
@@ -645,8 +655,20 @@ test-variables: $(BUILDDIR)/test_variables_simple
 	@echo "=========================================="
 	@$(BUILDDIR)/test_variables_simple
 
+test-suggestions: $(BUILDDIR)/test_suggestions
+	@echo "=========================================="
+	@echo "Testing Suggestions"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_suggestions
+
+test-highlight: $(BUILDDIR)/test_syntax_highlight
+	@echo "=========================================="
+	@echo "Testing Syntax Highlight v2"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_syntax_highlight
+
 # Run all unit bench tests (working tests only)
-test-bench: test-memory-pool test-lexer test-executor test-c-strings
+test-bench: test-memory-pool test-lexer test-executor test-suggestions test-highlight test-c-strings
 	@echo ""
 	@echo "=========================================="
 	@echo "All bench tests passed!"
@@ -669,4 +691,4 @@ c-strings: $(BUILDDIR)/test_c_strings
 	@echo "C string library built successfully!"
 	@echo "Run 'make test-c-strings' to test it"
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-bench
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-suggestions test-highlight test-bench
