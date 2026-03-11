@@ -1493,6 +1493,12 @@ contains
       ! Parent process
       shell%last_pid = pid
 
+      ! Auto-populate hash table (hashall)
+      if (shell%option_hashall .and. &
+          index(trim(cmd%tokens(1)), '/') == 0) then
+        call cache_command_path(shell, trim(cmd%tokens(1)))
+      end if
+
       if (.not. shell%in_pipeline_child) then
         ! Only manage process groups and terminal when NOT in a pipeline
         ! child. The AST pipeline executor handles these at pipeline level.
@@ -2735,5 +2741,39 @@ contains
       end if
     end do
   end subroutine init_token_metadata
+
+  subroutine cache_command_path(shell, cmd_name)
+    use command_builtin, only: find_command_full_path
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: cmd_name
+    character(len=MAX_PATH_LEN) :: full_path
+    integer :: j
+
+    full_path = find_command_full_path(cmd_name)
+    if (len_trim(full_path) == 0) return
+
+    ! Check if already in hash table — update hits
+    do j = 1, shell%num_hashed_commands
+      if (trim(shell%command_hash(j)%command_name) == &
+          cmd_name) then
+        shell%command_hash(j)%hits = &
+          shell%command_hash(j)%hits + 1
+        return
+      end if
+    end do
+
+    ! Add new entry
+    if (shell%num_hashed_commands < &
+        size(shell%command_hash)) then
+      shell%num_hashed_commands = &
+        shell%num_hashed_commands + 1
+      shell%command_hash(shell%num_hashed_commands) &
+        %command_name = cmd_name
+      shell%command_hash(shell%num_hashed_commands) &
+        %full_path = full_path
+      shell%command_hash(shell%num_hashed_commands) &
+        %hits = 1
+    end if
+  end subroutine cache_command_path
 
 end module executor
