@@ -742,69 +742,127 @@ contains
       end if
     end do
 
-    do i = start_token, cmd%num_tokens
-      ! POSIX: Skip empty tokens ONLY if they were unquoted (empty variables disappear)
-      ! Quoted empty strings "" should produce an empty argument
-      if (len_trim(cmd%tokens(i)) == 0) then
-        if (allocated(cmd%token_quoted)) then
-          if (i <= size(cmd%token_quoted) .and. cmd%token_quoted(i)) then
-            ! Token was quoted - keep it as empty argument
+    ! Fast path: when not interpreting escapes, build output in a single buffer
+    ! and write once to avoid per-token syscall overhead
+    if (.not. interpret_escapes) then
+      block
+        character(len=:), allocatable :: out_buf
+        integer :: out_pos, out_cap, tlen
+
+        ! Estimate total output size
+        out_cap = 0
+        do i = start_token, cmd%num_tokens
+          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+              cmd%token_lengths(i) > 0) then
+            out_cap = out_cap + cmd%token_lengths(i) + 1
           else
-            ! Token was not quoted - skip it
+            out_cap = out_cap + len_trim(cmd%tokens(i)) + 1
+          end if
+        end do
+        if (.not. suppress_newline) out_cap = out_cap + 1
+
+        allocate(character(len=max(out_cap, 1)) :: out_buf)
+        out_pos = 1
+        first = .true.
+
+        do i = start_token, cmd%num_tokens
+          ! Skip empty unquoted tokens
+          if (len_trim(cmd%tokens(i)) == 0) then
+            if (allocated(cmd%token_quoted)) then
+              if (.not. (i <= size(cmd%token_quoted) .and. cmd%token_quoted(i))) cycle
+            else
+              cycle
+            end if
+          end if
+
+          if (.not. first) then
+            out_buf(out_pos:out_pos) = ' '
+            out_pos = out_pos + 1
+          end if
+
+          if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+              cmd%token_lengths(i) > 0) then
+            tlen = cmd%token_lengths(i)
+          else
+            tlen = len_trim(cmd%tokens(i))
+          end if
+
+          if (tlen > 0) then
+            out_buf(out_pos:out_pos+tlen-1) = cmd%tokens(i)(1:tlen)
+            out_pos = out_pos + tlen
+          end if
+          first = .false.
+        end do
+
+        if (.not. suppress_newline) then
+          out_buf(out_pos:out_pos) = new_line('a')
+          out_pos = out_pos + 1
+        end if
+
+        if (out_pos > 1) then
+          call write_stdout_nonl_checked(out_buf(1:out_pos-1), write_ok)
+          if (.not. write_ok) had_error = .true.
+        else if (.not. suppress_newline) then
+          call write_stdout_checked('', write_ok)
+          if (.not. write_ok) had_error = .true.
+        end if
+      end block
+    else
+      ! Escape-interpreting path (less common)
+      do i = start_token, cmd%num_tokens
+        if (len_trim(cmd%tokens(i)) == 0) then
+          if (allocated(cmd%token_quoted)) then
+            if (i <= size(cmd%token_quoted) .and. cmd%token_quoted(i)) then
+              ! Token was quoted - keep it as empty argument
+            else
+              cycle
+            end if
+          else
             cycle
           end if
-        else
-          ! No quote info available - skip empty tokens (safer default)
-          cycle
         end if
-      end if
 
-      if (.not. first) then
-        call write_stdout_nonl_checked(' ', write_ok)
-        if (.not. write_ok) had_error = .true.
-      end if
+        if (.not. first) then
+          call write_stdout_nonl_checked(' ', write_ok)
+          if (.not. write_ok) had_error = .true.
+        end if
 
-      ! Process escape sequences in token (only if interpret_escapes is true)
-      token = cmd%tokens(i)
-      ! Use token_lengths to preserve trailing spaces if available
-      if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
-          cmd%token_lengths(i) > 0) then
-        len_token = cmd%token_lengths(i)
-      else
-        len_token = len_trim(token)
-      end if
+        token = cmd%tokens(i)
+        if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+            cmd%token_lengths(i) > 0) then
+          len_token = cmd%token_lengths(i)
+        else
+          len_token = len_trim(token)
+        end if
 
-      processed = ''
-      j = 1
+        processed = ''
+        j = 1
 
-      if (interpret_escapes) then
         do while (j <= len_token)
           if (token(j:j) == '\' .and. j < len_token) then
-            ! Escape sequence
             j = j + 1
             select case (token(j:j))
               case ('a')
-                processed = processed // achar(7)  ! Alert (bell)
+                processed = processed // achar(7)
               case ('b')
-                processed = processed // achar(8)  ! Backspace
+                processed = processed // achar(8)
               case ('c')
                 suppress_newline = .true.
                 stop_output = .true.
-                exit  ! Stop processing this token
+                exit
               case ('f')
-                processed = processed // achar(12) ! Form feed
+                processed = processed // achar(12)
               case ('n')
-                processed = processed // new_line('a')  ! Newline
+                processed = processed // new_line('a')
               case ('r')
-                processed = processed // achar(13) ! Carriage return
+                processed = processed // achar(13)
               case ('t')
-                processed = processed // achar(9)  ! Tab
+                processed = processed // achar(9)
               case ('v')
-                processed = processed // achar(11) ! Vertical tab
+                processed = processed // achar(11)
               case ('\')
-                processed = processed // '\'       ! Backslash
+                processed = processed // '\'
               case ('0')
-                ! Octal escape: \0NNN (up to 3 octal digits after the 0)
                 block
                   integer :: oval, nd
                   oval = 0
@@ -822,10 +880,9 @@ contains
                   else
                     processed = processed // achar(mod(oval, 256))
                   end if
-                  j = j + nd  ! skip consumed digits
+                  j = j + nd
                 end block
               case ('x')
-                ! Hex escape: \xNN (up to 2 hex digits)
                 block
                   integer :: hval, hd, hc
                   hval = 0
@@ -847,38 +904,32 @@ contains
                   end do
                   if (hd > 0) then
                     processed = processed // achar(mod(hval, 256))
-                    j = j + hd  ! skip consumed digits
+                    j = j + hd
                   else
-                    ! No valid hex digits, output literal \x
                     processed = processed // '\x'
                   end if
                 end block
               case default
-                ! Unknown escape - keep literal backslash and character
                 processed = processed // '\' // token(j:j)
             end select
             j = j + 1
           else
-            ! Regular character
             processed = processed // token(j:j)
             j = j + 1
           end if
         end do
-      else
-        ! -E flag: don't interpret escape sequences
-        processed = token(:len_token)
+
+        call write_stdout_nonl_checked(processed, write_ok)
+        if (.not. write_ok) had_error = .true.
+        first = .false.
+
+        if (stop_output) exit
+      end do
+
+      if (.not. suppress_newline) then
+        call write_stdout_checked('', write_ok)
+        if (.not. write_ok) had_error = .true.
       end if
-
-      call write_stdout_nonl_checked(processed, write_ok)
-      if (.not. write_ok) had_error = .true.
-      first = .false.
-
-      if (stop_output) exit
-    end do
-
-    if (.not. suppress_newline) then
-      call write_stdout_checked('', write_ok)
-      if (.not. write_ok) had_error = .true.
     end if
 
     if (had_error) then
