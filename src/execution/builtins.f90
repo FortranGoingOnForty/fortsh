@@ -2374,32 +2374,62 @@ contains
           end if
         end block
 
-        ! Unset variable
-        do j = 1, shell%num_variables
-          if (trim(shell%variables(j)%name) == var_name) then
-            ! Check if variable is readonly
-            if (shell%variables(j)%readonly) then
-              write(error_unit, '(a)') 'unset: ' // &
-                trim(var_name) // &
-                ': cannot unset readonly variable'
-              shell%last_exit_status = 1
-              return
+        ! Unset variable - check local scope first
+        block
+          logical :: found_local
+          integer :: lv_depth, lv_i
+          found_local = .false.
+          if (shell%function_depth > 0) then
+            lv_depth = shell%function_depth
+            if (lv_depth <= size(shell%local_var_counts)) then
+              do lv_i = 1, shell%local_var_counts(lv_depth)
+                if (trim(shell%local_vars(lv_depth, lv_i)%name) &
+                    == trim(var_name)) then
+                  if (shell%local_vars(lv_depth, lv_i)%readonly) then
+                    write(error_unit, '(a)') 'unset: ' // &
+                      trim(var_name) // &
+                      ': cannot unset readonly variable'
+                    shell%last_exit_status = 1
+                    return
+                  end if
+                  ! Mark local variable as unset (value_len=-1 sentinel)
+                  ! This keeps it shadowing the global but treated as unset
+                  shell%local_vars(lv_depth, lv_i)%value = ''
+                  shell%local_vars(lv_depth, lv_i)%value_len = -1
+                  found_local = .true.
+                  exit
+                end if
+              end do
             end if
-            ! Unset from environment if exported
-            if (shell%variables(j)%exported) then
-              call unset_environment_var(var_name)
-            end if
-            shell%variables(j)%name = ''
-            shell%variables(j)%value = ''
-            shell%variables(j)%is_array = .false.
-            shell%variables(j)%is_assoc_array = .false.
-            shell%variables(j)%readonly = .false.
-            shell%variables(j)%exported = .false.
-            shell%variables(j)%array_size = 0
-            shell%variables(j)%assoc_size = 0
-            exit
           end if
-        end do
+          if (.not. found_local) then
+            do j = 1, shell%num_variables
+              if (trim(shell%variables(j)%name) == var_name) then
+                ! Check if variable is readonly
+                if (shell%variables(j)%readonly) then
+                  write(error_unit, '(a)') 'unset: ' // &
+                    trim(var_name) // &
+                    ': cannot unset readonly variable'
+                  shell%last_exit_status = 1
+                  return
+                end if
+                ! Unset from environment if exported
+                if (shell%variables(j)%exported) then
+                  call unset_environment_var(var_name)
+                end if
+                shell%variables(j)%name = ''
+                shell%variables(j)%value = ''
+                shell%variables(j)%is_array = .false.
+                shell%variables(j)%is_assoc_array = .false.
+                shell%variables(j)%readonly = .false.
+                shell%variables(j)%exported = .false.
+                shell%variables(j)%array_size = 0
+                shell%variables(j)%assoc_size = 0
+                exit
+              end if
+            end do
+          end if
+        end block
       end if
     end do
     
