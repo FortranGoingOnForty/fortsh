@@ -113,13 +113,13 @@ done
 # Get script directory
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
-# Find fortsh binary
+# Find fortsh binary and resolve to absolute path (child scripts may cd)
 if [ -n "$FORTSH_BIN" ] && [ -x "$FORTSH_BIN" ]; then
-    FORTSH_PATH="$FORTSH_BIN"
+    FORTSH_PATH="$(cd "$(dirname "$FORTSH_BIN")" && pwd)/$(basename "$FORTSH_BIN")"
 elif [ -x "$SCRIPT_DIR/../bin/fortsh" ]; then
-    FORTSH_PATH="$SCRIPT_DIR/../bin/fortsh"
+    FORTSH_PATH="$(cd "$SCRIPT_DIR/../bin" && pwd)/fortsh"
 elif [ -x "./bin/fortsh" ]; then
-    FORTSH_PATH="./bin/fortsh"
+    FORTSH_PATH="$(cd ./bin && pwd)/fortsh"
 else
     printf "${RED}ERROR: fortsh binary not found!${NC}\n"
     printf "Please build fortsh first with 'make' or set FORTSH_BIN\n"

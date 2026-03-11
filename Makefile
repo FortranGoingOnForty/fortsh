@@ -389,21 +389,22 @@ release: clean $(TARGET)
 	@echo "Release build complete! Binary size: $$(du -h $(TARGET) | cut -f1)"
 
 # Test suite targets
+FORTSH_ABS = $(CURDIR)/$(TARGET)
 
 # POSIX compliance: single canonical test script (fastest)
 test-posix: $(TARGET)
 	@echo "Running POSIX compliance tests..."
-	FORTSH_BIN=$(TARGET) ./tests/posix_compliance_test.sh
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/posix_compliance_test.sh
 
 # Full POSIX suite: all shell-based POSIX test scripts via the comprehensive runner
 test-posix-full: $(TARGET)
 	@echo "Running full POSIX compliance test suite..."
-	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --posix-only
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --posix-only
 
 # Quick POSIX suite: skip slow coverage/untested suites
 test-posix-quick: $(TARGET)
 	@echo "Running quick POSIX compliance tests..."
-	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --posix-only --quick
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --posix-only --quick
 
 # Interactive PTY tests (requires Python venv with pexpect)
 test-interactive: $(TARGET)
@@ -425,12 +426,12 @@ test-interactive: $(TARGET)
 # Full test run: POSIX + interactive (no memory rebuild)
 test-full: $(TARGET)
 	@echo "Running full test suite (POSIX + interactive)..."
-	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --full
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --full
 
 # Everything including memory pool tests (SLOW: rebuilds fortsh)
 test-all: $(TARGET)
 	@echo "Running all test suites..."
-	FORTSH_BIN=$(TARGET) ./tests/run_all_tests.sh --all
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --all
 
 # Help target
 help:
