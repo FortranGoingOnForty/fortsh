@@ -2323,9 +2323,86 @@ contains
     do
       pos = index(output, trim(pattern))
       if (pos == 0) exit
-      temp = output(:pos-1) // trim(replacement) // output(pos+len_trim(pattern):)
+      temp = output(:pos-1) // trim(replacement) // &
+        output(pos+len_trim(pattern):)
       output = temp
     end do
+  end function
+
+  ! Glob-aware replace all: ${var//pattern/replacement}
+  function glob_replace_all(text, pattern, replacement) result(output)
+    character(len=*), intent(in) :: text, pattern, replacement
+    character(len=:), allocatable :: output
+    integer :: i, t_len, match_len, best_len
+
+    ! If pattern has no glob chars, use fast exact matching
+    if (index(pattern, '*') == 0 .and. index(pattern, '?') == 0 &
+        .and. index(pattern, '[') == 0) then
+      output = replace_all(text, pattern, replacement)
+      return
+    end if
+
+    output = ''
+    t_len = len_trim(text)
+    i = 1
+    do while (i <= t_len)
+      ! Try matching pattern at position i with increasing lengths
+      best_len = 0
+      do match_len = 1, t_len - i + 1
+        if (pattern_matches_no_dotfile_check(pattern, &
+            text(i:i+match_len-1))) then
+          best_len = match_len
+        end if
+      end do
+      if (best_len > 0) then
+        output = output // replacement
+        i = i + best_len
+      else
+        output = output // text(i:i)
+        i = i + 1
+      end if
+    end do
+  end function
+
+  ! Glob-aware replace first: ${var/pattern/replacement}
+  function glob_replace_first(text, pattern, replacement) &
+      result(output)
+    character(len=*), intent(in) :: text, pattern, replacement
+    character(len=:), allocatable :: output
+    integer :: i, t_len, match_len, best_len
+
+    ! If pattern has no glob chars, use fast exact matching
+    if (index(pattern, '*') == 0 .and. index(pattern, '?') == 0 &
+        .and. index(pattern, '[') == 0) then
+      block
+        integer :: pos
+        pos = index(text, trim(pattern))
+        if (pos > 0) then
+          output = text(:pos-1) // trim(replacement) // &
+            text(pos+len_trim(pattern):)
+        else
+          output = text
+        end if
+      end block
+      return
+    end if
+
+    t_len = len_trim(text)
+    do i = 1, t_len
+      best_len = 0
+      do match_len = 1, t_len - i + 1
+        if (pattern_matches_no_dotfile_check(pattern, &
+            text(i:i+match_len-1))) then
+          best_len = match_len
+        end if
+      end do
+      if (best_len > 0) then
+        output = text(:i-1) // replacement // &
+          text(i+best_len:len_trim(text))
+        return
+      end if
+    end do
+    output = text
   end function
 
   ! Convert to uppercase
@@ -2500,8 +2577,18 @@ contains
     end if
 
     ! Check for array syntax: var[index] or var[@] or var[*]
+    ! But NOT if there's a / before [ (indicates pattern replacement)
     bracket_pos = index(var_name, '[')
     is_array_access = (bracket_pos > 0)
+    if (is_array_access) then
+      block
+        integer :: slash_pos
+        slash_pos = index(var_name, '/')
+        if (slash_pos > 0 .and. slash_pos < bracket_pos) then
+          is_array_access = .false.
+        end if
+      end block
+    end if
 
     if (is_array_access) then
       bracket_end = index(var_name(bracket_pos:), ']')
@@ -2868,7 +2955,8 @@ contains
       end if
 
       if (allocated(current_value)) then
-        result_value = replace_all(current_value, trim(default_value), trim(operation))
+        result_value = glob_replace_all(current_value, &
+          trim(default_value), trim(operation))
       else
         result_value = ''
       end if
@@ -2919,7 +3007,8 @@ contains
             result_value = current_value
           end if
         else
-          result_value = replace_first(current_value, trim(default_value), trim(operation))
+          result_value = glob_replace_first(current_value, &
+            trim(default_value), trim(operation))
         end if
       else
         result_value = ''
