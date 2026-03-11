@@ -1211,6 +1211,12 @@ contains
         case('<<<')
           redirects(num_redirects)%type = REDIR_HERE_STRING
           redirects(num_redirects)%fd = 0  ! stdin
+        case('<<')
+          redirects(num_redirects)%type = REDIR_HERE_DOC
+          redirects(num_redirects)%fd = 0  ! stdin
+        case('<<-')
+          redirects(num_redirects)%type = REDIR_HERE_DOC
+          redirects(num_redirects)%fd = 0  ! stdin
         case default
           num_redirects = num_redirects - 1
           exit
