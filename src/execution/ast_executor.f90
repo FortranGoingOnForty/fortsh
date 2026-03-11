@@ -700,7 +700,19 @@ contains
             do lv_idx = 1, shell%local_var_counts(shell%function_depth)
               if (trim(shell%local_vars(shell%function_depth, lv_idx)%name) == 'IFS') then
                 had_local_ifs = .true.
-                exit
+              end if
+              ! Clean up local arrays from global variable storage
+              if (shell%local_vars(shell%function_depth, lv_idx)%is_array) then
+                do gv_idx = 1, shell%num_variables
+                  if (trim(shell%variables(gv_idx)%name) == &
+                      trim(shell%local_vars(shell%function_depth, lv_idx)%name)) then
+                    shell%variables(gv_idx)%name = ''
+                    shell%variables(gv_idx)%value = ''
+                    shell%variables(gv_idx)%is_array = .false.
+                    shell%variables(gv_idx)%array_size = 0
+                    exit
+                  end if
+                end do
               end if
             end do
             shell%local_var_counts(shell%function_depth) = 0
