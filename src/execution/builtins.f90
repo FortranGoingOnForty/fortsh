@@ -1401,7 +1401,11 @@ contains
             shell%last_exit_status = 1
             cycle
           end if
-          target_pid = -target_pid  ! Kill entire process group
+          ! In non-interactive mode, processes may not have
+          ! their own group; kill PID directly if so
+          if (shell%is_interactive) then
+            target_pid = -target_pid  ! Kill process group
+          end if
         else
           write(error_unit, '(a)') 'kill: invalid job specification'
           shell%last_exit_status = 1
