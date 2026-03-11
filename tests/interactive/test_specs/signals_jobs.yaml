@@ -227,6 +227,7 @@ tests:
     match_type: "contains"
 
   - name: "fg with no jobs shows error"
+    fresh_session: true
     steps:
       - send_line: "fg"
     expect_output: "no"
@@ -256,6 +257,7 @@ tests:
     match_type: "contains"
 
   - name: "bg with no stopped jobs shows error"
+    fresh_session: true
     steps:
       - send_line: "bg"
     expect_output: "no"
