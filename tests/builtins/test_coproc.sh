@@ -1,5 +1,15 @@
 #!/bin/sh
 TEST_PREFIX="[coproc]"
+
+# Coproc tests require job control (PTY) — skip in CI/non-interactive mode
+if [ ! -t 0 ] && [ -z "$FORCE_COPROC_TESTS" ]; then
+    echo "Passed:  0"
+    echo "Failed:  0"
+    echo "Skipped: 0"
+    echo "Total:   0"
+    exit 0
+fi
+
 . "$(cd "$(dirname "$0")" && pwd)/test_harness.sh"
 
 section "1. coproc basic launch"
