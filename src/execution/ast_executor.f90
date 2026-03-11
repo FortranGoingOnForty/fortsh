@@ -1247,6 +1247,10 @@ contains
       end if
     end if
 
+    ! POSIX: Check errexit after pipeline execution (e.g., pipefail + errexit)
+    shell%last_exit_status = exit_status
+    call check_errexit(shell, exit_status)
+
   end function execute_pipeline_node
 
   ! =====================================
