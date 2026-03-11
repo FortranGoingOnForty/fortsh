@@ -886,6 +886,7 @@ contains
       show_pids = .true.
     end if
     
+    call update_job_status(shell)
     call list_jobs(shell, show_pids)
     shell%last_exit_status = 0
   end subroutine
