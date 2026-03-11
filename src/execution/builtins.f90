@@ -599,19 +599,33 @@ contains
         end do
 
         if (.not. found) then
-          ! Variable doesn't exist, create it with empty value and export
-          call set_shell_variable(shell, var_name, '')
-          do j = 1, shell%num_variables
-            if (trim(shell%variables(j)%name) == var_name) then
-              shell%variables(j)%exported = .true.
-              if (.not. set_environment_var(var_name, '')) then
-                write(error_unit, '(a)') 'export: failed to set environment variable'
-                shell%last_exit_status = 1
-                return
-              end if
-              exit
+          ! Check special built-in variables stored in dedicated fields
+          select case (trim(var_name))
+          case ('PS1')
+            found = .true.
+            if (.not. set_environment_var(var_name, trim(shell%ps1))) then
+              write(error_unit, '(a)') 'export: failed to set environment variable'
             end if
-          end do
+          case ('PS2')
+            found = .true.
+            if (.not. set_environment_var(var_name, trim(shell%ps2))) then
+              write(error_unit, '(a)') 'export: failed to set environment variable'
+            end if
+          case default
+            ! Variable doesn't exist, create it with empty value and export
+            call set_shell_variable(shell, var_name, '')
+            do j = 1, shell%num_variables
+              if (trim(shell%variables(j)%name) == var_name) then
+                shell%variables(j)%exported = .true.
+                if (.not. set_environment_var(var_name, '')) then
+                  write(error_unit, '(a)') 'export: failed to set environment variable'
+                  shell%last_exit_status = 1
+                  return
+                end if
+                exit
+              end if
+            end do
+          end select
         end if
       end if
     end do
