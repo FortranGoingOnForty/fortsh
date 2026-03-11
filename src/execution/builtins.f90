@@ -1356,20 +1356,50 @@ contains
         if (iostat /= 0) then
           ! Try named signals
           select case(trim(cmd%tokens(2)(2:)))
-          case('TERM', 'term')
-            signal_num = 15
-          case('KILL', 'kill') 
-            signal_num = 9
-          case('INT', 'int')
-            signal_num = 2
-          case('STOP', 'stop')
-            signal_num = 19
-          case('CONT', 'cont')
-            signal_num = 18
-          case('HUP', 'hup')
+          case('HUP', 'hup', 'SIGHUP')
             signal_num = 1
-          case('QUIT', 'quit')
+          case('INT', 'int', 'SIGINT')
+            signal_num = 2
+          case('QUIT', 'quit', 'SIGQUIT')
             signal_num = 3
+          case('ILL', 'ill', 'SIGILL')
+            signal_num = 4
+          case('TRAP', 'trap', 'SIGTRAP')
+            signal_num = 5
+          case('ABRT', 'abrt', 'SIGABRT')
+            signal_num = 6
+          case('BUS', 'bus', 'SIGBUS')
+            signal_num = 7
+          case('FPE', 'fpe', 'SIGFPE')
+            signal_num = 8
+          case('KILL', 'kill', 'SIGKILL')
+            signal_num = 9
+          case('USR1', 'usr1', 'SIGUSR1')
+            signal_num = 10
+          case('SEGV', 'segv', 'SIGSEGV')
+            signal_num = 11
+          case('USR2', 'usr2', 'SIGUSR2')
+            signal_num = 12
+          case('PIPE', 'pipe', 'SIGPIPE')
+            signal_num = 13
+          case('ALRM', 'alrm', 'SIGALRM')
+            signal_num = 14
+          case('TERM', 'term', 'SIGTERM')
+            signal_num = 15
+          case('STKFLT', 'stkflt', 'SIGSTKFLT')
+            signal_num = 16
+          case('CHLD', 'chld', 'SIGCHLD')
+            signal_num = 17
+          case('CONT', 'cont', 'SIGCONT')
+            signal_num = 18
+          case('STOP', 'stop', 'SIGSTOP')
+            signal_num = 19
+          case('TSTP', 'tstp', 'SIGTSTP')
+            signal_num = 20
+          case('TTIN', 'ttin', 'SIGTTIN')
+            signal_num = 21
+          case('TTOU', 'ttou', 'SIGTTOU')
+            signal_num = 22
           case default
             write(error_unit, '(a)') 'kill: invalid signal specification'
             shell%last_exit_status = 1
