@@ -615,6 +615,9 @@ $(BUILDDIR)/test_variables_simple: tests/test_variables_simple.f90 $(BUILDDIR)/c
 $(BUILDDIR)/test_suggestions: tests/test_suggestions.f90 $(BUILDDIR)/io/suggestions.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/suggestions.o -o $@
 
+$(BUILDDIR)/test_syntax_highlight: tests/test_syntax_highlight.f90 $(BUILDDIR)/io/syntax_highlight.o $(CORE_C_OBJS) | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/types.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(CORE_C_OBJS) -o $@
+
 # Individual test targets
 test-memory-pool: $(BUILDDIR)/test_memory_pool
 	@echo "=========================================="
@@ -658,8 +661,14 @@ test-suggestions: $(BUILDDIR)/test_suggestions
 	@echo "=========================================="
 	@$(BUILDDIR)/test_suggestions
 
+test-highlight: $(BUILDDIR)/test_syntax_highlight
+	@echo "=========================================="
+	@echo "Testing Syntax Highlight v2"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_syntax_highlight
+
 # Run all unit bench tests (working tests only)
-test-bench: test-memory-pool test-lexer test-executor test-suggestions test-c-strings
+test-bench: test-memory-pool test-lexer test-executor test-suggestions test-highlight test-c-strings
 	@echo ""
 	@echo "=========================================="
 	@echo "All bench tests passed!"
@@ -682,4 +691,4 @@ c-strings: $(BUILDDIR)/test_c_strings
 	@echo "C string library built successfully!"
 	@echo "Run 'make test-c-strings' to test it"
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-suggestions test-bench
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-suggestions test-highlight test-bench
