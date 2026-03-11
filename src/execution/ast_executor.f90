@@ -975,6 +975,11 @@ contains
       call restore_fds()
     end if
 
+    ! Check for pending signals and dispatch their trap handlers
+    if (.not. shell%executing_trap) then
+      call dispatch_pending_signals(shell)
+    end if
+
     ! If a trap command was queued, execute it now (unless we're already executing a trap)
     if (len_trim(shell%pending_trap_command) > 0 .and. .not. shell%executing_trap) then
       call execute_pending_trap(shell)
@@ -2582,6 +2587,22 @@ contains
     shell%bypass_functions = saved_bypass
     shell%last_exit_status = saved_status
   end subroutine execute_pending_trap
+
+  ! Check for pending signals and dispatch their trap handlers
+  subroutine dispatch_pending_signals(shell)
+    use signal_handling, only: get_pending_trap_signals, execute_trap
+    type(shell_state_t), intent(inout) :: shell
+    integer :: pending_sigs(32), sig_count, si
+    logical :: trap_executed
+
+    call get_pending_trap_signals(pending_sigs, sig_count)
+    do si = 1, sig_count
+      trap_executed = execute_trap(shell, pending_sigs(si))
+      if (trap_executed .and. len_trim(shell%pending_trap_command) > 0) then
+        call execute_pending_trap(shell)
+      end if
+    end do
+  end subroutine dispatch_pending_signals
 
   ! Process sourced files inline (for dot command in lists)
   subroutine process_source_inline_ast(shell)
