@@ -19,7 +19,7 @@ jobs:
           sudo apt-get install -y gfortran
 
       - name: Build fortsh
-        run: make
+        run: make release
 
       - name: Run POSIX tests
         run: ./tests/run_all_tests.sh --posix-only
@@ -41,7 +41,7 @@ jobs:
           python-version: '3.12'
 
       - name: Build fortsh
-        run: make
+        run: make release
 
       - name: Install Python dependencies
         run: |
@@ -68,7 +68,7 @@ jobs:
           sudo apt-get install -y gfortran
 
       - name: Build fortsh
-        run: make
+        run: make release
 
       - name: Run builtin tests
         run: ./tests/builtins/run_builtin_tests.sh --verbose
@@ -85,7 +85,7 @@ jobs:
           sudo apt-get install -y gfortran
 
       - name: Build fortsh
-        run: make
+        run: make release
 
       - name: Run integration tests
         run: ./tests/builtins/integration/run_integration_tests.sh --verbose
