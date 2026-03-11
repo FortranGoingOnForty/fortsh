@@ -1756,7 +1756,8 @@ contains
     integer :: i
     
     if (command_history%count == 0) then
-      write(output_unit, '(a)') 'No commands in history.'
+      ! Bash is silent when history is empty
+      return
     else
       do i = 1, command_history%count
         write(output_unit, '(i4,2x,a)') i, trim(command_history%lines(i))
