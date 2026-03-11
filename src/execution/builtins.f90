@@ -2121,10 +2121,12 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    logical :: unset_functions = .false.
+    logical :: unset_functions
     character(len=256) :: var_name
     integer :: i, j, start_idx
-    
+
+    unset_functions = .false.
+
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'unset: usage: unset [-f] name [name ...]'
       shell%last_exit_status = 1
