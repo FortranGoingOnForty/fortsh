@@ -727,8 +727,14 @@ contains
               found_global_ifs = .false.
               do gv_idx = 1, shell%num_variables
                 if (trim(shell%variables(gv_idx)%name) == 'IFS') then
-                  shell%ifs = shell%variables(gv_idx)%value
                   shell%ifs_len = shell%variables(gv_idx)%value_len
+                  if (shell%ifs_len <= 0) &
+                    shell%ifs_len = len_trim(shell%variables(gv_idx)%value)
+                  if (shell%ifs_len > len(shell%ifs)) &
+                    shell%ifs_len = len(shell%ifs)
+                  shell%ifs = ''
+                  if (shell%ifs_len > 0) shell%ifs(1:shell%ifs_len) = &
+                    shell%variables(gv_idx)%value(1:shell%ifs_len)
                   found_global_ifs = .true.
                   exit
                 end if
@@ -907,7 +913,6 @@ contains
           ! For here-strings, preserve trailing whitespace
           if (temp_redirect%type == REDIR_HERE_STRING) then
             block
-              character(len=:), allocatable :: hs_content
               integer :: hs_len
               hs_len = len(node%simple_cmd%redirects(i)%filename)
               if (index(node%simple_cmd%redirects(i)%filename, &
@@ -1980,7 +1985,7 @@ contains
           character(len=:), allocatable :: wrd
           character(len=256) :: arr_name
           character(len=256) :: akeys(200)
-          integer :: nk, ai, bstart, bend
+          integer :: nk, ai, bstart
           logical :: is_keys_expansion
           wrd = trim(node%for_loop%words(i))
           is_keys_expansion = .false.
