@@ -1212,6 +1212,16 @@ contains
           end if
         end do
 
+        ! Populate PIPESTATUS array (bash extension)
+        block
+          use variables, only: set_array_variable
+          character(len=16) :: pipestatus_vals(num_commands)
+          do i = 1, num_commands
+            write(pipestatus_vals(i), '(I0)') exit_statuses(i)
+          end do
+          call set_array_variable(shell, 'PIPESTATUS', pipestatus_vals, num_commands)
+        end block
+
         ! POSIX default: exit status from last command
         ! pipefail: rightmost non-zero exit status
         if (shell%option_pipefail) then
