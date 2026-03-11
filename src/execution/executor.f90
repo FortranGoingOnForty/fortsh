@@ -1189,6 +1189,24 @@ contains
         index_str = token(bracket_pos+1:bracket_end-1)
         var_value = token(eq_pos+1:token_len)
 
+        ! Strip quotes and lexer sentinel chars from array subscript
+        block
+          use variables, only: strip_quotes
+          character(len=100) :: clean_key
+          integer :: ci, co
+          call strip_quotes(index_str)
+          ! Remove sentinel chars (char(1), char(2), char(3))
+          co = 0
+          clean_key = ''
+          do ci = 1, len_trim(index_str)
+            if (ichar(index_str(ci:ci)) > 3) then
+              co = co + 1
+              clean_key(co:co) = index_str(ci:ci)
+            end if
+          end do
+          index_str = clean_key
+        end block
+
         ! Check associative array first (numeric keys are valid)
         block
           use variables, only: is_associative_array, set_assoc_array_value
