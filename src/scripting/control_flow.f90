@@ -204,7 +204,10 @@ contains
       should_execute = .false.  ! Don't execute 'esac' as a command
     case default
       ! Check if line contains a case pattern (ends with ')' and we're in a case block)
-      if (shell%control_depth > 0 .and. shell%control_stack(shell%control_depth)%block_type == BLOCK_CASE) then
+      ! NOTE: Fortran does not guarantee short-circuit evaluation of .and., so we must
+      ! use nested ifs to avoid accessing control_stack(0) when control_depth == 0
+      if (shell%control_depth > 0) then
+      if (shell%control_stack(shell%control_depth)%block_type == BLOCK_CASE) then
         ! Check if this looks like a case pattern or ;;
         if (trim(cmd%tokens(1)) == ';;') then
           ! End of pattern commands - stop executing this case branch
@@ -228,6 +231,10 @@ contains
         end if
       else
         ! Check if we should execute this command based on control flow state
+        should_execute = should_execute_command(shell)
+      end if
+      else
+        ! control_depth == 0, check normal control flow
         should_execute = should_execute_command(shell)
       end if
     end select
