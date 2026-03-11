@@ -2107,7 +2107,7 @@ contains
   ! Coprocess built-in command: coproc [NAME] command [args]
   subroutine builtin_coproc(cmd, shell)
     use coprocess, only: start_coprocess, coprocs
-    use variables, only: set_array_element
+    use variables, only: set_array_element, set_shell_variable
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
@@ -2136,18 +2136,29 @@ contains
     ! Build command string from remaining tokens
     command_str = ''
     do i = cmd_start_idx, cmd%num_tokens
-      if (i > cmd_start_idx) command_str = trim(command_str) // ' '
-      command_str = trim(command_str) // trim(cmd%tokens(i))
+      if (i > cmd_start_idx) then
+        command_str = trim(command_str) // ' ' // trim(cmd%tokens(i))
+      else
+        command_str = trim(cmd%tokens(i))
+      end if
     end do
 
     ! Start the coprocess
-    coproc_id = start_coprocess(trim(command_str), trim(coproc_name))
+    coproc_id = start_coprocess(trim(command_str), trim(coproc_name), shell%is_interactive)
 
     if (coproc_id < 0) then
       write(error_unit, '(a)') 'coproc: failed to start coprocess'
       shell%last_exit_status = 1
       return
     end if
+
+    ! Set NAME_PID variable (e.g., COPROC_PID)
+    block
+      character(len=16) :: pid_str
+      write(pid_str, '(I0)') coprocs(coproc_id)%pid
+      call set_shell_variable(shell, &
+        trim(coproc_name) // '_PID', trim(pid_str))
+    end block
 
     ! Create array variables: NAME[0] = read_fd, NAME[1] = write_fd
     write(fd_str, '(I0)') coprocs(coproc_id)%read_fd
