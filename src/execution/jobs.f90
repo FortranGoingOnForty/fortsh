@@ -417,15 +417,36 @@ contains
           state_str = 'Done'
         end select
         
-        if (show_pid_info) then
-          write(output_unit, '(a,i0,a,i0,1x,a,1x,a)') &
-            '[', shell%jobs(i)%job_id, ']  ', shell%jobs(i)%pgid, &
-            trim(state_str), trim(shell%jobs(i)%command_line)
-        else
-          write(output_unit, '(a,i0,a,a,1x,a)') &
-            '[', shell%jobs(i)%job_id, ']  ', &
-            trim(state_str), trim(shell%jobs(i)%command_line)
-        end if
+        block
+          character(len=1) :: cur_mark
+          character(len=256) :: cmd_display
+          ! + for current job, - for previous, space otherwise
+          if (shell%jobs(i)%job_id == &
+              shell%current_job_id) then
+            cur_mark = '+'
+          else if (shell%jobs(i)%job_id == &
+              shell%previous_job_id) then
+            cur_mark = '-'
+          else
+            cur_mark = ' '
+          end if
+          ! Add trailing & for background running jobs
+          cmd_display = trim(shell%jobs(i)%command_line)
+          if (shell%jobs(i)%state == JOB_RUNNING .and. &
+              .not. shell%jobs(i)%foreground) then
+            cmd_display = trim(cmd_display) // ' &'
+          end if
+          if (show_pid_info) then
+            write(output_unit, '(i0)') shell%jobs(i)%pgid
+          else
+            write(output_unit, '(a,i0,a,a,2x,a,a,a)') &
+              '[', shell%jobs(i)%job_id, ']', cur_mark, &
+              trim(state_str), &
+              repeat(' ', max(1, &
+                24 - len_trim(state_str))), &
+              trim(cmd_display)
+          end if
+        end block
       end if
     end do
   end subroutine
