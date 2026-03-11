@@ -370,21 +370,50 @@ contains
                 end if
               else
                 ! Preserve whitespace in value by passing explicit length
-                ! Strip sentinel characters that may be embedded from lexer processing
+                ! Strip sentinel characters that may be embedded
                 block
                   character(len=1024) :: clean_value
                   integer :: src_i, dst_i
+                  logical :: is_int_var
                   clean_value = ''
                   dst_i = 1
                   do src_i = 1, value_len
                     if (assign_value(src_i:src_i) /= char(2) .and. &
-                        assign_value(src_i:src_i) /= char(3) .and. &
-                        assign_value(src_i:src_i) /= char(1)) then
-                      clean_value(dst_i:dst_i) = assign_value(src_i:src_i)
+                        assign_value(src_i:src_i) /= char(3) &
+                        .and. &
+                        assign_value(src_i:src_i) /= char(1)) &
+                        then
+                      clean_value(dst_i:dst_i) = &
+                        assign_value(src_i:src_i)
                       dst_i = dst_i + 1
                     end if
                   end do
-                  call set_shell_variable(shell, trim(assign_name), clean_value, dst_i - 1)
+                  ! Check integer attribute
+                  is_int_var = .false.
+                  do src_i = 1, shell%num_variables
+                    if (trim(shell%variables(src_i)%name) &
+                        == trim(assign_name)) then
+                      is_int_var = &
+                        shell%variables(src_i)%is_integer
+                      exit
+                    end if
+                  end do
+                  if (is_int_var .and. dst_i > 1) then
+                    block
+                      use expansion, only: &
+                        arithmetic_expansion_shell
+                      character(len=1024) :: ae, ar
+                      ae = '$((' // &
+                        clean_value(1:dst_i-1) // '))'
+                      ar = arithmetic_expansion_shell( &
+                        trim(ae), shell)
+                      clean_value = ar
+                      dst_i = len_trim(ar) + 1
+                    end block
+                  end if
+                  call set_shell_variable(shell, &
+                    trim(assign_name), clean_value, &
+                    dst_i - 1)
                 end block
               end if
 

@@ -1299,15 +1299,45 @@ contains
 
         ! Strip outer quotes if present (old parser keeps quotes in tokens)
         if (actual_value_len >= 2) then
-          if ((var_value(1:1) == '"' .and. var_value(actual_value_len:actual_value_len) == '"') .or. &
-              (var_value(1:1) == "'" .and. var_value(actual_value_len:actual_value_len) == "'")) then
+          if ((var_value(1:1) == '"' .and. &
+               var_value(actual_value_len:actual_value_len) == '"') &
+              .or. (var_value(1:1) == "'" .and. &
+               var_value(actual_value_len:actual_value_len) == "'")) &
+              then
             ! Remove quotes and adjust length
             var_value = var_value(2:actual_value_len-1)
             actual_value_len = actual_value_len - 2
           end if
         end if
 
-        call var_set_shell_variable(shell, trim(var_name), var_value, actual_value_len)
+        ! Check for integer attribute: evaluate as arithmetic
+        block
+          logical :: is_int_var
+          is_int_var = .false.
+          do i = 1, shell%num_variables
+            if (trim(shell%variables(i)%name) == &
+                trim(var_name)) then
+              is_int_var = shell%variables(i)%is_integer
+              exit
+            end if
+          end do
+          if (is_int_var .and. actual_value_len > 0) then
+            block
+              use expansion, only: arithmetic_expansion_shell
+              character(len=1024) :: arith_expr, arith_result
+              arith_expr = '$((' // &
+                var_value(:actual_value_len) // '))'
+              arith_result = &
+                arithmetic_expansion_shell( &
+                  trim(arith_expr), shell)
+              var_value = arith_result
+              actual_value_len = len_trim(var_value)
+            end block
+          end if
+        end block
+
+        call var_set_shell_variable(shell, trim(var_name), &
+          var_value, actual_value_len)
         ! Set exit status to 0 for simple assignments without expansions
         ! But don't overwrite error status from readonly violation
         if (shell%last_exit_status /= 127) then
