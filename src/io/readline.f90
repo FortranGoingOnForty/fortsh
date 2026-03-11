@@ -8,6 +8,8 @@ module readline
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
   use syntax_highlight, only: highlight_command_line, highlight_single_char, init_syntax_highlighting, MAX_HIGHLIGHT_LEN
   use abbreviations, only: try_expand_abbreviation
+  use suggestions, only: compute_path_suggestion, compute_history_suggestion, &
+                         suggestion_result_t, SUGGEST_NONE
   use glob, only: pattern_matches
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding
@@ -160,6 +162,13 @@ module readline
     ! CRITICAL: Must use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN) :: suggestion  ! Current suggestion from history (fixed-length to avoid flang-new bug)
     integer :: suggestion_length = 0  ! Length of suggestion
+
+    ! Prefix history search (fish-style up/down arrow with typed prefix)
+    logical :: in_prefix_search = .false.     ! Currently in prefix search mode
+    character(len=MAX_LINE_LEN) :: prefix_search_text  ! Frozen prefix text
+    integer :: prefix_search_len = 0          ! Length of frozen prefix
+    integer :: prefix_search_idx = 0          ! Current match index in history (0 = at present/original)
+    logical :: prefix_search_flash = .false.  ! Transient: flash reverse video on no-match
 
     ! Menu selection support (zsh/fish-style interactive completion)
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
@@ -1043,21 +1052,20 @@ contains
     if (.not. success) term_cols = 80  ! Default fallback
 
     ! Check if we have RPROMPT and enough space
+    ! Note: multi-line prompt RPROMPT is handled in fortsh.f90 by embedding into the prompt string
     if (present(rprompt) .and. len_trim(rprompt) > 0) then
       rprompt_visual_len = visual_length(rprompt)
       if (rprompt_visual_len < 0) rprompt_visual_len = 0
 
-      ! Calculate if we have room for both prompts with some space between
-      ! Need: prompt + space + gap + rprompt
+      ! Single-line prompt: place RPROMPT on same line
       padding_needed = term_cols - prompt_visual_len - 1 - rprompt_visual_len
 
       if (padding_needed >= 4) then  ! Minimum 4 chars gap
-        ! Print left prompt
         write(output_unit, '(a)', advance='no') prompt
         write(output_unit, '(a)', advance='no') ' '
 
         ! Save cursor position before printing RPROMPT
-        write(output_unit, '(a)', advance='no') char(27) // '7'  ! DECSC - save cursor
+        write(output_unit, '(a)', advance='no') char(27) // '7'
 
         ! Print padding to right-align RPROMPT
         do i_redraw = 1, padding_needed - 1
@@ -1068,11 +1076,11 @@ contains
         write(output_unit, '(a)', advance='no') trim(rprompt)
 
         ! Restore cursor position (back to after prompt + space)
-        write(output_unit, '(a)', advance='no') char(27) // '8'  ! DECRC - restore cursor
+        write(output_unit, '(a)', advance='no') char(27) // '8'
       else
         ! Not enough space - just print prompt normally
         write(output_unit, '(a)', advance='no') prompt
-        write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+        write(output_unit, '(a)', advance='no') ' '
       end if
     else
       ! No RPROMPT - just print prompt
@@ -1105,6 +1113,8 @@ contains
         if (utf8_num_bytes > 1) then
           ! In search mode, ignore multi-byte characters (search uses ASCII only)
           if (module_input_state%in_search) cycle
+          ! Cancel prefix search on any typed character
+          if (module_input_state%in_prefix_search) call cancel_prefix_search(module_input_state)
           ! Multi-byte UTF-8 character (emoji, CJK, etc.)
           ! Determine visual width: 3-4 byte UTF-8 is always 2-wide, 2-byte varies
           if (utf8_num_bytes >= 3) then
@@ -1122,6 +1132,11 @@ contains
 
         if (char_code == 27) then
         else if (char_code < 32 .or. char_code == 127) then
+        end if
+
+        ! Cancel prefix search on any key except escape (arrows handled inside escape handler)
+        if (module_input_state%in_prefix_search .and. char_code /= KEY_ESC) then
+          call cancel_prefix_search(module_input_state)
         end if
 
         select case(char_code)
@@ -1150,6 +1165,10 @@ contains
           else if (module_input_state%in_search) then
             call accept_search(module_input_state, prompt)
           else
+            ! Clear shadow text (suggestion) from cursor to end of line before newline
+            if (module_input_state%suggestion_length > 0) then
+              write(output_unit, '(a)', advance='no') char(27) // '[K'
+            end if
             write(output_unit, '()')  ! New line
             done = .true.
           end if
@@ -1416,14 +1435,35 @@ contains
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
-              call highlight_command_line(temp_buf(:module_input_state%length), &
-                                          module_highlighted_buffer, module_highlighted_len, &
-                                          module_input_state%length)
-              if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
-                write(output_unit, '(a)', advance='no') module_highlighted_buffer(:module_highlighted_len)
+
+              ! In prefix search mode, render prefix in reverse video + rest plain
+              if (module_input_state%in_prefix_search .and. &
+                  (module_input_state%prefix_search_idx /= 0 .or. module_input_state%prefix_search_flash)) then
+                ! Prefix in reverse video
+                write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                do i_redraw = 1, module_input_state%prefix_search_len
+                  write(output_unit, '(a)', advance='no') temp_buf(i_redraw:i_redraw)
+                end do
+                write(output_unit, '(a)', advance='no') char(27) // '[0m'
+                ! Clear flash flag after rendering (transient — one frame only)
+                if (module_input_state%prefix_search_flash) then
+                  module_input_state%prefix_search_flash = .false.
+                end if
+                ! Remainder in plain text
+                if (module_input_state%length > module_input_state%prefix_search_len) then
+                  write(output_unit, '(a)', advance='no') &
+                    temp_buf(module_input_state%prefix_search_len+1:module_input_state%length)
+                end if
               else
-                ! Fallback to plain text (temp_buf already extracted above)
-                write(output_unit, '(a)', advance='no') temp_buf(:module_input_state%length)
+                call highlight_command_line(temp_buf(:module_input_state%length), &
+                                            module_highlighted_buffer, module_highlighted_len, &
+                                            module_input_state%length)
+                if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
+                  write(output_unit, '(a)', advance='no') module_highlighted_buffer(:module_highlighted_len)
+                else
+                  ! Fallback to plain text (temp_buf already extracted above)
+                  write(output_unit, '(a)', advance='no') temp_buf(:module_input_state%length)
+                end if
               end if
 
               ! Display autosuggestion if present (only when cursor is at end)
@@ -3273,24 +3313,8 @@ contains
       file_pattern = trim(prefix)
     end if
 
-    ! Add directory navigation options ONLY when explicitly requested
-    ! Don't add ./ when user is trying to complete dotfiles like .fortshrc
-    if (len_trim(file_pattern) == 0) then
-      ! Empty pattern - offer . and ..
-      if (num_completions < MAX_LOCAL_COMPLETIONS) then
-        num_completions = num_completions + 1
-        if (trim(dir_path) == '.') then
-          completions(num_completions) = './'
-        else
-          completions(num_completions) = trim(dir_path) // '/./'
-        end if
-      end if
-
-      ! Don't add ../ - not based on user input
-    end if
-    ! Otherwise, let scan_directory handle ALL matches including dotfiles
-
-    ! Get actual filesystem entries
+    ! scan_directory handles all matches including dotfiles when pattern is empty
+    ! (. and .. are filtered in scan_directory at lines 3363-3369)
     call scan_directory(dir_path, file_pattern, completions, num_completions)
   end subroutine
 
@@ -5359,6 +5383,7 @@ contains
         if (input_state%in_search) then
           call accept_search_for_editing(input_state)
         else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
           call handle_cursor_right(input_state)
         end if
       case('D')  ! Left arrow
@@ -5366,14 +5391,16 @@ contains
         if (input_state%in_search) then
           call accept_search_for_editing(input_state)
         else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
           call handle_cursor_left(input_state)
         end if
       case('2')
         ! Could be bracketed paste (ESC[200~ or ESC[201~) or extended escape
+        if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
         call handle_paste_or_extended(input_state, done)
       case('1', '3', '4', '5', '6')
         ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C)
-        ! Parse it to check if it's a key we care about
+        if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
         call handle_extended_escape_sequence(input_state, done)
       case default
         ! Unknown escape sequence - ignore it
@@ -5381,6 +5408,7 @@ contains
       end select
     else
       ! Not '[', so it's an Alt+key combination (ESC followed by character)
+      if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
       ! In search mode, only Alt+Backspace is meaningful — everything else is no-op
       if (input_state%in_search) then
         if (ch1 == char(127)) then
@@ -5720,26 +5748,44 @@ contains
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
 
+    ! If there's text on the line and we're not yet in any history mode,
+    ! enter prefix search mode (fish-style)
+    if (.not. input_state%in_history .and. .not. input_state%in_prefix_search &
+        .and. input_state%length > 0) then
+      call state_buffer_save(input_state)
+      ! Freeze the prefix
+      input_state%prefix_search_len = input_state%length
+      input_state%prefix_search_text = ''
+      call state_buffer_get(input_state, input_state%prefix_search_text)
+      input_state%in_prefix_search = .true.
+      input_state%prefix_search_idx = 0  ! 0 = at present
+      ! Clear shadow text — prefix search replaces it
+      input_state%suggestion_length = 0
+      input_state%suggestion = ''
+    end if
 
-    ! If not currently browsing history, save the current input
+    ! Prefix search: find previous match
+    if (input_state%in_prefix_search) then
+      call prefix_search_move(input_state, -1)
+      return
+    end if
+
+    ! Standard history navigation (empty line)
     if (.not. input_state%in_history) then
       call state_buffer_save(input_state)
       input_state%history_pos = command_history%count + 1
       input_state%in_history = .true.
     end if
 
-    ! Move up in history
     if (input_state%history_pos > 1) then
       input_state%history_pos = input_state%history_pos - 1
       call get_history_line(input_state%history_pos, history_line, found)
-
       if (found) then
         call state_buffer_set(input_state, history_line)
         input_state%length = len_trim(history_line)
         input_state%cursor_pos = input_state%length
         input_state%dirty = .true.
       end if
-    else
     end if
   end subroutine
   
@@ -5747,6 +5793,12 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
+
+    ! Prefix search: find next match or return to present
+    if (input_state%in_prefix_search) then
+      call prefix_search_move(input_state, +1)
+      return
+    end if
 
     ! Only navigate down if we're currently in history
     if (.not. input_state%in_history) return
@@ -5779,6 +5831,111 @@ contains
       input_state%in_history = .false.
       input_state%dirty = .true.
     end if
+  end subroutine
+
+  ! --------------------------------------------------------------------------
+  ! Prefix history search: find next/previous history entry matching prefix.
+  ! direction: -1 = backward (older), +1 = forward (newer)
+  ! --------------------------------------------------------------------------
+  subroutine prefix_search_move(input_state, direction)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: direction
+
+    character(len=MAX_LINE_LEN) :: history_line
+    integer :: i, start_idx, hist_len, j
+    logical :: matches, found
+
+    if (command_history%count == 0) return
+
+    ! Search backward (older entries)
+    if (direction < 0) then
+      ! Determine starting point
+      if (input_state%prefix_search_idx == 0) then
+        ! At present — start from most recent
+        start_idx = command_history%count
+      else
+        start_idx = input_state%prefix_search_idx - 1
+      end if
+
+      do i = start_idx, 1, -1
+        call get_history_line(i, history_line, found)
+        if (.not. found) cycle
+        hist_len = len_trim(history_line)
+        if (hist_len <= input_state%prefix_search_len) cycle
+
+        ! Check prefix match character-by-character
+        matches = .true.
+        do j = 1, input_state%prefix_search_len
+          if (history_line(j:j) /= input_state%prefix_search_text(j:j)) then
+            matches = .false.
+            exit
+          end if
+        end do
+
+        if (matches) then
+          input_state%prefix_search_idx = i
+          call state_buffer_set(input_state, history_line)
+          input_state%length = hist_len
+          input_state%cursor_pos = input_state%length
+          input_state%suggestion_length = 0
+          input_state%suggestion = ''
+          input_state%dirty = .true.
+          return
+        end if
+      end do
+      ! No match found — flash reverse video to indicate no match
+      input_state%prefix_search_flash = .true.
+      input_state%dirty = .true.
+
+    else
+      ! Search forward (newer entries)
+      if (input_state%prefix_search_idx == 0) return  ! Already at present
+
+      start_idx = input_state%prefix_search_idx + 1
+
+      do i = start_idx, command_history%count
+        call get_history_line(i, history_line, found)
+        if (.not. found) cycle
+        hist_len = len_trim(history_line)
+        if (hist_len <= input_state%prefix_search_len) cycle
+
+        matches = .true.
+        do j = 1, input_state%prefix_search_len
+          if (history_line(j:j) /= input_state%prefix_search_text(j:j)) then
+            matches = .false.
+            exit
+          end if
+        end do
+
+        if (matches) then
+          input_state%prefix_search_idx = i
+          call state_buffer_set(input_state, history_line)
+          input_state%length = hist_len
+          input_state%cursor_pos = input_state%length
+          input_state%suggestion_length = 0
+          input_state%suggestion = ''
+          input_state%dirty = .true.
+          return
+        end if
+      end do
+
+      ! No more forward matches — return to present (original text)
+      call state_buffer_restore(input_state)
+      input_state%length = input_state%prefix_search_len
+      input_state%cursor_pos = input_state%length
+      input_state%prefix_search_idx = 0
+      input_state%dirty = .true.
+      call update_autosuggestion(input_state)
+    end if
+  end subroutine
+
+  ! Cancel prefix search and accept current buffer content
+  subroutine cancel_prefix_search(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    input_state%in_prefix_search = .false.
+    input_state%prefix_search_len = 0
+    input_state%prefix_search_idx = 0
+    input_state%prefix_search_flash = .false.
   end subroutine
 
   ! Calculate display width of UTF-8 character
@@ -7600,11 +7757,10 @@ contains
   subroutine try_path_suggestion(current_input, input_state)
     character(len=*), intent(in) :: current_input
     type(input_state_t), intent(inout) :: input_state
-    character(len=MAX_LINE_LEN) :: last_word, prefix_part
+    character(len=MAX_LINE_LEN) :: last_word
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
-    integer :: num_completions, last_space_pos, i, j
-    integer :: common_prefix_len, input_len
-    character(len=MAX_LINE_LEN) :: suggestion_text
+    integer :: num_completions, last_space_pos, i, input_len, last_word_len
+    type(suggestion_result_t) :: path_result
 
     ! Clear any existing suggestion
     input_state%suggestion = ''
@@ -7624,58 +7780,35 @@ contains
 
     if (last_space_pos > 0) then
       last_word = trim(current_input(last_space_pos+1:))
-      prefix_part = current_input(:last_space_pos)
     else
       last_word = trim(current_input)
-      prefix_part = ''
     end if
 
-    ! Skip if last word is empty
-    if (len_trim(last_word) == 0) return
+    last_word_len = len_trim(last_word)
+    if (last_word_len == 0) return
 
-    ! Always try path completion for the last word (fish-style aggressive suggestions)
-    ! This enables suggestions for things like "cd bi" -> "bin/", "ls bin/fo" -> "bin/fortsh"
-    call complete_files_enhanced(trim(last_word), completions, num_completions)
+    ! Get filesystem completions for the last word
+    call complete_files_enhanced(last_word(1:last_word_len), completions, num_completions)
 
-    ! If exactly one completion, suggest it
-    if (num_completions == 1) then
-      ! Build suggestion: remove the part user already typed
-      suggestion_text = trim(completions(1))
-      if (len_trim(suggestion_text) > len_trim(last_word)) then
-        ! Copy the part that extends beyond what user typed
-        input_state%suggestion = suggestion_text(len_trim(last_word)+1:len_trim(suggestion_text))
-        input_state%suggestion_length = len_trim(suggestion_text) - len_trim(last_word)
-      end if
-    else if (num_completions > 1) then
-      ! Multiple completions - find common prefix
-      common_prefix_len = len_trim(completions(1))
+    ! Delegate suggestion selection to the suggestions module
+    path_result = compute_path_suggestion(last_word, last_word_len, completions, num_completions)
 
-      do i = 2, num_completions
-        ! Find how much of completions(1) matches completions(i)
-        do j = 1, min(common_prefix_len, len_trim(completions(i)))
-          if (completions(1)(j:j) /= completions(i)(j:j)) then
-            common_prefix_len = j - 1
-            exit
-          end if
-        end do
-        if (common_prefix_len == 0) exit
+    if (path_result%source /= SUGGEST_NONE) then
+      ! Copy result into input_state character-by-character for flang-new safety
+      input_state%suggestion = ''
+      do i = 1, path_result%length
+        input_state%suggestion(i:i) = path_result%text(i:i)
       end do
-
-      ! If common prefix is longer than what user typed, suggest the difference
-      if (common_prefix_len > len_trim(last_word)) then
-        input_state%suggestion = completions(1)(len_trim(last_word)+1:common_prefix_len)
-        input_state%suggestion_length = common_prefix_len - len_trim(last_word)
-      end if
+      input_state%suggestion_length = path_result%length
     end if
   end subroutine try_path_suggestion
 
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, newline_pos, j
-    logical :: matches
+    integer :: j
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
-    character(len=MAX_LINE_LEN), allocatable :: suggestion_candidate
+    type(suggestion_result_t) :: hist_result
 
     ! Disable autosuggestion in test mode - prevents output pollution
     if (.not. test_mode_initialized) call init_test_mode()
@@ -7685,30 +7818,26 @@ contains
       return
     end if
 
-    ! Allocate buffers on heap
+    ! Allocate buffer on heap
     allocate(current_input)
     current_input = ''
-    allocate(suggestion_candidate)
-    suggestion_candidate = ''
 
     ! Defensive check: ensure length and cursor_pos are valid
     if (input_state%length < 0 .or. input_state%length > MAX_LINE_LEN) then
-      ! Corruption detected - reset to safe state
       input_state%length = 0
       input_state%cursor_pos = 0
       input_state%suggestion = ''
       input_state%suggestion_length = 0
       if (allocated(current_input)) deallocate(current_input)
-      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
       return
     end if
 
     ! Clear suggestion if buffer is empty or in special modes
-    if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history) then
+    if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history &
+        .or. input_state%in_prefix_search) then
       input_state%suggestion = ''
       input_state%suggestion_length = 0
       if (allocated(current_input)) deallocate(current_input)
-      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
       return
     end if
 
@@ -7718,86 +7847,27 @@ contains
       current_input(j:j) = state_buffer_get_char(input_state, j)
     end do
 
-    ! Check if user is currently typing a path (last word looks like a path)
-    ! If so, prioritize path completion over history
-    call try_path_suggestion(current_input(1:input_state%length), input_state)
-    if (input_state%suggestion_length > 0) then
-      ! Path suggestion found - use it instead of history
-      if (allocated(current_input)) deallocate(current_input)
-      if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
-      return
+    ! Priority 1: history-based suggestion (fish-style: history first)
+    if (command_history%count > 0 .and. allocated(command_history%lines)) then
+      hist_result = compute_history_suggestion( &
+        current_input, input_state%length, &
+        command_history%lines, command_history%count)
+
+      if (hist_result%source /= SUGGEST_NONE) then
+        input_state%suggestion = ''
+        do j = 1, hist_result%length
+          input_state%suggestion(j:j) = hist_result%text(j:j)
+        end do
+        input_state%suggestion_length = hist_result%length
+        if (allocated(current_input)) deallocate(current_input)
+        return
+      end if
     end if
 
-    ! No path suggestion - search history backwards for matching command
-    do i = command_history%count, 1, -1
-      ! Check if history entry starts with current input
-      if (len_trim(command_history%lines(i)) > input_state%length) then
-        ! Compare character-by-character (avoid substring on allocatable)
-        matches = .true.
-        do j = 1, input_state%length
-          if (command_history%lines(i)(j:j) /= current_input(j:j)) then
-            matches = .false.
-            exit
-          end if
-        end do
+    ! Priority 2: path-based suggestion (fallback when no history match)
+    call try_path_suggestion(current_input(1:input_state%length), input_state)
 
-        if (matches) then
-          ! Found a match! Store the rest as suggestion
-          ! CRITICAL FIX: Stop at first newline to avoid multi-line suggestions (heredocs, etc.)
-          ! Copy remaining part character-by-character (avoid substring)
-          ! CRITICAL FIX 2: Never write beyond MAX_LINE_LEN to prevent heap corruption
-          suggestion_candidate = ''
-          do j = input_state%length + 1, len_trim(command_history%lines(i))
-            ! Bounds check: ensure we don't write beyond MAX_LINE_LEN
-            if (j - input_state%length > MAX_LINE_LEN) exit
-            suggestion_candidate(j - input_state%length:j - input_state%length) = &
-              command_history%lines(i)(j:j)
-          end do
-
-          ! Find first newline character
-          newline_pos = -1  ! Initialize to -1 to indicate not found
-          do j = 1, len_trim(suggestion_candidate)
-            if (suggestion_candidate(j:j) == char(10) .or. suggestion_candidate(j:j) == char(13)) then
-              newline_pos = j - 1
-              exit
-            end if
-          end do
-
-          if (newline_pos >= 0) then
-            ! Found newline - truncate before it (or clear if newline is first char)
-            if (newline_pos > 0) then
-              ! Copy character-by-character to avoid substring
-              ! Ensure we don't exceed MAX_LINE_LEN
-              input_state%suggestion = ''
-              do j = 1, min(newline_pos, MAX_LINE_LEN)
-                input_state%suggestion(j:j) = suggestion_candidate(j:j)
-              end do
-              input_state%suggestion_length = min(newline_pos, MAX_LINE_LEN)
-            else
-              ! Newline is first character - no suggestion
-              input_state%suggestion = ''
-              input_state%suggestion_length = 0
-            end if
-          else
-            ! No newline found, use full suggestion - copy character-by-character
-            ! Ensure we don't exceed MAX_LINE_LEN when copying
-            input_state%suggestion = ''
-            do j = 1, min(len_trim(suggestion_candidate), MAX_LINE_LEN)
-              input_state%suggestion(j:j) = suggestion_candidate(j:j)
-            end do
-            input_state%suggestion_length = min(len_trim(suggestion_candidate), MAX_LINE_LEN)
-          end if
-          if (allocated(current_input)) deallocate(current_input)
-          if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
-          return
-        end if
-      end if
-    end do
-
-    ! No history or path match found - suggestion remains empty
-    ! Deallocate heap-allocated buffers
     if (allocated(current_input)) deallocate(current_input)
-    if (allocated(suggestion_candidate)) deallocate(suggestion_candidate)
   end subroutine
 
   ! Accept the current autosuggestion

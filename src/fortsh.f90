@@ -6,7 +6,9 @@ program fortran_shell
   use system_interface
   use signal_handler
   use signal_handling
-  use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash
+  use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash, &
+                    needs_compound_continuation, remove_line_continuations
+
   use grammar_parser  ! New grammar-aware parser
   use ast_executor, only: execute_ast, register_trap_evaluator
   use command_tree    ! Command tree for new parser
@@ -28,7 +30,7 @@ program fortran_shell
 
   type(shell_state_t), allocatable :: shell
   type(pipeline_t) :: pipeline
-  character(len=1024) :: input_line, proc_subst_line
+  character(len=16384) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, history_expanded
   character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
   character(len=1024) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
@@ -47,6 +49,10 @@ program fortran_shell
   ! Terminal resize support
   character(len=16) :: cols_str, rows_str
   logical :: success
+  ! RPROMPT embedding for multi-line prompts
+  integer :: newline_pos, first_line_vlen, rprompt_vlen, rprompt_col
+  character(len=16) :: col_str_buf
+  character(len=2048) :: embedded_prompt
 
   ! Initialize performance monitoring
   call init_performance_monitoring()
@@ -220,6 +226,10 @@ program fortran_shell
         exit_code = execute_ast(ast_root, shell)
         shell%last_exit_status = exit_code
         call destroy_command_node(ast_root)
+        ! Handle source commands that were the last/only command in -c string
+        if (shell%should_source) then
+          call process_source_file(shell)
+        end if
       else if (last_parse_had_error) then
         ! Parse error occurred (not just empty command)
         shell%last_exit_status = 2
@@ -321,7 +331,32 @@ program fortran_shell
       rprompt_value = get_shell_variable(shell, 'RPROMPT')
       if (len_trim(rprompt_value) > 0) then
         call safe_expand_prompt(rprompt_value, shell, len(rprompt_value), rprompt_str)
-        call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str))
+
+        ! Check if prompt is multi-line
+        newline_pos = index(trim(prompt_str), char(10))
+        if (newline_pos > 0) then
+          ! Multi-line prompt: embed RPROMPT at end of first line using CHA escape
+          ! This ensures RPROMPT survives readline redraws (unlike cursor movement approach)
+          first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
+          rprompt_vlen = visual_length(trim(rprompt_str))
+          rprompt_col = shell%term_cols - rprompt_vlen + 1
+
+          if (rprompt_col > first_line_vlen + 4) then
+            ! Build: first_line + CHA(col) + rprompt + \n + rest
+            write(col_str_buf, '(I0)') rprompt_col
+            embedded_prompt = prompt_str(1:newline_pos-1) // &
+              char(27) // '[' // trim(col_str_buf) // 'G' // &
+              trim(rprompt_str) // &
+              prompt_str(newline_pos:len_trim(prompt_str))
+            call readline_enhanced(trim(embedded_prompt), input_line, iostat)
+          else
+            ! Not enough space for RPROMPT — skip it
+            call readline_enhanced(trim(prompt_str), input_line, iostat)
+          end if
+        else
+          ! Single-line prompt: pass RPROMPT to readline for its handling
+          call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str))
+        end if
       else
         call readline_enhanced(trim(prompt_str), input_line, iostat)
       end if
@@ -381,6 +416,29 @@ program fortran_shell
 
     ! Handle line continuation (backslash-newline)
     input_line = remove_line_continuations(input_line)
+
+    ! Check for unclosed compound commands (if/fi, do/done, case/esac)
+    do while (needs_compound_continuation(input_line))
+      if (shell%is_interactive) then
+        ! Full readline with PS2 prompt expansion
+        prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
+        call readline_enhanced(prompt_str, proc_subst_line, iostat)
+      else
+        ! Non-interactive: just read next line
+        read(input_unit, '(a)', iostat=iostat) proc_subst_line
+      end if
+
+      ! Check for EOF during compound continuation
+      if (iostat /= 0) then
+        if (shell%is_interactive) then
+          write(output_unit, '(a)') ''
+        end if
+        exit
+      end if
+
+      ! Append the continuation line with a newline character
+      input_line = trim(input_line) // char(10) // trim(proc_subst_line)
+    end do
 
     ! Expand history (!!, !n, !string, etc.) if needed
     if (needs_history_expansion(input_line)) then
@@ -575,31 +633,6 @@ program fortran_shell
 contains
 
   ! Remove backslash-newline line continuations from input
-  function remove_line_continuations(input) result(output)
-    character(len=*), intent(in) :: input
-    character(len=len(input)) :: output
-    integer :: i, j
-
-    output = ''
-    i = 1
-    j = 1
-
-    do while (i <= len_trim(input))
-      ! Check for backslash followed by newline
-      if (i < len_trim(input) .and. input(i:i) == char(92)) then  ! char(92) is backslash
-        if (input(i+1:i+1) == char(10)) then  ! char(10) is newline
-          ! Skip both the backslash and newline
-          i = i + 2
-          cycle
-        end if
-      end if
-
-      ! Copy character to output
-      output(j:j) = input(i:i)
-      i = i + 1
-      j = j + 1
-    end do
-  end function
 
   ! Convert escape sequences like \n to actual characters for -c flag
   function convert_escape_sequences(input) result(output)
@@ -676,6 +709,9 @@ contains
       end if
     end do
   end function
+
+  ! Check if input has unclosed compound commands that need more lines
+  ! Uses the lexer to properly distinguish keywords from arguments
 
   ! Pre-process heredocs in -c commands
   ! Extracts heredoc content and stores it for later use
@@ -933,21 +969,17 @@ contains
   end subroutine
 
 
-  subroutine process_source_file(shell)
-    use variables, only: add_function
+  recursive subroutine process_source_file(shell)
     use grammar_parser, only: parse_command_line, last_parse_had_error
     use command_tree, only: destroy_command_node, command_node_t
     use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line, proc_subst_line, continuation_line, converted_line
-    integer :: file_unit, iostat, i, brace_depth, func_line_count, exit_code
+    character(len=16384) :: input_line, proc_subst_line, converted_line
+    character(len=1024) :: continuation_line
+    integer :: file_unit, iostat, i, exit_code
     type(pipeline_t) :: pipeline
     type(command_node_t), pointer :: ast_root
     character(len=:), allocatable :: expanded_line, history_expanded
-    logical :: in_function
-    character(len=256) :: func_name
-    ! Reduced from 100 to 50 lines to avoid static storage
-    character(len=1024) :: func_body(50)
 
     ! Reset the source flag first
     shell%should_source = .false.
@@ -963,21 +995,13 @@ contains
     ! Increment source depth for return tracking
     shell%source_depth = shell%source_depth + 1
 
-    ! Initialize function capture state
-    in_function = .false.
-    brace_depth = 0
-    func_line_count = 0
-    func_name = ''
-
     ! Execute each line in the file
     do
       read(file_unit, '(a)', iostat=iostat) input_line
       if (iostat /= 0) exit  ! End of file or error
 
-      ! Skip empty lines and comments (unless we're inside a function)
-      if (.not. in_function) then
-        if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
-      end if
+      ! Skip empty lines and comments
+      if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
 
       ! Check for unclosed quotes or backslash continuation
       do while (has_unclosed_quote(input_line) .or. ends_with_continuation_backslash(input_line))
@@ -993,57 +1017,21 @@ contains
       ! If EOF was reached during continuation, exit
       if (iostat /= 0) exit
 
-      ! NOTE: Function definitions are now handled by the AST parser
-      ! The old special handling has been removed to ensure functions are properly
-      ! added to the AST cache (not just the old text-based format)
+      ! Check for unclosed compound commands (if/fi, do/done, case/esac)
+      do while (needs_compound_continuation(input_line))
+        read(file_unit, '(a)', iostat=iostat) continuation_line
+        if (iostat /= 0) exit  ! End of file during compound command
+        ! Skip comment-only continuation lines but still append them
+        input_line = trim(input_line) // char(10) // trim(continuation_line)
+      end do
 
-      ! Check if this is the start of a MULTI-LINE function definition only
-      ! (single-line functions like "f() { cmd; }" are handled by the parser below)
-      if (.not. in_function .and. is_function_definition(input_line, func_name)) then
-        ! Check if this is a multi-line function (no closing brace on first line)
-        if (index(input_line, '{') > 0) then
-          brace_depth = count_braces(input_line)
-          if (brace_depth > 0) then
-            ! Multi-line function - need to capture it
-            in_function = .true.
-            func_line_count = 0
-            call extract_first_line_body(input_line, func_body, func_line_count)
-            cycle
-          end if
-          ! else: single-line function, fall through to normal parsing
-        else
-          ! Opening brace on next line - this is multi-line
-          in_function = .true.
-          brace_depth = 0
-          func_line_count = 0
-          cycle
-        end if
-      end if
+      ! If EOF was reached during compound continuation, still try to parse what we have
+      ! (the parser will report a syntax error for incomplete commands)
 
-      ! If we're capturing a function, accumulate lines
-      if (in_function) then
-        ! Update brace depth
-        brace_depth = brace_depth + count_braces(input_line)
+      ! Function definitions and all compound commands are now accumulated by
+      ! needs_compound_continuation above and parsed via the AST parser.
 
-        ! Check if this closes the function
-        if (brace_depth <= 0) then
-          ! Function definition complete - store it
-          call add_function(shell, trim(func_name), func_body, func_line_count)
-          in_function = .false.
-          func_name = ''
-          func_line_count = 0
-          brace_depth = 0
-        else
-          ! Add this line to function body (skip the closing } line)
-          if (func_line_count < 50 .and. trim(input_line) /= '}') then
-            func_line_count = func_line_count + 1
-            func_body(func_line_count) = trim(input_line)
-          end if
-        end if
-        cycle
-      end if
-
-      ! Normal line processing (not in a function)
+      ! Normal line processing
       ! Expand history if needed, then expand aliases
       ! NOTE: We do NOT add sourced file commands to history (only interactive commands)
       if (needs_history_expansion(input_line)) then
@@ -1079,6 +1067,11 @@ contains
           ! (function bodies need to remain alive in cache)
           ! TODO: Implement proper AST node lifecycle management
           !call destroy_command_node(ast_root)
+
+          ! Handle nested source commands (e.g., script calls source)
+          if (shell%should_source) then
+            call process_source_file(shell)
+          end if
         else if (last_parse_had_error) then
           ! Parse error occurred (not just empty command)
           shell%last_exit_status = 2
@@ -1166,101 +1159,6 @@ contains
 
     close(file_unit)
     shell%source_file = ''
-  end subroutine
-
-  ! Helper: Check if a line is a function definition and extract the name
-  function is_function_definition(line, func_name) result(is_func)
-    character(len=*), intent(in) :: line
-    character(len=*), intent(out) :: func_name
-    logical :: is_func
-    integer :: paren_pos, func_pos, i
-    character(len=1024) :: trimmed
-
-    is_func = .false.
-    func_name = ''
-    trimmed = adjustl(line)
-
-    ! Check for "function name" or "function name()" syntax
-    if (index(trimmed, 'function ') == 1) then
-      func_pos = 10  ! After "function "
-      i = func_pos
-      ! Extract function name
-      do while (i <= len_trim(trimmed) .and. trimmed(i:i) /= ' ' .and. &
-                trimmed(i:i) /= '(' .and. trimmed(i:i) /= '{')
-        i = i + 1
-      end do
-      if (i > func_pos) then
-        func_name = trimmed(func_pos:i-1)
-        is_func = .true.
-        return
-      end if
-    end if
-
-    ! Check for "name()" syntax
-    paren_pos = index(trimmed, '()')
-    if (paren_pos > 1) then
-      ! Extract name before ()
-      i = 1
-      do while (i < paren_pos .and. (is_alnum_underscore(trimmed(i:i))))
-        i = i + 1
-      end do
-      if (i == paren_pos) then
-        func_name = trimmed(1:paren_pos-1)
-        is_func = .true.
-        return
-      end if
-    end if
-  end function
-
-  ! Helper: Count net change in brace depth for a line
-  function count_braces(line) result(depth_change)
-    character(len=*), intent(in) :: line
-    integer :: depth_change
-    integer :: i
-
-    depth_change = 0
-    do i = 1, len_trim(line)
-      if (line(i:i) == '{') then
-        depth_change = depth_change + 1
-      else if (line(i:i) == '}') then
-        depth_change = depth_change - 1
-      end if
-    end do
-  end function
-
-  ! Helper: Check if character is alphanumeric or underscore
-  function is_alnum_underscore(c) result(is_valid)
-    character(len=1), intent(in) :: c
-    logical :: is_valid
-
-    is_valid = ((c >= 'a' .and. c <= 'z') .or. &
-                (c >= 'A' .and. c <= 'Z') .or. &
-                (c >= '0' .and. c <= '9') .or. &
-                c == '_')
-  end function
-
-  ! Helper: Extract function body from first line (for one-liners)
-  subroutine extract_first_line_body(line, func_body, count)
-    character(len=*), intent(in) :: line
-    character(len=1024), intent(inout) :: func_body(*)
-    integer, intent(inout) :: count
-    integer :: brace_pos, close_pos
-
-    brace_pos = index(line, '{')
-    if (brace_pos == 0) return
-
-    close_pos = index(line(brace_pos+1:), '}')
-    if (close_pos > 0) then
-      ! One-liner: name() { commands }
-      count = 1
-      func_body(1) = trim(adjustl(line(brace_pos+1:brace_pos+close_pos-1)))
-    else
-      ! Multi-line but with content after {
-      if (brace_pos < len_trim(line)) then
-        count = 1
-        func_body(1) = trim(adjustl(line(brace_pos+1:)))
-      end if
-    end if
   end subroutine
 
   subroutine initialize_shell(shell)

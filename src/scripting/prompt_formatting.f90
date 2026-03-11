@@ -14,10 +14,21 @@ module prompt_formatting
   ! History counter for prompts
   integer, save :: prompt_history_number = 1
 
+  ! Prompt element cache (valid for one prompt expansion cycle)
+  character(len=256), save :: cached_git_branch = ''
+  character(len=64), save :: cached_git_status = ''
+  character(len=64), save :: cached_git_ahead_behind = ''
+  character(len=256), save :: cached_venv_name = ''
+  logical, save :: cache_branch_valid = .false.
+  logical, save :: cache_status_valid = .false.
+  logical, save :: cache_ahead_behind_valid = .false.
+  logical, save :: cache_venv_valid = .false.
+
   ! Public interface
   public :: expand_prompt, safe_expand_prompt, expand_zsh_colors
   public :: get_ansi_color_code, get_epoch_seconds, increment_prompt_history
   public :: get_git_branch, get_git_status_indicator, is_git_repo
+  public :: invalidate_prompt_cache, get_git_ahead_behind, get_venv_name
 
 contains
 
@@ -35,6 +46,8 @@ contains
     integer :: i, j, prompt_len
     integer, parameter :: RESULT_CAPACITY = 1024
     character(len=256) :: replacement  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
+
+    call invalidate_prompt_cache()
 
     result = ''
     j = 1
@@ -104,6 +117,8 @@ contains
     character(len=1024) :: var_expanded  ! Buffer for variable/command expansion
     integer :: i, j, prompt_len, result_capacity
     character(len=:), allocatable :: replacement  ! Heap allocation to avoid stack overflow
+
+    call invalidate_prompt_cache()
 
     ! Allocate replacement buffer on heap
     allocate(character(len=256) :: replacement)
@@ -206,7 +221,7 @@ contains
       ! Directory information
       case ('w')
         ! Current working directory (full path, with ~ for HOME)
-        replacement = get_pretty_path(shell%cwd)
+        replacement = get_pretty_path(shell%cwd, shell)
 
       case ('W')
         ! Basename of current working directory
@@ -330,8 +345,16 @@ contains
         replacement = get_git_branch()
 
       case ('G')
-        ! Git status indicator (* if dirty, + if staged, clean otherwise)
+        ! Git status indicator (✓ clean, ✗ dirty, + staged, ± both)
         replacement = get_git_status_indicator()
+
+      case ('p')
+        ! Git ahead/behind upstream (e.g. ↑2↓1)
+        replacement = get_git_ahead_behind()
+
+      case ('P')
+        ! Python virtual environment name (from VIRTUAL_ENV)
+        replacement = get_venv_name()
 
       case ('S')
         ! Seconds since epoch (Unix timestamp)
@@ -361,10 +384,14 @@ contains
   end function
 
   ! Get pretty path with ~ for home directory and intelligent shortening
-  function get_pretty_path(path) result(pretty)
+  function get_pretty_path(path, shell) result(pretty)
     character(len=*), intent(in) :: path
+    type(shell_state_t), intent(in) :: shell
     character(len=:), allocatable :: pretty, home_dir, temp_path
-    integer :: home_len, term_rows, term_cols, max_path_len
+    character(len=:), allocatable :: branch, status, ab, venv
+    character(len=:), allocatable :: rprompt_val
+    integer :: home_len, term_rows, term_cols, max_path_len, overhead
+    integer :: i, ps1_len, first_line_end, rprompt_width
     logical :: got_term_size
 
     home_dir = get_environment_var('HOME')
@@ -392,14 +419,82 @@ contains
     ! Get terminal size to determine max path length
     got_term_size = get_terminal_size(term_rows, term_cols)
     if (got_term_size .and. term_cols > 0) then
-      ! Reserve space for prompt elements (username, hostname, etc)
-      ! Calculate based on actual prompt format: user@host :: path [branch] >
-      ! Assume ~50 chars for username, hostname, decorators, git branch
-      max_path_len = term_cols - 50  ! Be conservative to ensure readability
-      if (max_path_len < 15) max_path_len = 15  ! Minimum 15 chars for path
+      ps1_len = len_trim(shell%ps1)
+      if (ps1_len > 0) then
+        ! Find first line boundary in PS1 template
+        first_line_end = 0
+        do i = 1, ps1_len
+          ! Check for literal newline
+          if (shell%ps1(i:i) == char(10) .or. shell%ps1(i:i) == char(13)) then
+            first_line_end = i - 1
+            exit
+          end if
+          ! Check for \n escape sequence
+          if (i < ps1_len .and. shell%ps1(i:i) == '\' .and. shell%ps1(i+1:i+1) == 'n') then
+            first_line_end = i - 1
+            exit
+          end if
+        end do
+        if (first_line_end <= 0) first_line_end = ps1_len
+
+        ! Count literal visible chars (non-escape, non-color chars)
+        overhead = count_literal_chars(shell%ps1(1:first_line_end))
+
+        ! Add widths of detected escape sequences (excluding \w itself)
+        if (has_escape(shell%ps1(1:first_line_end), 'u')) &
+          overhead = overhead + len_trim(shell%username)
+        if (has_escape(shell%ps1(1:first_line_end), 'h')) &
+          overhead = overhead + len_trim(get_short_hostname(shell%hostname))
+        if (has_escape(shell%ps1(1:first_line_end), 'H')) &
+          overhead = overhead + len_trim(shell%hostname)
+        if (has_escape(shell%ps1(1:first_line_end), 'g')) then
+          branch = get_git_branch()
+          overhead = overhead + utf8_visual_width(branch)
+        end if
+        if (has_escape(shell%ps1(1:first_line_end), 'G')) then
+          status = get_git_status_indicator()
+          overhead = overhead + utf8_visual_width(status)
+        end if
+        if (has_escape(shell%ps1(1:first_line_end), 'p')) then
+          ab = get_git_ahead_behind()
+          overhead = overhead + utf8_visual_width(ab)
+        end if
+        if (has_escape(shell%ps1(1:first_line_end), 'P')) then
+          venv = get_venv_name()
+          overhead = overhead + utf8_visual_width(venv)
+        end if
+        ! Time/date escapes
+        if (has_escape(shell%ps1(1:first_line_end), 't')) overhead = overhead + 8
+        if (has_escape(shell%ps1(1:first_line_end), 'T')) overhead = overhead + 8
+        if (has_escape(shell%ps1(1:first_line_end), 'A')) overhead = overhead + 5
+        if (has_escape(shell%ps1(1:first_line_end), '@')) overhead = overhead + 8
+        if (has_escape(shell%ps1(1:first_line_end), 'd')) overhead = overhead + 10
+        if (has_escape(shell%ps1(1:first_line_end), 'D')) overhead = overhead + 10
+        if (has_escape(shell%ps1(1:first_line_end), '$')) overhead = overhead + 1
+        if (has_escape(shell%ps1(1:first_line_end), 's')) &
+          overhead = overhead + len_trim(shell%shell_name)
+        if (has_escape(shell%ps1(1:first_line_end), 'v')) overhead = overhead + 3
+        if (has_escape(shell%ps1(1:first_line_end), 'V')) overhead = overhead + 5
+
+        ! Account for RPROMPT width + minimum gap (readline requires 4-char gap)
+        rprompt_val = get_shell_variable(shell, 'RPROMPT')
+        if (len_trim(rprompt_val) > 0) then
+          rprompt_width = count_literal_chars(rprompt_val)
+          if (has_escape(rprompt_val, 'S')) rprompt_width = rprompt_width + 10
+          if (has_escape(rprompt_val, 't')) rprompt_width = rprompt_width + 8
+          if (has_escape(rprompt_val, 'T')) rprompt_width = rprompt_width + 8
+          if (has_escape(rprompt_val, 'A')) rprompt_width = rprompt_width + 5
+          if (has_escape(rprompt_val, 'D')) rprompt_width = rprompt_width + 10
+          overhead = overhead + rprompt_width + 4  ! 4 = minimum gap
+        end if
+
+        max_path_len = term_cols - overhead
+      else
+        max_path_len = term_cols - 50
+      end if
+      if (max_path_len < 15) max_path_len = 15
     else
-      ! Fallback if terminal size unavailable - assume narrow terminal
-      max_path_len = 25  ! More aggressive default shortening
+      max_path_len = 25
     end if
 
     ! Shorten path if needed
@@ -410,16 +505,17 @@ contains
     end if
   end function
 
-  ! Intelligently shorten a path by abbreviating parent directories
-  ! Example: ~/very/long/path/to/project -> ~/v/l/p/t/project
+  ! Intelligently shorten a path by progressively abbreviating parent directories
+  ! Pass 1: ~/ver/lon/pat/to/project (3-char parents)
+  ! Pass 2: ~/v/l/p/t/project       (1-char parents)
   function shorten_path(path, max_length) result(shortened)
     character(len=*), intent(in) :: path
     integer, intent(in) :: max_length
     character(len=:), allocatable :: shortened
     character(len=256), allocatable :: components(:)
-    integer :: num_components, i, slash_pos, start_pos, components_capacity
+    integer :: num_components, i, slash_pos, comp_start, components_capacity
     character(len=:), allocatable :: result
-    integer :: result_len, result_capacity
+    integer :: result_len, result_capacity, abbrev_len, use_len, comp_len
 
     ! If path is already short enough, return as-is
     if (len_trim(path) <= max_length) then
@@ -431,97 +527,96 @@ contains
     components_capacity = 50
     allocate(components(components_capacity))
 
-    ! Allocate result buffer - initialize with spaces
+    ! Allocate result buffer
     result_capacity = 512
     allocate(character(len=result_capacity) :: result)
-    result = repeat(' ', result_capacity)  ! Initialize properly
 
     ! Split path into components
     num_components = 0
-    start_pos = 1
+    comp_start = 1
 
-    do while (start_pos <= len_trim(path))
-      slash_pos = index(path(start_pos:), '/')
+    do while (comp_start <= len_trim(path))
+      slash_pos = index(path(comp_start:), '/')
       if (slash_pos > 0) then
-        slash_pos = slash_pos + start_pos - 1
-        if (slash_pos > start_pos) then
+        slash_pos = slash_pos + comp_start - 1
+        if (slash_pos > comp_start) then
           num_components = num_components + 1
-          ! Grow array if needed
           if (num_components > components_capacity) then
             call grow_components_array(components, components_capacity)
           end if
-          components(num_components) = path(start_pos:slash_pos-1)
+          components(num_components) = path(comp_start:slash_pos-1)
         end if
-        start_pos = slash_pos + 1
+        comp_start = slash_pos + 1
       else
-        ! Last component
-        if (start_pos <= len_trim(path)) then
+        if (comp_start <= len_trim(path)) then
           num_components = num_components + 1
-          ! Grow array if needed
           if (num_components > components_capacity) then
             call grow_components_array(components, components_capacity)
           end if
-          components(num_components) = path(start_pos:)
+          components(num_components) = path(comp_start:)
         end if
         exit
       end if
     end do
 
-    ! Build shortened path
-    result_len = 0
-
-    ! Handle leading ~ or /
+    ! Determine component start index (skip ~ component)
     if (len_trim(path) > 0 .and. path(1:1) == '~') then
-      result(1:1) = '~'
-      result_len = 1
-      start_pos = 2  ! Skip the ~ component
-    else if (len_trim(path) > 0 .and. path(1:1) == '/') then
-      result(1:1) = '/'
-      result_len = 1
-      start_pos = 1
+      comp_start = 2
     else
-      start_pos = 1
+      comp_start = 1
     end if
 
-    ! Shorten all components except the last one
-    do i = start_pos, num_components - 1
-      if (len_trim(components(i)) > 0) then
+    ! Two-pass progressive shortening: 3-char parents, then 1-char parents
+    do abbrev_len = 3, 1, -2
+      result = repeat(' ', result_capacity)
+      result_len = 0
+
+      ! Write leading prefix
+      if (len_trim(path) > 0 .and. path(1:1) == '~') then
+        result(1:1) = '~'
+        result_len = 1
+      else if (len_trim(path) > 0 .and. path(1:1) == '/') then
+        result(1:1) = '/'
+        result_len = 1
+      end if
+
+      ! Build shortened parent components
+      do i = comp_start, num_components - 1
+        comp_len = len_trim(components(i))
+        if (comp_len > 0) then
+          if (result_len > 0 .and. result(result_len:result_len) /= '/') then
+            result_len = result_len + 1
+            result(result_len:result_len) = '/'
+          end if
+          ! Abbreviate parent to abbrev_len chars
+          use_len = min(abbrev_len, comp_len)
+          result(result_len+1:result_len+use_len) = components(i)(1:use_len)
+          result_len = result_len + use_len
+        end if
+      end do
+
+      ! Always show last component in full
+      if (num_components > 0) then
         if (result_len > 0 .and. result(result_len:result_len) /= '/') then
           result_len = result_len + 1
-          if (result_len > result_capacity) then
-            call grow_string_buffer(result, result_capacity, result_capacity * 2)
-          end if
           result(result_len:result_len) = '/'
         end if
-        ! Use first character of each parent directory
-        result_len = result_len + 1
-        if (result_len > result_capacity) then
-          call grow_string_buffer(result, result_capacity, result_capacity * 2)
-        end if
-        result(result_len:result_len) = components(i)(1:1)
+        comp_len = len_trim(components(num_components))
+        result(result_len+1:result_len+comp_len) = trim(components(num_components))
+        result_len = result_len + comp_len
+      end if
+
+      ! If this pass fits or we're at minimum abbreviation, use it
+      if (result_len <= max_length .or. abbrev_len == 1) then
+        shortened = result(1:result_len)
+        if (allocated(components)) deallocate(components)
+        if (allocated(result)) deallocate(result)
+        return
       end if
     end do
 
-    ! Always show the last component in full (the current directory name)
-    if (num_components > 0) then
-      if (result_len > 0 .and. result(result_len:result_len) /= '/') then
-        result_len = result_len + 1
-        if (result_len > result_capacity) then
-          call grow_string_buffer(result, result_capacity, result_capacity * 2)
-        end if
-        result(result_len:result_len) = '/'
-      end if
-      if (result_len + len_trim(components(num_components)) > result_capacity) then
-        call grow_string_buffer(result, result_capacity, result_len + len_trim(components(num_components)) + 256)
-      end if
-      result(result_len+1:result_len+len_trim(components(num_components))) = &
-        trim(components(num_components))
-      result_len = result_len + len_trim(components(num_components))
-    end if
-
+    ! Fallback (should not reach here)
     shortened = result(1:result_len)
-
-    ! Clean up
     if (allocated(components)) deallocate(components)
     if (allocated(result)) deallocate(result)
   end function
@@ -559,6 +654,11 @@ contains
     character(len=:), allocatable :: branch
     character(len=256) :: output
 
+    if (cache_branch_valid) then
+      branch = trim(cached_git_branch)
+      return
+    end if
+
     ! Try to get branch name using git command
     ! Use git symbolic-ref for speed (faster than git branch)
     output = execute_and_capture('git symbolic-ref --short HEAD 2>/dev/null')
@@ -569,38 +669,190 @@ contains
       ! Not in a git repo or detached HEAD
       branch = ''
     end if
+
+    cached_git_branch = branch
+    cache_branch_valid = .true.
   end function
 
-  ! Get git status indicator
-  ! Returns: '*' if dirty, '+' if staged changes, '✓' if clean, '' if not git repo
+  ! Get git status indicator with Unicode symbols
+  ! Returns: '✓' if clean, '✗' if dirty (unstaged), '+' if staged, '±' if both
+  ! Returns '' if not in a git repo
   function get_git_status_indicator() result(indicator)
     character(len=:), allocatable :: indicator
-    character(len=256) :: output
+    character(len=4096) :: output
+    logical :: has_staged, has_unstaged
+    integer :: i, line_start
+
+    if (cache_status_valid) then
+      indicator = trim(cached_git_status)
+      return
+    end if
 
     ! First check if we're in a git repo
     output = execute_and_capture('git rev-parse --git-dir 2>/dev/null')
     if (len_trim(output) == 0) then
-      indicator = ''  ! Not in a git repo
+      indicator = ''
+      cached_git_status = ''
+      cache_status_valid = .true.
       return
     end if
 
     ! Check for uncommitted changes (both staged and unstaged)
-    ! Using git status --porcelain for machine-readable output
     output = execute_and_capture('git status --porcelain 2>/dev/null')
 
-    if (len_trim(output) > 0) then
-      ! There are changes
-      ! Check if any are staged (lines starting with A, M, D, R, C in first column)
-      if (index(output, 'A ') > 0 .or. index(output, 'M ') > 0 .or. &
-          index(output, 'D ') > 0 .or. index(output, 'R ') > 0) then
-        indicator = '+'  ! Staged changes
-      else
-        indicator = '*'  ! Unstaged changes
-      end if
-    else
+    if (len_trim(output) == 0) then
       ! Clean working tree
-      indicator = ''  ! Clean (or use '✓' if you want to show clean status)
+      indicator = char(226) // char(156) // char(147)  ! ✓ (U+2713)
+      cached_git_status = indicator
+      cache_status_valid = .true.
+      return
     end if
+
+    ! Parse porcelain output: first column = index (staged), second = worktree
+    has_staged = .false.
+    has_unstaged = .false.
+    line_start = 1
+    do i = 1, len_trim(output)
+      if (i == line_start .and. i + 1 <= len_trim(output)) then
+        ! First char: staged status (non-space and non-? means staged)
+        if (output(i:i) /= ' ' .and. output(i:i) /= '?') has_staged = .true.
+        ! Second char: unstaged status (non-space means unstaged)
+        if (output(i+1:i+1) /= ' ') has_unstaged = .true.
+      end if
+      if (output(i:i) == char(10)) line_start = i + 1
+    end do
+    ! Handle untracked files (lines starting with ??)
+    if (index(output, '??') > 0) has_unstaged = .true.
+
+    if (has_staged .and. has_unstaged) then
+      indicator = char(194) // char(177)  ! ± (U+00B1)
+    else if (has_staged) then
+      indicator = '+'
+    else
+      indicator = char(226) // char(156) // char(151)  ! ✗ (U+2717)
+    end if
+
+    cached_git_status = indicator
+    cache_status_valid = .true.
+  end function
+
+  ! Get git ahead/behind tracking info
+  ! Returns e.g. '↑2↓1' for 2 ahead, 1 behind; '↑3' for 3 ahead; '' if up to date or no upstream
+  function get_git_ahead_behind() result(info)
+    character(len=:), allocatable :: info
+    character(len=256) :: output
+    integer :: ahead, behind, dot_pos, space_pos, iostat
+
+    if (cache_ahead_behind_valid) then
+      info = trim(cached_git_ahead_behind)
+      return
+    end if
+
+    info = ''
+
+    ! Get ahead/behind counts in one shot
+    output = execute_and_capture('git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null')
+    if (len_trim(output) == 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    ! Output format: "ahead\tbehind"
+    ! Find the tab separator
+    space_pos = 0
+    do dot_pos = 1, len_trim(output)
+      if (output(dot_pos:dot_pos) == char(9) .or. output(dot_pos:dot_pos) == ' ') then
+        space_pos = dot_pos
+        exit
+      end if
+    end do
+    if (space_pos == 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    read(output(1:space_pos-1), *, iostat=iostat) ahead
+    if (iostat /= 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+    read(output(space_pos+1:), *, iostat=iostat) behind
+    if (iostat /= 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    if (ahead == 0 .and. behind == 0) then
+      cached_git_ahead_behind = ''
+      cache_ahead_behind_valid = .true.
+      return
+    end if
+
+    if (ahead > 0) then
+      block
+        character(len=16) :: num_str
+        write(num_str, '(i0)') ahead
+        ! ↑ = U+2191 = E2 86 91
+        info = char(226) // char(134) // char(145) // trim(num_str)
+      end block
+    end if
+    if (behind > 0) then
+      block
+        character(len=16) :: num_str
+        write(num_str, '(i0)') behind
+        ! ↓ = U+2193 = E2 86 93
+        info = info // char(226) // char(134) // char(147) // trim(num_str)
+      end block
+    end if
+
+    cached_git_ahead_behind = info
+    cache_ahead_behind_valid = .true.
+  end function
+
+  ! Get Python virtual environment name from VIRTUAL_ENV
+  ! Returns '(name)' if in a venv (e.g. '(.venv)'), '' if not
+  function get_venv_name() result(name)
+    character(len=:), allocatable :: name
+    character(len=4096) :: venv_path
+    integer :: i, last_sep, path_len
+    character(len=:), allocatable :: basename
+
+    if (cache_venv_valid) then
+      name = trim(cached_venv_name)
+      return
+    end if
+
+    call get_environment_variable('VIRTUAL_ENV', venv_path, status=i)
+    if (i /= 0 .or. len_trim(venv_path) == 0) then
+      name = ''
+      cached_venv_name = ''
+      cache_venv_valid = .true.
+      return
+    end if
+
+    ! Extract basename (last component of path)
+    path_len = len_trim(venv_path)
+    ! Strip trailing slash if present
+    if (venv_path(path_len:path_len) == '/') path_len = path_len - 1
+
+    last_sep = 0
+    do i = 1, path_len
+      if (venv_path(i:i) == '/') last_sep = i
+    end do
+
+    if (last_sep > 0 .and. last_sep < path_len) then
+      basename = venv_path(last_sep+1:path_len)
+    else
+      basename = trim(venv_path(1:path_len))
+    end if
+
+    name = '(' // basename // ')'
+    cached_venv_name = name
+    cache_venv_valid = .true.
   end function
 
   ! Check if current directory is in a git repository
@@ -1080,6 +1332,96 @@ contains
             (ic >= iachar('A') .and. ic <= iachar('Z')) .or. &
             (ic >= iachar('0') .and. ic <= iachar('9')) .or. &
             c == '_'
+  end function
+
+  ! Invalidate prompt element cache (call at start of each prompt expansion)
+  subroutine invalidate_prompt_cache()
+    cache_branch_valid = .false.
+    cache_status_valid = .false.
+    cache_ahead_behind_valid = .false.
+    cache_venv_valid = .false.
+  end subroutine
+
+  ! Check if a prompt template contains a specific escape sequence (\char)
+  function has_escape(template, esc_char) result(found)
+    character(len=*), intent(in) :: template
+    character(len=1), intent(in) :: esc_char
+    logical :: found
+    integer :: i, tlen
+
+    found = .false.
+    tlen = len_trim(template)
+
+    do i = 1, tlen - 1
+      if (template(i:i) == '\' .and. template(i+1:i+1) == esc_char) then
+        found = .true.
+        return
+      end if
+    end do
+  end function
+
+  ! Count visible literal characters in a prompt template
+  ! Skips: \x escape pairs, %F{...}, %K{...}, %f, %k, %B, %b, %U, %u
+  function count_literal_chars(template) result(count)
+    character(len=*), intent(in) :: template
+    integer :: count
+    integer :: i, tlen, brace_end
+
+    count = 0
+    i = 1
+    tlen = len_trim(template)
+
+    do while (i <= tlen)
+      if (template(i:i) == '\' .and. i < tlen) then
+        ! Skip \x escape pair (prompt escape, not a visible char)
+        i = i + 2
+      else if (template(i:i) == '%' .and. i < tlen) then
+        ! Skip zsh-style color sequences
+        select case (template(i+1:i+1))
+          case ('F', 'K')
+            ! %F{...} or %K{...} - skip to closing brace
+            if (i + 2 <= tlen .and. template(i+2:i+2) == '{') then
+              brace_end = index(template(i+3:), '}')
+              if (brace_end > 0) then
+                i = i + 3 + brace_end
+              else
+                i = i + 2
+              end if
+            else
+              i = i + 2
+            end if
+          case ('f', 'k', 'B', 'b', 'U', 'u')
+            ! Color/style resets - skip both chars
+            i = i + 2
+          case ('%')
+            ! %% = literal %
+            count = count + 1
+            i = i + 2
+          case default
+            count = count + 1
+            i = i + 1
+        end select
+      else
+        count = count + 1
+        i = i + 1
+      end if
+    end do
+  end function
+
+  ! Calculate visual width of a UTF-8 string (counts characters, not bytes)
+  function utf8_visual_width(str) result(width)
+    character(len=*), intent(in) :: str
+    integer :: width
+    integer :: i, byte_val
+
+    width = 0
+    do i = 1, len_trim(str)
+      byte_val = iand(iachar(str(i:i)), 255)
+      ! Skip UTF-8 continuation bytes (10xxxxxx = 128-191)
+      if (byte_val < 128 .or. byte_val >= 192) then
+        width = width + 1
+      end if
+    end do
   end function
 
 end module prompt_formatting

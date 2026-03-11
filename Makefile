@@ -155,6 +155,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/execution/command_capture_callback.o \
           $(BUILDDIR)/scripting/expansion.o \
           $(BUILDDIR)/scripting/substitution.o \
+          $(BUILDDIR)/io/suggestions.o \
           $(BUILDDIR)/io/readline.o \
           $(BUILDDIR)/scripting/shell_options.o \
           $(BUILDDIR)/fortsh.o
@@ -217,7 +218,7 @@ $(BUILDDIR)/system/signal_handling.o: src/system/signal_handling.f90 $(BUILDDIR)
 $(BUILDDIR)/parsing/glob.o: src/parsing/glob.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/scripting/expansion.o | $(BUILDDIR)/parsing
+$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/parsing/lexer.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/parsing/lexer.o: src/parsing/lexer.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/parsing
@@ -319,7 +320,10 @@ $(BUILDDIR)/scripting/completion.o: src/scripting/completion.f90 $(BUILDDIR)/com
 $(BUILDDIR)/io/syntax_highlight.o: src/io/syntax_highlight.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) | $(BUILDDIR)/io
+$(BUILDDIR)/io/suggestions.o: src/io/suggestions.f90 | $(BUILDDIR)/io
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
+$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
@@ -328,7 +332,7 @@ $(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDD
 $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/version.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/execution/command_capture_callback.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/common/performance.o | $(BUILDDIR)
+$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/version.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/lexer.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/execution/command_capture_callback.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/common/performance.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 # ============================================================================
@@ -389,35 +393,49 @@ release: clean $(TARGET)
 	@echo "Release build complete! Binary size: $$(du -h $(TARGET) | cut -f1)"
 
 # Test suite targets
-test-integration: $(TARGET)
-	@echo "Running integration tests..."
-	chmod +x tests/integration_test.sh
-	./tests/integration_test.sh
+FORTSH_ABS = $(CURDIR)/$(TARGET)
 
-test-parity: $(TARGET)
-	@echo "Running bash parity tests..."
-	chmod +x tests/bash_parity_test.sh
-	FORTSH_BIN=$(TARGET) ./tests/bash_parity_test.sh
-
+# POSIX compliance: single canonical test script (fastest)
 test-posix: $(TARGET)
 	@echo "Running POSIX compliance tests..."
-	chmod +x tests/posix_compliance_test.sh
-	FORTSH_BIN=$(TARGET) ./tests/posix_compliance_test.sh
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/posix_compliance_test.sh
 
-test-features: $(TARGET)
-	@echo "Running feature test suite..."
-	chmod +x tests/feature_test_suite.sh
-	./tests/feature_test_suite.sh
+# Full POSIX suite: all shell-based POSIX test scripts via the comprehensive runner
+test-posix-full: $(TARGET)
+	@echo "Running full POSIX compliance test suite..."
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --posix-only
 
-test-all: test-integration test-parity test-posix
-	@echo ""
-	@echo "=========================================="
-	@echo "ALL TEST SUITES COMPLETED"
-	@echo "=========================================="
-	@echo "✓ Integration tests"
-	@echo "✓ Bash parity tests"
-	@echo "✓ POSIX compliance tests"
-	@echo "=========================================="
+# Quick POSIX suite: skip slow coverage/untested suites
+test-posix-quick: $(TARGET)
+	@echo "Running quick POSIX compliance tests..."
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --posix-only --quick
+
+# Interactive PTY tests (requires Python venv with pexpect)
+test-interactive: $(TARGET)
+	@echo "Running interactive PTY tests..."
+	@if [ ! -d tests/interactive/.venv ] && [ ! -d tests/interactive/venv ]; then \
+		echo "Setting up Python virtual environment..."; \
+		python3 -m venv tests/interactive/.venv; \
+		. tests/interactive/.venv/bin/activate && pip install -r tests/interactive/requirements.txt; \
+	fi
+	@if [ -f tests/interactive/.venv/bin/activate ]; then \
+		. tests/interactive/.venv/bin/activate && cd tests/interactive && python run_tests.py; \
+	elif [ -f tests/interactive/venv/bin/activate ]; then \
+		. tests/interactive/venv/bin/activate && cd tests/interactive && python run_tests.py; \
+	else \
+		echo "Error: Python venv not found. Run: cd tests/interactive && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"; \
+		exit 1; \
+	fi
+
+# Full test run: POSIX + interactive (no memory rebuild)
+test-full: $(TARGET)
+	@echo "Running full test suite (POSIX + interactive)..."
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --full
+
+# Everything including memory pool tests (SLOW: rebuilds fortsh)
+test-all: $(TARGET)
+	@echo "Running all test suites..."
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/run_all_tests.sh --all
 
 # Help target
 help:
@@ -442,14 +460,14 @@ help:
 	@echo "  USE_C_STRINGS=1 make - Enable C strings in fortsh (experimental)"
 	@echo ""
 	@echo "Test targets:"
-	@echo "  test          - Run basic functionality test"
-	@echo "  test-all      - Run all test suites (integration, parity, POSIX)"
-	@echo "  test-integration - Run integration tests"
-	@echo "  test-parity   - Run bash parity tests"
-	@echo "  test-posix    - Run POSIX compliance tests"
-	@echo "  test-features - Run feature test suite"
-	@echo "  smoke-test    - Run quick smoke tests"
-	@echo "  check         - Run comprehensive checks"
+	@echo "  test            - Run basic functionality test"
+	@echo "  test-posix      - Run core POSIX compliance tests (~1 min)"
+	@echo "  test-posix-full - Run all POSIX test suites (~3 min)"
+	@echo "  test-posix-quick- Run fast POSIX tests, skip coverage (~30s)"
+	@echo "  test-interactive- Run interactive PTY tests (~2 min)"
+	@echo "  test-full       - Run POSIX + interactive tests (~5 min)"
+	@echo "  test-all        - Run everything incl. memory tests (SLOW)"
+	@echo "  check           - Run comprehensive checks"
 	@echo ""
 	@echo "Installation targets:"
 	@echo "  install       - Install fortsh to /usr/local/bin"
@@ -594,6 +612,12 @@ $(BUILDDIR)/test_expansion_simple: tests/test_expansion_simple.f90 $(BUILDDIR)/c
 $(BUILDDIR)/test_variables_simple: tests/test_variables_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
 
+$(BUILDDIR)/test_suggestions: tests/test_suggestions.f90 $(BUILDDIR)/io/suggestions.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/suggestions.o -o $@
+
+$(BUILDDIR)/test_syntax_highlight: tests/test_syntax_highlight.f90 $(BUILDDIR)/io/syntax_highlight.o $(CORE_C_OBJS) | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/types.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(CORE_C_OBJS) -o $@
+
 # Individual test targets
 test-memory-pool: $(BUILDDIR)/test_memory_pool
 	@echo "=========================================="
@@ -631,8 +655,20 @@ test-variables: $(BUILDDIR)/test_variables_simple
 	@echo "=========================================="
 	@$(BUILDDIR)/test_variables_simple
 
+test-suggestions: $(BUILDDIR)/test_suggestions
+	@echo "=========================================="
+	@echo "Testing Suggestions"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_suggestions
+
+test-highlight: $(BUILDDIR)/test_syntax_highlight
+	@echo "=========================================="
+	@echo "Testing Syntax Highlight v2"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_syntax_highlight
+
 # Run all unit bench tests (working tests only)
-test-bench: test-memory-pool test-lexer test-executor test-c-strings
+test-bench: test-memory-pool test-lexer test-executor test-suggestions test-highlight test-c-strings
 	@echo ""
 	@echo "=========================================="
 	@echo "All bench tests passed!"
@@ -655,4 +691,4 @@ c-strings: $(BUILDDIR)/test_c_strings
 	@echo "C string library built successfully!"
 	@echo "Run 'make test-c-strings' to test it"
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-bench
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-suggestions test-highlight test-bench

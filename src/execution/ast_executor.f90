@@ -692,11 +692,17 @@ contains
         shell%function_depth = shell%function_depth + 1
 
         ! Execute function body
-        if (associated(function_ast_cache(func_idx)%body)) then
-          exit_status = execute_ast_node(function_ast_cache(func_idx)%body, shell)
-        else
-          exit_status = 0
-        end if
+        ! Save body pointer locally so unset -f during execution can't
+        ! invalidate the pointer through the cache (Fortran aliasing)
+        block
+          type(command_node_t), pointer :: func_body
+          func_body => function_ast_cache(func_idx)%body
+          if (associated(func_body)) then
+            exit_status = execute_ast_node(func_body, shell)
+          else
+            exit_status = 0
+          end if
+        end block
 
         ! Fire RETURN trap if set (before cleanup, while still in function scope)
         block
@@ -2250,11 +2256,11 @@ contains
     use fd_redirection, only: apply_single_redirection, restore_fds
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, i
+    integer :: exit_status, i, k
     character(len=MAX_TOKEN_LEN) :: case_value
     integer :: case_value_len
     integer :: item_idx, pattern_idx
-    logical :: matched
+    logical :: matched, needs_expansion
     character(len=MAX_TOKEN_LEN) :: pattern
     character(len=:), allocatable :: expanded_pattern
     type(redirection_t) :: temp_redirect
@@ -2298,35 +2304,42 @@ contains
     end if
 
     ! Get the value to match (expand variables, command substitution, etc.)
-    block
-      use parser, only: expand_variables
-      character(len=:), allocatable :: expanded_case_value
-      integer :: raw_word_len
-      logical :: needs_expansion
-      raw_word_len = node%case_stmt%word_len
-      if (raw_word_len == 0) raw_word_len = len_trim(node%case_stmt%word)
-      ! Check if word needs expansion (contains $, `, or backtick)
-      needs_expansion = .false.
-      if (raw_word_len > 0) then
-        needs_expansion = (index(node%case_stmt%word(1:raw_word_len), '$') > 0) .or. &
-                         (index(node%case_stmt%word(1:raw_word_len), '`') > 0)
+    ! Use word_len to preserve whitespace-only values that len_trim would destroy
+    case_value_len = node%case_stmt%word_len
+    if (case_value_len == 0) case_value_len = len_trim(node%case_stmt%word)
+
+    ! Check if expansion is needed (contains $, `, or quotes)
+    needs_expansion = .false.
+    do k = 1, case_value_len
+      if (node%case_stmt%word(k:k) == '$' .or. &
+          node%case_stmt%word(k:k) == '`' .or. &
+          node%case_stmt%word(k:k) == char(1) .or. &
+          node%case_stmt%word(k:k) == char(2)) then
+        needs_expansion = .true.
+        exit
       end if
-      if (needs_expansion .and. raw_word_len > 0) then
-        call expand_variables(node%case_stmt%word(1:raw_word_len), expanded_case_value, shell)
+    end do
+
+    if (needs_expansion) then
+      block
+        character(len=:), allocatable :: expanded_case_value
+        call expand_variables(node%case_stmt%word(1:case_value_len), &
+                              expanded_case_value, shell)
         if (allocated(expanded_case_value)) then
-          case_value = expanded_case_value
           case_value_len = len(expanded_case_value)
+          case_value = ''
+          if (case_value_len > 0) case_value(1:case_value_len) = expanded_case_value
           deallocate(expanded_case_value)
         else
-          case_value = node%case_stmt%word
-          case_value_len = raw_word_len
+          case_value = ''
+          case_value_len = 0
         end if
-      else
-        ! No expansion needed — use raw word directly (preserves spaces)
-        case_value = node%case_stmt%word
-        case_value_len = raw_word_len
-      end if
-    end block
+      end block
+    else
+      case_value = ''
+      if (case_value_len > 0) case_value(1:case_value_len) = &
+        node%case_stmt%word(1:case_value_len)
+    end if
 
     ! Try to match against each case item
     do item_idx = 1, node%case_stmt%num_items
@@ -2340,8 +2353,12 @@ contains
         call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
         ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        ! Use case_value_len to preserve whitespace-only values (trim would destroy them)
-        matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), case_value(1:case_value_len))
+        if (case_value_len > 0) then
+          matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), &
+                                                     case_value(1:case_value_len))
+        else
+          matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), '')
+        end if
 
         if (matched) exit
       end do
@@ -2711,8 +2728,11 @@ contains
   subroutine process_source_inline_ast(shell)
     use grammar_parser, only: parse_command_line
     use command_tree, only: destroy_command_node
+    use parser, only: has_unclosed_quote, ends_with_continuation_backslash, &
+                      needs_compound_continuation, remove_line_continuations
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line
+    character(len=16384) :: input_line
+    character(len=1024) :: continuation_line
     integer :: file_unit, iostat
     type(command_node_t), pointer :: ast_root
     integer :: exit_code
@@ -2738,6 +2758,26 @@ contains
 
       ! Skip empty lines and comments
       if (len_trim(input_line) == 0 .or. input_line(1:1) == '#') cycle
+
+      ! Check for unclosed quotes or backslash continuation
+      do while (has_unclosed_quote(input_line) .or. ends_with_continuation_backslash(input_line))
+        read(file_unit, '(a)', iostat=iostat) continuation_line
+        if (iostat /= 0) exit
+        input_line = trim(input_line) // char(10) // trim(continuation_line)
+      end do
+
+      ! Handle line continuation (backslash-newline)
+      input_line = remove_line_continuations(input_line)
+
+      ! If EOF was reached during continuation, exit
+      if (iostat /= 0) exit
+
+      ! Check for unclosed compound commands (if/fi, do/done, case/esac, {/})
+      do while (needs_compound_continuation(input_line))
+        read(file_unit, '(a)', iostat=iostat) continuation_line
+        if (iostat /= 0) exit
+        input_line = trim(input_line) // char(10) // trim(continuation_line)
+      end do
 
       ! Parse and execute using AST parser
       ast_root => parse_command_line(trim(input_line))

@@ -937,7 +937,7 @@ contains
     end do
 
     if (.not. expect(state, 'esac')) return
-    node => create_case_statement(word, items, num_items, word_len)
+    node => create_case_statement(word, word_len, items, num_items)
   end function
 
   ! Parse commands in a case item until ;; or esac
