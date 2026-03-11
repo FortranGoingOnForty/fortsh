@@ -974,9 +974,6 @@ contains
     integer :: debug_stat
     ! Variables for RPROMPT (right-side prompt)
     integer :: rprompt_visual_len, padding_needed
-    integer :: first_line_visual_len
-    character(len=4096) :: first_line_buf
-    integer :: newline_pos
     ! Variables for multiline prompt support
     integer :: prompt_line_count
 
@@ -1046,77 +1043,35 @@ contains
     if (.not. success) term_cols = 80  ! Default fallback
 
     ! Check if we have RPROMPT and enough space
+    ! Note: multi-line prompt RPROMPT is handled in fortsh.f90 by embedding into the prompt string
     if (present(rprompt) .and. len_trim(rprompt) > 0) then
       rprompt_visual_len = visual_length(rprompt)
       if (rprompt_visual_len < 0) rprompt_visual_len = 0
 
-      if (prompt_line_count > 0) then
-        ! Multi-line prompt: place RPROMPT on the first line
-        ! Find first line visual width
-        newline_pos = 0
-        do i_redraw = 1, len_trim(prompt)
-          if (prompt(i_redraw:i_redraw) == char(10)) then
-            newline_pos = i_redraw
-            exit
-          end if
-        end do
-        if (newline_pos > 1) then
-          first_line_buf = prompt(1:newline_pos-1)
-          first_line_visual_len = visual_length(first_line_buf(1:newline_pos-1))
-        else
-          first_line_visual_len = 0
-        end if
-        if (first_line_visual_len < 0) first_line_visual_len = 0
+      ! Single-line prompt: place RPROMPT on same line
+      padding_needed = term_cols - prompt_visual_len - 1 - rprompt_visual_len
 
-        padding_needed = term_cols - first_line_visual_len - rprompt_visual_len
-
-        ! Print full prompt first
+      if (padding_needed >= 4) then  ! Minimum 4 chars gap
         write(output_unit, '(a)', advance='no') prompt
         write(output_unit, '(a)', advance='no') ' '
 
-        if (padding_needed >= 2) then
-          ! Save cursor (on last line after prompt)
-          write(output_unit, '(a)', advance='no') char(27) // '7'
+        ! Save cursor position before printing RPROMPT
+        write(output_unit, '(a)', advance='no') char(27) // '7'
 
-          ! Move cursor up to first line
-          write(output_unit, '(a,i0,a)', advance='no') char(27)//'[', prompt_line_count, 'A'
+        ! Print padding to right-align RPROMPT
+        do i_redraw = 1, padding_needed - 1
+          write(output_unit, '(a)', advance='no') ' '
+        end do
 
-          ! Move cursor to RPROMPT column on first line
-          write(output_unit, '(a,i0,a)', advance='no') &
-            char(27)//'[', term_cols - rprompt_visual_len + 1, 'G'
+        ! Print RPROMPT
+        write(output_unit, '(a)', advance='no') trim(rprompt)
 
-          ! Print RPROMPT
-          write(output_unit, '(a)', advance='no') trim(rprompt)
-
-          ! Restore cursor to last line input position
-          write(output_unit, '(a)', advance='no') char(27) // '8'
-        end if
+        ! Restore cursor position (back to after prompt + space)
+        write(output_unit, '(a)', advance='no') char(27) // '8'
       else
-        ! Single-line prompt: place RPROMPT on same line
-        padding_needed = term_cols - prompt_visual_len - 1 - rprompt_visual_len
-
-        if (padding_needed >= 4) then  ! Minimum 4 chars gap
-          write(output_unit, '(a)', advance='no') prompt
-          write(output_unit, '(a)', advance='no') ' '
-
-          ! Save cursor position before printing RPROMPT
-          write(output_unit, '(a)', advance='no') char(27) // '7'
-
-          ! Print padding to right-align RPROMPT
-          do i_redraw = 1, padding_needed - 1
-            write(output_unit, '(a)', advance='no') ' '
-          end do
-
-          ! Print RPROMPT
-          write(output_unit, '(a)', advance='no') trim(rprompt)
-
-          ! Restore cursor position (back to after prompt + space)
-          write(output_unit, '(a)', advance='no') char(27) // '8'
-        else
-          ! Not enough space - just print prompt normally
-          write(output_unit, '(a)', advance='no') prompt
-          write(output_unit, '(a)', advance='no') ' '
-        end if
+        ! Not enough space - just print prompt normally
+        write(output_unit, '(a)', advance='no') prompt
+        write(output_unit, '(a)', advance='no') ' '
       end if
     else
       ! No RPROMPT - just print prompt
