@@ -45,11 +45,11 @@ for test_file in "$SCRIPT_DIR"/test_*.sh; do
 
     if [ "$VERBOSE" -eq 1 ]; then
         printf "\n${CYAN}── %s ──${NC}\n" "$suite_name"
-        output=$("$test_file" 2>&1)
+        output=$(timeout 120 "$test_file" 2>&1)
         exit_code=$?
         echo "$output"
     else
-        output=$("$test_file" 2>&1)
+        output=$(timeout 120 "$test_file" 2>&1)
         exit_code=$?
     fi
 
