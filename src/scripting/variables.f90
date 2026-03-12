@@ -166,8 +166,9 @@ contains
   function get_shell_variable(shell, name) result(value)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
-    character(len=MAX_VAR_VALUE_LEN) :: value
+    character(len=:), allocatable :: value
     integer :: i, depth
+    character(len=20) :: fmt_buf
 
     value = ''
 
@@ -193,13 +194,16 @@ contains
     ! Handle special variables
     select case (trim(name))
       case ('$')
-        write(value, '(i0)') shell%shell_pid
+        write(fmt_buf, '(i0)') shell%shell_pid
+        value = trim(adjustl(fmt_buf))
         return
       case ('!')
-        write(value, '(i15)') shell%last_bg_pid
+        write(fmt_buf, '(i0)') shell%last_bg_pid
+        value = trim(adjustl(fmt_buf))
         return
       case ('?')
-        write(value, '(i15)') shell%last_exit_status
+        write(fmt_buf, '(i0)') shell%last_exit_status
+        value = trim(adjustl(fmt_buf))
         return
       case ('0')
         value = trim(shell%shell_name)
@@ -213,13 +217,16 @@ contains
         value = get_shell_option_flags(shell)
         return
       case ('PPID')
-        write(value, '(i0)') int(shell%parent_pid)
+        write(fmt_buf, '(i0)') int(shell%parent_pid)
+        value = trim(adjustl(fmt_buf))
         return
       case ('UID')
-        write(value, '(i15)') shell%uid
+        write(fmt_buf, '(i0)') shell%uid
+        value = trim(adjustl(fmt_buf))
         return
       case ('EUID')
-        write(value, '(i15)') shell%euid
+        write(fmt_buf, '(i0)') shell%euid
+        value = trim(adjustl(fmt_buf))
         return
       case ('PWD')
         value = trim(shell%cwd)
@@ -228,27 +235,34 @@ contains
         value = trim(shell%oldpwd)
         return
       case ('RANDOM')
-        ! Generate random number 0-32767
-        call get_random_number(value)
+        write(fmt_buf, '(i0)') get_random_int()
+        value = trim(adjustl(fmt_buf))
         return
       case ('SECONDS')
-        ! Seconds since shell start
-        call get_seconds_since_start(shell, value)
+        write(fmt_buf, '(i0)') get_elapsed_seconds(shell)
+        value = trim(adjustl(fmt_buf))
         return
       case ('LINENO')
-        write(value, '(i0)') shell%current_line_number
+        write(fmt_buf, '(i0)') shell%current_line_number
+        value = trim(adjustl(fmt_buf))
         return
       case ('#')
-        ! Number of positional parameters
-        write(value, '(I0)') shell%num_positional
+        write(fmt_buf, '(I0)') shell%num_positional
+        value = trim(adjustl(fmt_buf))
         return
       case ('*')
-        ! All positional parameters as single word (IFS separated)
-        call get_all_positional_params(shell, value, .true.)
+        block
+          character(len=4096) :: params_buf
+          call get_all_positional_params(shell, params_buf, .true.)
+          value = trim(params_buf)
+        end block
         return
       case ('@')
-        ! All positional parameters as separate words
-        call get_all_positional_params(shell, value, .false.)
+        block
+          character(len=4096) :: params_buf
+          call get_all_positional_params(shell, params_buf, .false.)
+          value = trim(params_buf)
+        end block
         return
       case ('IFS')
         ! Internal field separator - use ifs_len to preserve whitespace
@@ -274,10 +288,12 @@ contains
         value = trim(shell%histfile)
         return
       case ('HISTSIZE')
-        write(value, '(i15)') shell%histsize
+        write(fmt_buf, '(i0)') shell%histsize
+        value = trim(adjustl(fmt_buf))
         return
       case ('HISTFILESIZE')
-        write(value, '(i15)') shell%histfilesize
+        write(fmt_buf, '(i0)') shell%histfilesize
+        value = trim(adjustl(fmt_buf))
         return
       case ('HISTCONTROL')
         value = trim(shell%histcontrol)
@@ -379,7 +395,7 @@ contains
     character(len=*), intent(in) :: name
     integer :: var_len
     integer :: i, depth
-    character(len=MAX_VAR_VALUE_LEN) :: temp_value
+    character(len=20) :: temp_value
 
     var_len = 0
 
@@ -522,7 +538,7 @@ contains
     integer :: eq_pos, bracket_pos, bracket_end, array_index, read_status
     integer :: actual_value_len, i
     character(len=256) :: var_name, index_str
-    character(len=MAX_VAR_VALUE_LEN) :: var_value  ! Must match get_shell_variable return type
+    character(len=:), allocatable :: var_value
     character(len=:), allocatable :: expanded_value
     character(len=1) :: quote_char_temp
 
@@ -639,7 +655,7 @@ contains
     ! Use allocatable array to avoid static storage
     character(len=MAX_VAR_VALUE_LEN), allocatable :: values(:)
     integer :: count, start_pos, pos, capacity
-    character(len=MAX_VAR_VALUE_LEN) :: content
+    character(len=:), allocatable :: content
     logical :: in_quotes
     
     ! Remove parentheses
@@ -729,7 +745,7 @@ contains
     character(len=2048) :: result
     integer :: i, j, var_start, brace_end
     character(len=256) :: var_name
-    character(len=MAX_VAR_VALUE_LEN) :: expansion_result, var_value  ! Must match get_shell_variable return type
+    character(len=:), allocatable :: expansion_result, var_value
     character(len=:), allocatable :: env_value
     
     result = ''
@@ -1003,7 +1019,7 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
     integer, intent(in) :: index
-    character(len=MAX_VAR_VALUE_LEN) :: value
+    character(len=:), allocatable :: value
     integer :: i, actual_index
 
     value = ''
@@ -1149,7 +1165,7 @@ contains
   function get_assoc_array_value(shell, array_name, key) result(value)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: array_name, key
-    character(len=MAX_VAR_VALUE_LEN) :: value
+    character(len=:), allocatable :: value
     
     integer :: i, j
     
@@ -1240,12 +1256,12 @@ contains
   ! POSIX parameter expansion implementation
   subroutine expand_parameter(param_expr, result, shell)
     character(len=*), intent(in) :: param_expr
-    character(len=*), intent(out) :: result
+    character(len=:), allocatable, intent(out) :: result
     type(shell_state_t), intent(inout) :: shell
     
     character(len=256) :: param_name, default_value
-    character(len=MAX_VAR_VALUE_LEN) :: var_value  ! Must match get_shell_variable return type
-    character(len=MAX_VAR_VALUE_LEN) :: expanded_pattern_buf
+    character(len=:), allocatable :: var_value
+    character(len=:), allocatable :: expanded_pattern_buf
     integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
     integer :: percent_pos, hash_pos, percent2_pos, hash2_pos
     logical :: has_colon
@@ -1749,6 +1765,24 @@ contains
 
     write(value, '(i15)') elapsed
   end subroutine
+
+  function get_random_int() result(rand_int)
+    integer :: rand_int
+    real :: rand_val
+    call random_number(rand_val)
+    rand_int = int(rand_val * 32768.0)
+  end function
+
+  function get_elapsed_seconds(shell) result(elapsed)
+    type(shell_state_t), intent(in) :: shell
+    integer :: elapsed, current_time
+    call system_clock(current_time)
+    if (shell%shell_start_time > 0) then
+      elapsed = (current_time - shell%shell_start_time) / 1000
+    else
+      elapsed = 0
+    end if
+  end function
 
   ! Get the actual stored length of a variable (for ${#var} expansion)
   ! Returns -1 if variable not found or doesn't have stored length
