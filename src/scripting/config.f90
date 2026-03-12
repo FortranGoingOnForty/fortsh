@@ -195,7 +195,7 @@ contains
   subroutine load_legacy_config(shell)
     type(shell_state_t), intent(inout) :: shell
     character(len=MAX_PATH_LEN) :: home_dir, config_file
-    character(len=MAX_VAR_VALUE_LEN) :: line
+    character(len=4096) :: line
     integer :: unit, iostat
     logical :: file_exists
 
@@ -423,7 +423,7 @@ contains
   ! Show the current config file content
   subroutine show_config()
     character(len=MAX_PATH_LEN) :: home_dir, config_file
-    character(len=MAX_VAR_VALUE_LEN) :: line
+    character(len=4096) :: line
     integer :: unit, iostat
     logical :: file_exists
     
