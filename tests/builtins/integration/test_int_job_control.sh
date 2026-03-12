@@ -43,7 +43,8 @@ else
 fi
 
 section "5. coproc"
-# TODO: coproc with brace group syntax not yet supported (issue #28)
-skip "basic coproc" "issue #28"
+compare_output "coproc with brace group" 'coproc { cat; }; echo hello >&${COPROC[1]}; sleep 0.1; read line <&${COPROC[0]}; echo $line'
+compare_output "named coproc" 'coproc MYCAT { cat; }; echo test >&${MYCAT[1]}; sleep 0.1; read line <&${MYCAT[0]}; echo $line'
+compare_output "coproc output" 'coproc { echo from_coproc; sleep 10; }; sleep 0.1; read line <&${COPROC[0]}; echo $line; kill $COPROC_PID 2>/dev/null; wait $COPROC_PID 2>/dev/null'
 
 print_summary

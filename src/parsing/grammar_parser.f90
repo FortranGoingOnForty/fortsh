@@ -294,6 +294,9 @@ contains
       case('{')
         node => parse_brace_group(state)
         is_compound = .true.
+      case('coproc')
+        node => parse_coproc_stmt(state)
+        is_compound = .true.
       case default
         node => parse_simple_cmd(state)
       end select
@@ -1245,6 +1248,65 @@ contains
     call skip_newlines(state)
     if (.not. expect(state, '}')) return
     node => create_brace_group(commands)
+  end function
+
+  ! Parse coproc statement: coproc [NAME] compound_command | coproc simple_command
+  recursive function parse_coproc_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, body
+    type(token_t) :: tok, next_tok
+    character(len=256) :: coproc_name
+
+    nullify(node)
+    coproc_name = 'COPROC'
+
+    ! Consume 'coproc'
+    call advance(state)
+    tok = current_token(state)
+
+    ! Case 1: coproc { commands; } — unnamed brace group
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == '{') then
+      body => parse_brace_group(state)
+      node => create_coproc(coproc_name, body)
+      return
+    end if
+
+    ! Case 2: coproc ( commands ) — unnamed subshell
+    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+      body => parse_subshell(state)
+      node => create_coproc(coproc_name, body)
+      return
+    end if
+
+    ! Case 3: coproc NAME { ... } or coproc NAME ( ... ) — named compound
+    ! Case 4: coproc command args — unnamed simple command
+    if (tok%token_type == TOKEN_WORD) then
+      next_tok = peek_token(state%tokens, state%pos + 1)
+      if (next_tok%token_type == TOKEN_KEYWORD .and. trim(next_tok%value) == '{') then
+        ! Named coproc with brace group
+        coproc_name = trim(tok%value)
+        call advance(state)  ! consume name
+        body => parse_brace_group(state)
+        node => create_coproc(coproc_name, body)
+        return
+      else if (next_tok%token_type == TOKEN_OPERATOR .and. trim(next_tok%value) == '(') then
+        ! Named coproc with subshell
+        coproc_name = trim(tok%value)
+        call advance(state)  ! consume name
+        body => parse_subshell(state)
+        node => create_coproc(coproc_name, body)
+        return
+      end if
+
+      ! Simple command coproc (unnamed)
+      body => parse_simple_cmd(state)
+      node => create_coproc(coproc_name, body)
+      return
+    end if
+
+    ! Fallback: error
+    state%has_error = .true.
+    state%error_msg = 'coproc: expected command'
   end function
 
   subroutine skip_newlines(state)
