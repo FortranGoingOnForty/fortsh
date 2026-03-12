@@ -246,17 +246,17 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
-    
+    character(len=:), allocatable :: condition_cmd
+
     should_execute = .false.  ! Don't execute the if command itself
-    
+
     ! Parse if condition: if [ condition ] or if command
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'if: missing condition'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Build condition command from tokens (skip "if")
     condition_cmd = ''
     do i = 2, cmd%num_tokens
@@ -284,17 +284,17 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
-    
+    character(len=:), allocatable :: condition_cmd
+
     should_execute = .false.  ! Don't execute the while command itself
-    
+
     ! Parse while condition: while [ condition ] or while command
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'while: missing condition'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Build condition command from tokens (skip "while")
     condition_cmd = ''
     do i = 2, cmd%num_tokens
@@ -326,7 +326,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
+    character(len=:), allocatable :: condition_cmd
 
     should_execute = .false.  ! Don't execute the until command itself
 
@@ -660,7 +660,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
+    character(len=:), allocatable :: condition_cmd
 
     should_execute = .false.  ! Don't execute the "elif" keyword itself
 
@@ -728,7 +728,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
 
-    character(len=MAX_VAR_VALUE_LEN) :: remainder_cmd
+    character(len=:), allocatable :: remainder_cmd
     integer :: i
 
     should_execute = .false.  ! Don't execute the "do" keyword itself
@@ -1024,7 +1024,7 @@ contains
     type(command_t) :: cmd
     character(len=256) :: tokens(50), expanded_token
     integer :: num_tokens, i, pos, start_pos, test_exit_status
-    character(len=MAX_VAR_VALUE_LEN) :: trimmed_cmd
+    character(len=:), allocatable :: trimmed_cmd
     character(len=:), allocatable :: expanded_result
     character(len=1) :: quote_char
 
@@ -1271,7 +1271,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=MAX_VAR_VALUE_LEN) :: case_value  ! Increased to match condition_cmd length
+    character(len=:), allocatable :: case_value
     character(len=256) :: pattern
     logical :: pattern_matches
     integer :: i
@@ -1466,7 +1466,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=MAX_VAR_VALUE_LEN) :: result
     character(len=256) :: var_name
-    character(len=MAX_VAR_VALUE_LEN) :: var_value
+    character(len=:), allocatable :: var_value
     integer :: i, j, var_start
 
     result = ''
