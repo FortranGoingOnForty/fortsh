@@ -1097,7 +1097,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024) :: filename, path_var, dir, candidate
+    character(len=MAX_VAR_VALUE_LEN) :: filename, path_var, dir, candidate
     character(len=:), allocatable :: path_str
     logical :: file_exists, found_in_path
     integer :: i, path_start, path_end, path_len
@@ -1602,7 +1602,7 @@ contains
   subroutine builtin_trap(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: action
+    character(len=MAX_VAR_VALUE_LEN) :: action
     character(len=256) :: signal_spec
     integer :: i, j, k, signum
     logical :: list_mode, remove_mode
@@ -1750,7 +1750,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i
     character(len=256) :: alias_name, alias_command
-    character(len=1024) :: full_arg
+    character(len=MAX_VAR_VALUE_LEN) :: full_arg
 
     if (cmd%num_tokens == 1) then
       ! Show all aliases
@@ -2177,7 +2177,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024) :: function_body(1)
+    character(len=MAX_VAR_VALUE_LEN) :: function_body(1)
     character(len=256) :: func_name
     integer :: i
 
@@ -2305,7 +2305,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     
     integer :: timeout_seconds, i
-    character(len=1024) :: command
+    character(len=MAX_VAR_VALUE_LEN) :: command
     
     if (cmd%num_tokens < 3) then
       write(error_unit, '(a)') 'timeout: usage: timeout DURATION COMMAND...'
@@ -2340,7 +2340,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: command_name
-    character(len=1024) :: full_path
+    character(len=MAX_VAR_VALUE_LEN) :: full_path
     integer :: i
     logical :: any_not_found
 
@@ -2655,7 +2655,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, eq_pos, depth, var_index, fi, start_arg
     character(len=256) :: var_name
-    character(len=1024) :: var_value
+    character(len=MAX_VAR_VALUE_LEN) :: var_value
     logical :: integer_flag, readonly_flag, array_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
 
@@ -2755,7 +2755,7 @@ contains
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
-            character(len=1024) :: arith_expr, arith_result
+            character(len=MAX_VAR_VALUE_LEN) :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
             arith_result = &
               arithmetic_expansion_shell( &
@@ -3706,7 +3706,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, iostat
-    character(len=1024) :: expr, arith_expr, result_str
+    character(len=MAX_VAR_VALUE_LEN) :: expr, arith_expr, result_str
     integer(kind=8) :: result_val
 
     ! Default to success
@@ -3748,7 +3748,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=256) :: var_name
-    character(len=1024) :: var_value
+    character(len=MAX_VAR_VALUE_LEN) :: var_value
     logical :: readonly_flag, export_flag, print_mode, print_funcs
     logical :: array_flag, assoc_array_flag, found, integer_flag, global_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
@@ -3941,7 +3941,7 @@ contains
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
-            character(len=1024) :: arith_expr, arith_result
+            character(len=MAX_VAR_VALUE_LEN) :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
             arith_result = &
               arithmetic_expansion_shell(trim(arith_expr), shell)
@@ -4143,7 +4143,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical :: list_mode, no_line_numbers, reverse_order, subst_mode
     character(len=:), allocatable :: editor, old_str, new_str
-    character(len=1024) :: line, tmpfile, edit_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: line, tmpfile, edit_cmd
     integer :: first, last, i, arg_idx, iostat, tmp_unit
     integer :: eq_pos, history_count
     logical :: found
@@ -4415,7 +4415,7 @@ contains
   function find_history_by_prefix(prefix) result(hist_index)
     character(len=*), intent(in) :: prefix
     integer :: hist_index
-    character(len=1024) :: line
+    character(len=MAX_VAR_VALUE_LEN) :: line
     logical :: found
     integer :: i, count, pos
 
@@ -4938,7 +4938,7 @@ contains
   ! Execute EXIT trap inline (to avoid circular dependency with executor module)
   subroutine execute_exit_trap_inline(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: trap_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: trap_cmd
     integer :: saved_status
     type(pipeline_t) :: trap_pipeline
     integer :: i
