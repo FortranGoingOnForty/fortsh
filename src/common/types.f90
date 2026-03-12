@@ -17,6 +17,14 @@ module shell_types
   integer, parameter :: MAX_JOBS = 100
   integer, parameter :: MAX_HEREDOC_LEN = 65536
   integer, parameter :: MAX_CONTROL_DEPTH = 20
+  integer, parameter :: MAX_SHELL_VARS = 512
+  integer, parameter :: MAX_ALIASES = 256
+  integer, parameter :: MAX_FUNCTIONS = 128
+  integer, parameter :: MAX_TRAPS = 64
+  integer, parameter :: MAX_HASHED_CMDS = 128
+  integer, parameter :: MAX_VAR_NAME_LEN = 256
+  integer, parameter :: MAX_VAR_VALUE_LEN = 4096
+  integer, parameter :: MAX_LOCAL_VARS_PER_SCOPE = 64
 
   ! Command separator types
   integer, parameter :: SEP_NONE = 0
@@ -187,15 +195,15 @@ module shell_types
 
   ! Simple shell variable entry
   type :: shell_var_t
-    character(len=256) :: name
-    character(len=1024) :: value
+    character(len=MAX_VAR_NAME_LEN) :: name
+    character(len=MAX_VAR_VALUE_LEN) :: value
     integer :: value_len = 0           ! Actual length of value (preserves trailing spaces)
     logical :: is_array = .false.
     logical :: is_assoc_array = .false.
     logical :: readonly = .false.      ! Variable is read-only
     logical :: exported = .false.      ! Variable is exported to environment
     logical :: is_integer = .false.    ! Variable has integer attribute (declare -i)
-    character(len=1024), allocatable :: array_values(:)
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: array_values(:)
     integer :: array_size = 0
     type(assoc_array_entry_t), allocatable :: assoc_entries(:)
     integer :: assoc_size = 0
@@ -203,8 +211,8 @@ module shell_types
 
   ! Shell alias entry
   type :: shell_alias_t
-    character(len=256) :: name
-    character(len=1024) :: command
+    character(len=MAX_VAR_NAME_LEN) :: name
+    character(len=MAX_VAR_VALUE_LEN) :: command
   end type shell_alias_t
 
   ! Control flow block state
@@ -242,17 +250,17 @@ module shell_types
 
   ! Shell function definition
   type :: shell_function_t
-    character(len=256) :: name
-    character(len=1024), allocatable :: body(:)  ! function body lines
+    character(len=MAX_VAR_NAME_LEN) :: name
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: body(:)  ! function body lines
     integer :: body_lines = 0
-    character(len=256) :: params(10)  ! parameter names
+    character(len=MAX_VAR_NAME_LEN) :: params(10)  ! parameter names
     integer :: param_count = 0
   end type shell_function_t
 
   ! Shell trap definition
   type :: shell_trap_t
     integer :: signal = 0
-    character(len=1024) :: command = ''
+    character(len=MAX_VAR_VALUE_LEN) :: command = ''
     logical :: active = .false.
     logical :: inherited = .false.  ! Trap inherited from parent (visible but not executed)
   end type shell_trap_t
@@ -297,16 +305,16 @@ module shell_types
     integer :: current_job_id = 0   ! %% or %+ (most recent job)
     integer :: previous_job_id = 0  ! %- (previous job)
     ! Shell variables (local scope)
-    type(shell_var_t) :: variables(50)
+    type(shell_var_t) :: variables(MAX_SHELL_VARS)
     integer :: num_variables = 0
     ! Shell aliases
-    type(shell_alias_t) :: aliases(50)
+    type(shell_alias_t) :: aliases(MAX_ALIASES)
     integer :: num_aliases = 0
     ! Shell functions
-    type(shell_function_t) :: functions(20)
+    type(shell_function_t) :: functions(MAX_FUNCTIONS)
     integer :: num_functions = 0
     ! Shell traps
-    type(shell_trap_t) :: traps(20)
+    type(shell_trap_t) :: traps(MAX_TRAPS)
     integer :: num_traps = 0
     ! Pending trap execution (to avoid circular dependency in signal_handling)
     character(len=1024) :: pending_trap_command = ''
@@ -321,7 +329,7 @@ module shell_types
     logical :: in_pipeline_child = .false.   ! In forked pipeline child (skip setpgid/tcsetpgrp in execute_external)
     logical :: last_from_and_or = .false.     ! Last result was from an AND-OR list (suppress errexit check)
     ! Command hash table
-    type(command_hash_entry_t) :: command_hash(50)
+    type(command_hash_entry_t) :: command_hash(MAX_HASHED_CMDS)
     integer :: num_hashed_commands = 0
     ! Control flow state
     type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)

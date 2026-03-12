@@ -1176,7 +1176,7 @@ contains
       shell%positional_params_capacity = 50
     end if
     if (.not. allocated(shell%local_vars)) then
-      allocate(shell%local_vars(MAX_CONTROL_DEPTH, 20))
+      allocate(shell%local_vars(MAX_CONTROL_DEPTH, MAX_LOCAL_VARS_PER_SCOPE))
     end if
     if (.not. allocated(shell%local_var_counts)) then
       allocate(shell%local_var_counts(MAX_CONTROL_DEPTH))
