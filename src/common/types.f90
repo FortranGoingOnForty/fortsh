@@ -317,7 +317,7 @@ module shell_types
     type(shell_trap_t) :: traps(MAX_TRAPS)
     integer :: num_traps = 0
     ! Pending trap execution (to avoid circular dependency in signal_handling)
-    character(len=MAX_VAR_VALUE_LEN) :: pending_trap_command = ''
+    character(len=:), allocatable :: pending_trap_command
     integer :: pending_trap_signal = 0
     logical :: executing_trap = .false.  ! Prevent recursive trap execution
     logical :: exit_trap_executed = .false.  ! Track if EXIT trap has been executed
@@ -385,7 +385,7 @@ module shell_types
     integer(c_pid_t) :: last_bg_pid = 0        ! $! (last background process)
     character(len=256) :: shell_name = 'fortsh' ! $0 (shell name)
     integer(c_pid_t) :: parent_pid = 0         ! $PPID (parent process ID)
-    character(len=MAX_VAR_VALUE_LEN) :: last_arg = ''       ! $_ (last argument of previous command)
+    character(len=:), allocatable :: last_arg               ! $_ (last argument of previous command)
     integer :: uid = 0                         ! $UID (user ID)
     integer :: euid = 0                        ! $EUID (effective user ID)
     integer :: shell_start_time = 0            ! For $SECONDS
@@ -442,7 +442,7 @@ module shell_types
     logical :: has_pending_heredoc = .false.
 
     ! Current command being executed (for job descriptions)
-    character(len=MAX_VAR_VALUE_LEN) :: current_command = ''
+    character(len=:), allocatable :: current_command
   end type shell_state_t
 
 end module shell_types

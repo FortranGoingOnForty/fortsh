@@ -1137,6 +1137,8 @@ contains
     call system_clock(shell%shell_start_time)
     shell%oldpwd = ''
     shell%last_arg = ''
+    shell%pending_trap_command = ''
+    shell%current_command = ''
     shell%current_line_number = 0
 
     ! Initialize jobs array
