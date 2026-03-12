@@ -347,8 +347,6 @@ module shell_types
     logical :: option_pipefail = .false.       ! set -o pipefail
     logical :: option_verbose = .false.        ! set -v (verbose)
     logical :: option_xtrace = .false.         ! set -x (trace execution)
-    ! Parser selection (experimental feature)
-    logical :: use_new_parser = .false.        ! Use grammar-aware parser (FORTSH_USE_NEW_PARSER=1)
     logical :: option_noclobber = .false.      ! set -C (no clobber)
     logical :: option_monitor = .false.        ! set -m (job control)
     logical :: option_allexport = .false.      ! set -a (auto export)

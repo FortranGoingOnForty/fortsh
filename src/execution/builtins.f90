@@ -252,65 +252,30 @@ contains
     use grammar_parser, only: parse_command_line
     use ast_executor, only: execute_ast_node
     use command_tree, only: command_node_t, destroy_command_node
-    use executor, only: execute_pipeline
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_code, iostat, i
+    integer :: exit_code, iostat
     character(len=4096) :: trap_command
-    type(pipeline_t) :: trap_pipeline
     type(command_node_t), pointer :: trap_ast
     integer :: saved_exit_status, trap_exit_code
 
     ! Execute EXIT trap before exiting (TRAP_EXIT = 0)
-    ! Don't execute if we're already in a trap or if EXIT trap was already executed
-    ! Don't execute inherited traps (visible in subshell but not executed)
     if (.not. shell%executing_trap .and. .not. shell%exit_trap_executed .and. &
         .not. is_trap_inherited(shell, 0)) then
-      ! Get the trap command for EXIT signal (0)
       trap_command = get_trap_command(shell, 0)
 
       if (len_trim(trap_command) > 0) then
-        ! Mark EXIT trap as executed
         shell%exit_trap_executed = .true.
-
-        ! Save current exit status
         saved_exit_status = shell%last_exit_status
-
-        ! Set flag to prevent recursive trap execution
         shell%executing_trap = .true.
 
-        ! Parse and execute the trap command
-        if (shell%use_new_parser) then
-          trap_ast => parse_command_line(trim(trap_command))
-          if (associated(trap_ast)) then
-            trap_exit_code = execute_ast_node(trap_ast, shell)
-            call destroy_command_node(trap_ast)
-          end if
-        else
-          call parse_pipeline(trim(trap_command), trap_pipeline)
-          if (.not. trap_pipeline%parse_error .and. trap_pipeline%num_commands > 0) then
-            call execute_pipeline(trap_pipeline, shell, trim(trap_command))
-          end if
-
-          ! Clean up pipeline
-          if (allocated(trap_pipeline%commands)) then
-            do i = 1, trap_pipeline%num_commands
-              if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
-              if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
-              if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
-              if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
-              if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
-              if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
-              if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
-            end do
-            deallocate(trap_pipeline%commands)
-          end if
+        trap_ast => parse_command_line(trim(trap_command))
+        if (associated(trap_ast)) then
+          trap_exit_code = execute_ast_node(trap_ast, shell)
+          call destroy_command_node(trap_ast)
         end if
 
-        ! Clear flag
         shell%executing_trap = .false.
-
-        ! Restore exit status (trap shouldn't affect exit code)
         shell%last_exit_status = saved_exit_status
       end if
     end if
