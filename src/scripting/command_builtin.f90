@@ -269,7 +269,7 @@ contains
     logical, intent(in), optional :: silent_errors, v_flag
 
     logical :: found_any, suppress_errors, is_v_flag
-    character(len=1024) :: full_path
+    character(len=MAX_VAR_VALUE_LEN) :: full_path
 
     if (.false.) print *, function_flag  ! Silence unused warning
 
@@ -357,7 +357,7 @@ contains
     character(len=*), intent(in) :: command_name
     logical, intent(in) :: all_flag, silent_flag
 
-    character(len=1024) :: full_path
+    character(len=MAX_VAR_VALUE_LEN) :: full_path
 
     if (.false.) print *, all_flag  ! Silence unused warning
 
@@ -380,8 +380,8 @@ contains
     logical :: found
     
     character(len=4096) :: path_var
-    character(len=1024) :: path_component
-    character(len=1024) :: candidate_path
+    character(len=MAX_VAR_VALUE_LEN) :: path_component
+    character(len=MAX_VAR_VALUE_LEN) :: candidate_path
     integer :: start_pos, end_pos, colon_pos
     
     found = .false.
@@ -548,7 +548,7 @@ contains
     character(len=MAX_PATH_LEN) :: full_path
     character(len=:), allocatable :: path_var_alloc
     character(len=4096) :: path_var
-    character(len=1024) :: path_component, candidate_path
+    character(len=MAX_VAR_VALUE_LEN) :: path_component, candidate_path
     integer :: start_pos, end_pos, colon_pos
 
     full_path = ''

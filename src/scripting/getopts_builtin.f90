@@ -15,8 +15,8 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: optstring, optname
-    character(len=1024) :: current_arg
-    character(len=1024) :: optind_str, optarg_str
+    character(len=MAX_VAR_VALUE_LEN) :: current_arg
+    character(len=MAX_VAR_VALUE_LEN) :: optind_str, optarg_str
     integer :: optind, argc, current_pos, i
     character :: opt_char
     logical :: found_option, requires_arg, silent_mode

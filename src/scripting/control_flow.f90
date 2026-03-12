@@ -246,7 +246,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
     
     should_execute = .false.  ! Don't execute the if command itself
     
@@ -284,7 +284,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
     
     should_execute = .false.  ! Don't execute the while command itself
     
@@ -326,7 +326,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
 
     should_execute = .false.  ! Don't execute the until command itself
 
@@ -660,7 +660,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd
 
     should_execute = .false.  ! Don't execute the "elif" keyword itself
 
@@ -728,7 +728,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
 
-    character(len=1024) :: remainder_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: remainder_cmd
     integer :: i
 
     should_execute = .false.  ! Don't execute the "do" keyword itself
@@ -1024,7 +1024,7 @@ contains
     type(command_t) :: cmd
     character(len=256) :: tokens(50), expanded_token
     integer :: num_tokens, i, pos, start_pos, test_exit_status
-    character(len=1024) :: trimmed_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: trimmed_cmd
     character(len=:), allocatable :: expanded_result
     character(len=1) :: quote_char
 
@@ -1271,7 +1271,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024) :: case_value  ! Increased to match condition_cmd length
+    character(len=MAX_VAR_VALUE_LEN) :: case_value  ! Increased to match condition_cmd length
     character(len=256) :: pattern
     logical :: pattern_matches
     integer :: i
@@ -1464,9 +1464,9 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable, intent(out) :: output
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: result
+    character(len=MAX_VAR_VALUE_LEN) :: result
     character(len=256) :: var_name
-    character(len=1024) :: var_value
+    character(len=MAX_VAR_VALUE_LEN) :: var_value
     integer :: i, j, var_start
 
     result = ''

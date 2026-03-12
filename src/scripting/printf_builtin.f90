@@ -121,7 +121,7 @@ contains
     logical :: arg_error
     character :: current_char, next_char
     type(format_info_t) :: fmt_info
-    character(len=1024) :: arg_value, formatted_value
+    character(len=MAX_VAR_VALUE_LEN) :: arg_value, formatted_value
 
     pos = 1
     output_pos = 1
@@ -325,7 +325,7 @@ contains
     integer, intent(out) :: formatted_len
     logical, intent(out), optional :: had_error
 
-    character(len=1024) :: raw_value, temp_value
+    character(len=MAX_VAR_VALUE_LEN) :: raw_value, temp_value
     integer :: int_val, status, val_len, pad_len, prec, actual_len
     real(8) :: real_val
     character :: pad_char

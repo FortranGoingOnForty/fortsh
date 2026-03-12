@@ -194,7 +194,7 @@ contains
     type(proc_subst_t) :: proc_subst
 
     character(len=256) :: fifo_name
-    character(len=1024) :: full_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: full_cmd
     
     proc_subst%is_input = is_input
     proc_subst%active = .false.

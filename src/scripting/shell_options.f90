@@ -408,7 +408,7 @@ contains
     use system_interface, only: c_write
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command_line
-    character(len=1024) :: expanded_ps4
+    character(len=MAX_VAR_VALUE_LEN) :: expanded_ps4
     character(len=2048) :: trace_line
     integer :: ps4_actual_len, trace_len
     character(kind=c_char), target, allocatable :: c_trace(:)
