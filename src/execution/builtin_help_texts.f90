@@ -102,6 +102,23 @@ contains
       call help_abbr(u)
     case ('config')
       call help_config(u)
+    ! Scripting & Control Flow
+    case ('test', '[')
+      call help_test(u)
+    case ('break')
+      call help_break(u)
+    case ('continue')
+      call help_continue(u)
+    case ('return')
+      call help_return(u)
+    case ('shift')
+      call help_shift(u)
+    case ('getopts')
+      call help_getopts(u)
+    case ('let')
+      call help_let(u)
+    case ('exit')
+      call help_exit(u)
     case default
       found = .false.
     end select
@@ -854,5 +871,149 @@ contains
     write(u, '(a)') '    Exit Status:'
     write(u, '(a)') '    Returns 0 on success, 1 on invalid subcommand.'
   end subroutine help_config
+
+  ! --------------------------------------------------------------------------
+  ! Scripting & Control Flow
+  ! --------------------------------------------------------------------------
+
+  subroutine help_test(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'test: test [expr]'
+    write(u, '(a)') '    Evaluate conditional expression.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exits with a status of 0 (true) or 1 (false) depending on the'
+    write(u, '(a)') '    evaluation of EXPR. Also available as [ expr ].'
+    write(u, '(a)') ''
+    write(u, '(a)') '    File tests:'
+    write(u, '(a)') '      -e FILE   Exists            -f FILE   Regular file'
+    write(u, '(a)') '      -d FILE   Directory          -L/-h     Symbolic link'
+    write(u, '(a)') '      -r FILE   Readable           -w FILE   Writable'
+    write(u, '(a)') '      -x FILE   Executable         -s FILE   Non-empty'
+    write(u, '(a)') '      -b FILE   Block device       -c FILE   Character device'
+    write(u, '(a)') '      -p FILE   Named pipe         -S FILE   Socket'
+    write(u, '(a)') '      -u FILE   Setuid             -g FILE   Setgid'
+    write(u, '(a)') '      -k FILE   Sticky bit         -O FILE   Owned by you'
+    write(u, '(a)') '      -G FILE   Owned by your group'
+    write(u, '(a)') '      -v VAR    Variable is set'
+    write(u, '(a)') ''
+    write(u, '(a)') '    String tests:'
+    write(u, '(a)') '      -z STR   Empty string        -n STR   Non-empty string'
+    write(u, '(a)') '      S1 = S2  Strings equal       S1 != S2  Strings not equal'
+    write(u, '(a)') '      S1 < S2  Lexicographic less   S1 > S2  Lexicographic greater'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Arithmetic tests:'
+    write(u, '(a)') '      N1 -eq N2   Equal            N1 -ne N2   Not equal'
+    write(u, '(a)') '      N1 -lt N2   Less than        N1 -le N2   Less or equal'
+    write(u, '(a)') '      N1 -gt N2   Greater than     N1 -ge N2   Greater or equal'
+    write(u, '(a)') ''
+    write(u, '(a)') '    File comparison:'
+    write(u, '(a)') '      F1 -nt F2  Newer than        F1 -ot F2  Older than'
+    write(u, '(a)') '      F1 -ef F2  Same file (device and inode)'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Operators: ! (NOT), -a (AND), -o (OR), ( ) grouping.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 if EXPR is true, 1 if false, 2 on syntax error.'
+  end subroutine help_test
+
+  subroutine help_break(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'break: break [n]'
+    write(u, '(a)') '    Exit for, while, or until loops.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit a FOR, WHILE or UNTIL loop. If N is specified, break N'
+    write(u, '(a)') '    enclosing loops.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless N is not greater than or equal to 1.'
+  end subroutine help_break
+
+  subroutine help_continue(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'continue: continue [n]'
+    write(u, '(a)') '    Resume for, while, or until loops.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Resume the next iteration of the enclosing FOR, WHILE or UNTIL'
+    write(u, '(a)') '    loop. If N is specified, resume at the Nth enclosing loop.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless N is not greater than or equal to 1.'
+  end subroutine help_continue
+
+  subroutine help_return(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'return: return [n]'
+    write(u, '(a)') '    Return from a shell function.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Causes a function or sourced script to exit with the return value'
+    write(u, '(a)') '    specified by N. If N is omitted, the return status is that of the'
+    write(u, '(a)') '    last command executed within the function body.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns N, or the last command status if N is not supplied.'
+    write(u, '(a)') '    Returns 2 if called outside a function or sourced script.'
+  end subroutine help_return
+
+  subroutine help_shift(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'shift: shift [n]'
+    write(u, '(a)') '    Shift positional parameters.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Rename the positional parameters $N+1,$N+2 ... to $1,$2 ...'
+    write(u, '(a)') '    If N is not given, it is assumed to be 1.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless N is negative or greater than $#.'
+  end subroutine help_shift
+
+  subroutine help_getopts(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'getopts: getopts optstring name [arg ...]'
+    write(u, '(a)') '    Parse positional parameters.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    OPTSTRING contains the option characters to be recognized; if a'
+    write(u, '(a)') '    character is followed by a colon, the option takes an argument,'
+    write(u, '(a)') '    which is placed in OPTARG.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Each time getopts is invoked, it places the next option in NAME,'
+    write(u, '(a)') '    with OPTIND tracking the index of the next argument. OPTIND is'
+    write(u, '(a)') '    initialized to 1 each time the shell is invoked.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    If OPTSTRING begins with '':'', silent error reporting is used.'
+    write(u, '(a)') '    In this mode, invalid options set NAME to ''?'' with OPTARG set'
+    write(u, '(a)') '    to the invalid character. Missing arguments set NAME to '':'''
+    write(u, '(a)') '    with OPTARG set to the option character.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Bundled options like -abc are supported.'
+    write(u, '(a)') '    If ARGs are given, they are parsed instead of $1, $2, ...'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 if an option is found, 1 when end of options is reached.'
+  end subroutine help_getopts
+
+  subroutine help_let(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'let: let arg [arg ...]'
+    write(u, '(a)') '    Evaluate arithmetic expressions.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Each ARG is an arithmetic expression to be evaluated. If the'
+    write(u, '(a)') '    last ARG evaluates to 0, let returns 1; otherwise 0.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 if the last expression evaluates to a non-zero value,'
+    write(u, '(a)') '    1 if it evaluates to 0.'
+  end subroutine help_let
+
+  subroutine help_exit(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'exit: exit [n]'
+    write(u, '(a)') '    Exit the shell.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exits the shell with a status of N. If N is omitted, the exit'
+    write(u, '(a)') '    status is that of the last command executed.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Before exiting, the EXIT trap is executed and the history file'
+    write(u, '(a)') '    is saved.'
+  end subroutine help_exit
 
 end module builtin_help_texts
