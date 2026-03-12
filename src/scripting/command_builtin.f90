@@ -269,7 +269,7 @@ contains
     logical, intent(in), optional :: silent_errors, v_flag
 
     logical :: found_any, suppress_errors, is_v_flag
-    character(len=MAX_VAR_VALUE_LEN) :: full_path
+    character(len=MAX_PATH_LEN) :: full_path
 
     if (.false.) print *, function_flag  ! Silence unused warning
 
@@ -357,7 +357,7 @@ contains
     character(len=*), intent(in) :: command_name
     logical, intent(in) :: all_flag, silent_flag
 
-    character(len=MAX_VAR_VALUE_LEN) :: full_path
+    character(len=MAX_PATH_LEN) :: full_path
 
     if (.false.) print *, all_flag  ! Silence unused warning
 
@@ -380,13 +380,14 @@ contains
     logical :: found
     
     character(len=4096) :: path_var
-    character(len=MAX_VAR_VALUE_LEN) :: path_component
-    character(len=MAX_VAR_VALUE_LEN) :: candidate_path
+    character(len=:), allocatable :: path_component
+    character(len=MAX_PATH_LEN) :: candidate_buf
+    character(len=:), allocatable :: candidate_path
     integer :: start_pos, end_pos, colon_pos
-    
+
     found = .false.
     full_path = ''
-    
+
     ! If command contains '/', it's an absolute or relative path
     if (index(command_name, '/') > 0) then
       if (is_executable_file(command_name)) then
@@ -395,13 +396,13 @@ contains
       end if
       return
     end if
-    
+
     ! Get PATH variable
     path_var = get_shell_variable(shell, 'PATH')
     if (len_trim(path_var) == 0) then
       path_var = '/usr/bin:/bin'
     end if
-    
+
     ! Search each directory in PATH
     start_pos = 1
     do while (start_pos <= len_trim(path_var))
@@ -411,21 +412,22 @@ contains
       else
         end_pos = start_pos + colon_pos - 2
       end if
-      
+
       path_component = path_var(start_pos:end_pos)
       if (len_trim(path_component) == 0) then
         path_component = '.'
       end if
-      
+
       ! Construct full path
       if (path_component(len_trim(path_component):len_trim(path_component)) == '/') then
-        write(candidate_path, '(a,a)') trim(path_component), trim(command_name)
+        write(candidate_buf, '(a,a)') trim(path_component), trim(command_name)
       else
-        write(candidate_path, '(a,a,a)') trim(path_component), '/', trim(command_name)
+        write(candidate_buf, '(a,a,a)') trim(path_component), '/', trim(command_name)
       end if
-      
+      candidate_path = trim(candidate_buf)
+
       if (is_executable_file(candidate_path)) then
-        full_path = candidate_path
+        full_path = trim(candidate_path)
         found = .true.
         return
       end if
@@ -548,7 +550,9 @@ contains
     character(len=MAX_PATH_LEN) :: full_path
     character(len=:), allocatable :: path_var_alloc
     character(len=4096) :: path_var
-    character(len=MAX_VAR_VALUE_LEN) :: path_component, candidate_path
+    character(len=:), allocatable :: path_component
+    character(len=MAX_PATH_LEN) :: candidate_buf
+    character(len=:), allocatable :: candidate_path
     integer :: start_pos, end_pos, colon_pos
 
     full_path = ''
@@ -590,13 +594,14 @@ contains
 
       ! Construct full path
       if (path_component(len_trim(path_component):len_trim(path_component)) == '/') then
-        write(candidate_path, '(a,a)') trim(path_component), trim(command_name)
+        write(candidate_buf, '(a,a)') trim(path_component), trim(command_name)
       else
-        write(candidate_path, '(a,a,a)') trim(path_component), '/', trim(command_name)
+        write(candidate_buf, '(a,a,a)') trim(path_component), '/', trim(command_name)
       end if
+      candidate_path = trim(candidate_buf)
 
       if (is_executable_file(candidate_path)) then
-        full_path = candidate_path
+        full_path = trim(candidate_path)
         return
       end if
 
