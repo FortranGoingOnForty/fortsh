@@ -2620,7 +2620,7 @@ contains
   subroutine process_source_inline(shell)
     use variables, only: set_shell_variable
     type(shell_state_t), intent(inout) :: shell
-    character(len=MAX_VAR_VALUE_LEN) :: input_line
+    character(len=16384) :: input_line
     integer :: file_unit, iostat, i
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line
