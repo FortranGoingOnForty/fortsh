@@ -23,7 +23,7 @@ module shell_types
   integer, parameter :: MAX_TRAPS = 64
   integer, parameter :: MAX_HASHED_CMDS = 128
   integer, parameter :: MAX_VAR_NAME_LEN = 256
-  integer, parameter :: MAX_VAR_VALUE_LEN = 4096
+  integer, parameter :: MAX_VAR_VALUE_LEN = 1024
   integer, parameter :: MAX_LOCAL_VARS_PER_SCOPE = 64
 
   ! Command separator types
@@ -196,7 +196,7 @@ module shell_types
   ! Simple shell variable entry
   type :: shell_var_t
     character(len=MAX_VAR_NAME_LEN) :: name
-    character(len=MAX_VAR_VALUE_LEN) :: value
+    character(len=:), allocatable :: value  ! heap-allocated, no fixed limit (like bash char*)
     integer :: value_len = 0           ! Actual length of value (preserves trailing spaces)
     logical :: is_array = .false.
     logical :: is_assoc_array = .false.
