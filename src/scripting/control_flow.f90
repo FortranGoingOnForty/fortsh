@@ -1464,7 +1464,7 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable, intent(out) :: output
     type(shell_state_t), intent(inout) :: shell
-    character(len=MAX_VAR_VALUE_LEN) :: result
+    character(len=4096) :: result
     character(len=256) :: var_name
     character(len=:), allocatable :: var_value
     integer :: i, j, var_start
