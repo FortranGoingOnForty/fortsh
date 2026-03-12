@@ -73,6 +73,35 @@ contains
       call help_wait(u)
     case ('coproc')
       call help_coproc(u)
+    ! Shell Features
+    case ('source', '.')
+      call help_source(u)
+    case ('eval')
+      call help_eval(u)
+    case ('exec')
+      call help_exec(u)
+    case ('command')
+      call help_command(u)
+    case ('type')
+      call help_type(u)
+    case ('which')
+      call help_which(u)
+    case ('hash')
+      call help_hash(u)
+    case ('trap')
+      call help_trap(u)
+    case ('history')
+      call help_history(u)
+    case ('fc')
+      call help_fc(u)
+    case ('alias')
+      call help_alias(u)
+    case ('unalias')
+      call help_unalias(u)
+    case ('abbr')
+      call help_abbr(u)
+    case ('config')
+      call help_config(u)
     case default
       found = .false.
     end select
@@ -570,5 +599,260 @@ contains
     write(u, '(a)') '    Exit Status:'
     write(u, '(a)') '    Returns 0 on success, 1 if creation fails.'
   end subroutine help_coproc
+
+  ! --------------------------------------------------------------------------
+  ! Shell Features
+  ! --------------------------------------------------------------------------
+
+  subroutine help_source(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'source: source filename [arguments]'
+    write(u, '(a)') '    Execute commands from a file in the current shell.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Read and execute commands from FILENAME in the current shell'
+    write(u, '(a)') '    environment. If FILENAME does not contain a slash, the PATH is'
+    write(u, '(a)') '    searched for it. The return status is the status of the last'
+    write(u, '(a)') '    command executed, or 0 if no commands are executed.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    ARGUMENTS are made available as positional parameters within'
+    write(u, '(a)') '    the sourced file. The original positional parameters are restored'
+    write(u, '(a)') '    when the sourced file completes. Also available as `.`'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns the status of the last command executed in FILENAME,'
+    write(u, '(a)') '    or 1 if FILENAME is not found or cannot be read.'
+  end subroutine help_source
+
+  subroutine help_eval(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'eval: eval [arg ...]'
+    write(u, '(a)') '    Execute arguments as a shell command.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Combine ARGs into a single string, use the result as input to the'
+    write(u, '(a)') '    shell, and execute the resulting commands.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns the exit status of the executed command, or 0 if no'
+    write(u, '(a)') '    arguments are given.'
+  end subroutine help_eval
+
+  subroutine help_exec(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'exec: exec [-cl] [-a name] [command [arguments ...]]'
+    write(u, '(a)') '    Replace the shell with the given command.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Execute COMMAND, replacing this shell with the specified program.'
+    write(u, '(a)') '    If COMMAND is not specified, any redirections take effect in the'
+    write(u, '(a)') '    current shell.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -c    Execute command with an empty environment'
+    write(u, '(a)') '      -l    Place a dash at the beginning of the zeroth argument (login)'
+    write(u, '(a)') '      -a name  Pass NAME as the zeroth argument to the command'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    If command is found and executed, exec does not return. Returns 1'
+    write(u, '(a)') '    if the command is not found, or 126 if found but not executable.'
+  end subroutine help_exec
+
+  subroutine help_command(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'command: command [-pVv] command [arg ...]'
+    write(u, '(a)') '    Execute a command, bypassing shell functions.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Runs COMMAND with ARGS suppressing shell function lookup.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -p    Use a default PATH search'
+    write(u, '(a)') '      -v    Print a description of COMMAND (short form)'
+    write(u, '(a)') '      -V    Print a verbose description of COMMAND'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns the exit status of COMMAND, or 127 if not found. With -v/-V,'
+    write(u, '(a)') '    returns 0 if found, 1 if not found.'
+  end subroutine help_command
+
+  subroutine help_type(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'type: type [-afptP] name [name ...]'
+    write(u, '(a)') '    Display information about command type.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    For each NAME, indicate how it would be interpreted if used as a'
+    write(u, '(a)') '    command name.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -a    Display all locations containing an executable named NAME'
+    write(u, '(a)') '      -p    Search only PATH (skip builtins, functions, aliases)'
+    write(u, '(a)') '      -P    Same as -p'
+    write(u, '(a)') '      -t    Output a single word: alias, keyword, function, builtin, file'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Search order: keywords, aliases, functions, builtins, PATH.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 if all NAMEs are found, 1 if any are not found.'
+  end subroutine help_type
+
+  subroutine help_which(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'which: which [-as] command [command ...]'
+    write(u, '(a)') '    Locate a command in PATH.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Search PATH for each COMMAND and print the full path of the first'
+    write(u, '(a)') '    match found. Only searches PATH (does not check builtins,'
+    write(u, '(a)') '    functions, or aliases).'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -a    Print all matches in PATH, not just the first'
+    write(u, '(a)') '      -s    Silent mode (no output, only set exit status)'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 if all commands are found, 1 if any are not found.'
+  end subroutine help_which
+
+  subroutine help_hash(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'hash: hash [-r] [-d name] [name ...]'
+    write(u, '(a)') '    Remember or display command locations.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Determine and remember the full pathname of each NAME. If no'
+    write(u, '(a)') '    arguments are given, display information about remembered commands.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -d name  Forget the remembered location of NAME'
+    write(u, '(a)') '      -r       Forget all remembered locations'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless a NAME is not found or an invalid option is given.'
+  end subroutine help_hash
+
+  subroutine help_trap(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'trap: trap [-lp] [[arg] signal_spec ...]'
+    write(u, '(a)') '    Trap signals and other events.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Define and activate handlers to be run when the shell receives'
+    write(u, '(a)') '    signals or other conditions.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -l    List signal names and their corresponding numbers'
+    write(u, '(a)') '      -p    Display the trap commands associated with each SIGNAL_SPEC'
+    write(u, '(a)') ''
+    write(u, '(a)') '    If ARG is the string ''-'' the signal is reset to its original value.'
+    write(u, '(a)') '    If ARG is the string '''' (empty), the signal is ignored.'
+    write(u, '(a)') '    If ARG is omitted and -p given, display existing trap for signal.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Pseudo-signals: EXIT (0), ERR, DEBUG, RETURN.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    With no arguments, prints all traps in reusable format.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless a SIGSPEC is invalid.'
+  end subroutine help_trap
+
+  subroutine help_history(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'history: history [-c] [-d offset] [n]'
+    write(u, '(a)') '    Display or manipulate the history list.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Display the command history with line numbers. HISTORY with an'
+    write(u, '(a)') '    argument of N lists only the last N entries.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -c          Clear the history list'
+    write(u, '(a)') '      -d offset   Delete the history entry at position OFFSET'
+    write(u, '(a)') ''
+    write(u, '(a)') '    History entries are stored in the HISTFILE (default ~/.fortsh_history).'
+    write(u, '(a)') '    HISTSIZE controls the maximum number of entries (default 1000).'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless an invalid option is given.'
+  end subroutine help_history
+
+  subroutine help_fc(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'fc: fc [-e ename] [-lnr] [first] [last] or fc -s [pat=rep] [command]'
+    write(u, '(a)') '    Display or execute commands from the history list.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -e ename  Select which editor to use. Default is FCEDIT, then'
+    write(u, '(a)') '                EDITOR, then vi'
+    write(u, '(a)') '      -l        List lines instead of editing'
+    write(u, '(a)') '      -n        Omit line numbers when listing'
+    write(u, '(a)') '      -r        Reverse the order of the lines'
+    write(u, '(a)') '      -s        Re-execute the command without invoking an editor'
+    write(u, '(a)') ''
+    write(u, '(a)') '    FIRST and LAST select a range of commands. They can be numbers'
+    write(u, '(a)') '    (negative = relative to current) or strings (prefix match).'
+    write(u, '(a)') ''
+    write(u, '(a)') '    With fc -s [old=new], the most recent command starting with'
+    write(u, '(a)') '    COMMAND (or the previous command) is re-executed after substituting'
+    write(u, '(a)') '    OLD with NEW.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns the exit status of the executed command, or 1 on error.'
+  end subroutine help_fc
+
+  subroutine help_alias(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'alias: alias [name[=value] ...]'
+    write(u, '(a)') '    Define or display aliases.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Without arguments, prints the list of aliases in reusable form.'
+    write(u, '(a)') '    For each NAME without a value, prints the alias definition.'
+    write(u, '(a)') '    For each NAME=VALUE, defines an alias.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless a NAME is not an existing alias.'
+  end subroutine help_alias
+
+  subroutine help_unalias(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'unalias: unalias [-a] name [name ...]'
+    write(u, '(a)') '    Remove alias definitions.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Remove each NAME from the list of defined aliases.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -a    Remove all alias definitions'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless a NAME is not an existing alias.'
+  end subroutine help_unalias
+
+  subroutine help_abbr(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'abbr: abbr [-es] [name[=value] ...]'
+    write(u, '(a)') '    Manage abbreviations.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Abbreviations are expanded inline as you type, unlike aliases'
+    write(u, '(a)') '    which are expanded at execution time.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -e, --erase  Erase an abbreviation'
+    write(u, '(a)') '      -s, --show   Show all abbreviations'
+    write(u, '(a)') ''
+    write(u, '(a)') '    With no arguments, shows all abbreviations.'
+    write(u, '(a)') '    With name=value, sets an abbreviation.'
+    write(u, '(a)') '    With name only, shows the expansion for that abbreviation.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 on success, 1 if abbreviation not found.'
+  end subroutine help_abbr
+
+  subroutine help_config(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'config: config [show | create | reload]'
+    write(u, '(a)') '    Manage shell configuration.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Subcommands:'
+    write(u, '(a)') '      show      Display current configuration'
+    write(u, '(a)') '      create    Create default configuration file'
+    write(u, '(a)') '      reload    Reload configuration from disk'
+    write(u, '(a)') ''
+    write(u, '(a)') '    With no arguments, displays the current configuration.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 on success, 1 on invalid subcommand.'
+  end subroutine help_config
 
 end module builtin_help_texts
