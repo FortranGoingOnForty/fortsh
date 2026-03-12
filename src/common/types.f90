@@ -23,7 +23,7 @@ module shell_types
   integer, parameter :: MAX_TRAPS = 64
   integer, parameter :: MAX_HASHED_CMDS = 128
   integer, parameter :: MAX_VAR_NAME_LEN = 256
-  integer, parameter :: MAX_VAR_VALUE_LEN = 1024
+  integer, parameter :: MAX_VAR_VALUE_LEN = 4096
   integer, parameter :: MAX_LOCAL_VARS_PER_SCOPE = 64
 
   ! Command separator types
