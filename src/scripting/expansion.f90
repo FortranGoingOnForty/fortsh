@@ -329,7 +329,7 @@ contains
           if (i == 0 .and. j > 0) then
             ! ${#1}, ${#2}, etc. - return length of specific positional parameter
             if (j <= shell%num_positional) then
-              write(expanded, '(I0)') len_trim(shell%positional_params(j))
+              write(expanded, '(I0)') len_trim(shell%positional_params(j)%str)
             else
               expanded = '0'
             end if

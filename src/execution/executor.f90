@@ -1876,7 +1876,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=MAX_VAR_VALUE_LEN), allocatable :: function_body(:)
-    character(len=MAX_VAR_VALUE_LEN) :: saved_positional_params(50)
+    type(string_t), allocatable :: saved_positional_params(:)
     integer :: saved_num_positional
     integer :: i
     type(pipeline_t) :: pipeline
@@ -1884,7 +1884,12 @@ contains
     logical :: function_returned
 
     ! Save current positional parameters (caller's $1, $2, etc.)
-    saved_positional_params = shell%positional_params
+    if (allocated(shell%positional_params)) then
+      allocate(saved_positional_params(size(shell%positional_params)))
+      do i = 1, size(shell%positional_params)
+        saved_positional_params(i)%str = shell%positional_params(i)%str
+      end do
+    end if
     saved_num_positional = shell%num_positional
 
     ! Enter function scope
@@ -1899,7 +1904,7 @@ contains
     ! cmd%tokens(1) is function name, cmd%tokens(2:) are arguments
     shell%num_positional = cmd%num_tokens - 1
     do i = 1, shell%num_positional
-      shell%positional_params(i) = cmd%tokens(i + 1)
+      shell%positional_params(i)%str = cmd%tokens(i + 1)
     end do
 
     ! Get function body
@@ -1968,7 +1973,12 @@ contains
     shell%function_depth = shell%function_depth - 1
 
     ! Restore caller's positional parameters
-    shell%positional_params = saved_positional_params
+    if (allocated(saved_positional_params)) then
+      do i = 1, size(saved_positional_params)
+        shell%positional_params(i)%str = saved_positional_params(i)%str
+      end do
+      deallocate(saved_positional_params)
+    end if
     shell%num_positional = saved_num_positional
   end subroutine
 

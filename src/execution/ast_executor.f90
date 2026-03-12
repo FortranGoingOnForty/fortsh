@@ -161,7 +161,7 @@ contains
     type(pipeline_t) :: temp_pipeline
     type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: old_params(:)
+    type(string_t), allocatable :: old_params(:)
     character(len=:), allocatable :: expanded_filename
     logical :: redir_success
     logical :: has_redirects, is_pure_assignment
@@ -568,7 +568,12 @@ contains
         old_num_positional = shell%num_positional
         if (allocated(shell%positional_params) .and. old_num_positional > 0) then
           allocate(old_params(old_num_positional))
-          old_params(1:old_num_positional) = shell%positional_params(1:old_num_positional)
+          block
+            integer :: k
+            do k = 1, old_num_positional
+              old_params(k)%str = shell%positional_params(k)%str
+            end do
+          end block
         end if
 
         ! Set new positional parameters from function arguments
@@ -633,7 +638,7 @@ contains
                 shell%positional_params_capacity = shell%num_positional
               end if
               do k = 1, shell%num_positional
-                shell%positional_params(k) = trim(temp_cmd%tokens(k))
+                shell%positional_params(k)%str = trim(temp_cmd%tokens(k))
               end do
             end if
 
@@ -683,7 +688,12 @@ contains
                 shell%num_positional = old_num_positional
                 if (allocated(old_params)) then
                   if (shell%num_positional > 0) then
-                    shell%positional_params(1:old_num_positional) = old_params(1:old_num_positional)
+                    block
+                      integer :: k
+                      do k = 1, old_num_positional
+                        shell%positional_params(k)%str = old_params(k)%str
+                      end do
+                    end block
                   end if
                   deallocate(old_params)
                 end if
@@ -809,7 +819,12 @@ contains
         shell%num_positional = old_num_positional
         if (allocated(old_params)) then
           if (shell%num_positional > 0) then
-            shell%positional_params(1:old_num_positional) = old_params(1:old_num_positional)
+            block
+              integer :: k
+              do k = 1, old_num_positional
+                shell%positional_params(k)%str = old_params(k)%str
+              end do
+            end block
           end if
           deallocate(old_params)
         end if
@@ -1996,7 +2011,7 @@ contains
       do i = 1, shell%num_positional
         if (total_words < MAX_TOKEN_LEN) then
           total_words = total_words + 1
-          expanded_words(total_words) = shell%positional_params(i)
+          expanded_words(total_words) = shell%positional_params(i)%str
         end if
       end do
     else
@@ -2010,7 +2025,7 @@ contains
         do j = 1, shell%num_positional
           if (total_words < MAX_TOKEN_LEN) then
             total_words = total_words + 1
-            expanded_words(total_words) = shell%positional_params(j)
+            expanded_words(total_words) = shell%positional_params(j)%str
           end if
         end do
         cycle  ! Skip normal expansion for this word

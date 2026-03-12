@@ -455,7 +455,7 @@ contains
       ! No 'in' clause - POSIX: iterate over positional parameters ($@)
       final_count = min(shell%num_positional, 100)
       do i = 1, final_count
-        final_items(i) = trim(shell%positional_params(i))
+        final_items(i) = trim(shell%positional_params(i)%str)
       end do
     end if
 

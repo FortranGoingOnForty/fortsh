@@ -304,7 +304,7 @@ contains
     if (is_numeric(trim(name))) then
       i = string_to_int(trim(name))
       if (i >= 1 .and. i <= shell%num_positional) then
-        value = trim(shell%positional_params(i))
+        value = trim(shell%positional_params(i)%str)
         return
       else
         value = ''
@@ -1592,12 +1592,12 @@ contains
     shell%num_positional = actual_count
     
     do i = 1, actual_count
-      shell%positional_params(i) = params(i)
+      shell%positional_params(i)%str = params(i)
     end do
-    
+
     ! Clear any remaining parameters
     do i = actual_count + 1, size(shell%positional_params)
-      shell%positional_params(i) = ''
+      shell%positional_params(i)%str = ''
     end do
   end subroutine
   
@@ -1630,8 +1630,8 @@ contains
         result(pos:pos) = separator
         pos = pos + 1
       end if
-      result(pos:pos+len_trim(shell%positional_params(i))-1) = trim(shell%positional_params(i))
-      pos = pos + len_trim(shell%positional_params(i))
+      result(pos:pos+len_trim(shell%positional_params(i)%str)-1) = trim(shell%positional_params(i)%str)
+      pos = pos + len_trim(shell%positional_params(i)%str)
     end do
   end subroutine
   
@@ -1644,12 +1644,12 @@ contains
     
     ! Shift parameters left
     do i = 1, shell%num_positional - shift_count
-      shell%positional_params(i) = shell%positional_params(i + shift_count)
+      shell%positional_params(i)%str = shell%positional_params(i + shift_count)%str
     end do
-    
+
     ! Clear the shifted parameters
     do i = shell%num_positional - shift_count + 1, shell%num_positional
-      shell%positional_params(i) = ''
+      shell%positional_params(i)%str = ''
     end do
     
     shell%num_positional = shell%num_positional - shift_count

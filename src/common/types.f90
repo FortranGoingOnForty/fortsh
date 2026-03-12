@@ -26,6 +26,11 @@ module shell_types
   integer, parameter :: MAX_VAR_VALUE_LEN = 4096
   integer, parameter :: MAX_LOCAL_VARS_PER_SCOPE = 64
 
+  ! Variable-length string wrapper for allocatable arrays (like bash char*)
+  type :: string_t
+    character(len=:), allocatable :: str
+  end type string_t
+
   ! Command separator types
   integer, parameter :: SEP_NONE = 0
   integer, parameter :: SEP_SEMICOLON = 1    ! ;
@@ -403,7 +408,7 @@ module shell_types
     integer :: ps4_len = 0                     ! Actual length of PS4
     integer :: command_number = 0              ! For \# in prompts
     ! Positional parameters (allocatable to avoid large stack allocation on macOS)
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: positional_params(:) ! $1, $2, ..., $n
+    type(string_t), allocatable :: positional_params(:) ! $1, $2, ..., $n
     integer :: num_positional = 0             ! $# (number of positional parameters)
     integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting

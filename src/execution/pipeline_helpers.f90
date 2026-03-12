@@ -197,8 +197,8 @@ contains
         do j = 1, shell%num_positional
           total_tokens = total_tokens + 1
           if (total_tokens > temp_cap) call grow_temp_arrays()
-          temp_tokens(total_tokens) = trim(shell%positional_params(j))
-          temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j))
+          temp_tokens(total_tokens) = trim(shell%positional_params(j)%str)
+          temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j)%str)
           temp_token_quoted(total_tokens) = .true.  ! Positional params from "$@" are quoted
         end do
         cycle  ! Skip normal token processing

@@ -194,7 +194,7 @@ program fortran_shell
           end if
           do c_idx = 4, num_args
             call get_command_argument(c_idx, c_arg)
-            shell%positional_params(c_idx - 3) = trim(c_arg)
+            shell%positional_params(c_idx - 3)%str = trim(c_arg)
           end do
         end if
       end block
@@ -1009,6 +1009,9 @@ contains
     if (.not. allocated(shell%positional_params)) then
       allocate(shell%positional_params(50))
       shell%positional_params_capacity = 50
+      do i = 1, 50
+        shell%positional_params(i)%str = ''
+      end do
     end if
     if (.not. allocated(shell%local_vars)) then
       allocate(shell%local_vars(MAX_CONTROL_DEPTH, MAX_LOCAL_VARS_PER_SCOPE))

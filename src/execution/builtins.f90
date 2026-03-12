@@ -1152,12 +1152,18 @@ contains
       ! Allocate positional_params if not already allocated
       if (.not. allocated(shell%positional_params)) then
         allocate(shell%positional_params(50))  ! Default size
+        block
+          integer :: k
+          do k = 1, 50
+            shell%positional_params(k)%str = ''
+          end do
+        end block
       end if
 
       do i = 3, cmd%num_tokens
         shell%num_positional = shell%num_positional + 1
         if (shell%num_positional <= size(shell%positional_params)) then
-          shell%positional_params(shell%num_positional) = trim(cmd%tokens(i))
+          shell%positional_params(shell%num_positional)%str = trim(cmd%tokens(i))
         end if
       end do
     end if
