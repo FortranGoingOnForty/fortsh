@@ -58,7 +58,7 @@ module completion
 
   ! Current completion context (set during completion)
   type :: completion_context_t
-    character(len=MAX_VAR_VALUE_LEN) :: comp_line           ! Full command line
+    character(len=:), allocatable :: comp_line              ! Full command line
     integer :: comp_point                      ! Cursor position
     character(len=256) :: comp_words(50)       ! Words in command line
     integer :: comp_cword                      ! Index of word being completed

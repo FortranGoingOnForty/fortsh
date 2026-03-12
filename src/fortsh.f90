@@ -23,6 +23,7 @@ program fortran_shell
   use prompt_formatting
   use command_capture_callback, only: init_command_capture  ! For command substitution
   use builtins, only: init_builtins  ! Initialize builtin function pointers
+  use coprocess, only: init_coprocess_registry
   use version, only: print_version, print_help
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding, only: c_int
@@ -1162,6 +1163,9 @@ contains
     do i = 1, size(shell%control_stack)
       shell%control_stack(i)%condition_cmd = ''
     end do
+
+    ! Initialize coprocess registry (module-level, not part of shell_state_t)
+    call init_coprocess_registry()
 
     ! Initialize functions array
     do i = 1, size(shell%functions)

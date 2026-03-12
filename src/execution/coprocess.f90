@@ -13,7 +13,7 @@ module coprocess
   ! Coprocess type
   type :: coproc_t
     character(len=256) :: name = ''
-    character(len=MAX_VAR_VALUE_LEN) :: command = ''
+    character(len=:), allocatable :: command
     integer(c_pid_t) :: pid = 0
     integer :: read_fd = -1   ! Shell reads from coprocess
     integer :: write_fd = -1  ! Shell writes to coprocess
@@ -101,6 +101,13 @@ module coprocess
   integer, parameter :: SIGKILL = 9
 
 contains
+
+  subroutine init_coprocess_registry()
+    integer :: i
+    do i = 1, size(coprocs)
+      coprocs(i)%command = ''
+    end do
+  end subroutine
 
   ! Start a coprocess with optional name
   function start_coprocess(command, name, interactive) result(coproc_id)
