@@ -1147,6 +1147,12 @@ contains
       shell%jobs(i)%job_id = 0
     end do
 
+    ! Initialize aliases array
+    do i = 1, size(shell%aliases)
+      shell%aliases(i)%name = ''
+      shell%aliases(i)%command = ''
+    end do
+
     ! Initialize functions array
     do i = 1, size(shell%functions)
       shell%functions(i)%name = ''

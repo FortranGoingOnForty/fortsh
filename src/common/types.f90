@@ -212,7 +212,7 @@ module shell_types
   ! Shell alias entry
   type :: shell_alias_t
     character(len=MAX_VAR_NAME_LEN) :: name
-    character(len=MAX_VAR_VALUE_LEN) :: command
+    character(len=:), allocatable :: command
   end type shell_alias_t
 
   ! Control flow block state

@@ -116,7 +116,7 @@ contains
     integer, intent(in) :: num_args
     character(len=2048) :: expanded_command
     
-    character(len=MAX_VAR_VALUE_LEN) :: alias_command
+    character(len=:), allocatable :: alias_command
     character(len=2048) :: work_command
     integer :: pos, param_start, param_end, param_num
     character(len=16) :: param_str
@@ -229,14 +229,16 @@ contains
   subroutine get_alias_command(shell, alias_name, command)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: alias_name
-    character(len=*), intent(out) :: command
-    
+    character(len=:), allocatable, intent(out) :: command
+
     integer :: i
-    
+
     command = ''
     do i = 1, size(shell%aliases)
       if (trim(shell%aliases(i)%name) == trim(alias_name)) then
-        command = shell%aliases(i)%command
+        if (allocated(shell%aliases(i)%command)) then
+          command = shell%aliases(i)%command
+        end if
         return
       end if
     end do
