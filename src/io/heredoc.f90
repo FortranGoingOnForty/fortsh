@@ -17,7 +17,7 @@ module heredoc
     integer :: num_lines
     logical :: expand_variables
     logical :: strip_tabs
-    character(len=1024) :: temp_file
+    character(len=MAX_VAR_VALUE_LEN) :: temp_file
   end type heredoc_t
 
 contains
@@ -151,7 +151,7 @@ contains
     ! Use allocatable array to avoid static storage (was 4MB!)
     character(len=MAX_HEREDOC_LENGTH), allocatable :: doc_lines(:)
     character(len=MAX_HEREDOC_LENGTH) :: line, processed_line
-    character(len=1024) :: temp_file
+    character(len=MAX_VAR_VALUE_LEN) :: temp_file
     integer :: num_lines, i, capacity
     logical :: found_delimiter, actual_expand_vars
     
@@ -340,7 +340,7 @@ contains
     character(len=len(input_string)) :: work_string
     integer :: pos, var_start, var_end
     character(len=256) :: var_name
-    character(len=1024) :: var_value
+    character(len=MAX_VAR_VALUE_LEN) :: var_value
     
     work_string = input_string
     expanded_string = ''

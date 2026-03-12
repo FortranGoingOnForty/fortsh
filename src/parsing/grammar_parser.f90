@@ -24,7 +24,7 @@ module grammar_parser
     integer :: pos = 1
     integer :: current_line = 1  ! Track line number for LINENO
     logical :: has_error = .false.
-    character(len=1024) :: error_msg = ''
+    character(len=MAX_VAR_VALUE_LEN) :: error_msg = ''
     character(len=:), allocatable :: raw_input  ! For heredoc extraction
   end type parser_state_t
 
