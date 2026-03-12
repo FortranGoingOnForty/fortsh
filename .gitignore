@@ -23,3 +23,6 @@ get_crash_info.sh
 install_*.sh
 lldb_interactive.sh
 }_*.txt
+.claude/
+.fackr/
+scratch.sh
