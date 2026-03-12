@@ -1062,7 +1062,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=MAX_VAR_VALUE_LEN) :: filename, path_var, dir, candidate
+    character(len=:), allocatable :: filename, path_var, dir, candidate
     character(len=:), allocatable :: path_str
     logical :: file_exists, found_in_path
     integer :: i, path_start, path_end, path_len
@@ -1567,7 +1567,7 @@ contains
   subroutine builtin_trap(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=MAX_VAR_VALUE_LEN) :: action
+    character(len=:), allocatable :: action
     character(len=256) :: signal_spec
     integer :: i, j, k, signum
     logical :: list_mode, remove_mode
@@ -1715,7 +1715,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i
     character(len=256) :: alias_name, alias_command
-    character(len=MAX_VAR_VALUE_LEN) :: full_arg
+    character(len=:), allocatable :: full_arg
 
     if (cmd%num_tokens == 1) then
       ! Show all aliases
@@ -2142,7 +2142,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=MAX_VAR_VALUE_LEN) :: function_body(1)
+    character(len=:), allocatable :: function_body
     character(len=256) :: func_name
     integer :: i
 
@@ -2156,24 +2156,24 @@ contains
 
     ! Reconstruct the function body from all remaining tokens
     ! This handles cases where the parser split the quoted string
-    function_body(1) = trim(cmd%tokens(3))
+    function_body = trim(cmd%tokens(3))
     do i = 4, cmd%num_tokens
-      function_body(1) = trim(function_body(1)) // ' ' // trim(cmd%tokens(i))
+      function_body = trim(function_body) // ' ' // trim(cmd%tokens(i))
     end do
 
     ! Strip quotes from function body
-    if (len_trim(function_body(1)) >= 2) then
-      if (function_body(1)(1:1) == '"' .or. function_body(1)(1:1) == "'") then
+    if (len(function_body) >= 2) then
+      if (function_body(1:1) == '"' .or. function_body(1:1) == "'") then
         ! Check if last character is also a quote
-        if (function_body(1)(len_trim(function_body(1)):len_trim(function_body(1))) == '"' .or. &
-            function_body(1)(len_trim(function_body(1)):len_trim(function_body(1))) == "'") then
+        if (function_body(len(function_body):len(function_body)) == '"' .or. &
+            function_body(len(function_body):len(function_body)) == "'") then
           ! Remove first and last character (quotes)
-          function_body(1) = function_body(1)(2:len_trim(function_body(1))-1)
+          function_body = function_body(2:len(function_body)-1)
         end if
       end if
     end if
 
-    call add_function(shell, func_name, function_body, 1)
+    call add_function(shell, func_name, [function_body], 1)
     shell%last_exit_status = 0
   end subroutine
 
@@ -2270,21 +2270,21 @@ contains
     type(shell_state_t), intent(inout) :: shell
     
     integer :: timeout_seconds, i
-    character(len=MAX_VAR_VALUE_LEN) :: command
-    
+    character(len=:), allocatable :: command
+
     if (cmd%num_tokens < 3) then
       write(error_unit, '(a)') 'timeout: usage: timeout DURATION COMMAND...'
       shell%last_exit_status = 1
       return
     end if
-    
+
     read(cmd%tokens(2), *, iostat=i) timeout_seconds
     if (i /= 0 .or. timeout_seconds <= 0) then
       write(error_unit, '(a)') 'timeout: invalid duration'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Reconstruct command from remaining tokens
     command = ''
     do i = 3, cmd%num_tokens
@@ -2305,7 +2305,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: command_name
-    character(len=MAX_VAR_VALUE_LEN) :: full_path
+    character(len=:), allocatable :: full_path
     integer :: i
     logical :: any_not_found
 
@@ -2329,6 +2329,7 @@ contains
         write(output_unit, '(a)') trim(command_name) // ' is a function'
       else
         ! Try to find in PATH
+        allocate(character(len=MAX_VAR_VALUE_LEN) :: full_path)
         if (find_executable_in_path(shell, command_name, full_path)) then
           write(output_unit, '(a)') trim(command_name) // ' is ' // trim(full_path)
         else
@@ -2620,7 +2621,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, eq_pos, depth, var_index, fi, start_arg
     character(len=256) :: var_name
-    character(len=MAX_VAR_VALUE_LEN) :: var_value
+    character(len=:), allocatable :: var_value
     logical :: integer_flag, readonly_flag, array_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
 
@@ -2720,11 +2721,10 @@ contains
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
-            character(len=MAX_VAR_VALUE_LEN) :: arith_expr, arith_result
+            character(len=:), allocatable :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
-            arith_result = &
-              arithmetic_expansion_shell( &
-                trim(arith_expr), shell)
+            arith_result = trim(arithmetic_expansion_shell( &
+                trim(arith_expr), shell))
             var_value = arith_result
           end block
         end if
@@ -3671,7 +3671,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, iostat
-    character(len=MAX_VAR_VALUE_LEN) :: expr, arith_expr, result_str
+    character(len=:), allocatable :: expr, arith_expr, result_str
     integer(kind=8) :: result_val
 
     ! Default to success
@@ -3713,7 +3713,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=256) :: var_name
-    character(len=MAX_VAR_VALUE_LEN) :: var_value
+    character(len=:), allocatable :: var_value
     logical :: readonly_flag, export_flag, print_mode, print_funcs
     logical :: array_flag, assoc_array_flag, found, integer_flag, global_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
@@ -3906,10 +3906,10 @@ contains
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
-            character(len=MAX_VAR_VALUE_LEN) :: arith_expr, arith_result
+            character(len=:), allocatable :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
-            arith_result = &
-              arithmetic_expansion_shell(trim(arith_expr), shell)
+            arith_result = trim(arithmetic_expansion_shell( &
+              trim(arith_expr), shell))
             var_value = arith_result
           end block
         end if
@@ -4108,10 +4108,14 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical :: list_mode, no_line_numbers, reverse_order, subst_mode
     character(len=:), allocatable :: editor, old_str, new_str
-    character(len=MAX_VAR_VALUE_LEN) :: line, tmpfile, edit_cmd
+    character(len=:), allocatable :: line, tmpfile, edit_cmd
+    character(len=40) :: fmt_buf
     integer :: first, last, i, arg_idx, iostat, tmp_unit
     integer :: eq_pos, history_count
     logical :: found
+
+    ! Pre-allocate line for intent(out) calls and Fortran read
+    allocate(character(len=MAX_VAR_VALUE_LEN) :: line)
 
     ! Initialize flags
     list_mode = .false.
@@ -4329,7 +4333,8 @@ contains
     end if
 
     ! Create temporary file with commands to edit
-    write(tmpfile, '(a,i15)') '/tmp/fortsh_fc_', c_getpid()
+    write(fmt_buf, '(a,i15)') '/tmp/fortsh_fc_', c_getpid()
+    tmpfile = trim(adjustl(fmt_buf))
 
     open(newunit=tmp_unit, file=trim(tmpfile), status='replace', action='write', iostat=iostat)
     if (iostat /= 0) then
@@ -4348,7 +4353,7 @@ contains
     close(tmp_unit)
 
     ! Launch editor
-    write(edit_cmd, '(a,1x,a)') trim(editor), trim(tmpfile)
+    edit_cmd = trim(editor) // ' ' // trim(tmpfile)
     i = c_system(trim(edit_cmd) // c_null_char)
 
     ! Read back edited commands and execute them
@@ -4380,11 +4385,12 @@ contains
   function find_history_by_prefix(prefix) result(hist_index)
     character(len=*), intent(in) :: prefix
     integer :: hist_index
-    character(len=MAX_VAR_VALUE_LEN) :: line
+    character(len=:), allocatable :: line
     logical :: found
     integer :: i, count, pos
 
     count = get_history_count()
+    allocate(character(len=MAX_VAR_VALUE_LEN) :: line)
 
     ! Search backwards from most recent
     do i = count, 1, -1
@@ -4903,7 +4909,7 @@ contains
   ! Execute EXIT trap inline (to avoid circular dependency with executor module)
   subroutine execute_exit_trap_inline(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=MAX_VAR_VALUE_LEN) :: trap_cmd
+    character(len=:), allocatable :: trap_cmd
     integer :: saved_status
     type(pipeline_t) :: trap_pipeline
     integer :: i
