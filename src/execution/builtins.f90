@@ -2329,7 +2329,7 @@ contains
         write(output_unit, '(a)') trim(command_name) // ' is a function'
       else
         ! Try to find in PATH
-        allocate(character(len=MAX_VAR_VALUE_LEN) :: full_path)
+        allocate(character(len=MAX_PATH_LEN) :: full_path)
         if (find_executable_in_path(shell, command_name, full_path)) then
           write(output_unit, '(a)') trim(command_name) // ' is ' // trim(full_path)
         else
