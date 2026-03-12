@@ -189,8 +189,8 @@ module shell_types
 
   ! Associative array entry
   type :: assoc_array_entry_t
-    character(len=256) :: key
-    character(len=1024) :: value
+    character(len=MAX_VAR_NAME_LEN) :: key
+    character(len=MAX_VAR_VALUE_LEN) :: value
   end type assoc_array_entry_t
 
   ! Simple shell variable entry
@@ -226,10 +226,10 @@ module shell_types
     character(len=MAX_TOKEN_LEN), allocatable :: for_values(:)  ! parsed for-loop values
     integer :: for_index = 0         ! current index in for loop
     integer :: for_count = 0         ! total count of for loop values
-    character(len=1024) :: condition_cmd = ''  ! while condition command (must match control_flow usage)
+    character(len=MAX_VAR_VALUE_LEN) :: condition_cmd = ''  ! while condition command (must match control_flow usage)
     integer :: loop_start_line = 0   ! for loop replay
     ! Loop body buffering for proper iteration
-    character(len=1024), allocatable :: loop_body(:)  ! commands in loop body
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: loop_body(:)  ! commands in loop body
     integer :: loop_body_count = 0   ! number of commands in loop body
     logical :: capturing_loop_body = .false.  ! currently capturing commands
     integer :: capture_nesting_depth = 0  ! track nested loops during capture
@@ -317,7 +317,7 @@ module shell_types
     type(shell_trap_t) :: traps(MAX_TRAPS)
     integer :: num_traps = 0
     ! Pending trap execution (to avoid circular dependency in signal_handling)
-    character(len=1024) :: pending_trap_command = ''
+    character(len=MAX_VAR_VALUE_LEN) :: pending_trap_command = ''
     integer :: pending_trap_signal = 0
     logical :: executing_trap = .false.  ! Prevent recursive trap execution
     logical :: exit_trap_executed = .false.  ! Track if EXIT trap has been executed
@@ -387,7 +387,7 @@ module shell_types
     integer(c_pid_t) :: last_bg_pid = 0        ! $! (last background process)
     character(len=256) :: shell_name = 'fortsh' ! $0 (shell name)
     integer(c_pid_t) :: parent_pid = 0         ! $PPID (parent process ID)
-    character(len=1024) :: last_arg = ''       ! $_ (last argument of previous command)
+    character(len=MAX_VAR_VALUE_LEN) :: last_arg = ''       ! $_ (last argument of previous command)
     integer :: uid = 0                         ! $UID (user ID)
     integer :: euid = 0                        ! $EUID (effective user ID)
     integer :: shell_start_time = 0            ! For $SECONDS
@@ -395,7 +395,7 @@ module shell_types
     character(len=MAX_PATH_LEN) :: oldpwd = '' ! $OLDPWD (previous working directory)
     logical :: is_login_shell = .false.        ! Started as login shell
     ! Prompt strings
-    character(len=1024) :: ps1 = '%F{green}\u@\h%f :: %F{blue}\w%f\n> ' ! 2-line prompt with zsh colors
+    character(len=MAX_VAR_VALUE_LEN) :: ps1 = '%F{green}\u@\h%f :: %F{blue}\w%f\n> ' ! 2-line prompt with zsh colors
     integer :: ps1_len = 0                     ! Actual length of PS1 (preserves trailing spaces)
     character(len=256) :: ps2 = '> '              ! Continuation prompt
     integer :: ps2_len = 0                     ! Actual length of PS2
@@ -405,7 +405,7 @@ module shell_types
     integer :: ps4_len = 0                     ! Actual length of PS4
     integer :: command_number = 0              ! For \# in prompts
     ! Positional parameters (allocatable to avoid large stack allocation on macOS)
-    character(len=1024), allocatable :: positional_params(:) ! $1, $2, ..., $n
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: positional_params(:) ! $1, $2, ..., $n
     integer :: num_positional = 0             ! $# (number of positional parameters)
     integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting
@@ -444,7 +444,7 @@ module shell_types
     logical :: has_pending_heredoc = .false.
 
     ! Current command being executed (for job descriptions)
-    character(len=1024) :: current_command = ''
+    character(len=MAX_VAR_VALUE_LEN) :: current_command = ''
   end type shell_state_t
 
 end module shell_types
