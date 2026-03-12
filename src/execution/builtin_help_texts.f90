@@ -119,6 +119,34 @@ contains
       call help_let(u)
     case ('exit')
       call help_exit(u)
+    ! System & Completion
+    case ('umask')
+      call help_umask(u)
+    case ('ulimit')
+      call help_ulimit(u)
+    case ('times')
+      call help_times(u)
+    case ('complete')
+      call help_complete(u)
+    case ('compgen')
+      call help_compgen(u)
+    ! Utilities
+    case ('perf')
+      call help_perf(u)
+    case ('memory')
+      call help_memory(u)
+    case ('defun')
+      call help_defun(u)
+    case ('timeout')
+      call help_timeout(u)
+    case ('help')
+      call help_help(u)
+    case ('true')
+      call help_true(u)
+    case ('false')
+      call help_false(u)
+    case (':')
+      call help_colon(u)
     case default
       found = .false.
     end select
@@ -1015,5 +1043,225 @@ contains
     write(u, '(a)') '    Before exiting, the EXIT trap is executed and the history file'
     write(u, '(a)') '    is saved.'
   end subroutine help_exit
+
+  ! --------------------------------------------------------------------------
+  ! System & Completion
+  ! --------------------------------------------------------------------------
+
+  subroutine help_umask(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'umask: umask [-p] [-S] [mode]'
+    write(u, '(a)') '    Display or set the file mode creation mask.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Sets the file mode creation mask to MODE. If MODE is omitted,'
+    write(u, '(a)') '    prints the current value of the mask.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -p    Print in a form that may be reused as input'
+    write(u, '(a)') '      -S    Print using symbolic notation (u=rwx,g=rx,o=rx)'
+    write(u, '(a)') ''
+    write(u, '(a)') '    MODE is an octal number from 0 to 0777.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless MODE is invalid.'
+  end subroutine help_umask
+
+  subroutine help_ulimit(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'ulimit: ulimit [-SHa] [-cdfklmnstuvx [limit]]'
+    write(u, '(a)') '    Modify shell resource limits.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Provides control over process resource limits.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -S    Use the soft limit (default)'
+    write(u, '(a)') '      -H    Use the hard limit'
+    write(u, '(a)') '      -a    Show all current limits'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Resources:'
+    write(u, '(a)') '      -c    Core file size (blocks)'
+    write(u, '(a)') '      -d    Data segment size (kbytes)'
+    write(u, '(a)') '      -f    File size (blocks, default)'
+    write(u, '(a)') '      -l    Max locked memory (kbytes)'
+    write(u, '(a)') '      -m    Max memory size (kbytes)'
+    write(u, '(a)') '      -n    Open files'
+    write(u, '(a)') '      -s    Stack size (kbytes)'
+    write(u, '(a)') '      -t    CPU time (seconds)'
+    write(u, '(a)') '      -u    Max user processes'
+    write(u, '(a)') '      -v    Virtual memory (kbytes)'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Use "unlimited" to remove a limit.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless an invalid option or error occurs.'
+  end subroutine help_ulimit
+
+  subroutine help_times(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'times: times'
+    write(u, '(a)') '    Display process times.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Prints the accumulated user and system times for the shell and'
+    write(u, '(a)') '    for all processes run from the shell.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Output format:'
+    write(u, '(a)') '      Line 1: Shell user time and system time'
+    write(u, '(a)') '      Line 2: Children user time and system time'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0.'
+  end subroutine help_times
+
+  subroutine help_complete(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'complete: complete [-pr] [-A action] [-F func] [-W words] ' // &
+                     '[-o opt] [-P prefix] [-S suffix] [-X pattern] [name ...]'
+    write(u, '(a)') '    Specify how arguments are to be completed.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    For each NAME, specify how arguments are to be completed.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -r          Remove completion specifications for NAMEs'
+    write(u, '(a)') '      -p          Print existing completion specifications'
+    write(u, '(a)') '      -A action   Use ACTION to generate completions'
+    write(u, '(a)') '                  (alias, command, directory, file, function,'
+    write(u, '(a)') '                  hostname, variable, user, group, export, keyword,'
+    write(u, '(a)') '                  builtin, service)'
+    write(u, '(a)') '      -F func     Call FUNC for completions'
+    write(u, '(a)') '      -W words    Split WORDS and generate completions from them'
+    write(u, '(a)') '      -o opt      Completion option (default, dirnames, filenames,'
+    write(u, '(a)') '                  nospace, plusdirs, nosort)'
+    write(u, '(a)') '      -P prefix   Add PREFIX to each completion'
+    write(u, '(a)') '      -S suffix   Add SUFFIX to each completion'
+    write(u, '(a)') '      -X pattern  Exclude completions matching PATTERN'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless an invalid option is given.'
+  end subroutine help_complete
+
+  subroutine help_compgen(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'compgen: compgen -W wordlist [prefix]'
+    write(u, '(a)') '    Generate completion matches.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Generate possible completion matches for PREFIX according to the'
+    write(u, '(a)') '    given options. Matches are printed one per line.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -W wordlist  Use WORDLIST as the source of completions'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 if matches are generated, 1 otherwise.'
+  end subroutine help_compgen
+
+  ! --------------------------------------------------------------------------
+  ! Utilities
+  ! --------------------------------------------------------------------------
+
+  subroutine help_perf(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'perf: perf [on | off | stats | reset]'
+    write(u, '(a)') '    Performance monitoring.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Control and display shell performance statistics.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Subcommands:'
+    write(u, '(a)') '      on      Enable performance monitoring'
+    write(u, '(a)') '      off     Disable performance monitoring'
+    write(u, '(a)') '      stats   Display detailed performance statistics'
+    write(u, '(a)') '      reset   Reset all performance counters'
+    write(u, '(a)') ''
+    write(u, '(a)') '    With no arguments, displays current status and basic stats.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 on success, 1 on invalid subcommand.'
+  end subroutine help_perf
+
+  subroutine help_memory(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'memory: memory [optimize | stats | auto]'
+    write(u, '(a)') '    Memory pool management.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Display and manage the shell''s internal memory pools.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Subcommands:'
+    write(u, '(a)') '      optimize  Optimize memory pools'
+    write(u, '(a)') '      stats     Display detailed pool statistics'
+    write(u, '(a)') '      auto      Trigger automatic memory optimization'
+    write(u, '(a)') ''
+    write(u, '(a)') '    With no arguments, displays memory usage summary including'
+    write(u, '(a)') '    current/peak allocations and memory used.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 on success, 1 on invalid subcommand.'
+  end subroutine help_memory
+
+  subroutine help_defun(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'defun: defun name "body"'
+    write(u, '(a)') '    Define a function in one line.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Creates a shell function NAME with the given BODY.'
+    write(u, '(a)') '    Surrounding quotes are stripped from the body.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Example:'
+    write(u, '(a)') '      defun greet "echo Hello, $1!"'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 on success, 1 on usage error.'
+  end subroutine help_defun
+
+  subroutine help_timeout(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'timeout: timeout DURATION COMMAND [args]'
+    write(u, '(a)') '    Run a command with a time limit.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Start COMMAND, and kill it if still running after DURATION seconds.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns the exit status of COMMAND, or 1 on error.'
+  end subroutine help_timeout
+
+  subroutine help_help(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'help: help [builtin]'
+    write(u, '(a)') '    Display information about builtin commands.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Displays brief summaries of builtin commands. If BUILTIN is'
+    write(u, '(a)') '    specified, gives detailed help for that builtin.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless BUILTIN is not a shell builtin.'
+  end subroutine help_help
+
+  subroutine help_true(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'true: true'
+    write(u, '(a)') '    Return a successful result.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Always succeeds (returns 0).'
+  end subroutine help_true
+
+  subroutine help_false(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'false: false'
+    write(u, '(a)') '    Return an unsuccessful result.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Always fails (returns 1).'
+  end subroutine help_false
+
+  subroutine help_colon(u)
+    integer, intent(in) :: u
+    write(u, '(a)') ':: :'
+    write(u, '(a)') '    Null command.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    No effect; the command does nothing. Arguments are expanded'
+    write(u, '(a)') '    and redirections are performed, but nothing else happens.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Always succeeds (returns 0).'
+  end subroutine help_colon
 
 end module builtin_help_texts
