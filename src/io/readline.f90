@@ -4194,6 +4194,11 @@ contains
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
 
+      ! Recompute autosuggestion for the completed buffer — without this,
+      ! the stale suggestion from before tab (e.g. "tsh" for "fort" → "fortsh")
+      ! persists and renders as ghost text after the completed word.
+      call update_autosuggestion(input_state)
+
       if (tab_num_completions > 1) then
         if (tab_made_progress) then
           input_state%completions_shown = .false.
