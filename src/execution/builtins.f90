@@ -4115,7 +4115,7 @@ contains
     logical :: found
 
     ! Pre-allocate line for intent(out) calls and Fortran read
-    allocate(character(len=MAX_VAR_VALUE_LEN) :: line)
+    allocate(character(len=4096) :: line)
 
     ! Initialize flags
     list_mode = .false.
@@ -4390,7 +4390,7 @@ contains
     integer :: i, count, pos
 
     count = get_history_count()
-    allocate(character(len=MAX_VAR_VALUE_LEN) :: line)
+    allocate(character(len=4096) :: line)
 
     ! Search backwards from most recent
     do i = count, 1, -1
