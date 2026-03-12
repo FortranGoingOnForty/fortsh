@@ -12,11 +12,11 @@ module directory_builtin
   integer, parameter :: MAX_DIR_STACK = 32
   
   type :: dir_stack_t
-    character(len=MAX_VAR_VALUE_LEN) :: directories(MAX_DIR_STACK)
+    character(len=MAX_PATH_LEN) :: directories(MAX_DIR_STACK)
     integer :: top
   end type
 
-  type(dir_stack_t), save :: dir_stack = dir_stack_t(directories=repeat(' ', 1024), top=0)
+  type(dir_stack_t), save :: dir_stack = dir_stack_t(directories=repeat(' ', MAX_PATH_LEN), top=0)
 
   interface
     function chdir_c(path) bind(c, name='chdir') result(status)
