@@ -780,13 +780,37 @@ contains
           tokens(num_tokens)%end_pos = i - 1
           tokens(num_tokens)%token_type = HTOK_REDIRECT
 
-        case('(', ')')
+        case('(')
+          if (next_ch == '(') then
+            ! (( ... )) arithmetic context — consume as single token
+            i = i + 2  ! skip ((
+            do while (i <= input_len)
+              if (i + 1 <= input_len .and. input(i:i) == ')' .and. input(i+1:i+1) == ')') then
+                i = i + 2  ! skip ))
+                exit
+              end if
+              i = i + 1
+            end do
+            num_tokens = num_tokens + 1
+            tokens(num_tokens)%start_pos = tok_start
+            tokens(num_tokens)%end_pos = i - 1
+            tokens(num_tokens)%token_type = HTOK_NUMBER  ! arithmetic expression
+            in_cmd_pos = .true.  ! do/command follows ))
+          else
+            i = i + 1
+            num_tokens = num_tokens + 1
+            tokens(num_tokens)%start_pos = tok_start
+            tokens(num_tokens)%end_pos = i - 1
+            tokens(num_tokens)%token_type = HTOK_OPERATOR
+            in_cmd_pos = .true.
+          end if
+
+        case(')')
           i = i + 1
           num_tokens = num_tokens + 1
           tokens(num_tokens)%start_pos = tok_start
           tokens(num_tokens)%end_pos = i - 1
           tokens(num_tokens)%token_type = HTOK_OPERATOR
-          if (ch == '(') in_cmd_pos = .true.
 
         end select
         cycle
@@ -844,15 +868,16 @@ contains
       end if
 
       ! Classify the word
-      if (in_cmd_pos) then
-        if (is_keyword_for_highlight(input(tok_start:), wlen)) then
-          tokens(num_tokens)%token_type = HTOK_KEYWORD
-          if (keyword_starts_command(input(tok_start:), wlen)) then
-            in_cmd_pos = .true.
-          else
-            in_cmd_pos = .false.
-          end if
-        else if (is_builtin_v2(input(tok_start:), wlen)) then
+      ! Keywords are structural — recognize them regardless of command position
+      if (is_keyword_for_highlight(input(tok_start:), wlen)) then
+        tokens(num_tokens)%token_type = HTOK_KEYWORD
+        if (keyword_starts_command(input(tok_start:), wlen)) then
+          in_cmd_pos = .true.
+        else
+          in_cmd_pos = .false.
+        end if
+      else if (in_cmd_pos) then
+        if (is_builtin_v2(input(tok_start:), wlen)) then
           tokens(num_tokens)%token_type = HTOK_BUILTIN
           in_cmd_pos = .false.
         else if (is_valid_command(input(tok_start:tok_start+wlen-1))) then
