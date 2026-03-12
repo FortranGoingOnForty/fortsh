@@ -161,7 +161,7 @@ contains
     type(pipeline_t) :: temp_pipeline
     type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
-    character(len=1024), allocatable :: old_params(:)
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: old_params(:)
     character(len=:), allocatable :: expanded_filename
     logical :: redir_success
     logical :: has_redirects, is_pure_assignment
@@ -399,7 +399,7 @@ contains
                 ! Preserve whitespace in value by passing explicit length
                 ! Strip sentinel characters that may be embedded
                 block
-                  character(len=1024) :: clean_value
+                  character(len=MAX_VAR_VALUE_LEN) :: clean_value
                   integer :: src_i, dst_i
                   logical :: is_int_var
                   clean_value = ''
@@ -429,7 +429,7 @@ contains
                     block
                       use expansion, only: &
                         arithmetic_expansion_shell
-                      character(len=1024) :: ae, ar
+                      character(len=MAX_VAR_VALUE_LEN) :: ae, ar
                       ae = '$((' // &
                         clean_value(1:dst_i-1) // '))'
                       ar = arithmetic_expansion_shell( &
@@ -1255,7 +1255,7 @@ contains
       ! Background pipeline: add job, don't wait
       block
         integer :: job_id
-        character(len=1024) :: job_command
+        character(len=MAX_VAR_VALUE_LEN) :: job_command
         job_command = ''
         ! Reconstruct command string from pipeline words
         do i = 1, node%pipeline%num_commands
@@ -1373,7 +1373,7 @@ contains
     integer :: exit_status, left_status
     integer(c_pid_t) :: pid
     integer :: status
-    character(len=1024) :: job_command, job_command2
+    character(len=MAX_VAR_VALUE_LEN) :: job_command, job_command2
     integer :: i, j
 
     exit_status = 0
@@ -2943,7 +2943,7 @@ contains
                       needs_compound_continuation, remove_line_continuations
     type(shell_state_t), intent(inout) :: shell
     character(len=16384) :: input_line
-    character(len=1024) :: continuation_line
+    character(len=MAX_VAR_VALUE_LEN) :: continuation_line
     integer :: file_unit, iostat
     type(command_node_t), pointer :: ast_root
     integer :: exit_code

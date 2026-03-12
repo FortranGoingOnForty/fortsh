@@ -754,7 +754,7 @@ contains
           logical :: cmd_found
           integer :: ii
           character(len=4096) :: path_var, candidate
-          character(len=1024) :: path_dir
+          character(len=MAX_VAR_VALUE_LEN) :: path_dir
           integer :: spos, cpos
 
           ! Inline PATH search to avoid command_builtin dependency
@@ -845,7 +845,7 @@ contains
     character(len=:), allocatable :: content_to_write, expanded_content
     logical :: has_redirects, has_heredoc
     ! Prefix assignment handling
-    character(len=1024) :: saved_var_names(10), saved_var_values(10)
+    character(len=MAX_VAR_VALUE_LEN) :: saved_var_names(10), saved_var_values(10)
     integer :: num_saved_vars, eq_pos, j
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: var_was_set(10)
@@ -1081,7 +1081,7 @@ contains
     use expansion, only: arithmetic_expansion_shell
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: expr, result_str
+    character(len=MAX_VAR_VALUE_LEN) :: expr, result_str
     character(len=:), allocatable :: arith_expr
     integer(kind=8) :: result_val
     integer :: iostat
@@ -1361,7 +1361,7 @@ contains
           if (is_int_var .and. actual_value_len > 0) then
             block
               use expansion, only: arithmetic_expansion_shell
-              character(len=1024) :: arith_expr, arith_result
+              character(len=MAX_VAR_VALUE_LEN) :: arith_expr, arith_result
               arith_expr = '$((' // &
                 var_value(:actual_value_len) // '))'
               arith_result = &
@@ -1875,8 +1875,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024), allocatable :: function_body(:)
-    character(len=1024) :: saved_positional_params(50)
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: function_body(:)
+    character(len=MAX_VAR_VALUE_LEN) :: saved_positional_params(50)
     integer :: saved_num_positional
     integer :: i
     type(pipeline_t) :: pipeline
@@ -2260,7 +2260,7 @@ contains
     logical :: saved_bypass
 
     ! Save the trap command and signal before clearing
-    character(len=1024) :: trap_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: trap_cmd
     trap_cmd = shell%pending_trap_command
 
     ! Save current exit status (traps don't affect $?)
@@ -2295,7 +2295,7 @@ contains
   subroutine execute_inline_then_commands(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: remainder_cmd
+    character(len=MAX_VAR_VALUE_LEN) :: remainder_cmd
     type(pipeline_t) :: inline_pipeline
     integer :: i
 
@@ -2487,7 +2487,7 @@ contains
     character(len=256) :: func_name
     character(len=2048) :: reconstructed
     ! Reduced from 100 to 50 lines to avoid static storage
-    character(len=1024) :: func_body(50)
+    character(len=MAX_VAR_VALUE_LEN) :: func_body(50)
     integer :: body_count, brace_start, brace_end, paren_pos
 
     is_func_def = .false.
@@ -2620,7 +2620,7 @@ contains
   subroutine process_source_inline(shell)
     use variables, only: set_shell_variable
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line
+    character(len=MAX_VAR_VALUE_LEN) :: input_line
     integer :: file_unit, iostat, i
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line
@@ -2775,7 +2775,7 @@ contains
     block
       character(len=:), allocatable :: path_alloc
       character(len=4096) :: path_var
-      character(len=1024) :: path_comp, candidate
+      character(len=MAX_VAR_VALUE_LEN) :: path_comp, candidate
       integer :: spos, epos, cpos
       character(kind=c_char), target :: c_path(1025)
       integer :: ci, acc_status

@@ -13,7 +13,7 @@ module coprocess
   ! Coprocess type
   type :: coproc_t
     character(len=256) :: name = ''
-    character(len=1024) :: command = ''
+    character(len=MAX_VAR_VALUE_LEN) :: command = ''
     integer(c_pid_t) :: pid = 0
     integer :: read_fd = -1   ! Shell reads from coprocess
     integer :: write_fd = -1  ! Shell writes to coprocess
