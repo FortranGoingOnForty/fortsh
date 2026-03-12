@@ -38,7 +38,7 @@ contains
   ! Replace $HOME prefix with ~ for display
   function tilde_abbreviate(path) result(abbreviated)
     character(len=*), intent(in) :: path
-    character(len=MAX_VAR_VALUE_LEN) :: abbreviated
+    character(len=MAX_PATH_LEN) :: abbreviated
     character(len=:), allocatable :: home_dir
     character(len=MAX_PATH_LEN) :: home_buf
     integer :: home_len, path_len
@@ -66,7 +66,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=:), allocatable :: new_dir
-    character(len=MAX_VAR_VALUE_LEN) :: current_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     integer :: arg_index, status
     logical :: no_change, swap_top
     
@@ -179,7 +179,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=:), allocatable :: new_dir
-    character(len=MAX_VAR_VALUE_LEN) :: current_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     integer :: arg_index, status, n
     logical :: no_change
     character(len=16) :: n_str
@@ -315,7 +315,7 @@ contains
 
   subroutine print_directory_stack(long_fmt)
     logical, intent(in), optional :: long_fmt
-    character(len=MAX_VAR_VALUE_LEN) :: current_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     character(len=:), allocatable :: display_dir
     integer :: i, status
     logical :: use_long
@@ -348,7 +348,7 @@ contains
 
   subroutine print_directory_stack_lines(long_fmt)
     logical, intent(in), optional :: long_fmt
-    character(len=MAX_VAR_VALUE_LEN) :: current_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     character(len=:), allocatable :: display_dir
     integer :: i, status
     logical :: use_long
@@ -379,7 +379,7 @@ contains
   end subroutine
 
   subroutine print_directory_stack_verbose()
-    character(len=MAX_VAR_VALUE_LEN) :: current_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     integer :: i, status
 
     call get_current_dir(current_dir, status)
