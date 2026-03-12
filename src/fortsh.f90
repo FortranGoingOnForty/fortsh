@@ -1158,6 +1158,11 @@ contains
       shell%traps(i)%command = ''
     end do
 
+    ! Initialize control stack
+    do i = 1, size(shell%control_stack)
+      shell%control_stack(i)%condition_cmd = ''
+    end do
+
     ! Initialize functions array
     do i = 1, size(shell%functions)
       shell%functions(i)%name = ''
