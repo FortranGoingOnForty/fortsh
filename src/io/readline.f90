@@ -3313,8 +3313,14 @@ contains
       file_pattern = trim(prefix)
     end if
 
+    ! Preserve explicit "./" prefix: when user typed "./something", dir_path
+    ! is "." but completions should include "./" to match what was typed.
+    ! Pass "./" as dir_path so scan_directory builds paths with "./" prefix.
+    if (len_trim(prefix) >= 2 .and. prefix(1:2) == './') then
+      if (trim(dir_path) == '.') dir_path = './'
+    end if
+
     ! scan_directory handles all matches including dotfiles when pattern is empty
-    ! (. and .. are filtered in scan_directory at lines 3363-3369)
     call scan_directory(dir_path, file_pattern, completions, num_completions)
   end subroutine
 
@@ -3424,6 +3430,9 @@ contains
         ! Build full path for display (use original dir_path to preserve ~ in display)
         if (trim(dir_path) == '.') then
           full_path = trim(full_path)
+        else if (trim(dir_path) == './') then
+          ! Explicit ./ prefix — preserve it without adding extra slash
+          full_path = './' // trim(full_path)
         else if (trim(dir_path) == '/') then
           ! Root directory - don't add extra slash
           full_path = '/' // trim(full_path)
