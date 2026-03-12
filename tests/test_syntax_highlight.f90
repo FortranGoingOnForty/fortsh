@@ -49,6 +49,8 @@ program test_syntax_highlight
   call test_complex_pipeline()
   call test_keyword_resets_cmd_pos()
   call test_case_esac()
+  call test_c_style_for_loop()
+  call test_keyword_outside_cmd_pos()
 
   write(*, '(a)') ''
   write(*, '(a)') '=========================================='
@@ -431,10 +433,40 @@ contains
     call tokenize_v2(input, 9, tokens, n)
     call assert_eq('case_esac: count', 2, n)
     call assert_eq('case_esac/case', HTOK_KEYWORD, tokens(1)%token_type)
-    ! esac is not in command position after case (case doesn't reset cmd pos)
-    ! but 'case' is a keyword. After case, in_cmd_pos goes to false.
-    ! esac is a word in non-cmd position — DEFAULT
-    call assert_eq('case_esac/esac', HTOK_DEFAULT, tokens(2)%token_type)
+    ! esac is always recognized as a keyword regardless of command position
+    call assert_eq('case_esac/esac', HTOK_KEYWORD, tokens(2)%token_type)
+  end subroutine
+
+  ! C-style for loop: for ((i=0; i<3; i++)) do echo $i; done
+  subroutine test_c_style_for_loop()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+
+    input = 'for ((i=0; i<3; i++)) do echo $i; done'
+    call tokenize_v2(input, 38, tokens, n)
+    ! for = KEYWORD, ((...)) = NUMBER (arithmetic), do = KEYWORD,
+    ! echo = BUILTIN, $i = VARIABLE, ; = OPERATOR, done = KEYWORD
+    call assert_eq('cfor: for', HTOK_KEYWORD, tokens(1)%token_type)
+    call assert_eq('cfor: (())', HTOK_NUMBER, tokens(2)%token_type)
+    call assert_eq('cfor: do', HTOK_KEYWORD, tokens(3)%token_type)
+    call assert_eq('cfor: echo', HTOK_BUILTIN, tokens(4)%token_type)
+    call assert_eq('cfor: $i', HTOK_VARIABLE, tokens(5)%token_type)
+    call assert_eq('cfor: ;', HTOK_OPERATOR, tokens(6)%token_type)
+    call assert_eq('cfor: done', HTOK_KEYWORD, tokens(7)%token_type)
+  end subroutine
+
+  ! Keywords recognized even outside command position
+  subroutine test_keyword_outside_cmd_pos()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+
+    ! 'echo done' — done after a builtin should still be keyword
+    input = 'echo done'
+    call tokenize_v2(input, 9, tokens, n)
+    call assert_eq('kw_nonpos: echo', HTOK_BUILTIN, tokens(1)%token_type)
+    call assert_eq('kw_nonpos: done', HTOK_KEYWORD, tokens(2)%token_type)
   end subroutine
 
 end program test_syntax_highlight
