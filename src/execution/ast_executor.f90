@@ -128,6 +128,10 @@ contains
     case(CMD_FUNCTION_DEF)
       ! Function definitions: Store in shell state
       exit_status = execute_function_def(node, shell)
+    case(CMD_FOR_ARITH)
+      exit_status = execute_for_arith_node(node, shell)
+    case(CMD_COPROC)
+      exit_status = execute_coproc_node(node, shell)
     case default
       ! node_type = 0 usually means uninitialized/invalid AST node from parser
       if (node%node_type == 0) then
@@ -2250,6 +2254,110 @@ contains
     end if
 
   end function execute_for_node
+
+  ! =====================================
+  ! C-Style Arithmetic For Loop Execution
+  ! =====================================
+
+  function execute_for_arith_node(node, shell) result(exit_status)
+    use expansion, only: arithmetic_expansion_shell
+    use control_flow, only: push_control_block, pop_control_block, BLOCK_FOR
+    type(command_node_t), pointer, intent(in) :: node
+    type(shell_state_t), intent(inout) :: shell
+    integer :: exit_status
+    character(len=32) :: arith_result
+    character(len=MAX_TOKEN_LEN) :: wrapped_expr
+    integer(kind=8) :: cond_value
+    integer :: io_stat
+
+    exit_status = 0
+    if (.not. associated(node%for_arith)) return
+
+    ! Evaluate init expression
+    if (len_trim(node%for_arith%init_expr) > 0) then
+      wrapped_expr = '$((' // trim(node%for_arith%init_expr) // '))'
+      arith_result = arithmetic_expansion_shell(trim(wrapped_expr), shell)
+    end if
+
+    ! Push loop control block for break/continue support
+    call push_control_block(shell, BLOCK_FOR, .true.)
+
+    ! Loop: evaluate condition, execute body, evaluate increment
+    do
+      ! Evaluate condition (empty condition = infinite loop, like C)
+      if (len_trim(node%for_arith%cond_expr) > 0) then
+        wrapped_expr = '$((' // trim(node%for_arith%cond_expr) // '))'
+        arith_result = arithmetic_expansion_shell(trim(wrapped_expr), shell)
+        read(arith_result, *, iostat=io_stat) cond_value
+        if (io_stat /= 0) cond_value = 0
+        if (cond_value == 0) exit
+      end if
+
+      ! Execute body
+      if (associated(node%for_arith%body)) then
+        exit_status = execute_ast_node(node%for_arith%body, shell)
+      end if
+
+      ! Check for break/continue (same pattern as while loop)
+      if (shell%control_depth > 0) then
+        if (shell%control_stack(shell%control_depth)%break_requested) then
+          if (shell%control_stack(shell%control_depth)%break_level > 1) then
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%break_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%break_level = &
+                shell%control_stack(shell%control_depth)%break_level - 1
+            end if
+          end if
+          shell%control_stack(shell%control_depth)%break_requested = .false.
+          shell%control_stack(shell%control_depth)%break_level = 0
+          exit
+        end if
+
+        if (shell%control_stack(shell%control_depth)%continue_requested) then
+          if (shell%control_stack(shell%control_depth)%continue_level > 1) then
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%continue_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%continue_level = &
+                shell%control_stack(shell%control_depth)%continue_level - 1
+            end if
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+            exit
+          else
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+          end if
+        end if
+      end if
+
+      ! Evaluate increment expression
+      if (len_trim(node%for_arith%incr_expr) > 0) then
+        wrapped_expr = '$((' // trim(node%for_arith%incr_expr) // '))'
+        arith_result = arithmetic_expansion_shell(trim(wrapped_expr), shell)
+      end if
+    end do
+
+    call pop_control_block(shell)
+  end function execute_for_arith_node
+
+  ! =====================================
+  ! Coproc Execution
+  ! =====================================
+
+  function execute_coproc_node(node, shell) result(exit_status)
+    use coprocess, only: start_coprocess
+    type(command_node_t), pointer, intent(in) :: node
+    type(shell_state_t), intent(inout) :: shell
+    integer :: exit_status
+    character(len=4096) :: cmd_str
+
+    exit_status = 0
+    if (.not. associated(node%coproc)) return
+
+    ! TODO: implement full coproc AST execution
+    ! For now, convert command to string and use existing start_coprocess
+    exit_status = 1
+  end function execute_coproc_node
 
   ! =====================================
   ! Case Statement Execution
