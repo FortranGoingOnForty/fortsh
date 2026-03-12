@@ -913,22 +913,24 @@ contains
     character(len=*), intent(in) :: name
     character(len=*), intent(in) :: values(:)
     integer, intent(in) :: count
-    integer :: i, empty_slot
-    
+    integer :: i, k, empty_slot
+
     empty_slot = -1
-    
+
     ! Check if variable already exists
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
         if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
         allocate(shell%variables(i)%array_values(count))
-        shell%variables(i)%array_values(1:count) = values(1:count)
+        do k = 1, count
+          shell%variables(i)%array_values(k)%str = trim(values(k))
+        end do
         shell%variables(i)%array_size = count
         shell%variables(i)%is_array = .true.
         return
       end if
     end do
-    
+
     ! Find empty slot
     do i = 1, size(shell%variables)
       if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
@@ -936,7 +938,7 @@ contains
         exit
       end if
     end do
-    
+
     ! Add new array variable
     if (empty_slot > 0) then
       shell%variables(empty_slot)%name = name
@@ -944,7 +946,9 @@ contains
       shell%variables(empty_slot)%array_size = count
       if (allocated(shell%variables(empty_slot)%array_values)) deallocate(shell%variables(empty_slot)%array_values)
       allocate(shell%variables(empty_slot)%array_values(count))
-      shell%variables(empty_slot)%array_values(1:count) = values(1:count)
+      do k = 1, count
+        shell%variables(empty_slot)%array_values(k)%str = trim(values(k))
+      end do
       shell%num_variables = shell%num_variables + 1
     end if
   end subroutine
@@ -955,8 +959,8 @@ contains
     character(len=*), intent(in) :: name
     integer, intent(in) :: index
     character(len=*), intent(in) :: value
-    integer :: i, empty_slot, new_size
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: temp_array(:)
+    integer :: i, k, empty_slot, new_size
+    type(string_t), allocatable :: temp_array(:)
 
     ! Check if variable already exists
     do i = 1, shell%num_variables
@@ -967,30 +971,40 @@ contains
           shell%variables(i)%is_array = .true.
           if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
           allocate(shell%variables(i)%array_values(index))
-          shell%variables(i)%array_values(:) = ''
+          do k = 1, index
+            shell%variables(i)%array_values(k)%str = ''
+          end do
           shell%variables(i)%array_size = index
         else if (.not. allocated(shell%variables(i)%array_values)) then
           ! Array exists but not allocated (from declare -a)
           allocate(shell%variables(i)%array_values(index))
-          shell%variables(i)%array_values(:) = ''
+          do k = 1, index
+            shell%variables(i)%array_values(k)%str = ''
+          end do
           shell%variables(i)%array_size = index
         else if (index > shell%variables(i)%array_size) then
           ! Need to expand the array (sparse array support)
           new_size = index
           allocate(temp_array(new_size))
-          temp_array(:) = ''
+          do k = 1, new_size
+            temp_array(k)%str = ''
+          end do
           if (shell%variables(i)%array_size > 0 .and. allocated(shell%variables(i)%array_values)) then
-            temp_array(1:shell%variables(i)%array_size) = shell%variables(i)%array_values(1:shell%variables(i)%array_size)
+            do k = 1, shell%variables(i)%array_size
+              temp_array(k)%str = shell%variables(i)%array_values(k)%str
+            end do
           end if
           if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
           allocate(shell%variables(i)%array_values(new_size))
-          shell%variables(i)%array_values = temp_array
+          do k = 1, new_size
+            shell%variables(i)%array_values(k)%str = temp_array(k)%str
+          end do
           shell%variables(i)%array_size = new_size
           deallocate(temp_array)
         end if
 
         ! Set the element
-        shell%variables(i)%array_values(index) = value
+        shell%variables(i)%array_values(index)%str = value
         return
       end if
     end do
@@ -1009,8 +1023,10 @@ contains
       shell%variables(empty_slot)%is_array = .true.
       shell%variables(empty_slot)%array_size = index
       allocate(shell%variables(empty_slot)%array_values(index))
-      shell%variables(empty_slot)%array_values(:) = ''
-      shell%variables(empty_slot)%array_values(index) = value
+      do k = 1, index
+        shell%variables(empty_slot)%array_values(k)%str = ''
+      end do
+      shell%variables(empty_slot)%array_values(index)%str = value
       shell%num_variables = shell%num_variables + 1
     end if
   end subroutine
@@ -1032,7 +1048,7 @@ contains
           actual_index = shell%variables(i)%array_size + actual_index + 1
         end if
         if (actual_index >= 1 .and. actual_index <= shell%variables(i)%array_size) then
-          value = shell%variables(i)%array_values(actual_index)
+          value = shell%variables(i)%array_values(actual_index)%str
         end if
         return
       end if
@@ -1053,15 +1069,16 @@ contains
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
         do j = 1, shell%variables(i)%array_size
-          if (len_trim(shell%variables(i)%array_values(j)) == 0) cycle
+          if (.not. allocated(shell%variables(i)%array_values(j)%str)) cycle
+          if (len_trim(shell%variables(i)%array_values(j)%str) == 0) cycle
           if (.not. first) then
             result_str(pos:pos) = ' '
             pos = pos + 1
           end if
           first = .false.
-          result_str(pos:pos+len_trim(shell%variables(i)%array_values(j))-1) = &
-            trim(shell%variables(i)%array_values(j))
-          pos = pos + len_trim(shell%variables(i)%array_values(j))
+          result_str(pos:pos+len_trim(shell%variables(i)%array_values(j)%str)-1) = &
+            trim(shell%variables(i)%array_values(j)%str)
+          pos = pos + len_trim(shell%variables(i)%array_values(j)%str)
         end do
         return
       end if

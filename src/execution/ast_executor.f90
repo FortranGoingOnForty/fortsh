@@ -2115,14 +2115,17 @@ contains
                       shell%variables(ai)%is_array) then
                     do bstart = 1, nk
                       if (total_words < MAX_TOKEN_LEN &
+                          .and. allocated( &
+                          shell%variables(ai) &
+                          %array_values(bstart)%str) &
                           .and. len_trim( &
                           shell%variables(ai) &
-                          %array_values(bstart)) > 0) &
+                          %array_values(bstart)%str) > 0) &
                       then
                         total_words = total_words + 1
                         expanded_words(total_words) = &
                           shell%variables(ai) &
-                          %array_values(bstart)
+                          %array_values(bstart)%str
                       end if
                     end do
                     exit

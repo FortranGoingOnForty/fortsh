@@ -208,7 +208,7 @@ module shell_types
     logical :: readonly = .false.      ! Variable is read-only
     logical :: exported = .false.      ! Variable is exported to environment
     logical :: is_integer = .false.    ! Variable has integer attribute (declare -i)
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: array_values(:)
+    type(string_t), allocatable :: array_values(:)
     integer :: array_size = 0
     type(assoc_array_entry_t), allocatable :: assoc_entries(:)
     integer :: assoc_size = 0
