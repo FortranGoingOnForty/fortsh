@@ -108,7 +108,7 @@ contains
     case('case', 'esac')
       is_kw = .true.
     ! Other keywords
-    case('function', 'select', 'time')
+    case('function', 'select', 'time', 'coproc')
       is_kw = .true.
     case('{', '}')
       is_kw = .true.

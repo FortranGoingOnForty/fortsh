@@ -5,8 +5,10 @@ module grammar_parser
   use lexer
   use command_tree, only: command_node_t, create_simple_command, create_pipeline, &
                           create_list, create_if_statement, create_while_loop, &
-                          create_for_loop, create_case_statement, create_subshell, &
-                          create_brace_group, create_function_def, destroy_command_node, &
+                          create_for_loop, create_for_arith_loop, &
+                          create_case_statement, create_subshell, &
+                          create_brace_group, create_function_def, create_coproc, &
+                          destroy_command_node, &
                           print_command_tree, case_item_t, LIST_SEP_SEQUENTIAL, &
                           LIST_SEP_AND, LIST_SEP_OR, LIST_SEP_BACKGROUND
   implicit none
@@ -291,6 +293,9 @@ contains
         is_compound = .true.
       case('{')
         node => parse_brace_group(state)
+        is_compound = .true.
+      case('coproc')
+        node => parse_coproc_stmt(state)
         is_compound = .true.
       case default
         node => parse_simple_cmd(state)
@@ -820,7 +825,7 @@ contains
     character(len=MAX_TOKEN_LEN), allocatable :: words(:)
     integer :: num_words
     integer, allocatable :: quote_types(:)
-    type(token_t) :: tok
+    type(token_t) :: tok, next_tok
     nullify(node)
     num_words = 0
     allocate(words(MAX_TOKENS))
@@ -828,6 +833,17 @@ contains
     quote_types = QUOTE_NONE
     if (.not. expect(state, 'for')) return
     tok = current_token(state)
+    ! Check for C-style arithmetic for: for (( init; cond; incr ))
+    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+      if (state%pos + 1 <= state%num_tokens) then
+        next_tok = state%tokens(state%pos + 1)
+        if (next_tok%token_type == TOKEN_OPERATOR .and. trim(next_tok%value) == '(' .and. &
+            tok%end_pos + 1 == next_tok%start_pos) then
+          node => parse_for_arith_stmt(state)
+          return
+        end if
+      end if
+    end if
     if (tok%token_type /= TOKEN_WORD) return
     variable = tok%value
     call advance(state)
@@ -854,6 +870,134 @@ contains
     call skip_newlines(state)
     if (.not. expect(state, 'done')) return
     node => create_for_loop(variable, words, num_words, body, quote_types)
+  end function
+
+  ! Parse C-style arithmetic for: for (( init; cond; incr )); do ... done
+  recursive function parse_for_arith_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, body
+    character(len=MAX_TOKEN_LEN) :: init_expr, cond_expr, incr_expr
+    type(token_t) :: tok
+    integer :: paren_depth, expr_pos, prev_end_pos
+
+    nullify(node)
+    init_expr = ''
+    cond_expr = ''
+    incr_expr = ''
+
+    ! Consume (( — we know both parens are present from the caller check
+    if (.not. expect(state, '(')) return
+    if (.not. expect(state, '(')) return
+
+    ! Collect init expression until ;
+    expr_pos = 1
+    prev_end_pos = -1
+    paren_depth = 0
+    do while (state%pos <= state%num_tokens)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_EOF) return
+      if (paren_depth == 0 .and. tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ';') then
+        call advance(state)
+        exit
+      end if
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') paren_depth = paren_depth + 1
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ')') paren_depth = paren_depth - 1
+      if (prev_end_pos >= 0 .and. tok%start_pos > prev_end_pos + 1) then
+        if (expr_pos + 1 <= MAX_TOKEN_LEN) then
+          init_expr(expr_pos:expr_pos) = ' '
+          expr_pos = expr_pos + 1
+        end if
+      end if
+      if (expr_pos + len_trim(tok%value) <= MAX_TOKEN_LEN) then
+        init_expr(expr_pos:expr_pos+len_trim(tok%value)-1) = trim(tok%value)
+        expr_pos = expr_pos + len_trim(tok%value)
+      end if
+      prev_end_pos = tok%end_pos
+      call advance(state)
+    end do
+
+    ! Collect condition expression until ;
+    expr_pos = 1
+    prev_end_pos = -1
+    paren_depth = 0
+    do while (state%pos <= state%num_tokens)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_EOF) return
+      if (paren_depth == 0 .and. tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ';') then
+        call advance(state)
+        exit
+      end if
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') paren_depth = paren_depth + 1
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ')') paren_depth = paren_depth - 1
+      if (prev_end_pos >= 0 .and. tok%start_pos > prev_end_pos + 1) then
+        if (expr_pos + 1 <= MAX_TOKEN_LEN) then
+          cond_expr(expr_pos:expr_pos) = ' '
+          expr_pos = expr_pos + 1
+        end if
+      end if
+      if (expr_pos + len_trim(tok%value) <= MAX_TOKEN_LEN) then
+        cond_expr(expr_pos:expr_pos+len_trim(tok%value)-1) = trim(tok%value)
+        expr_pos = expr_pos + len_trim(tok%value)
+      end if
+      prev_end_pos = tok%end_pos
+      call advance(state)
+    end do
+
+    ! Collect increment expression until ))
+    ! paren_depth tracks nested parens WITHIN the expression (starts at 0)
+    expr_pos = 1
+    prev_end_pos = -1
+    paren_depth = 0
+    do while (state%pos <= state%num_tokens)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_EOF) return
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ')') then
+        if (paren_depth == 0) then
+          ! First ) of )) — stop collecting, consume both
+          call advance(state)
+          if (state%pos <= state%num_tokens) then
+            tok = current_token(state)
+            if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ')') then
+              call advance(state)
+            end if
+          end if
+          exit
+        end if
+        paren_depth = paren_depth - 1
+        if (expr_pos + 1 <= MAX_TOKEN_LEN) then
+          incr_expr(expr_pos:expr_pos) = ')'
+          expr_pos = expr_pos + 1
+        end if
+        prev_end_pos = tok%end_pos
+        call advance(state)
+        cycle
+      end if
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+        paren_depth = paren_depth + 1
+      end if
+      if (prev_end_pos >= 0 .and. tok%start_pos > prev_end_pos + 1) then
+        if (expr_pos + 1 <= MAX_TOKEN_LEN) then
+          incr_expr(expr_pos:expr_pos) = ' '
+          expr_pos = expr_pos + 1
+        end if
+      end if
+      if (expr_pos + len_trim(tok%value) <= MAX_TOKEN_LEN) then
+        incr_expr(expr_pos:expr_pos+len_trim(tok%value)-1) = trim(tok%value)
+        expr_pos = expr_pos + len_trim(tok%value)
+      end if
+      prev_end_pos = tok%end_pos
+      call advance(state)
+    end do
+
+    ! Skip optional ; or newlines before do
+    call skip_newlines(state)
+    if (match(state, ';')) call skip_newlines(state)
+    if (.not. expect(state, 'do')) return
+    call skip_newlines(state)
+    body => parse_list(state)
+    call skip_newlines(state)
+    if (.not. expect(state, 'done')) return
+    node => create_for_arith_loop(trim(init_expr), trim(cond_expr), trim(incr_expr), body)
   end function
 
   function parse_case_stmt(state) result(node)
@@ -1104,6 +1248,65 @@ contains
     call skip_newlines(state)
     if (.not. expect(state, '}')) return
     node => create_brace_group(commands)
+  end function
+
+  ! Parse coproc statement: coproc [NAME] compound_command | coproc simple_command
+  recursive function parse_coproc_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, body
+    type(token_t) :: tok, next_tok
+    character(len=256) :: coproc_name
+
+    nullify(node)
+    coproc_name = 'COPROC'
+
+    ! Consume 'coproc'
+    call advance(state)
+    tok = current_token(state)
+
+    ! Case 1: coproc { commands; } — unnamed brace group
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == '{') then
+      body => parse_brace_group(state)
+      node => create_coproc(coproc_name, body)
+      return
+    end if
+
+    ! Case 2: coproc ( commands ) — unnamed subshell
+    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+      body => parse_subshell(state)
+      node => create_coproc(coproc_name, body)
+      return
+    end if
+
+    ! Case 3: coproc NAME { ... } or coproc NAME ( ... ) — named compound
+    ! Case 4: coproc command args — unnamed simple command
+    if (tok%token_type == TOKEN_WORD) then
+      next_tok = peek_token(state%tokens, state%pos + 1)
+      if (next_tok%token_type == TOKEN_KEYWORD .and. trim(next_tok%value) == '{') then
+        ! Named coproc with brace group
+        coproc_name = trim(tok%value)
+        call advance(state)  ! consume name
+        body => parse_brace_group(state)
+        node => create_coproc(coproc_name, body)
+        return
+      else if (next_tok%token_type == TOKEN_OPERATOR .and. trim(next_tok%value) == '(') then
+        ! Named coproc with subshell
+        coproc_name = trim(tok%value)
+        call advance(state)  ! consume name
+        body => parse_subshell(state)
+        node => create_coproc(coproc_name, body)
+        return
+      end if
+
+      ! Simple command coproc (unnamed)
+      body => parse_simple_cmd(state)
+      node => create_coproc(coproc_name, body)
+      return
+    end if
+
+    ! Fallback: error
+    state%has_error = .true.
+    state%error_msg = 'coproc: expected command'
   end function
 
   subroutine skip_newlines(state)

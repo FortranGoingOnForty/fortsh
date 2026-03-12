@@ -128,6 +128,10 @@ contains
     case(CMD_FUNCTION_DEF)
       ! Function definitions: Store in shell state
       exit_status = execute_function_def(node, shell)
+    case(CMD_FOR_ARITH)
+      exit_status = execute_for_arith_node(node, shell)
+    case(CMD_COPROC)
+      exit_status = execute_coproc_node(node, shell)
     case default
       ! node_type = 0 usually means uninitialized/invalid AST node from parser
       if (node%node_type == 0) then
@@ -2250,6 +2254,208 @@ contains
     end if
 
   end function execute_for_node
+
+  ! =====================================
+  ! C-Style Arithmetic For Loop Execution
+  ! =====================================
+
+  function execute_for_arith_node(node, shell) result(exit_status)
+    use expansion, only: arithmetic_expansion_shell
+    use control_flow, only: push_control_block, pop_control_block, BLOCK_FOR
+    type(command_node_t), pointer, intent(in) :: node
+    type(shell_state_t), intent(inout) :: shell
+    integer :: exit_status
+    character(len=32) :: arith_result
+    character(len=MAX_TOKEN_LEN) :: wrapped_expr
+    integer(kind=8) :: cond_value
+    integer :: io_stat
+
+    exit_status = 0
+    if (.not. associated(node%for_arith)) return
+
+    ! Evaluate init expression
+    if (len_trim(node%for_arith%init_expr) > 0) then
+      wrapped_expr = '$((' // trim(node%for_arith%init_expr) // '))'
+      arith_result = arithmetic_expansion_shell(trim(wrapped_expr), shell)
+    end if
+
+    ! Push loop control block for break/continue support
+    call push_control_block(shell, BLOCK_FOR, .true.)
+
+    ! Loop: evaluate condition, execute body, evaluate increment
+    do
+      ! Evaluate condition (empty condition = infinite loop, like C)
+      if (len_trim(node%for_arith%cond_expr) > 0) then
+        wrapped_expr = '$((' // trim(node%for_arith%cond_expr) // '))'
+        arith_result = arithmetic_expansion_shell(trim(wrapped_expr), shell)
+        read(arith_result, *, iostat=io_stat) cond_value
+        if (io_stat /= 0) cond_value = 0
+        if (cond_value == 0) exit
+      end if
+
+      ! Execute body
+      if (associated(node%for_arith%body)) then
+        exit_status = execute_ast_node(node%for_arith%body, shell)
+      end if
+
+      ! Check for break/continue (same pattern as while loop)
+      if (shell%control_depth > 0) then
+        if (shell%control_stack(shell%control_depth)%break_requested) then
+          if (shell%control_stack(shell%control_depth)%break_level > 1) then
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%break_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%break_level = &
+                shell%control_stack(shell%control_depth)%break_level - 1
+            end if
+          end if
+          shell%control_stack(shell%control_depth)%break_requested = .false.
+          shell%control_stack(shell%control_depth)%break_level = 0
+          exit
+        end if
+
+        if (shell%control_stack(shell%control_depth)%continue_requested) then
+          if (shell%control_stack(shell%control_depth)%continue_level > 1) then
+            if (shell%control_depth > 1) then
+              shell%control_stack(shell%control_depth - 1)%continue_requested = .true.
+              shell%control_stack(shell%control_depth - 1)%continue_level = &
+                shell%control_stack(shell%control_depth)%continue_level - 1
+            end if
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+            exit
+          else
+            shell%control_stack(shell%control_depth)%continue_requested = .false.
+            shell%control_stack(shell%control_depth)%continue_level = 0
+          end if
+        end if
+      end if
+
+      ! Evaluate increment expression
+      if (len_trim(node%for_arith%incr_expr) > 0) then
+        wrapped_expr = '$((' // trim(node%for_arith%incr_expr) // '))'
+        arith_result = arithmetic_expansion_shell(trim(wrapped_expr), shell)
+      end if
+    end do
+
+    call pop_control_block(shell)
+  end function execute_for_arith_node
+
+  ! =====================================
+  ! Coproc Execution
+  ! =====================================
+
+  function execute_coproc_node(node, shell) result(exit_status)
+    use coprocess, only: coprocs
+    use variables, only: set_array_element, set_shell_variable
+    type(command_node_t), pointer, intent(in) :: node
+    type(shell_state_t), intent(inout) :: shell
+    integer :: exit_status
+
+    integer(c_int), target :: pipe_to_child(2), pipe_from_child(2)
+    integer(c_pid_t) :: pid
+    integer(c_int) :: ret
+    integer :: coproc_id, status, i
+    character(len=256) :: coproc_name
+    character(len=16) :: fd_str, pid_str
+
+    exit_status = 0
+    if (.not. associated(node%coproc)) return
+
+    coproc_name = trim(node%coproc%name)
+
+    ! Find available coprocess slot
+    coproc_id = -1
+    do i = 1, size(coprocs)
+      if (.not. coprocs(i)%active) then
+        coproc_id = i
+        exit
+      end if
+    end do
+
+    if (coproc_id == -1) then
+      write(error_unit, '(a)') 'coproc: maximum number of coprocesses reached'
+      exit_status = 1
+      return
+    end if
+
+    ! Create pipes: parent writes to child stdin, reads from child stdout
+    if (c_pipe(c_loc(pipe_to_child)) /= 0) then
+      write(error_unit, '(a)') 'coproc: pipe creation failed'
+      exit_status = 1
+      return
+    end if
+
+    if (c_pipe(c_loc(pipe_from_child)) /= 0) then
+      write(error_unit, '(a)') 'coproc: pipe creation failed'
+      ret = close(pipe_to_child(1))
+      ret = close(pipe_to_child(2))
+      exit_status = 1
+      return
+    end if
+
+    ! Flush before fork
+    flush(output_unit)
+    flush(error_unit)
+
+    pid = c_fork()
+
+    if (pid == 0) then
+      ! Child: redirect stdin from pipe, stdout to pipe
+      ret = c_dup2(pipe_to_child(1), int(0, c_int))   ! stdin = read end of to_child
+      ret = close(pipe_to_child(1))
+      ret = close(pipe_to_child(2))                     ! close write end
+
+      ret = c_dup2(pipe_from_child(2), int(1, c_int))  ! stdout = write end of from_child
+      ret = close(pipe_from_child(1))
+      ret = close(pipe_from_child(2))                    ! close read end
+
+      ! Execute the command body in the child
+      if (associated(node%coproc%command)) then
+        status = execute_ast_node(node%coproc%command, shell)
+      else
+        status = 0
+      end if
+      call c_exit(status)
+
+    else if (pid > 0) then
+      ! Parent: close child ends of pipes
+      ret = close(pipe_to_child(1))    ! close read end (child's stdin source)
+      ret = close(pipe_from_child(2))  ! close write end (child's stdout dest)
+
+      ! Register in coprocess table
+      coprocs(coproc_id)%name = coproc_name
+      coprocs(coproc_id)%command = 'coproc'
+      coprocs(coproc_id)%pid = pid
+      coprocs(coproc_id)%write_fd = pipe_to_child(2)     ! parent writes here
+      coprocs(coproc_id)%read_fd = pipe_from_child(1)     ! parent reads here
+      coprocs(coproc_id)%active = .true.
+      coprocs(coproc_id)%eof_reached = .false.
+
+      ! Set NAME_PID variable
+      write(pid_str, '(I0)') pid
+      call set_shell_variable(shell, trim(coproc_name) // '_PID', trim(pid_str))
+
+      ! Set NAME[0] = read_fd, NAME[1] = write_fd (bash convention)
+      write(fd_str, '(I0)') pipe_from_child(1)
+      call set_array_element(shell, trim(coproc_name), 1, trim(fd_str))  ! bash [0]
+      write(fd_str, '(I0)') pipe_to_child(2)
+      call set_array_element(shell, trim(coproc_name), 2, trim(fd_str))  ! bash [1]
+
+      if (shell%is_interactive) then
+        write(error_unit, '(a,a,a,I0)') '[', trim(coproc_name), '] ', pid
+      end if
+
+      exit_status = 0
+    else
+      ! Fork failed
+      write(error_unit, '(a)') 'coproc: fork failed'
+      ret = close(pipe_to_child(1))
+      ret = close(pipe_to_child(2))
+      ret = close(pipe_from_child(1))
+      ret = close(pipe_from_child(2))
+      exit_status = 1
+    end if
+  end function execute_coproc_node
 
   ! =====================================
   ! Case Statement Execution

@@ -23,9 +23,11 @@ module command_tree
   public :: if_data_t
   public :: while_data_t
   public :: for_data_t
+  public :: for_arith_data_t
   public :: case_data_t
   public :: case_item_t
   public :: function_def_data_t
+  public :: coproc_data_t
   public :: heredoc_info_t
 
   ! Public functions
@@ -35,10 +37,12 @@ module command_tree
   public :: create_if_statement
   public :: create_while_loop
   public :: create_for_loop
+  public :: create_for_arith_loop
   public :: create_case_statement
   public :: create_subshell
   public :: create_brace_group
   public :: create_function_def
+  public :: create_coproc
   public :: destroy_command_node
   public :: print_command_tree
 
@@ -57,6 +61,8 @@ module command_tree
   integer, parameter :: NODE_SUBSHELL = CMD_SUBSHELL
   integer, parameter :: NODE_BRACE_GROUP = CMD_BRACE_GROUP
   integer, parameter :: NODE_FUNCTION_DEF = CMD_FUNCTION_DEF
+  integer, parameter :: NODE_FOR_ARITH = CMD_FOR_ARITH
+  integer, parameter :: NODE_COPROC = CMD_COPROC
 
   ! List separator types
   integer, parameter :: LIST_SEP_SEQUENTIAL = 1    ! ;
@@ -154,6 +160,24 @@ module command_tree
   end type for_data_t
 
   ! =====================================
+  ! Arithmetic For Loop Data (C-style)
+  ! =====================================
+  type :: for_arith_data_t
+    character(len=MAX_TOKEN_LEN) :: init_expr          ! e.g., "i=0"
+    character(len=MAX_TOKEN_LEN) :: cond_expr          ! e.g., "i<3"
+    character(len=MAX_TOKEN_LEN) :: incr_expr          ! e.g., "i++"
+    type(command_node_t), pointer :: body => null()     ! Loop body
+  end type for_arith_data_t
+
+  ! =====================================
+  ! Coproc Data
+  ! =====================================
+  type :: coproc_data_t
+    character(len=256) :: name = 'COPROC'              ! Coproc name
+    type(command_node_t), pointer :: command => null()  ! Command to run
+  end type coproc_data_t
+
+  ! =====================================
   ! Case Statement Item
   ! =====================================
   type :: case_item_t
@@ -197,6 +221,8 @@ module command_tree
     type(for_data_t), pointer :: for_loop => null()
     type(case_data_t), pointer :: case_stmt => null()
     type(function_def_data_t), pointer :: function_def => null()
+    type(for_arith_data_t), pointer :: for_arith => null()
+    type(coproc_data_t), pointer :: coproc => null()
     type(command_node_t), pointer :: subshell => null()       ! For subshells/groups
 
     ! Redirections (can apply to any command type, not just simple commands)
@@ -312,6 +338,32 @@ contains
     end do
     node%for_loop%body => body
   end function create_for_loop
+
+  function create_for_arith_loop(init_expr, cond_expr, incr_expr, body) result(node)
+    character(len=*), intent(in) :: init_expr, cond_expr, incr_expr
+    type(command_node_t), pointer, intent(in) :: body
+    type(command_node_t), pointer :: node
+
+    allocate(node)
+    node%node_type = NODE_FOR_ARITH
+    allocate(node%for_arith)
+    node%for_arith%init_expr = init_expr
+    node%for_arith%cond_expr = cond_expr
+    node%for_arith%incr_expr = incr_expr
+    node%for_arith%body => body
+  end function create_for_arith_loop
+
+  function create_coproc(name, command) result(node)
+    character(len=*), intent(in) :: name
+    type(command_node_t), pointer, intent(in) :: command
+    type(command_node_t), pointer :: node
+
+    allocate(node)
+    node%node_type = NODE_COPROC
+    allocate(node%coproc)
+    node%coproc%name = name
+    node%coproc%command => command
+  end function create_coproc
 
   function create_case_statement(word, word_len, items, num_items) result(node)
     character(len=*), intent(in) :: word
@@ -431,6 +483,18 @@ contains
       if (associated(node%function_def)) then
         call destroy_command_node(node%function_def%body)
         deallocate(node%function_def)
+      end if
+
+    case(NODE_FOR_ARITH)
+      if (associated(node%for_arith)) then
+        call destroy_command_node(node%for_arith%body)
+        deallocate(node%for_arith)
+      end if
+
+    case(NODE_COPROC)
+      if (associated(node%coproc)) then
+        call destroy_command_node(node%coproc%command)
+        deallocate(node%coproc)
       end if
     end select
 

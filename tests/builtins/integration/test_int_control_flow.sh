@@ -57,8 +57,7 @@ compare_output "grouped conditions" '{ true && true; } && echo both'
 section "6. builtins in loops"
 compare_output "for in list" 'for i in 1 2 3; do echo $i; done'
 compare_output "for with cmd sub in list" 'for f in $(echo a b c); do echo $f; done'
-# TODO: c-style for loop syntax not yet supported (issue #27)
-skip "c-style for" "issue #27"
+compare_output "c-style for" 'for ((i=0; i<3; i++)); do echo $i; done'
 compare_output "echo in while loop" 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done'
 compare_output "variable survives non-pipeline loop" 'i=0; while [ $i -lt 3 ]; do i=$((i+1)); done; echo $i'
 compare_output "read loop from heredoc" 'while read line; do echo "got:$line"; done <<EOF

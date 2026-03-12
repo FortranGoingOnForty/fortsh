@@ -119,6 +119,8 @@ module shell_types
   integer, parameter :: CMD_SUBSHELL = 9
   integer, parameter :: CMD_BRACE_GROUP = 10
   integer, parameter :: CMD_FUNCTION_DEF = 11
+  integer, parameter :: CMD_FOR_ARITH = 12
+  integer, parameter :: CMD_COPROC = 13
 
   type :: command_t
     character(len=:), allocatable :: tokens(:)
