@@ -35,7 +35,7 @@ program fortran_shell
   character(len=MAX_VAR_VALUE_LEN) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
   character(len=:), allocatable :: rprompt_value  ! RPROMPT variable value
   integer :: iostat, i, num_args
-  character(len=MAX_VAR_VALUE_LEN) :: arg1, command_string
+  character(len=MAX_PATH_LEN) :: arg1, command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
   character(len=:), allocatable :: script_file
   ! Command duration tracking
@@ -92,7 +92,7 @@ program fortran_shell
       execute_script_file = .true.
       ! If there's a script file after -n, use it
       if (num_args >= 2) then
-        if (.not. allocated(script_file)) allocate(character(len=MAX_VAR_VALUE_LEN) :: script_file)
+        if (.not. allocated(script_file)) allocate(character(len=MAX_PATH_LEN) :: script_file)
         call get_command_argument(2, script_file)
         execute_script_file = .true.
       end if
@@ -175,7 +175,7 @@ program fortran_shell
     ! For -c 'command' arg0 arg1 arg2: arg0 becomes $0, arg1 arg2 become $1 $2
     if (num_args >= 3) then
       block
-        character(len=MAX_VAR_VALUE_LEN) :: c_arg
+        character(len=MAX_PATH_LEN) :: c_arg
         integer :: c_idx
         ! Third argument becomes $0
         call get_command_argument(3, c_arg)
@@ -853,7 +853,7 @@ contains
     use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
     character(len=16384) :: input_line, proc_subst_line, converted_line
-    character(len=MAX_VAR_VALUE_LEN) :: continuation_line
+    character(len=16384) :: continuation_line
     integer :: file_unit, iostat, exit_code
     type(command_node_t), pointer :: ast_root
     character(len=:), allocatable :: expanded_line, history_expanded
