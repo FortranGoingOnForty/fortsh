@@ -16,7 +16,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     
     character(len=256) :: prompt, var_name, delimiter
-    character(len=MAX_VAR_VALUE_LEN) :: input_line
+    character(len=4096) :: input_line
     integer :: timeout_sec, arg_index, actual_input_len
     logical :: silent_mode, raw_mode, use_prompt, use_timeout, use_delimiter
     logical :: use_array, use_nchars
