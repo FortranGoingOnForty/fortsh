@@ -742,6 +742,12 @@ contains
     ! "do" marks the start of the loop body - start capturing commands
     if (.not. allocated(shell%control_stack(shell%control_depth)%loop_body)) then
       allocate(shell%control_stack(shell%control_depth)%loop_body(100))
+      block
+        integer :: k
+        do k = 1, 100
+          shell%control_stack(shell%control_depth)%loop_body(k)%str = ''
+        end do
+      end block
     end if
 
     shell%control_stack(shell%control_depth)%loop_body_count = 0
@@ -1443,7 +1449,7 @@ contains
 
     if (shell%control_stack(shell%control_depth)%loop_body_count <= 100) then
       shell%control_stack(shell%control_depth)%loop_body(&
-        shell%control_stack(shell%control_depth)%loop_body_count) = command_line
+        shell%control_stack(shell%control_depth)%loop_body_count)%str = command_line
     end if
   end subroutine
 

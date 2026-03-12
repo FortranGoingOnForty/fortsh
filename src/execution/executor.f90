@@ -1875,7 +1875,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: function_body(:)
+    type(string_t), allocatable :: function_body(:)
     type(string_t), allocatable :: saved_positional_params(:)
     integer :: saved_num_positional
     integer :: i
@@ -1908,7 +1908,6 @@ contains
     end do
 
     ! Get function body
-    allocate(function_body(0))
     function_body = get_function_body(shell, cmd%tokens(1))
 
     function_returned = .false.
@@ -1916,11 +1915,12 @@ contains
     if (allocated(function_body)) then
       ! For defun-style functions (body has no $), append call args
       if (size(function_body) == 1 .and. cmd%num_tokens > 1 .and. &
-          index(function_body(1), '$') == 0) then
+          allocated(function_body(1)%str) .and. &
+          index(function_body(1)%str, '$') == 0) then
         block
           integer :: j
           do j = 2, cmd%num_tokens
-            function_body(1) = trim(function_body(1)) // &
+            function_body(1)%str = trim(function_body(1)%str) // &
                                ' ' // trim(cmd%tokens(j))
           end do
         end block
@@ -1928,9 +1928,9 @@ contains
 
       ! Execute each line of the function
       do i = 1, size(function_body)
-        if (len_trim(function_body(i)) > 0) then
+        if (allocated(function_body(i)%str) .and. len_trim(function_body(i)%str) > 0) then
           ! Expand aliases
-          call expand_alias(shell, trim(function_body(i)), expanded_line)
+          call expand_alias(shell, trim(function_body(i)%str), expanded_line)
 
           ! Parse and execute
           call parse_pipeline(expanded_line, pipeline)
@@ -2139,9 +2139,9 @@ contains
           exit
         end if
 
-        call parse_pipeline(shell%control_stack(loop_depth)%loop_body(i), pipeline)
+        call parse_pipeline(shell%control_stack(loop_depth)%loop_body(i)%str, pipeline)
         if (pipeline%num_commands > 0) then
-          call execute_pipeline(pipeline, shell, shell%control_stack(loop_depth)%loop_body(i))
+          call execute_pipeline(pipeline, shell, shell%control_stack(loop_depth)%loop_body(i)%str)
         end if
       end do
 
@@ -2497,7 +2497,7 @@ contains
     character(len=256) :: func_name
     character(len=2048) :: reconstructed
     ! Reduced from 100 to 50 lines to avoid static storage
-    character(len=MAX_VAR_VALUE_LEN) :: func_body(50)
+    character(len=MAX_VAR_VALUE_LEN) :: func_body_line
     integer :: body_count, brace_start, brace_end, paren_pos
 
     is_func_def = .false.
@@ -2541,13 +2541,14 @@ contains
     ! Extract function body (between { and })
     if (brace_end > brace_start + 1) then
       body_count = 1
-      func_body(1) = trim(adjustl(reconstructed(brace_start+1:brace_end-1)))
+      func_body_line = trim(adjustl(reconstructed(brace_start+1:brace_end-1)))
     else
       body_count = 0
+      func_body_line = ''
     end if
 
     ! Register the function
-    call add_function(shell, trim(func_name), func_body, body_count)
+    call add_function(shell, trim(func_name), [func_body_line], body_count)
 
     is_func_def = .true.
   end function

@@ -234,7 +234,7 @@ module shell_types
     character(len=:), allocatable :: condition_cmd  ! while condition command
     integer :: loop_start_line = 0   ! for loop replay
     ! Loop body buffering for proper iteration
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: loop_body(:)  ! commands in loop body
+    type(string_t), allocatable :: loop_body(:)  ! commands in loop body
     integer :: loop_body_count = 0   ! number of commands in loop body
     logical :: capturing_loop_body = .false.  ! currently capturing commands
     integer :: capture_nesting_depth = 0  ! track nested loops during capture
@@ -256,7 +256,7 @@ module shell_types
   ! Shell function definition
   type :: shell_function_t
     character(len=MAX_VAR_NAME_LEN) :: name
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: body(:)  ! function body lines
+    type(string_t), allocatable :: body(:)  ! function body lines
     integer :: body_lines = 0
     character(len=MAX_VAR_NAME_LEN) :: params(10)  ! parameter names
     integer :: param_count = 0

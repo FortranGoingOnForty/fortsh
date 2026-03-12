@@ -2797,7 +2797,7 @@ contains
       shell%functions(shell%num_functions)%name = trim(node%function_def%name)
       shell%functions(shell%num_functions)%body_lines = 1
       allocate(shell%functions(shell%num_functions)%body(1))
-      shell%functions(shell%num_functions)%body(1) = 'AST_FUNCTION'
+      shell%functions(shell%num_functions)%body(1)%str = 'AST_FUNCTION'
     end if
 
   end function execute_function_def

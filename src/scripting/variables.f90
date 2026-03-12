@@ -854,18 +854,18 @@ contains
     character(len=*), intent(in) :: body_lines(:)
     integer, intent(in) :: body_count
     integer :: i, j
-    
+
     ! Find empty slot or replace existing function
     do i = 1, size(shell%functions)
       if (trim(shell%functions(i)%name) == trim(name) .or. len_trim(shell%functions(i)%name) == 0) then
         shell%functions(i)%name = name
         shell%functions(i)%body_lines = body_count
-        
+
         if (allocated(shell%functions(i)%body)) deallocate(shell%functions(i)%body)
         allocate(shell%functions(i)%body(body_count))
-        
+
         do j = 1, body_count
-          shell%functions(i)%body(j) = body_lines(j)
+          shell%functions(i)%body(j)%str = trim(body_lines(j))
         end do
 
         ! Update function count to include this function
@@ -893,14 +893,16 @@ contains
   function get_function_body(shell, name) result(body)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: body(:)
-    integer :: i
+    type(string_t), allocatable :: body(:)
+    integer :: i, j
 
     do i = 1, shell%num_functions
       if (trim(shell%functions(i)%name) == trim(name)) then
         if (allocated(shell%functions(i)%body)) then
           allocate(body(shell%functions(i)%body_lines))
-          body = shell%functions(i)%body(1:shell%functions(i)%body_lines)
+          do j = 1, shell%functions(i)%body_lines
+            body(j)%str = shell%functions(i)%body(j)%str
+          end do
         end if
         return
       end if

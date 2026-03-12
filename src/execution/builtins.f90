@@ -3788,7 +3788,9 @@ contains
             write(output_unit, '(a)') '{'
             if (allocated(shell%functions(i)%body)) then
               do j = 1, shell%functions(i)%body_lines
-                write(output_unit, '(a)') '    ' // trim(shell%functions(i)%body(j))
+                if (allocated(shell%functions(i)%body(j)%str)) then
+                  write(output_unit, '(a)') '    ' // trim(shell%functions(i)%body(j)%str)
+                end if
               end do
             end if
             write(output_unit, '(a)') '}'
