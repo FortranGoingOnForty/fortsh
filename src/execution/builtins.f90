@@ -1906,10 +1906,23 @@ contains
   end subroutine
 
   subroutine builtin_help(cmd, shell)
+    use builtin_help_texts, only: print_builtin_help
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
+    logical :: found
 
-    if (.false.) print *, cmd%num_tokens  ! Silence unused warning
+    ! Per-builtin help: help <name>
+    if (cmd%num_tokens > 1) then
+      found = print_builtin_help(trim(cmd%tokens(2)))
+      if (.not. found) then
+        write(error_unit, '(a)') 'help: no help topics match `' // &
+          trim(cmd%tokens(2)) // "'."
+        shell%last_exit_status = 1
+      else
+        shell%last_exit_status = 0
+      end if
+      return
+    end if
 
     write(output_unit, '(a)') 'Fortran Shell (fortsh) - Built-in Commands:'
     write(output_unit, '(a)') '========================================'
