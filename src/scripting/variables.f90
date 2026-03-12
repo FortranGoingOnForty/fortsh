@@ -166,7 +166,7 @@ contains
   function get_shell_variable(shell, name) result(value)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
-    character(len=1024) :: value
+    character(len=MAX_VAR_VALUE_LEN) :: value
     integer :: i, depth
 
     value = ''
@@ -379,7 +379,7 @@ contains
     character(len=*), intent(in) :: name
     integer :: var_len
     integer :: i, depth
-    character(len=1024) :: temp_value
+    character(len=MAX_VAR_VALUE_LEN) :: temp_value
 
     var_len = 0
 
@@ -522,7 +522,7 @@ contains
     integer :: eq_pos, bracket_pos, bracket_end, array_index, read_status
     integer :: actual_value_len, i
     character(len=256) :: var_name, index_str
-    character(len=1024) :: var_value  ! Must match get_shell_variable return type
+    character(len=MAX_VAR_VALUE_LEN) :: var_value  ! Must match get_shell_variable return type
     character(len=:), allocatable :: expanded_value
     character(len=1) :: quote_char_temp
 
@@ -637,9 +637,9 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: var_name, array_expr
     ! Use allocatable array to avoid static storage
-    character(len=1024), allocatable :: values(:)
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: values(:)
     integer :: count, start_pos, pos, capacity
-    character(len=1024) :: content
+    character(len=MAX_VAR_VALUE_LEN) :: content
     logical :: in_quotes
     
     ! Remove parentheses
@@ -705,9 +705,9 @@ contains
 
   ! Helper subroutine to grow string array
   subroutine grow_string_array(array, current_size)
-    character(len=1024), allocatable, intent(inout) :: array(:)
+    character(len=MAX_VAR_VALUE_LEN), allocatable, intent(inout) :: array(:)
     integer, intent(inout) :: current_size
-    character(len=1024), allocatable :: new_array(:)
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: new_array(:)
     integer :: new_size
 
     new_size = current_size * 2
@@ -729,7 +729,7 @@ contains
     character(len=2048) :: result
     integer :: i, j, var_start, brace_end
     character(len=256) :: var_name
-    character(len=1024) :: expansion_result, var_value  ! Must match get_shell_variable return type
+    character(len=MAX_VAR_VALUE_LEN) :: expansion_result, var_value  ! Must match get_shell_variable return type
     character(len=:), allocatable :: env_value
     
     result = ''
@@ -877,7 +877,7 @@ contains
   function get_function_body(shell, name) result(body)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
-    character(len=1024), allocatable :: body(:)
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: body(:)
     integer :: i
 
     do i = 1, shell%num_functions
@@ -940,7 +940,7 @@ contains
     integer, intent(in) :: index
     character(len=*), intent(in) :: value
     integer :: i, empty_slot, new_size
-    character(len=1024), allocatable :: temp_array(:)
+    character(len=MAX_VAR_VALUE_LEN), allocatable :: temp_array(:)
 
     ! Check if variable already exists
     do i = 1, shell%num_variables
@@ -1003,7 +1003,7 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
     integer, intent(in) :: index
-    character(len=1024) :: value
+    character(len=MAX_VAR_VALUE_LEN) :: value
     integer :: i, actual_index
 
     value = ''
@@ -1149,7 +1149,7 @@ contains
   function get_assoc_array_value(shell, array_name, key) result(value)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: array_name, key
-    character(len=1024) :: value
+    character(len=MAX_VAR_VALUE_LEN) :: value
     
     integer :: i, j
     
@@ -1244,8 +1244,8 @@ contains
     type(shell_state_t), intent(inout) :: shell
     
     character(len=256) :: param_name, default_value
-    character(len=1024) :: var_value  ! Must match get_shell_variable return type
-    character(len=1024) :: expanded_pattern_buf
+    character(len=MAX_VAR_VALUE_LEN) :: var_value  ! Must match get_shell_variable return type
+    character(len=MAX_VAR_VALUE_LEN) :: expanded_pattern_buf
     integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
     integer :: percent_pos, hash_pos, percent2_pos, hash2_pos
     logical :: has_colon
