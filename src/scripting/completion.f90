@@ -519,7 +519,7 @@ contains
     character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
     integer, intent(out) :: count
     integer :: array_size, i
-    character(len=MAX_VAR_VALUE_LEN) :: element
+    character(len=:), allocatable :: element
 
     count = 0
 
@@ -582,7 +582,7 @@ contains
     character(len=*), intent(in) :: command, word_prefix
     character(len=256), intent(out) :: completions(MAX_COMPLETIONS)
     integer, intent(out) :: count
-    character(len=MAX_VAR_VALUE_LEN) :: function_call
+    character(len=:), allocatable :: function_call
     character(len=256) :: comp_words(50)
     integer :: comp_cword
 

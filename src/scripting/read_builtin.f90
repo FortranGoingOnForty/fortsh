@@ -378,7 +378,7 @@ contains
     character(len=*), intent(in) :: input_line
 
     character(len=256) :: words(20)
-    character(len=MAX_VAR_VALUE_LEN) :: ifs_value
+    character(len=:), allocatable :: ifs_value
     integer :: word_count, var_count, i, pos, start_pos, input_len
     logical :: is_ifs_char
 

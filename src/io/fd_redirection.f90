@@ -138,7 +138,7 @@ contains
     logical, intent(in), optional :: noclobber
     logical, intent(in), optional :: permanent
     integer(c_int) :: file_fd, flags, mode
-    character(len=MAX_VAR_VALUE_LEN) :: filename_c
+    character(len=:), allocatable :: filename_c
     logical :: check_noclobber, is_permanent
 
     success = .true.

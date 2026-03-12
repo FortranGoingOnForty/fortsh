@@ -1855,7 +1855,7 @@ contains
 
     integer :: i, j, var_start, var_end
     character(len=256) :: var_name
-    character(len=MAX_VAR_VALUE_LEN) :: var_value  ! 1024 to match get_shell_variable return size
+    character(len=:), allocatable :: var_value
 
     output = ''
     i = 1
@@ -2451,7 +2451,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation, index_str
-    character(len=MAX_VAR_VALUE_LEN) :: assoc_value
+    character(len=:), allocatable :: assoc_value
     character(len=256) :: keys(100), offset_str, length_str_temp
     integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
     integer :: num_keys, key_idx

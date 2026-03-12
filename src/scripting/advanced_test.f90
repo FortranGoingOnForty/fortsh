@@ -587,7 +587,7 @@ contains
     character(len=*), intent(in) :: filename
     logical, intent(out) :: exists, is_file, is_dir, is_executable, is_readable, is_writable
     
-    character(len=MAX_VAR_VALUE_LEN) :: test_cmd
+    character(len=:), allocatable :: test_cmd
     integer :: status
     
     ! Use system test command for file properties
@@ -655,7 +655,7 @@ contains
     character(len=*), intent(in) :: operand
     character(len=*), intent(out) :: expanded
 
-    character(len=MAX_VAR_VALUE_LEN) :: temp  ! Must match get_shell_variable return type
+    character(len=:), allocatable :: temp
     integer :: temp_len
 
     ! Simple variable expansion for test operands

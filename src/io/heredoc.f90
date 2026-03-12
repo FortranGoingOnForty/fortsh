@@ -340,7 +340,7 @@ contains
     character(len=len(input_string)) :: work_string
     integer :: pos, var_start, var_end
     character(len=256) :: var_name
-    character(len=MAX_VAR_VALUE_LEN) :: var_value
+    character(len=:), allocatable :: var_value
     
     work_string = input_string
     expanded_string = ''
