@@ -1139,6 +1139,7 @@ contains
     shell%last_arg = ''
     shell%pending_trap_command = ''
     shell%current_command = ''
+    shell%ps1 = '%F{green}\u@\h%f :: %F{blue}\w%f\n> '
     shell%current_line_number = 0
 
     ! Initialize jobs array

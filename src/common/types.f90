@@ -393,7 +393,7 @@ module shell_types
     character(len=MAX_PATH_LEN) :: oldpwd = '' ! $OLDPWD (previous working directory)
     logical :: is_login_shell = .false.        ! Started as login shell
     ! Prompt strings
-    character(len=MAX_VAR_VALUE_LEN) :: ps1 = '%F{green}\u@\h%f :: %F{blue}\w%f\n> ' ! 2-line prompt with zsh colors
+    character(len=:), allocatable :: ps1    ! PS1 prompt string (heap-allocated, no fixed limit)
     integer :: ps1_len = 0                     ! Actual length of PS1 (preserves trailing spaces)
     character(len=256) :: ps2 = '> '              ! Continuation prompt
     integer :: ps2_len = 0                     ! Actual length of PS2
