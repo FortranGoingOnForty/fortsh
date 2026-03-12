@@ -25,8 +25,8 @@ contains
     character(len=2048) :: expanded
 
     character(len=256) :: var_name, operation, param1, param2, replacement
-    character(len=MAX_VAR_VALUE_LEN) :: pattern  ! 1024 to match get_shell_variable return size
-    character(len=MAX_VAR_VALUE_LEN) :: var_value
+    character(len=:), allocatable :: pattern
+    character(len=:), allocatable :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos, equals_pos, question_pos
     integer :: offset, length, i, at_pos
     character :: transform_op
@@ -1542,7 +1542,7 @@ contains
     integer(kind=8) :: value, right_val, current_val
     integer :: pos, op_len, iostat
     character(len=512) :: var_name, right_expr, var_value_str
-    character(len=MAX_VAR_VALUE_LEN) :: temp_value
+    character(len=:), allocatable :: temp_value
 
     ! Check for assignment operators (right-to-left associative, so find rightmost)
     pos = find_rightmost_assignment(expr, op_len)
@@ -2042,7 +2042,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, current_val
     character(len=512) :: rest, var_name, var_value_str, trimmed_expr
-    character(len=MAX_VAR_VALUE_LEN) :: temp_value
+    character(len=:), allocatable :: temp_value
     integer :: iostat
 
     if (len_trim(expr) == 0) then; value = 0; return; end if
@@ -2142,7 +2142,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, new_val
     character(len=512) :: inner_expr, temp_expr, var_name, var_value_str
-    character(len=MAX_VAR_VALUE_LEN) :: var_value
+    character(len=:), allocatable :: var_value
     integer :: iostat, paren_end, expr_len
 
     if (len_trim(expr) == 0) then; value = 0; return; end if
@@ -2653,7 +2653,7 @@ contains
     integer :: i, field_idx, input_len
     logical :: prev_was_ifs, is_ifs_char, is_whitespace_ifs
     logical :: prev_was_nonws_ifs  ! Previous was non-whitespace IFS
-    character(len=MAX_VAR_VALUE_LEN) :: current_field
+    character(len=:), allocatable :: current_field
     logical :: has_whitespace_ifs
 
     field_count = 0
@@ -3257,7 +3257,7 @@ contains
     character(len=:), allocatable :: output
     ! Use allocatable array to avoid static storage
     character(len=MAX_VAR_VALUE_LEN), allocatable :: words(:)
-    character(len=MAX_VAR_VALUE_LEN) :: temp_result
+    character(len=:), allocatable :: temp_result
     integer :: word_count, i, j, out_pos, capacity
     character(len=:), allocatable :: final_result
     integer :: final_result_capacity, final_result_len
@@ -3265,6 +3265,7 @@ contains
 
     ! Allocate initial array
     allocate(words(20))  ! Start with reasonable size
+    allocate(character(len=max(1, len_trim(input))) :: temp_result)
     capacity = 20
 
     ! Allocate final_result buffer to avoid stack allocation
@@ -3346,7 +3347,7 @@ contains
   function add_braces_to_words(words_str, prefix, suffix) result(output)
     character(len=*), intent(in) :: words_str, prefix, suffix
     character(len=:), allocatable :: output
-    character(len=MAX_VAR_VALUE_LEN) :: result_buf, word_buf
+    character(len=:), allocatable :: result_buf, word_buf
     integer :: i, word_start, word_len
 
     result_buf = ''
@@ -3408,7 +3409,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
     character(len=*), intent(out) :: output
-    character(len=MAX_VAR_VALUE_LEN) :: home_dir
+    character(len=:), allocatable :: home_dir
     character(len=:), allocatable :: env_home
     integer :: tilde_pos
 
@@ -3495,7 +3496,7 @@ contains
     integer, intent(out) :: word_count
 
     character(len=:), allocatable :: temp_result, brace_expanded
-    character(len=MAX_VAR_VALUE_LEN) :: tilde_expanded, quote_removed
+    character(len=:), allocatable :: tilde_expanded, quote_removed
 
     word_count = 1
 
@@ -3503,6 +3504,8 @@ contains
     brace_expanded = expand_braces(input)
 
     ! Step 1: Tilde expansion
+    ! Pre-allocate for intent(out) character(len=*) parameter
+    allocate(character(len=len(brace_expanded) + 4096) :: tilde_expanded)
     call tilde_expansion(shell, brace_expanded, tilde_expanded)
 
     ! Step 2: Parameter and variable expansion
