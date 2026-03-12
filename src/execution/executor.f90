@@ -754,7 +754,7 @@ contains
           logical :: cmd_found
           integer :: ii
           character(len=4096) :: path_var, candidate
-          character(len=MAX_VAR_VALUE_LEN) :: path_dir
+          character(len=:), allocatable :: path_dir
           integer :: spos, cpos
 
           ! Inline PATH search to avoid command_builtin dependency
@@ -845,7 +845,7 @@ contains
     character(len=:), allocatable :: content_to_write, expanded_content
     logical :: has_redirects, has_heredoc
     ! Prefix assignment handling
-    character(len=MAX_VAR_VALUE_LEN) :: saved_var_names(10), saved_var_values(10)
+    character(len=MAX_TOKEN_LEN) :: saved_var_names(10), saved_var_values(10)
     integer :: num_saved_vars, eq_pos, j
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
     logical :: var_was_set(10)
@@ -1081,7 +1081,7 @@ contains
     use expansion, only: arithmetic_expansion_shell
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=MAX_VAR_VALUE_LEN) :: expr, result_str
+    character(len=:), allocatable :: expr, result_str
     character(len=:), allocatable :: arith_expr
     integer(kind=8) :: result_val
     integer :: iostat
@@ -1361,7 +1361,7 @@ contains
           if (is_int_var .and. actual_value_len > 0) then
             block
               use expansion, only: arithmetic_expansion_shell
-              character(len=MAX_VAR_VALUE_LEN) :: arith_expr, arith_result
+              character(len=:), allocatable :: arith_expr, arith_result
               arith_expr = '$((' // &
                 var_value(:actual_value_len) // '))'
               arith_result = &
@@ -2260,8 +2260,8 @@ contains
     logical :: saved_bypass
 
     ! Save the trap command and signal before clearing
-    character(len=MAX_VAR_VALUE_LEN) :: trap_cmd
-    trap_cmd = shell%pending_trap_command
+    character(len=:), allocatable :: trap_cmd
+    trap_cmd = trim(shell%pending_trap_command)
 
     ! Save current exit status (traps don't affect $?)
     saved_status = shell%last_exit_status
@@ -2295,7 +2295,7 @@ contains
   subroutine execute_inline_then_commands(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=MAX_VAR_VALUE_LEN) :: remainder_cmd
+    character(len=:), allocatable :: remainder_cmd
     type(pipeline_t) :: inline_pipeline
     integer :: i
 
@@ -2775,7 +2775,8 @@ contains
     block
       character(len=:), allocatable :: path_alloc
       character(len=4096) :: path_var
-      character(len=MAX_VAR_VALUE_LEN) :: path_comp, candidate
+      character(len=:), allocatable :: path_comp, candidate
+      character(len=MAX_PATH_LEN) :: candidate_buf
       integer :: spos, epos, cpos
       character(kind=c_char), target :: c_path(1025)
       integer :: ci, acc_status
@@ -2809,7 +2810,8 @@ contains
         path_comp = path_var(spos:epos)
         if (len_trim(path_comp) == 0) path_comp = '.'
 
-        write(candidate, '(a,a,a)') trim(path_comp), '/', trim(cmd_name)
+        write(candidate_buf, '(a,a,a)') trim(path_comp), '/', trim(cmd_name)
+        candidate = trim(candidate_buf)
 
         ! Check executable via C access()
         do ci = 1, len_trim(candidate)
@@ -2818,7 +2820,7 @@ contains
         c_path(len_trim(candidate) + 1) = c_null_char
         acc_status = cache_access(c_path, int(1, c_int))  ! X_OK = 1
         if (acc_status == 0) then
-          full_path = candidate
+          full_path = trim(candidate)
           exit
         end if
 
