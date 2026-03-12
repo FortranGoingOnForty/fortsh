@@ -190,7 +190,7 @@ module shell_types
   ! Associative array entry
   type :: assoc_array_entry_t
     character(len=MAX_VAR_NAME_LEN) :: key
-    character(len=MAX_VAR_VALUE_LEN) :: value
+    character(len=:), allocatable :: value
   end type assoc_array_entry_t
 
   ! Simple shell variable entry
