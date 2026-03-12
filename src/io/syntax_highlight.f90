@@ -377,6 +377,35 @@ contains
     if (allocated(dir)) deallocate(dir)
   end function
 
+  ! Check if a path is a navigable directory (for cd-on-path-entry highlighting)
+  function is_navigable_path(path) result(is_nav)
+    use system_interface, only: file_is_directory, get_environment_var
+    character(len=*), intent(in) :: path
+    logical :: is_nav
+    character(len=:), allocatable :: expanded, home_dir
+
+    is_nav = .false.
+    if (len_trim(path) == 0) return
+
+    ! Expand tilde
+    if (path(1:1) == '~') then
+      home_dir = get_environment_var('HOME')
+      if (allocated(home_dir) .and. len(home_dir) > 0) then
+        if (len_trim(path) == 1) then
+          expanded = home_dir
+        else
+          expanded = trim(home_dir) // path(2:len_trim(path))
+        end if
+      else
+        return
+      end if
+    else
+      expanded = trim(path)
+    end if
+
+    is_nav = file_is_directory(expanded)
+  end function is_navigable_path
+
   ! Generate ANSI color code
   function color_code(color) result(code)
     integer, intent(in) :: color
@@ -881,6 +910,10 @@ contains
           tokens(num_tokens)%token_type = HTOK_BUILTIN
           in_cmd_pos = .false.
         else if (is_valid_command(input(tok_start:tok_start+wlen-1))) then
+          tokens(num_tokens)%token_type = HTOK_COMMAND_VALID
+          in_cmd_pos = .false.
+        else if (has_slash .and. is_navigable_path(input(tok_start:tok_start+wlen-1))) then
+          ! Path-as-command (cd-on-path-entry): valid directory shows green
           tokens(num_tokens)%token_type = HTOK_COMMAND_VALID
           in_cmd_pos = .false.
         else
