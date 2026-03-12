@@ -1153,6 +1153,11 @@ contains
       shell%aliases(i)%command = ''
     end do
 
+    ! Initialize traps array
+    do i = 1, size(shell%traps)
+      shell%traps(i)%command = ''
+    end do
+
     ! Initialize functions array
     do i = 1, size(shell%functions)
       shell%functions(i)%name = ''

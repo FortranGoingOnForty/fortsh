@@ -260,7 +260,7 @@ module shell_types
   ! Shell trap definition
   type :: shell_trap_t
     integer :: signal = 0
-    character(len=MAX_VAR_VALUE_LEN) :: command = ''
+    character(len=:), allocatable :: command
     logical :: active = .false.
     logical :: inherited = .false.  ! Trap inherited from parent (visible but not executed)
   end type shell_trap_t
