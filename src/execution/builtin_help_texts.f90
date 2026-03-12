@@ -53,6 +53,13 @@ contains
       call help_set(u)
     case ('shopt')
       call help_shopt(u)
+    ! I/O & Formatting
+    case ('echo')
+      call help_echo(u)
+    case ('printf')
+      call help_printf(u)
+    case ('read')
+      call help_read(u)
     case default
       found = .false.
     end select
@@ -365,5 +372,87 @@ contains
     write(u, '(a)') '    Exit Status:'
     write(u, '(a)') '    Returns 0, or 1 if an invalid option name is given.'
   end subroutine help_shopt
+
+  ! --------------------------------------------------------------------------
+  ! I/O & Formatting
+  ! --------------------------------------------------------------------------
+
+  subroutine help_echo(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'echo: echo [-neE] [arg ...]'
+    write(u, '(a)') '    Write arguments to standard output.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Display the ARGs, separated by spaces, followed by a newline.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -n    Do not append a trailing newline'
+    write(u, '(a)') '      -e    Enable interpretation of backslash escapes'
+    write(u, '(a)') '      -E    Disable interpretation of backslash escapes (default)'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Escape sequences (with -e):'
+    write(u, '(a)') '      \\    backslash           \a    alert (bell)'
+    write(u, '(a)') '      \b    backspace           \c    stop output (no trailing newline)'
+    write(u, '(a)') '      \f    form feed           \n    newline'
+    write(u, '(a)') '      \r    carriage return     \t    horizontal tab'
+    write(u, '(a)') '      \v    vertical tab        \0nnn octal value'
+    write(u, '(a)') '      \xHH  hexadecimal value'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless a write error occurs.'
+  end subroutine help_echo
+
+  subroutine help_printf(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'printf: printf FORMAT [ARGUMENTS...]'
+    write(u, '(a)') '    Formats and prints ARGUMENTS under control of the FORMAT.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    FORMAT is a string containing three types of objects: plain'
+    write(u, '(a)') '    characters (copied to stdout), escape sequences (converted and'
+    write(u, '(a)') '    copied), and format specifications, each causing printing of'
+    write(u, '(a)') '    the next successive ARGUMENT.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Format specifiers:'
+    write(u, '(a)') '      %s    string              %c    single character'
+    write(u, '(a)') '      %d    decimal integer      %i    integer (same as %d)'
+    write(u, '(a)') '      %o    octal               %x    hexadecimal (lowercase)'
+    write(u, '(a)') '      %X    hexadecimal (upper)  %u    unsigned decimal'
+    write(u, '(a)') '      %f    floating point       %e    scientific notation'
+    write(u, '(a)') '      %g    auto float/sci       %b    string with backslash escapes'
+    write(u, '(a)') '      %q    shell-quoted string  %%    literal percent sign'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Modifier flags: -, 0, +, space, #'
+    write(u, '(a)') '    Width and precision: %10s, %.5f, %*d (from argument)'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Integer arguments accept 0x (hex), 0 (octal), and ''A (character).'
+    write(u, '(a)') '    FORMAT is reused as necessary to consume all ARGUMENTS.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 on success, 1 on format/numeric error, 2 on usage error.'
+  end subroutine help_printf
+
+  subroutine help_read(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'read: read [-rs] [-a array] [-d delim] [-n nchars] [-p prompt] ' // &
+                     '[-t timeout] [name ...]'
+    write(u, '(a)') '    Read a line from standard input.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Reads a single line from standard input. The line is split into'
+    write(u, '(a)') '    fields using IFS, and each field is assigned to the corresponding'
+    write(u, '(a)') '    NAME. Leftover fields go to the last NAME.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -a array   Assign words to sequential indices of ARRAY'
+    write(u, '(a)') '      -d delim   Use DELIM to terminate the line instead of newline'
+    write(u, '(a)') '      -n nchars  Return after reading NCHARS characters'
+    write(u, '(a)') '      -p prompt  Output PROMPT without trailing newline before reading'
+    write(u, '(a)') '      -r         Do not allow backslash escapes or line continuation'
+    write(u, '(a)') '      -s         Silent mode (do not echo input)'
+    write(u, '(a)') '      -t timeout Time out and return failure after TIMEOUT seconds'
+    write(u, '(a)') ''
+    write(u, '(a)') '    If no NAMEs are supplied, the line is stored in the REPLY variable.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless EOF is encountered with no input or an error occurs.'
+  end subroutine help_read
 
 end module builtin_help_texts
