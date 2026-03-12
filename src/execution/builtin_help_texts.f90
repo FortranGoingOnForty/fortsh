@@ -60,6 +60,19 @@ contains
       call help_printf(u)
     case ('read')
       call help_read(u)
+    ! Job Control
+    case ('jobs')
+      call help_jobs(u)
+    case ('fg')
+      call help_fg(u)
+    case ('bg')
+      call help_bg(u)
+    case ('kill')
+      call help_kill(u)
+    case ('wait')
+      call help_wait(u)
+    case ('coproc')
+      call help_coproc(u)
     case default
       found = .false.
     end select
@@ -454,5 +467,108 @@ contains
     write(u, '(a)') '    Exit Status:'
     write(u, '(a)') '    Returns 0 unless EOF is encountered with no input or an error occurs.'
   end subroutine help_read
+
+  ! --------------------------------------------------------------------------
+  ! Job Control
+  ! --------------------------------------------------------------------------
+
+  subroutine help_jobs(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'jobs: jobs [-l]'
+    write(u, '(a)') '    Display status of jobs.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Lists the active jobs. The -l option provides more information.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -l    List process IDs in addition to the normal information'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0.'
+  end subroutine help_jobs
+
+  subroutine help_fg(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'fg: fg [job_spec]'
+    write(u, '(a)') '    Move job to the foreground.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Place the job identified by JOB_SPEC in the foreground, making it'
+    write(u, '(a)') '    the current job. If JOB_SPEC is not present, the most recent'
+    write(u, '(a)') '    background job is used.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    JOB_SPEC can be:'
+    write(u, '(a)') '      %N    Job number N'
+    write(u, '(a)') '      %str  Job whose command begins with str'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns the status of the command placed in foreground, or 1 if'
+    write(u, '(a)') '    an error occurs.'
+  end subroutine help_fg
+
+  subroutine help_bg(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'bg: bg [job_spec]'
+    write(u, '(a)') '    Move job to the background.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Place the job identified by JOB_SPEC in the background, as if it'
+    write(u, '(a)') '    had been started with &. If JOB_SPEC is not present, the most'
+    write(u, '(a)') '    recently suspended job is used.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 unless job control is not enabled or an error occurs.'
+  end subroutine help_bg
+
+  subroutine help_kill(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'kill: kill [-s sigspec | -signum] pid | jobspec ...'
+    write(u, '(a)') '    Send a signal to a job.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Send the processes identified by PID or JOBSPEC the signal named'
+    write(u, '(a)') '    by SIGSPEC or SIGNUM. If neither SIGSPEC nor SIGNUM is present,'
+    write(u, '(a)') '    SIGTERM is assumed.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -s sig  SIG is a signal name (e.g., TERM, KILL, HUP)'
+    write(u, '(a)') '      -l      List signal names'
+    write(u, '(a)') '      -NUM    Send signal number NUM'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Supported signals: HUP (1), INT (2), QUIT (3), KILL (9),'
+    write(u, '(a)') '    TERM (15), STOP (17/19), CONT (18/19), USR1 (10), USR2 (12).'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 if at least one signal was sent, 1 on error.'
+  end subroutine help_kill
+
+  subroutine help_wait(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'wait: wait [-n] [id ...]'
+    write(u, '(a)') '    Wait for job completion and return exit status.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Wait for each process identified by an ID, which may be a process'
+    write(u, '(a)') '    ID or a job specification, and report its termination status.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Options:'
+    write(u, '(a)') '      -n    Wait for any single job to complete and return its status'
+    write(u, '(a)') ''
+    write(u, '(a)') '    If ID is not given, waits for all currently active child processes.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns the status of the last ID, or 0 if no ID is given, or'
+    write(u, '(a)') '    127 if ID is not a known process.'
+  end subroutine help_wait
+
+  subroutine help_coproc(u)
+    integer, intent(in) :: u
+    write(u, '(a)') 'coproc: coproc [NAME] command [args]'
+    write(u, '(a)') '    Create a coprocess named NAME.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Execute COMMAND asynchronously with its standard output and input'
+    write(u, '(a)') '    connected to the shell via a two-way pipe.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    The NAME defaults to COPROC. NAME[0] holds the read fd and'
+    write(u, '(a)') '    NAME[1] holds the write fd. NAME_PID holds the PID.'
+    write(u, '(a)') ''
+    write(u, '(a)') '    Exit Status:'
+    write(u, '(a)') '    Returns 0 on success, 1 if creation fails.'
+  end subroutine help_coproc
 
 end module builtin_help_texts
