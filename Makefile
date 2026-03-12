@@ -471,6 +471,7 @@ help:
 	@echo "  test-interactive- Run interactive PTY tests (~2 min)"
 	@echo "  test-full       - Run POSIX + interactive tests (~5 min)"
 	@echo "  test-all        - Run everything incl. memory tests (SLOW)"
+	@echo "  test-stress     - Run stress tests for large values/deep nesting"
 	@echo "  check           - Run comprehensive checks"
 	@echo ""
 	@echo "Installation targets:"
@@ -672,7 +673,11 @@ test-highlight: $(BUILDDIR)/test_syntax_highlight
 	@$(BUILDDIR)/test_syntax_highlight
 
 # Run all unit bench tests (working tests only)
-test-bench: test-memory-pool test-lexer test-executor test-suggestions test-highlight test-c-strings
+test-stress: $(TARGET)
+	@echo "Running stress tests..."
+	FORTSH_BIN=$(FORTSH_ABS) ./tests/builtins/test_stress.sh
+
+test-bench: test-memory-pool test-lexer test-executor test-suggestions test-highlight test-c-strings test-stress
 	@echo ""
 	@echo "=========================================="
 	@echo "All bench tests passed!"
@@ -695,4 +700,4 @@ c-strings: $(BUILDDIR)/test_c_strings
 	@echo "C string library built successfully!"
 	@echo "Run 'make test-c-strings' to test it"
 
-.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-suggestions test-highlight test-bench
+.PHONY: all clean distclean install test debug release help dist rpm dev-install uninstall check smoke-test test-integration test-parity test-posix test-features test-all test-macos-pool test-macos-compiler test-macos test-c-strings c-strings test-memory-pool test-lexer test-parser test-executor test-expansion test-variables test-suggestions test-highlight test-stress test-bench
