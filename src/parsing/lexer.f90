@@ -363,7 +363,7 @@ contains
             end if
             pos = pos + 1
           end if
-        else if (ch == '$' .and. pos < input_len .and. input(pos+1:pos+1) == '(') then
+        else if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
           ! Command substitution inside double quotes - need to find matching )
           ! while ignoring quotes inside $()
           if (token_len < MAX_TOKEN_LEN - 1) then
