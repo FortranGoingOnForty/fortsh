@@ -362,8 +362,7 @@ contains
                 ! Array assignment - expand variables/command substitutions first
                 block
                   use variables, only: handle_array_assignment
-                  character(len=:), allocatable :: arr_expanded
-                  character(len=4096) :: arr_buf
+                  character(len=:), allocatable :: arr_expanded, arr_buf
                   if (index(assign_value(1:value_len), '$') > 0 &
                       .or. index(assign_value(1:value_len), &
                       '`') > 0) then
@@ -375,7 +374,7 @@ contains
                       arr_buf = '(' // arr_expanded // ')'
                       call handle_array_assignment(shell, &
                         trim(assign_name), &
-                        trim(arr_buf))
+                        arr_buf)
                     else
                       call handle_array_assignment(shell, &
                         trim(assign_name), &
