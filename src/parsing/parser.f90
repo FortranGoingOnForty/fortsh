@@ -1276,13 +1276,18 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(in), optional :: was_quoted_in
 
-    character(len=MAX_TOKEN_LEN) :: result, working_token
+    character(len=:), allocatable :: result, working_token
     integer :: i, j, var_start, brace_depth, end_pos
+    integer :: result_cap
     character(len=MAX_TOKEN_LEN) :: var_name
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
     logical :: is_quoted, is_single_quoted
     logical :: escapes_already_processed  ! True if lexer already processed escapes
+
+    ! Initialize growing result buffer
+    result_cap = max(len(token) * 4, 16384)
+    allocate(character(len=result_cap) :: result)
 
     ! Check if token was originally quoted (from lexer metadata or token inspection)
     is_quoted = .false.
@@ -1355,7 +1360,6 @@ contains
       working_token = token
     end if
 
-    result = ''
     i = 1
     j = 1
     ! For quoted tokens, use len(token) to preserve trailing whitespace
@@ -1380,6 +1384,8 @@ contains
     in_single_quote_literal = .false.
 
     do while (i <= end_pos)
+      ! Grow result buffer if needed (headroom for single-char writes)
+      call ensure_result_cap(j + 256)
       ! Check for single-quote literal START sentinel (char(2))
       if (working_token(i:i) == char(2)) then
         in_single_quote_literal = .true.
@@ -1488,6 +1494,7 @@ contains
           ! $@ - all positional parameters
           var_value = get_shell_variable(shell, '@')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1496,6 +1503,7 @@ contains
           ! $# - number of positional parameters
           var_value = get_shell_variable(shell, '#')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1504,6 +1512,7 @@ contains
           ! $* - all positional parameters as single word
           var_value = get_shell_variable(shell, '*')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1512,6 +1521,7 @@ contains
           ! $- - current shell option flags
           var_value = get_shell_variable(shell, '-')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1529,6 +1539,7 @@ contains
             var_name = working_token(var_start:i-1)
             var_value = get_shell_variable(shell, trim(var_name))
             if (len_trim(var_value) > 0) then
+              call ensure_result_cap(j + len_trim(var_value))
               result(j:j+len_trim(var_value)-1) = trim(var_value)
               j = j + len_trim(var_value)
             end if
@@ -1536,6 +1547,7 @@ contains
             ! $_ - last argument of previous command
             var_value = get_shell_variable(shell, '_')
             if (len_trim(var_value) > 0) then
+              call ensure_result_cap(j + len_trim(var_value))
               result(j:j+len_trim(var_value)-1) = trim(var_value)
               j = j + len_trim(var_value)
             end if
@@ -1546,6 +1558,7 @@ contains
           var_name = working_token(i:i)
           var_value = get_shell_variable(shell, trim(var_name))
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1573,6 +1586,7 @@ contains
             ! Evaluate arithmetic expansion with shell context
             var_value = arithmetic_expansion_shell(trim(var_name), shell)
             if (len_trim(var_value) > 0) then
+              call ensure_result_cap(j + len_trim(var_value))
               result(j:j+len_trim(var_value)-1) = trim(var_value)
               j = j + len_trim(var_value)
             end if
@@ -1596,6 +1610,7 @@ contains
             ! Execute command substitution
             call execute_command_substitution(trim(var_name), var_value, shell)
             if (allocated(var_value) .and. len(var_value) > 0) then
+              call ensure_result_cap(j + len(var_value))
               result(j:j+len(var_value)-1) = var_value
               j = j + len(var_value)
             end if
@@ -1625,6 +1640,7 @@ contains
           ! Process parameter expansion
           call process_parameter_expansion(var_name, var_value, shell)
           if (allocated(var_value) .and. len(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1651,6 +1667,7 @@ contains
               ! This is crucial for variables like IFS=' ' where the space must be preserved
               brace_depth = get_shell_variable_length(shell, trim(var_name))
               if (brace_depth > 0) then
+                call ensure_result_cap(j + brace_depth)
                 result(j:j+brace_depth-1) = var_value(1:brace_depth)
                 j = j + brace_depth
               end if
@@ -1658,6 +1675,7 @@ contains
               ! Fall back to environment variables
               var_value = get_environment_var(trim(var_name))
               if (allocated(var_value) .and. len(var_value) > 0) then
+                call ensure_result_cap(j + len(var_value))
                 result(j:j+len(var_value)-1) = var_value
                 j = j + len(var_value)
               else
@@ -1690,6 +1708,7 @@ contains
           ! Execute command substitution
           call execute_command_substitution(trim(var_name), var_value, shell)
           if (allocated(var_value) .and. len(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1721,7 +1740,19 @@ contains
     end if
 
   contains
-    
+
+    subroutine ensure_result_cap(needed)
+      integer, intent(in) :: needed
+      character(len=:), allocatable :: tmp
+      integer :: new_cap
+      if (needed <= result_cap) return
+      new_cap = max(result_cap * 2, needed + 4096)
+      allocate(character(len=new_cap) :: tmp)
+      if (j > 1) tmp(1:j-1) = result(1:j-1)
+      call move_alloc(tmp, result)
+      result_cap = new_cap
+    end subroutine
+
     function is_alnum(ch) result(res)
       character, intent(in) :: ch
       logical :: res
@@ -1729,7 +1760,7 @@ contains
             (ch >= 'A' .and. ch <= 'Z') .or. &
             (ch >= '0' .and. ch <= '9')
     end function
-    
+
   end subroutine
 
   subroutine read_heredoc(delimiter, content, shell, strip_tabs)
@@ -2171,24 +2202,15 @@ contains
     character(len=:), allocatable, intent(out) :: output
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=4096) :: temp_output
-    integer :: actual_len
-
     ! POSIX: errexit should not trigger in command substitution
     shell%in_command_substitution = .true.
 
     ! Execute in current shell context to preserve functions, variables, etc.
-    call execute_command_and_capture(shell, command, temp_output, actual_len)
+    call execute_command_and_capture(shell, command, output)
 
     shell%in_command_substitution = .false.
 
-    ! Allocate and copy result, preserving exact length (don't use trim!)
-    if (actual_len > 0) then
-      allocate(character(len=actual_len) :: output)
-      output = temp_output(1:actual_len)
-    else
-      output = ''
-    end if
+    if (.not. allocated(output)) output = ''
 
     ! Remove trailing newlines (but NOT other whitespace like spaces)
     do while (len(output) > 0 .and. output(len(output):len(output)) == char(10))
