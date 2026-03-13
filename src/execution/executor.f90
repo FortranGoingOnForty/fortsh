@@ -1212,6 +1212,17 @@ contains
           index_str = clean_key
         end block
 
+        ! Expand variables/command substitutions in value
+        if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
+          block
+            use parser, only: expand_variables
+            call expand_variables(var_value, expanded_value, shell)
+            if (allocated(expanded_value)) then
+              var_value = expanded_value
+            end if
+          end block
+        end if
+
         ! Check associative array first (numeric keys are valid)
         block
           use variables, only: is_associative_array, set_assoc_array_value
