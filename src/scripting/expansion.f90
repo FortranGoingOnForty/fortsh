@@ -2428,7 +2428,7 @@ contains
     character(len=:), allocatable :: result
     integer :: i, start_pos, bracket_count, result_capacity, result_pos
     character(len=256) :: var_expr
-    character(len=2048) :: var_value
+    character(len=:), allocatable :: var_value
     logical :: in_single_quote, in_double_quote
 
     ! Allocate with initial capacity

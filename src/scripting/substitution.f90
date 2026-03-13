@@ -54,9 +54,9 @@ contains
   function enhanced_command_substitution(shell, input) result(output)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
-    character(len=4096) :: output
+    character(len=:), allocatable :: output
 
-    character(len=4096) :: processed_input
+    character(len=:), allocatable :: processed_input
     integer :: actual_len
 
     output = ''
@@ -68,17 +68,19 @@ contains
     ! Execute the final command in the current shell context
     ! POSIX: errexit should not trigger in command substitution
     shell%in_command_substitution = .true.
-    call execute_command_and_capture(shell, processed_input, output, actual_len)
+    call execute_command_and_capture(shell, trim(processed_input), output, actual_len)
     shell%in_command_substitution = .false.
 
+    if (.not. allocated(output)) output = ''
+
     ! Remove trailing newlines only (preserve trailing spaces!)
-    ! Use actual_len to track content, not len_trim which strips whitespace
     do while (actual_len > 0 .and. output(actual_len:actual_len) == char(10))
       actual_len = actual_len - 1
     end do
-    ! Clear any content beyond actual_len
-    if (actual_len < 4096) then
-      output(actual_len+1:) = ''
+    if (actual_len > 0) then
+      output = output(1:actual_len)
+    else
+      output = ''
     end if
   end function
 
@@ -88,7 +90,7 @@ contains
 
     character(len=len(cmd_str)) :: result
     integer :: i, j, paren_count, subst_start, subst_end, result_len
-    character(len=2048) :: inner_cmd, inner_result
+    character(len=:), allocatable :: inner_cmd, inner_result
     logical :: found_nested
 
     found_nested = .true.
