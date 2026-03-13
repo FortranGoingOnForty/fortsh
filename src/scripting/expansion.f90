@@ -3498,11 +3498,13 @@ contains
   subroutine expand_word(shell, input, expanded_words, word_count)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
-    character(len=MAX_VAR_VALUE_LEN), intent(out) :: expanded_words(:)
+    type(string_t), intent(out) :: expanded_words(:)
     integer, intent(out) :: word_count
 
     character(len=:), allocatable :: temp_result, brace_expanded
     character(len=:), allocatable :: tilde_expanded, quote_removed
+    character(len=:), allocatable :: temp_split_words(:)
+    integer :: k
 
     word_count = 1
 
@@ -3526,10 +3528,16 @@ contains
     ! Check if the original input was entirely quoted with no expansions inside.
     if (is_quoted_literal(input)) then
       ! Skip field splitting for quoted literals
-      expanded_words(1) = quote_removed
+      expanded_words(1)%str = quote_removed
       word_count = 1
     else
-      call word_split(shell, quote_removed, expanded_words, word_count)
+      ! Use temp buffer for word_split (expects character(len=*) array)
+      allocate(character(len=max(1, len(quote_removed))) :: temp_split_words(size(expanded_words)))
+      call word_split(shell, quote_removed, temp_split_words, word_count)
+      do k = 1, word_count
+        expanded_words(k)%str = trim(temp_split_words(k))
+      end do
+      deallocate(temp_split_words)
     end if
 
     ! POSIX: If field splitting results in zero words (empty unquoted expansion),
