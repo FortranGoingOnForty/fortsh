@@ -708,8 +708,8 @@ contains
     type(shell_state_t), intent(in) :: shell
 
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_tokens(:)
-    character(len=MAX_TOKEN_LEN), allocatable :: original_tokens(:)
-    integer :: expanded_count, i
+    character(len=:), allocatable :: original_tokens(:)
+    integer :: expanded_count, i, tok_char_len
     logical :: has_expandable
 
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
@@ -717,8 +717,11 @@ contains
     ! Skip glob expansion if noglob option is enabled (set -f)
     if (shell%option_noglob) return
 
-    ! Save original tokens
-    allocate(original_tokens(cmd%num_tokens))
+    ! Preserve the character width from expand_tokens (may be > MAX_TOKEN_LEN)
+    tok_char_len = len(cmd%tokens(1))
+
+    ! Save original tokens with matching character width
+    allocate(character(len=tok_char_len) :: original_tokens(cmd%num_tokens))
     do i = 1, cmd%num_tokens
       original_tokens(i) = cmd%tokens(i)
     end do
@@ -771,7 +774,7 @@ contains
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
 
     if (expanded_count > 0) then
-      allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(expanded_count))
+      allocate(character(len=max(tok_char_len, MAX_TOKEN_LEN)) :: cmd%tokens(expanded_count))
       do i = 1, expanded_count
         cmd%tokens(i) = expanded_tokens(i)
       end do
@@ -795,7 +798,7 @@ contains
       cmd%token_escaped = .false.
     else
       ! No expansion occurred - restore original
-      allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(cmd%num_tokens))
+      allocate(character(len=tok_char_len) :: cmd%tokens(cmd%num_tokens))
       do i = 1, cmd%num_tokens
         cmd%tokens(i) = original_tokens(i)
       end do
