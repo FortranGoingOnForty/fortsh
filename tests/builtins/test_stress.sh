@@ -309,4 +309,45 @@ compare_output "long assignment value" \
 compare_output "variable with special chars" \
   'x="hello'\''world\"test"; echo "$x"'
 
+# ==========================================
+# 16. Pipeline overflow (formerly 4096 ceiling)
+# ==========================================
+section "16 - Pipeline overflow (>4096 byte values)"
+
+compare_output "5000-char variable via head" \
+  'x=$(head -c 5000 /dev/zero | tr "\0" "a"); echo ${#x}'
+
+compare_output "10000-char variable via head" \
+  'x=$(head -c 10000 /dev/zero | tr "\0" "a"); echo ${#x}'
+
+compare_output "5000-char in echo" \
+  'x=$(head -c 5000 /dev/zero | tr "\0" "b"); echo ${#x}'
+
+compare_output "8000-char variable via python" \
+  'x=$(python3 -c "print(\"c\"*8000, end=\"\")"); echo ${#x}'
+
+compare_output "5000-char array assignment via word splitting" \
+  'x=$(head -c 5000 /dev/zero | tr "\0" "d"); arr=($x); echo ${#arr[0]}'
+
+compare_output "10000-char array element" \
+  'x=$(head -c 10000 /dev/zero | tr "\0" "e"); arr=($x); echo ${#arr[0]}'
+
+compare_output "multiple 5000-char array elements" \
+  'a=$(head -c 5000 /dev/zero | tr "\0" "f"); b=$(head -c 5000 /dev/zero | tr "\0" "g"); arr=($a $b); echo ${#arr[0]} ${#arr[1]}'
+
+compare_output "5000-char variable string length" \
+  'x=$(head -c 5000 /dev/zero | tr "\0" "h"); echo ${#x}'
+
+compare_output "5000-char variable substring" \
+  'x=$(head -c 5000 /dev/zero | tr "\0" "i"); y=${x:1000:2000}; echo ${#y}'
+
+compare_output "command substitution preserves 10000 bytes" \
+  'echo $(head -c 10000 /dev/zero | tr "\0" "j") | wc -c'
+
+compare_output "nested command sub with large output" \
+  'x=$(echo $(head -c 5000 /dev/zero | tr "\0" "k")); echo ${#x}'
+
+compare_output "export 5000-char variable" \
+  'export BIGVAR=$(head -c 5000 /dev/zero | tr "\0" "m"); echo ${#BIGVAR}'
+
 print_summary
