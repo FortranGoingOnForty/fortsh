@@ -275,6 +275,18 @@ contains
           cycle
         end if
 
+        ! Check for $' - ANSI-C quoting
+        if (ch == '$' .and. pos < input_len .and. next_ch == "'") then
+          state = LEX_IN_WORD
+          token_start = pos
+          token_len = 0
+          current_token = ''
+          token_has_quoted_part = .true.
+          pos = pos + 2  ! Skip $'
+          call process_ansi_c_quote(input, pos, input_len, current_token, token_len)
+          cycle
+        end if
+
         ! Assignment detection: VAR=value
         ! (This is complex - we'll detect it as WORD and let parser handle it)
 
@@ -623,6 +635,16 @@ contains
           end if
           pos = pos + 2
         else if (ch == "'" .or. ch == '"') then
+          ! Check for $' (ANSI-C quoting) when last char in token is $
+          if (ch == "'" .and. token_len >= 1 .and. &
+              current_token(token_len:token_len) == '$') then
+            ! Remove trailing $ and process ANSI-C quoted string
+            token_len = token_len - 1
+            token_has_quoted_part = .true.
+            pos = pos + 1  ! Skip opening '
+            call process_ansi_c_quote(input, pos, input_len, current_token, token_len)
+            cycle
+          end if
           ! Quote in middle of word - continue building the same token
           ! Mark that we're continuing a word so quote handler doesn't reset the token
           continuing_word = .true.
@@ -1087,5 +1109,184 @@ contains
       tok%quoted = .false.
     end if
   end function peek_token
+
+  ! =====================================
+  ! process_ansi_c_quote - Handle $'...' ANSI-C quoting
+  ! Reads characters from input starting at pos (after $'),
+  ! processes escape sequences, appends to current_token.
+  ! Wraps output in char(2)/char(3) sentinels to prevent expansion.
+  ! =====================================
+  subroutine process_ansi_c_quote(input, pos, input_len, current_token, token_len)
+    character(len=*), intent(in) :: input
+    integer, intent(inout) :: pos
+    integer, intent(in) :: input_len
+    character(len=*), intent(inout) :: current_token
+    integer, intent(inout) :: token_len
+
+    character :: ch, esc_ch
+    integer :: oct_val, hex_val, n_digits, i
+
+    ! Add sentinel to mark start of quoted content (no expansion)
+    if (token_len < MAX_TOKEN_LEN) then
+      token_len = token_len + 1
+      current_token(token_len:token_len) = char(2)
+    end if
+
+    do while (pos <= input_len)
+      ch = input(pos:pos)
+
+      if (ch == "'") then
+        ! Closing quote
+        pos = pos + 1
+        ! Add sentinel to mark end of quoted content
+        if (token_len < MAX_TOKEN_LEN) then
+          token_len = token_len + 1
+          current_token(token_len:token_len) = char(3)
+        end if
+        return
+      end if
+
+      if (ch == '\' .and. pos < input_len) then
+        ! Escape sequence
+        esc_ch = input(pos+1:pos+1)
+        select case(esc_ch)
+        case('a')   ! Alert (bell)
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(7)
+          end if
+          pos = pos + 2
+        case('b')   ! Backspace
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(8)
+          end if
+          pos = pos + 2
+        case('e', 'E')  ! Escape
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(27)
+          end if
+          pos = pos + 2
+        case('f')   ! Form feed
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(12)
+          end if
+          pos = pos + 2
+        case('n')   ! Newline
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(10)
+          end if
+          pos = pos + 2
+        case('r')   ! Carriage return
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(13)
+          end if
+          pos = pos + 2
+        case('t')   ! Horizontal tab
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(9)
+          end if
+          pos = pos + 2
+        case('v')   ! Vertical tab
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(11)
+          end if
+          pos = pos + 2
+        case('\')   ! Literal backslash
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = '\'
+          end if
+          pos = pos + 2
+        case("'")   ! Literal single quote
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = "'"
+          end if
+          pos = pos + 2
+        case('"')   ! Literal double quote
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = '"'
+          end if
+          pos = pos + 2
+        case('0', '1', '2', '3', '4', '5', '6', '7')
+          ! Octal: \nnn (up to 3 digits)
+          oct_val = 0
+          n_digits = 0
+          pos = pos + 1  ! skip backslash
+          do while (pos <= input_len .and. n_digits < 3)
+            ch = input(pos:pos)
+            if (ch >= '0' .and. ch <= '7') then
+              oct_val = oct_val * 8 + (ichar(ch) - ichar('0'))
+              pos = pos + 1
+              n_digits = n_digits + 1
+            else
+              exit
+            end if
+          end do
+          if (oct_val > 0 .and. oct_val <= 127 .and. token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(oct_val)
+          end if
+        case('x')
+          ! Hex: \xHH (up to 2 digits)
+          hex_val = 0
+          n_digits = 0
+          pos = pos + 2  ! skip \x
+          do while (pos <= input_len .and. n_digits < 2)
+            ch = input(pos:pos)
+            if (ch >= '0' .and. ch <= '9') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('0'))
+              pos = pos + 1
+              n_digits = n_digits + 1
+            else if (ch >= 'a' .and. ch <= 'f') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('a') + 10)
+              pos = pos + 1
+              n_digits = n_digits + 1
+            else if (ch >= 'A' .and. ch <= 'F') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('A') + 10)
+              pos = pos + 1
+              n_digits = n_digits + 1
+            else
+              exit
+            end if
+          end do
+          if (hex_val > 0 .and. hex_val <= 127 .and. token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(hex_val)
+          end if
+        case default
+          ! Unknown escape: include backslash and character literally
+          if (token_len < MAX_TOKEN_LEN - 1) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = '\'
+            token_len = token_len + 1
+            current_token(token_len:token_len) = esc_ch
+          end if
+          pos = pos + 2
+        end select
+      else
+        ! Regular character
+        if (token_len < MAX_TOKEN_LEN) then
+          token_len = token_len + 1
+          current_token(token_len:token_len) = ch
+        end if
+        pos = pos + 1
+      end if
+    end do
+
+    ! Unterminated $'...' - add sentinel anyway
+    if (token_len < MAX_TOKEN_LEN) then
+      token_len = token_len + 1
+      current_token(token_len:token_len) = char(3)
+    end if
+  end subroutine process_ansi_c_quote
 
 end module lexer
