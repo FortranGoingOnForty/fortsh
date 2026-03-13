@@ -180,7 +180,8 @@ contains
     end if
 
     ! Remove trailing newlines for command substitution
-    do while (total_len > 0 .and. buf(total_len:total_len) == char(10))
+    do while (total_len > 0)
+      if (buf(total_len:total_len) /= char(10)) exit
       total_len = total_len - 1
     end do
 
