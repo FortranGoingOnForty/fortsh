@@ -2496,8 +2496,7 @@ contains
 
     character(len=256) :: func_name
     character(len=2048) :: reconstructed
-    ! Reduced from 100 to 50 lines to avoid static storage
-    character(len=MAX_VAR_VALUE_LEN) :: func_body_line
+    character(len=:), allocatable :: func_body_line
     integer :: body_count, brace_start, brace_end, paren_pos
 
     is_func_def = .false.
