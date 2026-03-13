@@ -22,9 +22,10 @@ contains
   function parameter_expansion(shell, expression) result(expanded)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: expression
-    character(len=2048) :: expanded
+    character(len=:), allocatable :: expanded
 
     character(len=256) :: var_name, operation, param1, param2, replacement
+    character(len=32) :: num_buf
     character(len=:), allocatable :: pattern
     character(len=:), allocatable :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos, equals_pos, question_pos
@@ -83,7 +84,6 @@ contains
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             expanded = ''
             do j = 1, min(num_keys, 50)
-              if (len_trim(expanded) + len_trim(keys(j)) + 2 > 2048) exit  ! Prevent overflow
               if (j > 1) expanded = trim(expanded) // ' '
               expanded = trim(expanded) // trim(keys(j))
             end do
@@ -94,7 +94,8 @@ contains
             allocate(keys(50))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             deallocate(keys)
-            write(expanded, '(I0)') num_keys
+            write(num_buf, '(I0)') num_keys
+            expanded = trim(num_buf)
             return
           else if (is_all_expansion) then
             ! ${array[@]} - return all values
@@ -104,7 +105,6 @@ contains
             expanded = ''
             do j = 1, min(num_keys, 50)
               var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
-              if (len_trim(expanded) + len_trim(var_value) + 2 > 2048) exit  ! Prevent overflow
               if (j > 1) expanded = trim(expanded) // ' '
               expanded = trim(expanded) // trim(var_value)
             end do
@@ -312,7 +312,8 @@ contains
       ! Check if this is just ${#} (number of positional params)
       if (len_trim(var_name) == 1) then
         ! ${#} alone - return number of positional parameters
-        write(expanded, '(I0)') shell%num_positional
+        write(num_buf, '(I0)') shell%num_positional
+        expanded = trim(num_buf)
         return
       else if (len_trim(var_name) > 1) then
         ! ${#var} length expansion
@@ -321,7 +322,8 @@ contains
         ! Check for special parameters
         if (trim(operation) == '@' .or. trim(operation) == '*') then
           ! ${#@} or ${#*} - return number of positional parameters
-          write(expanded, '(I0)') shell%num_positional
+          write(num_buf, '(I0)') shell%num_positional
+          expanded = trim(num_buf)
           return
         else if (len(trim(operation)) > 0) then
           ! Check if it's a positional parameter (digit)
@@ -329,7 +331,8 @@ contains
           if (i == 0 .and. j > 0) then
             ! ${#1}, ${#2}, etc. - return length of specific positional parameter
             if (j <= shell%num_positional) then
-              write(expanded, '(I0)') len_trim(shell%positional_params(j)%str)
+              write(num_buf, '(I0)') len_trim(shell%positional_params(j)%str)
+              expanded = trim(num_buf)
             else
               expanded = '0'
             end if
@@ -337,7 +340,8 @@ contains
           else
             ! Regular variable length
             var_value = get_shell_variable(shell, trim(operation))
-            write(expanded, '(I0)') len_trim(var_value)
+            write(num_buf, '(I0)') len_trim(var_value)
+            expanded = trim(num_buf)
             return
           end if
         end if
@@ -569,8 +573,9 @@ contains
       ! ${#var} length expansion
       operation = var_name(hash_pos+1:)
       var_value = get_shell_variable(shell, trim(operation))
-      write(expanded, '(I0)') len_trim(var_value)
-      
+      write(num_buf, '(I0)') len_trim(var_value)
+      expanded = trim(num_buf)
+
     else
       ! Simple variable expansion
       var_value = get_shell_variable(shell, trim(var_name))
