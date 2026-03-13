@@ -2923,14 +2923,19 @@ contains
       if (is_command) then
         ! Check if this looks like a directory path for cd-less navigation
         if (looks_like_directory_path(last_word)) then
-          ! Complete as directories for cd-less navigation
+          ! Complete as files/directories for path-like input
           if (has_glob_chars(last_word)) then
             call expand_glob_for_completion(last_word, completions, num_completions)
           else
             call complete_files_enhanced(last_word, completions, num_completions)
           end if
-          ! Filter to directories only for cd-less navigation
-          call filter_directories_only(completions, num_completions)
+          ! Only filter to directories when pattern is empty (path ends with /)
+          ! i.e., cd-less navigation. When there's a filename pattern (./bin/fort),
+          ! keep all matches so executables can be completed.
+          if (len_trim(last_word) > 0 .and. &
+              last_word(len_trim(last_word):len_trim(last_word)) == '/') then
+            call filter_directories_only(completions, num_completions)
+          end if
         else
           ! Complete commands (builtins + PATH executables)
           call complete_commands_enhanced(last_word, completions, num_completions)
@@ -4188,6 +4193,11 @@ contains
       input_state%length = len_trim(tab_completed_line)
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
+
+      ! Recompute autosuggestion for the completed buffer — without this,
+      ! the stale suggestion from before tab (e.g. "tsh" for "fort" → "fortsh")
+      ! persists and renders as ghost text after the completed word.
+      call update_autosuggestion(input_state)
 
       if (tab_num_completions > 1) then
         if (tab_made_progress) then

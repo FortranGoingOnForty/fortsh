@@ -406,6 +406,17 @@ contains
     is_nav = file_is_directory(expanded)
   end function is_navigable_path
 
+  ! Check if a path containing / points to an executable file
+  function is_path_executable(path) result(is_exec)
+    use system_interface, only: file_is_executable
+    character(len=*), intent(in) :: path
+    logical :: is_exec
+
+    is_exec = .false.
+    if (len_trim(path) == 0) return
+    is_exec = file_is_executable(trim(path))
+  end function is_path_executable
+
   ! Generate ANSI color code
   function color_code(color) result(code)
     integer, intent(in) :: color
@@ -910,6 +921,10 @@ contains
           tokens(num_tokens)%token_type = HTOK_BUILTIN
           in_cmd_pos = .false.
         else if (is_valid_command(input(tok_start:tok_start+wlen-1))) then
+          tokens(num_tokens)%token_type = HTOK_COMMAND_VALID
+          in_cmd_pos = .false.
+        else if (has_slash .and. is_path_executable(input(tok_start:tok_start+wlen-1))) then
+          ! Path-to-executable (e.g. ./bin/fortsh, /usr/bin/env): check directly
           tokens(num_tokens)%token_type = HTOK_COMMAND_VALID
           in_cmd_pos = .false.
         else if (has_slash .and. is_navigable_path(input(tok_start:tok_start+wlen-1))) then
