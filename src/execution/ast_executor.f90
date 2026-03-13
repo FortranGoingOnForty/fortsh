@@ -863,8 +863,17 @@ contains
     temp_pipeline%commands(1)%skip_expansion = node%simple_cmd%pre_expanded
 
 
-    ! Allocate tokens array directly in pipeline command
-    allocate(character(len=MAX_TOKEN_LEN) :: temp_pipeline%commands(1)%tokens(node%simple_cmd%num_words))
+    ! Allocate tokens array — use actual word width if pre-expanded (may be > MAX_TOKEN_LEN)
+    block
+      integer :: tok_alloc_len
+      if (node%simple_cmd%pre_expanded .and. allocated(node%simple_cmd%words) .and. &
+          node%simple_cmd%num_words > 0) then
+        tok_alloc_len = max(MAX_TOKEN_LEN, len(node%simple_cmd%words(1)))
+      else
+        tok_alloc_len = MAX_TOKEN_LEN
+      end if
+      allocate(character(len=tok_alloc_len) :: temp_pipeline%commands(1)%tokens(node%simple_cmd%num_words))
+    end block
 
     ! Allocate metadata arrays to track token properties
     allocate(temp_pipeline%commands(1)%token_quoted(node%simple_cmd%num_words))
