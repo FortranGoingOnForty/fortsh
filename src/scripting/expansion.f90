@@ -3256,7 +3256,7 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: output
     ! Use allocatable array to avoid static storage
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: words(:)
+    type(string_t), allocatable :: words(:)
     character(len=:), allocatable :: temp_result
     integer :: word_count, i, j, out_pos, capacity
     character(len=:), allocatable :: final_result
@@ -3285,7 +3285,7 @@ contains
           if (word_count > capacity) then
             call grow_expansion_array(words, capacity)
           end if
-          words(word_count) = temp_result(:out_pos-1)
+          words(word_count)%str = temp_result(:out_pos-1)
           out_pos = 1
         end if
       else
@@ -3300,14 +3300,14 @@ contains
       if (word_count > capacity) then
         call grow_expansion_array(words, capacity)
       end if
-      words(word_count) = temp_result(:out_pos-1)
+      words(word_count)%str = temp_result(:out_pos-1)
     end if
 
     ! Recursively expand each word and recombine
     do i = 1, word_count
-      if (index(words(i), '{') > 0) then
+      if (index(words(i)%str, '{') > 0) then
         ! Still has braces - recurse
-        temp_result = expand_braces(trim(words(i)))
+        temp_result = expand_braces(trim(words(i)%str))
         if (final_result_len > 0) then
           temp_piece = ' ' // trim(temp_result)
         else
@@ -3316,9 +3316,9 @@ contains
       else
         ! No braces - use as-is
         if (final_result_len > 0) then
-          temp_piece = ' ' // trim(words(i))
+          temp_piece = ' ' // trim(words(i)%str)
         else
-          temp_piece = trim(words(i))
+          temp_piece = trim(words(i)%str)
         end if
       end if
 
@@ -3388,16 +3388,22 @@ contains
 
   ! Helper subroutine to grow expansion array
   subroutine grow_expansion_array(array, current_size)
-    character(len=MAX_VAR_VALUE_LEN), allocatable, intent(inout) :: array(:)
+    type(string_t), allocatable, intent(inout) :: array(:)
     integer, intent(inout) :: current_size
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: new_array(:)
-    integer :: new_size
+    type(string_t), allocatable :: new_array(:)
+    integer :: new_size, k
 
     new_size = current_size * 2
     allocate(new_array(new_size))
 
     ! Copy existing data
-    new_array(1:current_size) = array(1:current_size)
+    do k = 1, current_size
+      if (allocated(array(k)%str)) then
+        new_array(k)%str = array(k)%str
+      else
+        new_array(k)%str = ''
+      end if
+    end do
 
     ! Swap arrays
     call move_alloc(new_array, array)
