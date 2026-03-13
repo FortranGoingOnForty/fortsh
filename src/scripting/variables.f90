@@ -653,7 +653,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: var_name, array_expr
     ! Use allocatable array to avoid static storage
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: values(:)
+    type(string_t), allocatable :: values(:)
     integer :: count, start_pos, pos, capacity
     character(len=:), allocatable :: content
     logical :: in_quotes
@@ -680,12 +680,14 @@ contains
           if (count > capacity) then
             call grow_string_array(values, capacity)
           end if
-          values(count) = content(start_pos:pos-1)
+          values(count)%str = content(start_pos:pos-1)
           ! Remove quotes if present
-          if (len_trim(values(count)) >= 2) then
-            if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
-                (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
-              values(count) = values(count)(2:len_trim(values(count))-1)
+          if (len_trim(values(count)%str) >= 2) then
+            if ((values(count)%str(1:1) == '"' .and. &
+                 values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == '"') .or. &
+                (values(count)%str(1:1) == "'" .and. &
+                 values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == "'")) then
+              values(count)%str = values(count)%str(2:len_trim(values(count)%str)-1)
             end if
           end if
         end if
@@ -693,7 +695,7 @@ contains
       end if
       pos = pos + 1
     end do
-    
+
     ! Handle last value
     if (start_pos <= len_trim(content)) then
       count = count + 1
@@ -701,18 +703,20 @@ contains
       if (count > capacity) then
         call grow_string_array(values, capacity)
       end if
-      values(count) = content(start_pos:)
+      values(count)%str = content(start_pos:)
       ! Remove quotes if present
-      if (len_trim(values(count)) >= 2) then
-        if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
-            (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
-          values(count) = values(count)(2:len_trim(values(count))-1)
+      if (len_trim(values(count)%str) >= 2) then
+        if ((values(count)%str(1:1) == '"' .and. &
+             values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == '"') .or. &
+            (values(count)%str(1:1) == "'" .and. &
+             values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == "'")) then
+          values(count)%str = values(count)%str(2:len_trim(values(count)%str)-1)
         end if
       end if
     end if
-    
+
     if (count > 0) then
-      call set_array_variable(shell, var_name, values(1:count), count)
+      call set_array_variable_string_t(shell, var_name, values(1:count), count)
     end if
 
     ! Clean up allocatable array
@@ -721,16 +725,22 @@ contains
 
   ! Helper subroutine to grow string array
   subroutine grow_string_array(array, current_size)
-    character(len=MAX_VAR_VALUE_LEN), allocatable, intent(inout) :: array(:)
+    type(string_t), allocatable, intent(inout) :: array(:)
     integer, intent(inout) :: current_size
-    character(len=MAX_VAR_VALUE_LEN), allocatable :: new_array(:)
-    integer :: new_size
+    type(string_t), allocatable :: new_array(:)
+    integer :: new_size, k
 
     new_size = current_size * 2
     allocate(new_array(new_size))
 
     ! Copy existing data
-    new_array(1:current_size) = array(1:current_size)
+    do k = 1, current_size
+      if (allocated(array(k)%str)) then
+        new_array(k)%str = array(k)%str
+      else
+        new_array(k)%str = ''
+      end if
+    end do
 
     ! Swap arrays
     call move_alloc(new_array, array)
@@ -950,6 +960,51 @@ contains
       allocate(shell%variables(empty_slot)%array_values(count))
       do k = 1, count
         shell%variables(empty_slot)%array_values(k)%str = trim(values(k))
+      end do
+      shell%num_variables = shell%num_variables + 1
+    end if
+  end subroutine
+
+  subroutine set_array_variable_string_t(shell, name, values, count)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: name
+    type(string_t), intent(in) :: values(:)
+    integer, intent(in) :: count
+    integer :: i, k, empty_slot
+
+    empty_slot = -1
+
+    ! Check if variable already exists
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
+        allocate(shell%variables(i)%array_values(count))
+        do k = 1, count
+          shell%variables(i)%array_values(k)%str = values(k)%str
+        end do
+        shell%variables(i)%array_size = count
+        shell%variables(i)%is_array = .true.
+        return
+      end if
+    end do
+
+    ! Find empty slot
+    do i = 1, size(shell%variables)
+      if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+        empty_slot = i
+        exit
+      end if
+    end do
+
+    ! Add new array variable
+    if (empty_slot > 0) then
+      shell%variables(empty_slot)%name = name
+      shell%variables(empty_slot)%is_array = .true.
+      shell%variables(empty_slot)%array_size = count
+      if (allocated(shell%variables(empty_slot)%array_values)) deallocate(shell%variables(empty_slot)%array_values)
+      allocate(shell%variables(empty_slot)%array_values(count))
+      do k = 1, count
+        shell%variables(empty_slot)%array_values(k)%str = values(k)%str
       end do
       shell%num_variables = shell%num_variables + 1
     end if
