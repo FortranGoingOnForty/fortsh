@@ -503,7 +503,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
-    character(len=MAX_TOKEN_LEN) :: var_name, var_value
+    character(len=MAX_TOKEN_LEN) :: var_name
+    character(len=:), allocatable :: var_value
     logical :: print_mode, found, unexport_mode
     character(len=:), allocatable :: env_entry
 
@@ -577,17 +578,22 @@ contains
       if (eq_pos > 0) then
         ! VAR=value form - set and export
         var_name = cmd%tokens(i)(:eq_pos-1)
-        var_value = cmd%tokens(i)(eq_pos+1:)
+        if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+            cmd%token_lengths(i) > eq_pos) then
+          var_value = cmd%tokens(i)(eq_pos+1:cmd%token_lengths(i))
+        else
+          var_value = trim(cmd%tokens(i)(eq_pos+1:))
+        end if
 
         ! Set as shell variable first
-        call set_shell_variable(shell, trim(var_name), trim(var_value))
+        call set_shell_variable(shell, trim(var_name), var_value)
 
         ! Mark as exported
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == trim(var_name)) then
             shell%variables(j)%exported = .true.
             ! Also set in environment
-            if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+            if (.not. set_environment_var(trim(var_name), var_value)) then
               write(error_unit, '(a)') 'export: failed to set environment variable'
               shell%last_exit_status = 1
               return
