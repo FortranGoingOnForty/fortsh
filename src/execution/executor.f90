@@ -1835,11 +1835,16 @@ contains
     integer, intent(in) :: num_tokens
 
     type(c_ptr), target :: argv(num_tokens + 1)
-    character(kind=c_char), target :: c_tokens(MAX_TOKEN_LEN+1, num_tokens)
+    integer :: c_tok_len
+    character(kind=c_char), allocatable, target :: c_tokens(:,:)
     integer :: i, j, k
     integer :: ret
     logical :: is_path_command
 
+
+    ! Allocate C token buffer based on actual token character length
+    c_tok_len = len(tokens(1)) + 1
+    allocate(c_tokens(c_tok_len, num_tokens))
 
     ! Convert tokens to C strings
     do i = 1, num_tokens
