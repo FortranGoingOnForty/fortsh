@@ -3726,11 +3726,19 @@ contains
   function is_valid_var_name(name) result(is_valid)
     character(len=*), intent(in) :: name
     logical :: is_valid
-    integer :: i
+    integer :: i, check_len, bracket_pos
     character :: ch
 
     is_valid = .false.
-    if (len_trim(name) == 0) return
+    check_len = len_trim(name)
+    if (check_len == 0) return
+
+    ! Accept array subscript names: var[subscript]
+    bracket_pos = index(name(1:check_len), '[')
+    if (bracket_pos > 0) then
+      check_len = bracket_pos - 1
+      if (check_len == 0) return
+    end if
 
     ! First character must be letter or underscore
     ch = name(1:1)
@@ -3741,7 +3749,7 @@ contains
     end if
 
     ! Remaining characters can be letters, digits, or underscores
-    do i = 2, len_trim(name)
+    do i = 2, check_len
       ch = name(i:i)
       if (.not. ((ch >= 'A' .and. ch <= 'Z') .or. &
                  (ch >= 'a' .and. ch <= 'z') .or. &

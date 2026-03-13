@@ -1476,16 +1476,25 @@ contains
   end subroutine
 
   ! Check if a string is a valid shell variable name for assignments
+  ! Accepts plain names (var) and array subscript names (var[subscript])
   function is_valid_assignment_name(name) result(valid)
     character(len=*), intent(in) :: name
     logical :: valid
-    integer :: i, name_len
+    integer :: i, name_len, bracket_pos
     character :: ch
 
     valid = .false.
     name_len = len_trim(name)
 
     if (name_len == 0) return
+
+    ! Check for array subscript: name[subscript]
+    ! Only validate the base name before the bracket
+    bracket_pos = index(name(1:name_len), '[')
+    if (bracket_pos > 0) then
+      name_len = bracket_pos - 1
+      if (name_len == 0) return
+    end if
 
     ! First character must be letter or underscore
     ch = name(1:1)
