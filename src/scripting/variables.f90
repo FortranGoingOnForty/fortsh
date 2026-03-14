@@ -1221,14 +1221,24 @@ contains
           end if
         end do
         
-        ! Add new key-value pair
-        if (shell%variables(i)%assoc_size < size(shell%variables(i)%assoc_entries)) then
-          shell%variables(i)%assoc_size = shell%variables(i)%assoc_size + 1
-          shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%key = key
-          shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%value = value
-        else
-          write(error_unit, '(a)') 'associative array: too many entries'
+        ! Add new key-value pair — grow array if needed
+        if (shell%variables(i)%assoc_size >= size(shell%variables(i)%assoc_entries)) then
+          block
+            type(assoc_array_entry_t), allocatable :: new_entries(:)
+            integer :: old_size, new_size, k
+            old_size = size(shell%variables(i)%assoc_entries)
+            new_size = old_size * 2
+            allocate(new_entries(new_size))
+            do k = 1, old_size
+              new_entries(k)%key = shell%variables(i)%assoc_entries(k)%key
+              new_entries(k)%value = shell%variables(i)%assoc_entries(k)%value
+            end do
+            call move_alloc(new_entries, shell%variables(i)%assoc_entries)
+          end block
         end if
+        shell%variables(i)%assoc_size = shell%variables(i)%assoc_size + 1
+        shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%key = key
+        shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%value = value
         return
       end if
     end do
