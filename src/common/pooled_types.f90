@@ -48,7 +48,7 @@ module pooled_types
     integer :: num_redirections = 0
 
     ! Prefix assignments remain as fixed-size for now
-    character(len=256) :: prefix_assignments(10) = ''
+    character(len=256) :: prefix_assignments(MAX_PREFIX_ASSIGNMENTS) = ''
     integer :: num_prefix_assignments = 0
   end type pooled_command_t
 

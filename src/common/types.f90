@@ -80,6 +80,7 @@ module shell_types
   ! Pending heredoc entry for -c flag processing
   ! =====================================
   integer, parameter :: MAX_PENDING_HEREDOCS = 10
+  integer, parameter :: MAX_PREFIX_ASSIGNMENTS = 20
 
   type :: pending_heredoc_entry_t
     character(len=4096) :: content = ''
@@ -169,7 +170,7 @@ module shell_types
     type(redirection_t) :: redirections(10)
     integer :: num_redirections = 0
     ! Prefix assignments (VAR=value command)
-    character(len=MAX_TOKEN_LEN) :: prefix_assignments(10) = ''  ! VAR=value pairs
+    character(len=MAX_TOKEN_LEN) :: prefix_assignments(MAX_PREFIX_ASSIGNMENTS) = ''  ! VAR=value pairs
     integer :: num_prefix_assignments = 0
     ! Skip expansion flag (words already expanded in pipeline)
     logical :: skip_expansion = .false.

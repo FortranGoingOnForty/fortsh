@@ -845,10 +845,10 @@ contains
     character(len=:), allocatable :: content_to_write, expanded_content
     logical :: has_redirects, has_heredoc
     ! Prefix assignment handling
-    character(len=MAX_TOKEN_LEN) :: saved_var_names(10), saved_var_values(10)
+    character(len=MAX_TOKEN_LEN) :: saved_var_names(MAX_PREFIX_ASSIGNMENTS), saved_var_values(MAX_PREFIX_ASSIGNMENTS)
     integer :: num_saved_vars, eq_pos, j
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
-    logical :: var_was_set(10)
+    logical :: var_was_set(MAX_PREFIX_ASSIGNMENTS)
 
     ! Apply prefix assignments to shell variables (save old values first)
     num_saved_vars = 0
