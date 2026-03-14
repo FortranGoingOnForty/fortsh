@@ -43,7 +43,7 @@ module ast_executor
     type(command_node_t), pointer :: body => null()
   end type function_ast_entry_t
 
-  type(function_ast_entry_t), save :: function_ast_cache(20)
+  type(function_ast_entry_t), save :: function_ast_cache(MAX_FUNCTIONS)
   integer, save :: num_cached_functions = 0
 
 contains
@@ -2779,10 +2779,23 @@ contains
       end if
     end do
 
-    if (cache_idx == -1 .and. num_cached_functions < 20) then
-      ! New function
-      num_cached_functions = num_cached_functions + 1
-      cache_idx = num_cached_functions
+    if (cache_idx == -1) then
+      if (num_cached_functions < size(function_ast_cache)) then
+        ! New function - append
+        num_cached_functions = num_cached_functions + 1
+        cache_idx = num_cached_functions
+      else
+        ! Cache full - evict oldest entry (slot 1), shift down, use last slot
+        if (associated(function_ast_cache(1)%body)) then
+          call destroy_command_node(function_ast_cache(1)%body)
+        end if
+        do func_idx = 1, num_cached_functions - 1
+          function_ast_cache(func_idx) = function_ast_cache(func_idx + 1)
+        end do
+        function_ast_cache(num_cached_functions)%name = ''
+        function_ast_cache(num_cached_functions)%body => null()
+        cache_idx = num_cached_functions
+      end if
     end if
 
     if (cache_idx > 0) then
@@ -2800,7 +2813,7 @@ contains
       end if
     end do
 
-    if (shell%num_functions < 20) then
+    if (shell%num_functions < MAX_FUNCTIONS) then
       shell%num_functions = shell%num_functions + 1
       shell%functions(shell%num_functions)%name = trim(node%function_def%name)
       shell%functions(shell%num_functions)%body_lines = 1
