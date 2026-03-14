@@ -852,6 +852,7 @@ contains
 
     ! Apply prefix assignments to shell variables (save old values first)
     num_saved_vars = 0
+    if (allocated(cmd%prefix_assignments)) then
     do j = 1, cmd%num_prefix_assignments
       eq_pos = index(cmd%prefix_assignments(j), '=')
       if (eq_pos > 1) then
@@ -866,6 +867,7 @@ contains
         call var_set_shell_variable(shell, trim(var_name), trim(var_value))
       end if
     end do
+    end if  ! allocated(prefix_assignments)
 
     ! Check if we have any redirections
     has_redirects = allocated(cmd%output_file) .or. allocated(cmd%input_file) .or. &
@@ -2621,6 +2623,7 @@ contains
     character(len=MAX_TOKEN_LEN), target :: c_var_name, c_var_value
 
     ! Iterate through all prefix assignments
+    if (.not. allocated(cmd%prefix_assignments)) return
     do i = 1, cmd%num_prefix_assignments
       ! Find the '=' separator
       eq_pos = index(cmd%prefix_assignments(i), '=')

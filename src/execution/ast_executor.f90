@@ -855,6 +855,10 @@ contains
     ! Copy prefix assignments from AST
     temp_pipeline%commands(1)%num_prefix_assignments = node%simple_cmd%num_assignments
     if (node%simple_cmd%num_assignments > 0 .and. allocated(node%simple_cmd%assignments)) then
+      if (.not. allocated(temp_pipeline%commands(1)%prefix_assignments)) then
+        allocate(character(len=MAX_TOKEN_LEN) :: &
+          temp_pipeline%commands(1)%prefix_assignments(MAX_PREFIX_ASSIGNMENTS))
+      end if
       do i = 1, node%simple_cmd%num_assignments
         temp_pipeline%commands(1)%prefix_assignments(i) = node%simple_cmd%assignments(i)
       end do

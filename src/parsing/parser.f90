@@ -414,7 +414,10 @@ contains
 
         ! Copy prefix assignments (VAR=value command)
         pipeline%commands(i)%num_prefix_assignments = temp_commands(i)%num_prefix_assignments
-        pipeline%commands(i)%prefix_assignments = temp_commands(i)%prefix_assignments
+        if (allocated(temp_commands(i)%prefix_assignments) .and. &
+            temp_commands(i)%num_prefix_assignments > 0) then
+          pipeline%commands(i)%prefix_assignments = temp_commands(i)%prefix_assignments
+        end if
 
         ! Copy allocatable components explicitly
         if (allocated(temp_commands(i)%tokens)) then
@@ -3722,6 +3725,9 @@ contains
       if (is_assignment) then
         ! This is a prefix assignment
         if (cmd%num_prefix_assignments < MAX_PREFIX_ASSIGNMENTS) then
+          if (.not. allocated(cmd%prefix_assignments)) then
+            allocate(character(len=MAX_TOKEN_LEN) :: cmd%prefix_assignments(MAX_PREFIX_ASSIGNMENTS))
+          end if
           cmd%num_prefix_assignments = cmd%num_prefix_assignments + 1
           cmd%prefix_assignments(cmd%num_prefix_assignments) = trim(token)
         end if
