@@ -2463,7 +2463,7 @@ contains
     end do
   end function
 
-  subroutine process_parameter_expansion(param_expr, result_value, shell)
+  recursive subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
                          set_shell_variable, is_shell_variable_set, check_nounset, &
@@ -2843,15 +2843,39 @@ contains
       end if
     end if
 
-    ! Handle indirect expansion: ${!ref} (non-array case)
+    ! Handle indirect expansion: ${!ref} or ${!ref:-default} (non-array case)
+    ! Resolve the reference, then recurse with the resolved name + any operators.
     if (get_keys .and. .not. is_array_access) then
-      current_value = get_shell_variable(shell, trim(var_name))
-      if (len_trim(current_value) > 0) then
-        result_value = get_shell_variable(shell, trim(current_value))
-      else
-        result_value = ''
-      end if
-      return
+      block
+        integer :: rend
+        character(len=MAX_TOKEN_LEN) :: ref_var, resolved
+        character(len=:), allocatable :: new_expr
+        ! Extract just the variable name (alphanumeric/underscore)
+        rend = 1
+        do while (rend <= len_trim(var_name))
+          if (.not. (var_name(rend:rend) >= 'a' .and. var_name(rend:rend) <= 'z') .and. &
+              .not. (var_name(rend:rend) >= 'A' .and. var_name(rend:rend) <= 'Z') .and. &
+              .not. (var_name(rend:rend) >= '0' .and. var_name(rend:rend) <= '9') .and. &
+              var_name(rend:rend) /= '_') exit
+          rend = rend + 1
+        end do
+        ref_var = var_name(1:rend-1)
+        resolved = get_shell_variable(shell, trim(ref_var))
+        if (len_trim(resolved) > 0) then
+          ! Construct new param_expr: resolved_name + trailing operators
+          if (rend <= len_trim(var_name)) then
+            new_expr = trim(resolved) // var_name(rend:len_trim(var_name))
+          else
+            new_expr = trim(resolved)
+          end if
+          ! Recurse with resolved expression
+          call process_parameter_expansion(new_expr, result_value, shell)
+          return
+        else
+          result_value = ''
+          return
+        end if
+      end block
     end if
 
     ! Not array access - fall back to original length logic

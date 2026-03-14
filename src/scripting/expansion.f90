@@ -129,6 +129,41 @@ contains
       end if
     end if
 
+    ! ========================================================================
+    ! Handle indirect expansion prefix: ${!ref...}
+    ! Resolve !name to the variable name it references, then continue with
+    ! normal operator handling so ${!ref:-default} works correctly.
+    ! ========================================================================
+    if (len_trim(var_name) > 1 .and. var_name(1:1) == '!' .and. index(var_name, '[') == 0) then
+      block
+        integer :: ref_end
+        character(len=4096) :: ref_name, resolved_name
+        ! Extract reference variable name (alphanumeric/underscore chars after !)
+        ref_end = 2
+        do while (ref_end <= len_trim(var_name))
+          if (.not. (var_name(ref_end:ref_end) >= 'a' .and. var_name(ref_end:ref_end) <= 'z') .and. &
+              .not. (var_name(ref_end:ref_end) >= 'A' .and. var_name(ref_end:ref_end) <= 'Z') .and. &
+              .not. (var_name(ref_end:ref_end) >= '0' .and. var_name(ref_end:ref_end) <= '9') .and. &
+              var_name(ref_end:ref_end) /= '_') exit
+          ref_end = ref_end + 1
+        end do
+        ref_name = var_name(2:ref_end-1)
+        resolved_name = get_shell_variable(shell, trim(ref_name))
+        if (len_trim(resolved_name) > 0) then
+          ! Replace !ref with resolved name, keep any trailing operators
+          if (ref_end <= len_trim(var_name)) then
+            var_name = trim(resolved_name) // var_name(ref_end:len_trim(var_name))
+          else
+            var_name = trim(resolved_name)
+          end if
+        else
+          ! Reference variable is unset — expand to empty
+          expanded = ''
+          return
+        end if
+      end block
+    end if
+
     ! Check for various expansion operations (need to check in right order!)
 
     ! Check for @ transformations first: ${var@U}, ${var@L}, ${var@u}, ${var@Q}, ${var@E}
@@ -577,18 +612,6 @@ contains
       expanded = trim(num_buf)
 
     else
-      ! Check for indirect expansion: ${!ref}
-      if (len_trim(var_name) > 1 .and. var_name(1:1) == '!') then
-        ! Two-step lookup: get value of ref, then use it as variable name
-        var_value = get_shell_variable(shell, trim(var_name(2:)))
-        if (len_trim(var_value) > 0) then
-          expanded = trim(get_shell_variable(shell, trim(var_value)))
-        else
-          expanded = ''
-        end if
-        return
-      end if
-
       ! Simple variable expansion
       var_value = get_shell_variable(shell, trim(var_name))
 
