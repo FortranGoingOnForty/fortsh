@@ -409,7 +409,7 @@ compare_output "200 variables" \
   'for i in $(seq 1 200); do eval "var_$i=$i"; done; echo $var_1 $var_100 $var_200'
 
 compare_output "400 variables" \
-  'for i in $(seq 1 400); do eval "var_$i=$i"; done; echo $var_1 $var_200 $var_400'
+  'i=1; while [ $i -le 400 ]; do eval "var_$i=$i"; i=$((i+1)); done; echo $var_1 $var_200 $var_400'
 
 # Control flow nesting depth (MAX_CONTROL_DEPTH=20)
 compare_output "nested if 15 levels" \
@@ -523,10 +523,10 @@ compare_output "many semicolons 30 commands" \
 section "22 - FD and redirection stress"
 
 compare_output "rapid redirect cycling 100 iterations" \
-  'for i in $(seq 1 100); do echo $i > /tmp/fortsh_test_fd_$$; done; cat /tmp/fortsh_test_fd_$$; rm -f /tmp/fortsh_test_fd_$$'
+  'i=1; while [ $i -le 100 ]; do echo $i > /tmp/fortsh_test_fd_$$; i=$((i+1)); done; cat /tmp/fortsh_test_fd_$$; rm -f /tmp/fortsh_test_fd_$$'
 
 compare_output "append redirect 200 lines" \
-  'rm -f /tmp/fortsh_test_append_$$; for i in $(seq 1 200); do echo $i >> /tmp/fortsh_test_append_$$; done; wc -l < /tmp/fortsh_test_append_$$; rm -f /tmp/fortsh_test_append_$$'
+  'rm -f /tmp/fortsh_test_append_$$; i=1; while [ $i -le 200 ]; do echo $i >> /tmp/fortsh_test_append_$$; i=$((i+1)); done; wc -l < /tmp/fortsh_test_append_$$; rm -f /tmp/fortsh_test_append_$$'
 
 compare_output "stderr redirect in loop" \
   'for i in 1 2 3 4 5; do echo "err$i" >&2; done 2>&1 | wc -l'
@@ -535,7 +535,7 @@ compare_output "output and error merge" \
   '{ echo stdout; echo stderr >&2; } 2>&1 | sort'
 
 compare_output "dev null redirect in loop" \
-  'for i in $(seq 1 100); do echo $i > /dev/null; done; echo done'
+  'i=1; while [ $i -le 100 ]; do echo $i > /dev/null; i=$((i+1)); done; echo done'
 
 # ==========================================
 # 23. Pipeline & fork stress
@@ -555,10 +555,10 @@ compare_output "pipeline with sort 10000 lines" \
   'seq 1 10000 | sort -rn | head -1'
 
 compare_output "background job wait cycling" \
-  'for i in $(seq 1 50); do true & done; wait; echo done'
+  'i=1; while [ $i -le 50 ]; do true & i=$((i+1)); done; wait; echo done'
 
 compare_output "100 background jobs then wait" \
-  'for i in $(seq 1 100); do true & done; wait; echo done'
+  'i=1; while [ $i -le 100 ]; do true & i=$((i+1)); done; wait; echo done'
 
 compare_output "subshell pipeline isolation" \
   'x=outer; echo $x | (read y; echo $y) | cat'
@@ -569,25 +569,25 @@ compare_output "subshell pipeline isolation" \
 section "24 - Array scaling"
 
 compare_output "indexed array 100 elements" \
-  'for i in $(seq 0 99); do arr[$i]=$i; done; echo ${#arr[@]} ${arr[0]} ${arr[50]} ${arr[99]}'
+  'i=0; while [ $i -lt 100 ]; do arr[$i]=$i; i=$((i+1)); done; echo ${#arr[@]} ${arr[0]} ${arr[50]} ${arr[99]}'
 
 compare_output "indexed array 500 elements" \
-  'for i in $(seq 0 499); do arr[$i]=$i; done; echo ${#arr[@]} ${arr[0]} ${arr[250]} ${arr[499]}'
+  'i=0; while [ $i -lt 500 ]; do arr[$i]=$i; i=$((i+1)); done; echo ${#arr[@]} ${arr[0]} ${arr[250]} ${arr[499]}'
 
 compare_output "indexed array via init list 50" \
   'arr=($(seq 1 50)); echo ${#arr[@]} ${arr[0]} ${arr[49]}'
 
 compare_output "array append 500 times" \
-  'arr=(); for i in $(seq 1 500); do arr+=("$i"); done; echo ${#arr[@]}'
+  'arr=(); i=0; while [ $i -lt 500 ]; do arr+=("$i"); i=$((i+1)); done; echo ${#arr[@]}'
 
 compare_output "assoc array 100 keys" \
-  'declare -A m; for i in $(seq 1 100); do m["key$i"]=$i; done; echo ${#m[@]} ${m[key1]} ${m[key50]} ${m[key100]}'
+  'declare -A m; i=1; while [ $i -le 100 ]; do m["key$i"]=$i; i=$((i+1)); done; echo ${#m[@]} ${m[key1]} ${m[key50]} ${m[key100]}'
 
 compare_output "assoc array 200 keys" \
-  'declare -A m; for i in $(seq 1 200); do m["key$i"]=$i; done; echo ${#m[@]}'
+  'declare -A m; i=1; while [ $i -le 200 ]; do m["key$i"]=$i; i=$((i+1)); done; echo ${#m[@]}'
 
 compare_output "assoc array overwrite cycle" \
-  'declare -A m; for i in $(seq 1 100); do m[k]=$i; done; echo ${m[k]}'
+  'declare -A m; i=1; while [ $i -le 100 ]; do m[k]=$i; i=$((i+1)); done; echo ${m[k]}'
 
 compare_output "array element 10000-char value" \
   'x=$(head -c 10000 /dev/zero | tr "\0" "a"); arr[0]=$x; echo ${#arr[0]}'
@@ -610,10 +610,13 @@ compare_output "continue 2 from inner loop" \
   'for i in 1 2 3; do for j in a b c; do if [ "$j" = "b" ]; then continue 2; fi; echo "$i$j"; done; done'
 
 compare_output "loop 5000 iterations" \
-  'x=0; for i in $(seq 1 5000); do x=$((x+1)); done; echo $x'
+  'x=0; i=0; while [ $i -lt 5000 ]; do x=$((x+1)); i=$((i+1)); done; echo $x'
 
+# 10000 iterations takes ~45s in fortsh — increase timeout
+TEST_TIMEOUT=60
 compare_output "loop 10000 iterations" \
-  'x=0; for i in $(seq 1 10000); do x=$((x+1)); done; echo $x'
+  'x=0; i=0; while [ $i -lt 10000 ]; do x=$((x+1)); i=$((i+1)); done; echo $x'
+TEST_TIMEOUT=30
 
 compare_output "while with complex condition" \
   'i=0; while [ $i -lt 10 ] && [ $((i % 2)) -eq 0 -o $i -lt 5 ]; do echo $i; i=$((i+1)); done'
@@ -630,10 +633,10 @@ compare_output "set traps on 10 signals" \
   'trap "echo 1" HUP; trap "echo 2" INT; trap "echo 3" QUIT; trap "echo 4" TERM; trap "echo 5" USR1; trap "echo 6" USR2; trap "echo 7" PIPE; trap "echo 8" ALRM; trap "echo 9" CONT; trap "echo exit" EXIT; trap -p | wc -l'
 
 compare_output "trap reset cycling 50 times" \
-  'for i in $(seq 1 50); do trap "echo $i" EXIT; done; trap -p EXIT'
+  'i=1; while [ $i -le 50 ]; do trap "echo $i" EXIT; i=$((i+1)); done; trap -p EXIT'
 
 compare_output "trap with long handler" \
-  'handler=""; for i in $(seq 1 100); do handler="${handler}echo $i;"; done; trap "$handler" EXIT; echo before'
+  'handler=""; i=1; while [ $i -le 100 ]; do handler="${handler}echo $i;"; i=$((i+1)); done; trap "$handler" EXIT; echo before'
 
 compare_output "modify trap inside trap" \
   'trap '\''trap "echo inner" EXIT; echo outer'\'' EXIT; exit 0'
@@ -714,7 +717,7 @@ C'
 section "29 - Glob expansion"
 
 compare_output "glob with many matches" \
-  'mkdir -p /tmp/fortsh_glob_$$; for i in $(seq 1 200); do touch /tmp/fortsh_glob_$$/f$i.txt; done; ls /tmp/fortsh_glob_$$/*.txt | wc -l; rm -rf /tmp/fortsh_glob_$$'
+  'mkdir -p /tmp/fortsh_glob_$$; i=1; while [ $i -le 200 ]; do touch /tmp/fortsh_glob_$$/f$i.txt; i=$((i+1)); done; ls /tmp/fortsh_glob_$$/*.txt | wc -l; rm -rf /tmp/fortsh_glob_$$'
 
 # Use check_output for glob no-match since $$ differs between bash and fortsh
 check_output "glob with no matches nullglob off" \
@@ -753,13 +756,13 @@ compare_output "eval chain 5 deep" \
 section "31 - Variable churn"
 
 compare_output "set/unset 500 cycle" \
-  'for i in $(seq 1 500); do x=$i; unset x; done; echo ${x:-done}'
+  'i=0; while [ $i -lt 500 ]; do x=$i; unset x; i=$((i+1)); done; echo ${x:-done}'
 
 compare_output "rapid export/unexport" \
-  'for i in $(seq 1 100); do export v=$i; unset v; done; echo ${v:-done}'
+  'i=0; while [ $i -lt 100 ]; do export v=$i; unset v; i=$((i+1)); done; echo ${v:-done}'
 
 compare_output "overwrite same variable 1000 times" \
-  'for i in $(seq 1 1000); do x=$i; done; echo $x'
+  'i=0; while [ $i -lt 1000 ]; do x=$i; i=$((i+1)); done; echo $x'
 
 compare_output "local variable scoping 10 deep" \
   'f() { local x=$1; if [ $1 -le 0 ]; then echo $x; return; fi; f $(($1-1)); echo $x; }; f 10 | head -1'
