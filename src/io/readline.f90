@@ -4158,6 +4158,10 @@ contains
       input_state%history_pos = 0
     end if
 
+    ! Clear any existing autosuggestion — tab completion replaces it
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
     ! Don't complete empty buffer - just ring bell
     if (input_state%length == 0) then
       write(output_unit, '(a)', advance='no') char(7)
