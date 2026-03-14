@@ -80,10 +80,10 @@ contains
         if (is_associative_array(shell, trim(array_name))) then
           if (is_keys_expansion .and. is_all_expansion) then
             ! ${!array[@]} - return all keys
-            allocate(keys(50))  ! Match size in get_assoc_array_keys
+            allocate(keys(500))  ! Match size in get_assoc_array_keys
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             expanded = ''
-            do j = 1, min(num_keys, 50)
+            do j = 1, min(num_keys, 500)
               if (j > 1) expanded = trim(expanded) // ' '
               expanded = trim(expanded) // trim(keys(j))
             end do
@@ -91,7 +91,7 @@ contains
             return
           else if (is_length_expansion .and. is_all_expansion) then
             ! ${#array[@]} - return number of keys
-            allocate(keys(50))
+            allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             deallocate(keys)
             write(num_buf, '(I0)') num_keys
@@ -100,10 +100,10 @@ contains
           else if (is_all_expansion) then
             ! ${array[@]} - return all values
             ! Get all keys, then get value for each key
-            allocate(keys(50))
+            allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             expanded = ''
-            do j = 1, min(num_keys, 50)
+            do j = 1, min(num_keys, 500)
               var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
               if (j > 1) expanded = trim(expanded) // ' '
               expanded = trim(expanded) // trim(var_value)

@@ -2474,7 +2474,7 @@ contains
 
     character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation, index_str
     character(len=:), allocatable :: assoc_value
-    character(len=256) :: keys(100), offset_str, length_str_temp
+    character(len=256) :: keys(500), offset_str, length_str_temp
     integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
     integer :: num_keys, key_idx
     integer :: colon_pos, offset, str_length, second_colon, iostat_val, char_code
@@ -3697,7 +3697,7 @@ contains
 
       if (is_assignment) then
         ! This is a prefix assignment
-        if (cmd%num_prefix_assignments < 10) then
+        if (cmd%num_prefix_assignments < MAX_PREFIX_ASSIGNMENTS) then
           cmd%num_prefix_assignments = cmd%num_prefix_assignments + 1
           cmd%prefix_assignments(cmd%num_prefix_assignments) = trim(token)
         end if
