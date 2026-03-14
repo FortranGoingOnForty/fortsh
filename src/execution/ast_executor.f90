@@ -3150,25 +3150,41 @@ contains
       return
     end if
 
-    do i = 1, str_len
-      if (index(ifs_chars, str(i:i)) > 0) then
-        ! IFS character - end current word if in one
-        if (in_word) then
-          word_count = word_count + 1
-          if (word_count <= max_words) then
-            words(word_count) = current_word(1:word_pos)
+    ! POSIX IFS splitting: non-whitespace IFS chars are explicit delimiters
+    ! that produce empty fields between consecutive occurrences.
+    ! IFS whitespace chars (space/tab/newline) are collapsed.
+    block
+      logical :: is_ifs_ws, prev_was_nonws_delim
+      prev_was_nonws_delim = .false.
+      do i = 1, str_len
+        if (index(ifs_chars, str(i:i)) > 0) then
+          is_ifs_ws = (str(i:i) == ' ' .or. str(i:i) == char(9) .or. str(i:i) == char(10))
+          if (in_word) then
+            ! End current word
+            word_count = word_count + 1
+            if (word_count <= max_words) then
+              words(word_count) = current_word(1:word_pos)
+            end if
+            current_word = ''
+            word_pos = 0
+            in_word = .false.
+          else if (.not. is_ifs_ws .and. prev_was_nonws_delim) then
+            ! Consecutive non-whitespace IFS chars produce empty fields
+            word_count = word_count + 1
+            if (word_count <= max_words) then
+              words(word_count) = ''
+            end if
           end if
-          current_word = ''
-          word_pos = 0
-          in_word = .false.
+          prev_was_nonws_delim = .not. is_ifs_ws
+        else
+          ! Non-IFS character - add to current word
+          word_pos = word_pos + 1
+          current_word(word_pos:word_pos) = str(i:i)
+          in_word = .true.
+          prev_was_nonws_delim = .false.
         end if
-      else
-        ! Non-IFS character - add to current word (preserve spaces!)
-        word_pos = word_pos + 1
-        current_word(word_pos:word_pos) = str(i:i)
-        in_word = .true.
-      end if
-    end do
+      end do
+    end block
 
     ! Add final word if any
     if (in_word) then
