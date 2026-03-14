@@ -63,7 +63,7 @@ contains
 
     ! Allocate initial arrays
     allocate(temp_tokens(100))  ! Start with reasonable size
-    allocate(matches(100))
+    allocate(matches(MAX_GLOB_MATCHES))
     current_size = 100
     total_count = 0
 
