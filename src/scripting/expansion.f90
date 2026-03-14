@@ -577,6 +577,18 @@ contains
       expanded = trim(num_buf)
 
     else
+      ! Check for indirect expansion: ${!ref}
+      if (len_trim(var_name) > 1 .and. var_name(1:1) == '!') then
+        ! Two-step lookup: get value of ref, then use it as variable name
+        var_value = get_shell_variable(shell, trim(var_name(2:)))
+        if (len_trim(var_value) > 0) then
+          expanded = trim(get_shell_variable(shell, trim(var_value)))
+        else
+          expanded = ''
+        end if
+        return
+      end if
+
       ! Simple variable expansion
       var_value = get_shell_variable(shell, trim(var_name))
 

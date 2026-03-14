@@ -2843,6 +2843,17 @@ contains
       end if
     end if
 
+    ! Handle indirect expansion: ${!ref} (non-array case)
+    if (get_keys .and. .not. is_array_access) then
+      current_value = get_shell_variable(shell, trim(var_name))
+      if (len_trim(current_value) > 0) then
+        result_value = get_shell_variable(shell, trim(current_value))
+      else
+        result_value = ''
+      end if
+      return
+    end if
+
     ! Not array access - fall back to original length logic
     if (is_length) then
       ! Special handling for @ and * parameters, or empty (just ${#}) - return count, not string length

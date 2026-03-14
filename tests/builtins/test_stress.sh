@@ -242,7 +242,6 @@ section "12 - Parameter expansion stress"
 compare_output "default value expansion chain" \
   'echo ${a:-${b:-${c:-${d:-${e:-deep}}}}}'
 
-# BUG: indirect expansion not yet implemented (#38)
 compare_output "indirect expansion" \
   'x=hello; ref=x; echo ${!ref}'
 
