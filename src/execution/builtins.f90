@@ -2454,6 +2454,11 @@ contains
                   ! This keeps it shadowing the global but treated as unset
                   shell%local_vars(lv_depth, lv_i)%value = ''
                   shell%local_vars(lv_depth, lv_i)%value_len = -1
+                  ! Special handling: restore default IFS when unset
+                  if (trim(var_name) == 'IFS') then
+                    shell%ifs = ' ' // char(9) // char(10)
+                    shell%ifs_len = -1
+                  end if
                   found_local = .true.
                   exit
                 end if
@@ -2483,6 +2488,11 @@ contains
                 shell%variables(j)%exported = .false.
                 shell%variables(j)%array_size = 0
                 shell%variables(j)%assoc_size = 0
+                ! Special handling: restore default IFS when unset
+                if (trim(var_name) == 'IFS') then
+                  shell%ifs = ' ' // char(9) // char(10)
+                  shell%ifs_len = -1
+                end if
                 exit
               end if
             end do
