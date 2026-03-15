@@ -334,7 +334,7 @@ contains
     logical :: saved_heredoc_quoted
     logical :: saved_heredoc_strip_tabs
     logical :: has_heredoc
-    type(redirection_t) :: redirects(10)
+    type(redirection_t), allocatable :: redirects(:)
     integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos
     type(token_t) :: tok, next_tok, peek_tok, delim_tok
     ! Prefix assignments (VAR=value before command)
@@ -347,6 +347,7 @@ contains
     allocate(was_escaped(MAX_TOKENS))
     allocate(quote_types(MAX_TOKENS))
     allocate(word_lens(MAX_TOKENS))
+    allocate(redirects(4))
     num_words = 0
     num_redirects = 0
     num_assignments = 0
@@ -509,8 +510,15 @@ contains
         end if
         end block  ! is_trailing_eq bounds-safe check
       else if (tok%token_type == TOKEN_REDIRECT) then
-        if (num_redirects < 10) then
-          num_redirects = num_redirects + 1
+        if (num_redirects >= size(redirects)) then
+          block
+            type(redirection_t), allocatable :: tmp_r(:)
+            allocate(tmp_r(size(redirects) * 2))
+            tmp_r(1:num_redirects) = redirects(1:num_redirects)
+            call move_alloc(tmp_r, redirects)
+          end block
+        end if
+        num_redirects = num_redirects + 1
 
           ! Check if previous word was a file descriptor number (e.g., "2" before ">", "3" before "<&")
           ! FD must be a single digit (0-9) to avoid false positives like "/tmp"
@@ -656,7 +664,6 @@ contains
               end if
             end if
           end if
-        end if
       else
         exit
       end if
@@ -1003,12 +1010,15 @@ contains
   function parse_case_stmt(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, case_cmds
-    character(len=MAX_TOKEN_LEN) :: word, patterns(10)
-    type(case_item_t) :: items(20)
+    character(len=MAX_TOKEN_LEN) :: word
+    character(len=MAX_TOKEN_LEN), allocatable :: patterns(:)
+    type(case_item_t), allocatable :: items(:)
     integer :: num_items, num_patterns, i, word_len
     type(token_t) :: tok
     nullify(node)
     num_items = 0
+    allocate(patterns(4))
+    allocate(items(4))
     if (.not. expect(state, 'case')) return
     tok = current_token(state)
     if (tok%token_type /= TOKEN_WORD) return
@@ -1024,17 +1034,22 @@ contains
     tok = current_token(state)
     do while (tok%token_type /= TOKEN_KEYWORD .or. trim(tok%value) /= 'esac')
       if (tok%token_type == TOKEN_EOF) exit
-      if (num_items >= 20) exit
 
       ! Parse patterns (pattern1|pattern2|...)
       num_patterns = 0
       do while (tok%token_type == TOKEN_WORD .or. &
                 (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|'))
         if (tok%token_type == TOKEN_WORD) then
-          if (num_patterns < 10) then
-            num_patterns = num_patterns + 1
-            patterns(num_patterns) = tok%value
+          if (num_patterns >= size(patterns)) then
+            block
+              character(len=MAX_TOKEN_LEN), allocatable :: tmp(:)
+              allocate(tmp(size(patterns) * 2))
+              tmp(1:num_patterns) = patterns(1:num_patterns)
+              call move_alloc(tmp, patterns)
+            end block
           end if
+          num_patterns = num_patterns + 1
+          patterns(num_patterns) = tok%value
           call advance(state)
           tok = current_token(state)
 
@@ -1067,6 +1082,14 @@ contains
 
       ! Store case item with patterns and commands
       if (num_patterns > 0) then
+        if (num_items >= size(items)) then
+          block
+            type(case_item_t), allocatable :: tmp(:)
+            allocate(tmp(size(items) * 2))
+            tmp(1:num_items) = items(1:num_items)
+            call move_alloc(tmp, items)
+          end block
+        end if
         num_items = num_items + 1
         allocate(items(num_items)%patterns(num_patterns))
         items(num_items)%num_patterns = num_patterns
@@ -1324,19 +1347,20 @@ contains
   subroutine parse_trailing_redirections(state, node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer, intent(inout) :: node
-    type(redirection_t) :: redirects(10)
+    type(redirection_t), allocatable :: redirects(:)
     integer :: num_redirects, fd_num, io_stat
     type(token_t) :: tok, next_tok
     logical :: has_fd_prefix
 
     if (.not. associated(node)) return
 
+    allocate(redirects(4))
     num_redirects = 0
     tok = current_token(state)
 
     ! Parse any trailing redirect operators
     ! Handle both "2>/dev/null" (fd-numbered) and ">/dev/null" (default fd)
-    do while (num_redirects < 10)
+    do while (.true.)
       has_fd_prefix = .false.
       fd_num = -1
 
@@ -1364,6 +1388,14 @@ contains
 
       if (tok%token_type /= TOKEN_REDIRECT) exit
 
+      if (num_redirects >= size(redirects)) then
+        block
+          type(redirection_t), allocatable :: tmp_r(:)
+          allocate(tmp_r(size(redirects) * 2))
+          tmp_r(1:num_redirects) = redirects(1:num_redirects)
+          call move_alloc(tmp_r, redirects)
+        end block
+      end if
       num_redirects = num_redirects + 1
 
       ! Set redirect type based on operator
