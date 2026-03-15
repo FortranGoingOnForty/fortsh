@@ -312,23 +312,32 @@ contains
                     end if
 
                     ! Expand variables in value if needed
+                    ! Use expanded_value directly to avoid truncation in fixed-size assign_value
                     if (index(assign_value, '$') > 0 .or. index(assign_value, '~') > 0) then
                       call expand_variables(assign_value, expanded_value, shell)
-                      if (allocated(expanded_value)) then
-                        assign_value = expanded_value
-                        value_len = len(expanded_value)
-                      end if
                     end if
 
                     if (is_associative_array(shell, trim(ab_base_name))) then
-                      call set_assoc_array_value(shell, trim(ab_base_name), &
-                                                 trim(ab_index_str), assign_value(1:value_len))
+                      if (allocated(expanded_value)) then
+                        call set_assoc_array_value(shell, trim(ab_base_name), &
+                                                   trim(ab_index_str), expanded_value)
+                        deallocate(expanded_value)
+                      else
+                        call set_assoc_array_value(shell, trim(ab_base_name), &
+                                                   trim(ab_index_str), assign_value(1:value_len))
+                      end if
                     else
                       read(ab_index_str, *, iostat=ab_idx_status) ab_array_index
                       if (ab_idx_status == 0) then
                         ab_array_index = ab_array_index + 1  ! Convert to 1-indexed
-                        call set_array_element(shell, trim(ab_base_name), &
-                                               ab_array_index, assign_value(1:value_len))
+                        if (allocated(expanded_value)) then
+                          call set_array_element(shell, trim(ab_base_name), &
+                                                 ab_array_index, expanded_value)
+                          deallocate(expanded_value)
+                        else
+                          call set_array_element(shell, trim(ab_base_name), &
+                                                 ab_array_index, assign_value(1:value_len))
+                        end if
                       else
                         write(error_unit, '(a)') 'Error: invalid array index'
                         shell%last_exit_status = 1
