@@ -1221,8 +1221,19 @@ contains
     num_commands = node%pipeline%num_commands
     num_pipes = num_commands - 1
 
-    allocate(pipefd(2, num_pipes))
-    allocate(pids(num_commands))
+    allocate(pipefd(2, num_pipes), stat=i)
+    if (i /= 0) then
+      write(error_unit, '(A)') 'fortsh: failed to allocate pipe descriptors'
+      exit_status = 1
+      return
+    end if
+    allocate(pids(num_commands), stat=i)
+    if (i /= 0) then
+      write(error_unit, '(A)') 'fortsh: failed to allocate pid array'
+      deallocate(pipefd)
+      exit_status = 1
+      return
+    end if
 
     ! POSIX: Pre-expand all command words before forking
     ! This ensures expansion errors go to the parent shell's stderr
@@ -2064,9 +2075,21 @@ contains
     end if
 
     ! First, expand variables and split on IFS, then expand globs
-    allocate(expanded_words(MAX_TOKEN_LEN))
-    allocate(glob_matches(MAX_GLOB))
-    allocate(split_words(MAX_SPLIT))
+    allocate(expanded_words(MAX_TOKEN_LEN), stat=i)
+    if (i /= 0) then
+      write(error_unit, '(A)') 'fortsh: for: allocation failure'
+      exit_status = 1; return
+    end if
+    allocate(glob_matches(MAX_GLOB), stat=i)
+    if (i /= 0) then
+      write(error_unit, '(A)') 'fortsh: for: allocation failure'
+      deallocate(expanded_words); exit_status = 1; return
+    end if
+    allocate(split_words(MAX_SPLIT), stat=i)
+    if (i /= 0) then
+      write(error_unit, '(A)') 'fortsh: for: allocation failure'
+      deallocate(expanded_words); deallocate(glob_matches); exit_status = 1; return
+    end if
     total_words = 0
 
     ! POSIX: If 'in' is omitted (num_words == 0), iterate over positional parameters
