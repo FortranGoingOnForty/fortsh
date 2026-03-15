@@ -28,10 +28,11 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=4096) :: format_string, output_buffer
+    character(len=4096) :: format_string
+    character(len=:), allocatable :: output_buffer
     integer :: arg_index, prev_arg_index, output_len, format_string_len
     integer, allocatable :: arg_lengths(:)
-    integer :: i
+    integer :: i, buf_size
     logical :: fmt_error
 
     if (cmd%num_tokens < 2) then
@@ -79,6 +80,15 @@ contains
 
     arg_index = 3
     fmt_error = .false.
+
+    ! Size buffer based on argument content — each format cycle can produce
+    ! up to sum(arg_lengths) + format_string_len of output
+    buf_size = format_string_len
+    do i = 3, cmd%num_tokens
+      buf_size = buf_size + arg_lengths(i)
+    end do
+    buf_size = max(buf_size * 2, 65536)
+    allocate(character(len=buf_size) :: output_buffer)
 
     ! POSIX behavior: always output format string at least once,
     ! then repeat for any remaining arguments
