@@ -11,7 +11,7 @@
 STRESS TEST RESULTS (2026-03-14, updated)
 ========================================================================
 204 passed, 0 failed, 0 skipped out of 204 stress tests (100%)
-846 passed, 2 failed, 4 skipped out of 852 total builtin tests (99%)
+848 passed, 0 failed, 4 skipped out of 852 total builtin tests (100%)
 3632 passed, 0 failed POSIX compliance tests
 
 ### REMAINING FAILURES (0 stress tests)
@@ -66,7 +66,7 @@ REMAINING WORK (deferred)
 - [x] array element storage truncation at ~MAX_TOKEN_LEN (24.8) — FIXED
 - [ ] array subscript variable expansion (arr[$i] doesn't expand $i)
 - [ ] array init list word-splitting (arr=($(cmd)) single element)
-- [ ] assoc array quoted key lookup (arrays 5.6)
+- [x] assoc array quoted key lookup (arrays 5.6) — FIXED
 
 ### Hardcoded limits still present
 - [ ] grammar_parser.f90 — patterns(10), items(20) in case statements
