@@ -151,13 +151,14 @@ contains
 
   function execute_simple_command(node, shell) result(exit_status)
     use executor, only: execute_pipeline
-    use fd_redirection, only: apply_single_redirection, restore_fds
+    use fd_redirection, only: apply_single_redirection, &
+                              save_fd_mark, restore_fds_to_mark
     use parser, only: expand_variables
     use iso_fortran_env, only: error_unit
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
-    integer :: i, func_idx, old_num_positional, eq_pos
+    integer :: i, func_idx, old_num_positional, eq_pos, fd_mark
     type(pipeline_t) :: temp_pipeline
     type(redirection_t) :: temp_redirect
     character(len=MAX_TOKEN_LEN) :: cmd_name
@@ -207,8 +208,9 @@ contains
               ! Explicit empty string like '' or "" - command not found
               ! Apply any redirections first (e.g., 2>/dev/null)
               if (node%simple_cmd%num_redirects > 0) then
+                fd_mark = save_fd_mark()
                 block
-                  use fd_redirection, only: apply_single_redirection, restore_fds
+                  use fd_redirection, only: apply_single_redirection
                   use parser, only: expand_variables
                   type(redirection_t) :: temp_redirect
                   logical :: redir_success
@@ -237,7 +239,7 @@ contains
               write(error_unit, '(a)') 'fortsh: : command not found'
               ! Restore file descriptors
               if (node%simple_cmd%num_redirects > 0) then
-                call restore_fds()
+                call restore_fds_to_mark(fd_mark)
               end if
               exit_status = 127
               shell%last_exit_status = exit_status
@@ -654,14 +656,15 @@ contains
 
         ! Apply redirections for the function call
         block
-          use fd_redirection, only: apply_single_redirection, restore_fds
+          use fd_redirection, only: apply_single_redirection
           use parser, only: expand_variables
           type(redirection_t) :: temp_redirect
           logical :: redir_success, func_has_redirects
           character(len=:), allocatable :: expanded_filename
-          integer :: redir_idx
+          integer :: redir_idx, func_fd_mark
 
           func_has_redirects = (node%simple_cmd%num_redirects > 0)
+          func_fd_mark = save_fd_mark()
           if (func_has_redirects) then
             do redir_idx = 1, node%simple_cmd%num_redirects
               temp_redirect%type = node%simple_cmd%redirects(redir_idx)%type
@@ -681,7 +684,7 @@ contains
               call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
               if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
               if (.not. redir_success) then
-                call restore_fds()
+                call restore_fds_to_mark(func_fd_mark)
                 exit_status = 1
                 ! Restore old positional params before returning
                 shell%num_positional = old_num_positional
@@ -804,7 +807,7 @@ contains
 
         ! Restore file descriptors if we applied redirections
         if (func_has_redirects) then
-          call restore_fds()
+          call restore_fds_to_mark(func_fd_mark)
         end if
         end block
 
@@ -972,6 +975,7 @@ contains
     ! Apply redirections directly (in order, left-to-right) before executing
     ! This preserves proper ordering for cases like: echo test >/tmp/r1 2>&1 >/tmp/r2
     has_redirects = (node%simple_cmd%num_redirects > 0)
+    fd_mark = save_fd_mark()
     if (has_redirects) then
       do i = 1, node%simple_cmd%num_redirects
         temp_redirect%type = node%simple_cmd%redirects(i)%type
@@ -1049,7 +1053,7 @@ contains
             if (allocated(temp_pipeline%commands(1)%token_lengths)) deallocate(temp_pipeline%commands(1)%token_lengths)
             deallocate(temp_pipeline%commands)
           end if
-          call restore_fds()
+          call restore_fds_to_mark(fd_mark)
           return
         end if
       end do
@@ -1078,7 +1082,7 @@ contains
       ! Exit status was already set by expansion code (usually 127)
       ! Just clean up and return
       if (has_redirects) then
-        call restore_fds()
+        call restore_fds_to_mark(fd_mark)
       end if
       if (allocated(temp_pipeline%commands)) then
         if (allocated(temp_pipeline%commands(1)%tokens)) deallocate(temp_pipeline%commands(1)%tokens)
@@ -1093,7 +1097,7 @@ contains
 
     ! Restore file descriptors if we applied any redirections
     if (has_redirects) then
-      call restore_fds()
+      call restore_fds_to_mark(fd_mark)
     end if
 
     ! Check for pending signals and dispatch their trap handlers
@@ -1706,11 +1710,11 @@ contains
   ! =====================================
 
   recursive function execute_if_node(node, shell) result(exit_status)
-    use fd_redirection, only: apply_single_redirection, restore_fds
+    use fd_redirection, only: apply_single_redirection, save_fd_mark, restore_fds_to_mark
     use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, cond_status, i
+    integer :: exit_status, cond_status, i, fd_mark
     type(redirection_t) :: temp_redirect
     logical :: redir_success, has_redirects
 
@@ -1722,6 +1726,7 @@ contains
 
     ! Apply redirections for the entire if statement
     has_redirects = (node%num_redirects > 0)
+    fd_mark = save_fd_mark()
     if (has_redirects) then
       block
         character(len=:), allocatable :: expanded_filename
@@ -1743,7 +1748,7 @@ contains
           call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
           if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
           if (.not. redir_success) then
-            call restore_fds()
+            call restore_fds_to_mark(fd_mark)
             exit_status = 1
             return
           end if
@@ -1776,7 +1781,7 @@ contains
 
     ! Restore file descriptors if we applied redirections
     if (has_redirects) then
-      call restore_fds()
+      call restore_fds_to_mark(fd_mark)
     end if
 
   end function execute_if_node
@@ -1787,11 +1792,11 @@ contains
 
   recursive function execute_while_node(node, shell) result(exit_status)
     use control_flow, only: push_control_block, pop_control_block, BLOCK_WHILE, BLOCK_UNTIL
-    use fd_redirection, only: apply_single_redirection, restore_fds
+    use fd_redirection, only: apply_single_redirection, save_fd_mark, restore_fds_to_mark
     use parser, only: expand_variables, read_heredoc
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, cond_status, i
+    integer :: exit_status, cond_status, i, fd_mark
     logical :: should_continue
     type(redirection_t) :: temp_redirect
     logical :: redir_success, has_redirects
@@ -1804,6 +1809,7 @@ contains
 
     ! Apply redirections for the entire while loop
     has_redirects = (node%num_redirects > 0)
+    fd_mark = save_fd_mark()
     if (has_redirects) then
       block
         character(len=:), allocatable :: expanded_filename
@@ -1848,7 +1854,7 @@ contains
           if (allocated(temp_redirect%filename)) &
             deallocate(temp_redirect%filename)
           if (.not. redir_success) then
-            call restore_fds()
+            call restore_fds_to_mark(fd_mark)
             exit_status = 1
             return
           end if
@@ -1933,7 +1939,7 @@ contains
 
     ! Restore file descriptors if we applied redirections
     if (has_redirects) then
-      call restore_fds()
+      call restore_fds_to_mark(fd_mark)
     end if
 
   end function execute_while_node
@@ -1947,10 +1953,10 @@ contains
     use control_flow, only: push_control_block, pop_control_block, BLOCK_FOR
     use glob, only: glob_match, has_unescaped_glob_chars
     use parser, only: expand_variables
-    use fd_redirection, only: apply_single_redirection, restore_fds
+    use fd_redirection, only: apply_single_redirection, save_fd_mark, restore_fds_to_mark
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, i, j, glob_count, word_idx, k, split_count
+    integer :: exit_status, i, j, glob_count, word_idx, k, split_count, fd_mark
     integer, parameter :: MAX_GLOB = 256, MAX_SPLIT = 256
     character(len=MAX_TOKEN_LEN), allocatable :: glob_matches(:)
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_words(:)
@@ -1968,6 +1974,7 @@ contains
 
     ! Apply redirections for the entire for loop
     has_redirects = (node%num_redirects > 0)
+    fd_mark = save_fd_mark()
     if (has_redirects) then
       block
         character(len=:), allocatable :: expanded_filename
@@ -1990,7 +1997,7 @@ contains
           call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
           if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
           if (.not. redir_success) then
-            call restore_fds()
+            call restore_fds_to_mark(fd_mark)
             exit_status = 1
             return
           end if
@@ -2280,7 +2287,7 @@ contains
 
     ! Restore file descriptors if we applied redirections
     if (has_redirects) then
-      call restore_fds()
+      call restore_fds_to_mark(fd_mark)
     end if
 
   end function execute_for_node
@@ -2494,10 +2501,10 @@ contains
   function execute_case_node(node, shell) result(exit_status)
     use variables, only: get_shell_variable
     use parser, only: expand_variables
-    use fd_redirection, only: apply_single_redirection, restore_fds
+    use fd_redirection, only: apply_single_redirection, save_fd_mark, restore_fds_to_mark
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_status, i, k
+    integer :: exit_status, i, k, fd_mark
     character(len=MAX_TOKEN_LEN) :: case_value
     integer :: case_value_len
     integer :: item_idx, pattern_idx
@@ -2515,6 +2522,7 @@ contains
 
     ! Apply redirections for the entire case statement
     has_redirects = (node%num_redirects > 0)
+    fd_mark = save_fd_mark()
     if (has_redirects) then
       block
         character(len=:), allocatable :: expanded_filename
@@ -2536,7 +2544,7 @@ contains
           call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber)
           if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
           if (.not. redir_success) then
-            call restore_fds()
+            call restore_fds_to_mark(fd_mark)
             exit_status = 1
             return
           end if
@@ -2617,7 +2625,7 @@ contains
 
     ! Restore file descriptors if we applied redirections
     if (has_redirects) then
-      call restore_fds()
+      call restore_fds_to_mark(fd_mark)
     end if
 
   end function execute_case_node
@@ -2704,12 +2712,12 @@ contains
   ! =====================================
 
   recursive function execute_brace_group_node(node, shell) result(exit_status)
-    use fd_redirection, only: apply_single_redirection, restore_fds
+    use fd_redirection, only: apply_single_redirection, save_fd_mark, restore_fds_to_mark
     use parser, only: expand_variables
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
-    integer :: i
+    integer :: i, fd_mark
     type(redirection_t) :: temp_redirect
     logical :: redir_success
     character(len=:), allocatable :: expanded_filename
@@ -2721,6 +2729,7 @@ contains
     end if
 
     ! Apply redirections if present
+    fd_mark = save_fd_mark()
     if (node%num_redirects > 0) then
       do i = 1, node%num_redirects
         temp_redirect%type = node%redirects(i)%type
@@ -2742,7 +2751,7 @@ contains
         if (allocated(temp_redirect%filename)) deallocate(temp_redirect%filename)
         if (.not. redir_success) then
           exit_status = 1
-          call restore_fds()
+          call restore_fds_to_mark(fd_mark)
           return
         end if
       end do
@@ -2753,7 +2762,7 @@ contains
 
     ! Restore file descriptors
     if (node%num_redirects > 0) then
-      call restore_fds()
+      call restore_fds_to_mark(fd_mark)
     end if
 
   end function execute_brace_group_node
