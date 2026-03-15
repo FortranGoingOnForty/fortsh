@@ -34,7 +34,12 @@ contains
     character(len=*), intent(in) :: input
     type(command_node_t), pointer :: root
     type(parser_state_t) :: state
-    allocate(state%tokens(MAX_TOKENS))
+    integer :: alloc_stat
+    allocate(state%tokens(MAX_TOKENS), stat=alloc_stat)
+    if (alloc_stat /= 0) then
+      nullify(root)
+      return
+    end if
     state%raw_input = input  ! Save for heredoc parsing
     call tokenize(input, state%tokens, state%num_tokens)
     state%pos = 1
@@ -335,18 +340,23 @@ contains
     logical :: saved_heredoc_strip_tabs
     logical :: has_heredoc
     type(redirection_t), allocatable :: redirects(:)
-    integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos
+    integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos, alloc_stat
     type(token_t) :: tok, next_tok, peek_tok, delim_tok
     ! Prefix assignments (VAR=value before command)
     character(len=MAX_TOKEN_LEN) :: assignments(MAX_PREFIX_ASSIGNMENTS)
     integer :: assignment_lens(MAX_PREFIX_ASSIGNMENTS)
     integer :: num_assignments, eq_pos
     logical :: seen_command
-    allocate(words(MAX_TOKENS))
-    allocate(was_quoted(MAX_TOKENS))
-    allocate(was_escaped(MAX_TOKENS))
-    allocate(quote_types(MAX_TOKENS))
-    allocate(word_lens(MAX_TOKENS))
+    allocate(words(MAX_TOKENS), stat=alloc_stat)
+    if (alloc_stat /= 0) then; nullify(node); return; end if
+    allocate(was_quoted(MAX_TOKENS), stat=alloc_stat)
+    if (alloc_stat /= 0) then; nullify(node); return; end if
+    allocate(was_escaped(MAX_TOKENS), stat=alloc_stat)
+    if (alloc_stat /= 0) then; nullify(node); return; end if
+    allocate(quote_types(MAX_TOKENS), stat=alloc_stat)
+    if (alloc_stat /= 0) then; nullify(node); return; end if
+    allocate(word_lens(MAX_TOKENS), stat=alloc_stat)
+    if (alloc_stat /= 0) then; nullify(node); return; end if
     allocate(redirects(4))
     num_words = 0
     num_redirects = 0
