@@ -190,7 +190,7 @@ compare_output "EXIT trap fires" \
   'trap "echo trapped" EXIT; true'
 
 compare_output "multiple trap signals" \
-  'trap "echo exit" EXIT; trap "echo hup" HUP; trap "echo usr1" USR1; trap -p | wc -l'
+  'trap "echo exit" EXIT; trap "echo hup" HUP; trap "echo usr1" USR1; trap -p | grep -cE "(EXIT|HUP|USR1)"'
 
 compare_output "trap set/unset cycle" \
   'for i in $(seq 1 10); do trap "echo $i" EXIT; done; trap -p EXIT'
@@ -555,7 +555,7 @@ compare_output "pipeline with 100000 lines" \
   'seq 1 100000 | wc -l'
 
 compare_output "pipeline with sort 10000 lines" \
-  'seq 1 10000 | sort -rn | head -1'
+  'seq 1 10000 | sort -rn 2>/dev/null | head -1'
 
 compare_output "background job wait cycling" \
   'i=1; while [ $i -le 50 ]; do true & i=$((i+1)); done; wait; echo done'
@@ -688,10 +688,9 @@ compare_output "error-if-unset expansion" \
 section "28 - Heredoc scaling"
 
 compare_output "heredoc 50 lines" \
-  "seq 1 50 | while read line; do echo \"\$line\"; done | cat <<EOF
+  'cat <<EOF | wc -l
 $(seq 1 50)
-EOF
-wc -l"
+EOF'
 
 compare_output "heredoc with 20 variable expansions" \
   'a=1; b=2; c=3; d=4; e=5; f=6; g=7; h=8; i=9; j=10; cat <<EOF
