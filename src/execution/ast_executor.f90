@@ -285,7 +285,7 @@ contains
               ! Handle array element assignment: VAR[key]=value or VAR[idx]=value
               block
                 use variables, only: is_associative_array, set_assoc_array_value, &
-                                     set_array_element
+                                     set_array_element, strip_quotes
                 integer :: ab_pos, ab_end, ab_idx_status, ab_array_index
                 character(len=256) :: ab_base_name, ab_index_str
 
@@ -296,6 +296,21 @@ contains
                     ab_end = ab_pos + ab_end - 1
                     ab_base_name = assign_name(1:ab_pos-1)
                     ab_index_str = assign_name(ab_pos+1:ab_end-1)
+                    call strip_quotes(ab_index_str)
+                    ! Strip lexer sentinel chars (char(1)/char(2) inserted at quote boundaries)
+                    block
+                      integer :: si, so
+                      character(len=256) :: cleaned_key
+                      cleaned_key = ''
+                      so = 0
+                      do si = 1, len_trim(ab_index_str)
+                        if (ab_index_str(si:si) /= char(1) .and. ab_index_str(si:si) /= char(2)) then
+                          so = so + 1
+                          cleaned_key(so:so) = ab_index_str(si:si)
+                        end if
+                      end do
+                      ab_index_str = cleaned_key
+                    end block
 
                     ! Calculate value_len for the value portion
                     if (len_trim(assign_value) > 0) then
