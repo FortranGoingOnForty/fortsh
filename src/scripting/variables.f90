@@ -673,7 +673,8 @@ contains
     do while (pos <= len_trim(content))
       if (content(pos:pos) == '"' .or. content(pos:pos) == "'") then
         in_quotes = .not. in_quotes
-      else if (content(pos:pos) == ' ' .and. .not. in_quotes) then
+      else if ((content(pos:pos) == ' ' .or. content(pos:pos) == char(10) .or. &
+               content(pos:pos) == char(9)) .and. .not. in_quotes) then
         if (pos > start_pos) then
           count = count + 1
           ! Grow array if needed
