@@ -845,14 +845,17 @@ contains
     character(len=:), allocatable :: content_to_write, expanded_content
     logical :: has_redirects, has_heredoc
     ! Prefix assignment handling
-    character(len=MAX_TOKEN_LEN) :: saved_var_names(MAX_PREFIX_ASSIGNMENTS), saved_var_values(MAX_PREFIX_ASSIGNMENTS)
+    character(len=MAX_TOKEN_LEN), allocatable :: saved_var_names(:), saved_var_values(:)
     integer :: num_saved_vars, eq_pos, j
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
-    logical :: var_was_set(MAX_PREFIX_ASSIGNMENTS)
+    logical, allocatable :: var_was_set(:)
 
     ! Apply prefix assignments to shell variables (save old values first)
     num_saved_vars = 0
     if (allocated(cmd%prefix_assignments)) then
+    allocate(saved_var_names(cmd%num_prefix_assignments))
+    allocate(saved_var_values(cmd%num_prefix_assignments))
+    allocate(var_was_set(cmd%num_prefix_assignments))
     do j = 1, cmd%num_prefix_assignments
       eq_pos = index(cmd%prefix_assignments(j), '=')
       if (eq_pos > 1) then
