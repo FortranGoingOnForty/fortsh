@@ -12,6 +12,8 @@ module glob
 
   integer, parameter :: MAX_GLOB_MATCHES = 1000
   integer, parameter :: MAX_FILENAME_LEN = 256
+  integer, parameter :: MAX_GLOB_RECURSION = 4096
+  integer :: glob_recursion_depth = 0
 
 contains
 
@@ -425,12 +427,21 @@ contains
     character(len=1) :: p_char, t_char
     logical :: bracket_match
 
+    ! Guard against runaway recursion (e.g., pathological patterns like **...**)
+    glob_recursion_depth = glob_recursion_depth + 1
+    if (glob_recursion_depth > MAX_GLOB_RECURSION) then
+      glob_recursion_depth = glob_recursion_depth - 1
+      matches = .false.
+      return
+    end if
+
     p_len = len_trim(pattern)
     t_len = len_trim(text)
 
     ! Special case: empty pattern should only match empty text
     if (p_len == 0) then
       matches = (t_len == 0)
+      glob_recursion_depth = glob_recursion_depth - 1
       return
     end if
 
@@ -447,6 +458,7 @@ contains
     ! End conditions
     if (p_pos > p_len) then
       matches = (t_pos > t_len)
+      glob_recursion_depth = glob_recursion_depth - 1
       return
     end if
     
@@ -458,13 +470,15 @@ contains
       ! Try matching rest of pattern at current position
       if (glob_match_recursive(pattern, text, p_pos + 1, t_pos)) then
         matches = .true.
+        glob_recursion_depth = glob_recursion_depth - 1
         return
       end if
-      
+
       ! Try consuming one character from text and continue
       do i = t_pos, t_len
         if (glob_match_recursive(pattern, text, p_pos + 1, i + 1)) then
           matches = .true.
+          glob_recursion_depth = glob_recursion_depth - 1
           return
         end if
       end do
@@ -483,6 +497,7 @@ contains
       ! Character class matching
       if (t_pos > t_len) then
         matches = .false.
+        glob_recursion_depth = glob_recursion_depth - 1
         return
       end if
       
@@ -541,6 +556,7 @@ contains
         matches = .false.
       end if
     end select
+    glob_recursion_depth = glob_recursion_depth - 1
   end function
 
   ! Match bracket expression [abc], [a-z], [!abc], [[:class:]]
