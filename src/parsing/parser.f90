@@ -2641,6 +2641,17 @@ contains
           index_str = clean_key
         end block
 
+        ! Expand variables in array subscript (e.g., $i in arr[$i])
+        if (index(trim(index_str), '$') > 0) then
+          block
+            character(len=:), allocatable :: sub_expanded
+            call expand_variables(trim(index_str), sub_expanded, shell)
+            if (allocated(sub_expanded) .and. len_trim(sub_expanded) > 0) then
+              index_str = sub_expanded
+            end if
+          end block
+        end if
+
         ! Check for special indices
         if (trim(index_str) == '@' .or. trim(index_str) == '*') then
           get_all = .true.
