@@ -117,13 +117,25 @@ contains
             return
           end if
         else
-          ! Handle indexed arrays (use existing get_array_element if available)
-          ! For now, if not an associative array, try normal variable expansion
+          ! Handle indexed arrays
           if (.not. is_all_expansion) then
-            ! Try to get indexed array element
-            ! Note: indexed arrays use numeric indices
-            ! This would call get_array_element(shell, array_name, index)
-            ! For now, fall through to normal variable expansion
+            block
+              integer :: arr_idx, arr_ios
+              character(len=:), allocatable :: arr_val
+              ! Parse subscript as integer index
+              read(array_key, *, iostat=arr_ios) arr_idx
+              if (arr_ios == 0) then
+                ! Bash uses 0-based indexing, Fortran 1-based
+                arr_val = get_array_element(shell, trim(array_name), arr_idx + 1)
+                if (is_length_expansion) then
+                  write(num_buf, '(I0)') len_trim(arr_val)
+                  expanded = trim(num_buf)
+                else
+                  expanded = trim(arr_val)
+                end if
+                return
+              end if
+            end block
           end if
         end if
       end if
