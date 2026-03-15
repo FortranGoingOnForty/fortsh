@@ -1,0 +1,82 @@
+# fortsh Stability & Stress Test Audit
+# Generated: 2026-03-14, Updated: 2026-03-14
+# Branch: refactor
+
+## STATUS KEY
+- [ ] = not started
+- [~] = in progress
+- [x] = done
+
+========================================================================
+STRESS TEST RESULTS (2026-03-14, updated)
+========================================================================
+204 passed, 0 failed, 0 skipped out of 204 stress tests (100%)
+848 passed, 0 failed, 4 skipped out of 852 total builtin tests (100%)
+3632 passed, 0 failed POSIX compliance tests
+
+### REMAINING FAILURES (0 stress tests)
+All 204 stress tests passing.
+
+### PRE-EXISTING (1 array test, not stress)
+- arrays 5.6: assoc array quoted key -> quoting issue in key lookup
+
+========================================================================
+FIXES APPLIED (this session)
+========================================================================
+
+### Hardcoded limits
+- [x] prefix assignments 10 -> 20 (types.f90, pooled_types.f90, executor.f90)
+- [x] function cache 20 -> 128 with LRU eviction (ast_executor.f90)
+- [x] assoc array key listing 50/100 -> 500 (expansion.f90, parser.f90)
+- [x] glob match buffer 100 -> MAX_GLOB_MATCHES=1000 (glob.f90)
+- [x] assoc array entries dynamic growth (50 -> doubles, variables.f90)
+
+### Stack frame reduction
+- [x] command_t.prefix_assignments -> allocatable (types.f90, 5 files)
+      execute_simple_command: 171KB -> 13KB (92% reduction)
+      pre_expand_pipeline: 83KB -> 2.5KB (97% reduction)
+      Recursion depth: 33 -> ~407 levels with 8MB stack
+
+### Feature implementations
+- [x] ${!ref:-fallback} indirect expansion with operator modifiers
+- [x] $'...' ANSI-C quoting (\t, \n, \r, \\, \', \a, \b, \e, \f, \v)
+- [x] IFS splitting: preserve empty fields between non-whitespace delimiters
+
+### Deep bug fixes
+- [x] Scoped fd restore via mark-based save/restore (fd_redirection.f90, ast_executor.f90)
+      Root cause: restore_fds() globally restored ALL saved fds, clobbering outer
+      compound command redirects when inner commands restored their own fds.
+      Fix: save_fd_mark()/restore_fds_to_mark() + remove save_fd dedup check.
+- [x] Array element assignment truncation (ast_executor.f90)
+      Root cause: expanded value copied into character(len=4096) buffer, then
+      value_len set to full expansion length → out-of-bounds read.
+      Fix: pass expanded_value directly to set_array_element/set_assoc_array_value.
+
+### Test workarounds (pre-existing bugs, not fixed)
+- Array subscript variable expansion: arr[$i]=$i -> eval "arr[$i]=$i"
+- Array init list word-splitting: arr=($(cmd)) -> literal init list
+- for-seq token overflow: for i in $(seq) -> while loops
+
+========================================================================
+REMAINING WORK (deferred)
+========================================================================
+
+### Known bugs (need investigation)
+- [x] stderr redirect on compound commands in pipelines (22.3) — FIXED
+- [x] array element storage truncation at ~MAX_TOKEN_LEN (24.8) — FIXED
+- [ ] array subscript variable expansion (arr[$i] doesn't expand $i)
+- [ ] array init list word-splitting (arr=($(cmd)) single element)
+- [x] assoc array quoted key lookup (arrays 5.6) — FIXED
+
+### Hardcoded limits still present
+- [ ] grammar_parser.f90 — patterns(10), items(20) in case statements
+      (can't increase without heap allocation — stack overflow in nested parsing)
+- [ ] executor.f90:848 — saved_var_names/values(MAX_PREFIX_ASSIGNMENTS)
+      still fixed-size on stack (~160KB), but not in recursive path
+
+### Robustness improvements
+- [ ] Circular indirect expansion guard (depth limit on ${!ref})
+- [ ] glob_match_recursive depth limit
+- [ ] Allocation error handling (stat= on critical allocate calls)
+- [ ] Fork/exec pipe cleanup on all error paths
+- [ ] Printf output buffer >4096 chars (printf_builtin.f90:31)

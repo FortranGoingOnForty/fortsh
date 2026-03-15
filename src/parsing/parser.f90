@@ -414,7 +414,10 @@ contains
 
         ! Copy prefix assignments (VAR=value command)
         pipeline%commands(i)%num_prefix_assignments = temp_commands(i)%num_prefix_assignments
-        pipeline%commands(i)%prefix_assignments = temp_commands(i)%prefix_assignments
+        if (allocated(temp_commands(i)%prefix_assignments) .and. &
+            temp_commands(i)%num_prefix_assignments > 0) then
+          pipeline%commands(i)%prefix_assignments = temp_commands(i)%prefix_assignments
+        end if
 
         ! Copy allocatable components explicitly
         if (allocated(temp_commands(i)%tokens)) then
@@ -1276,13 +1279,18 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(in), optional :: was_quoted_in
 
-    character(len=MAX_TOKEN_LEN) :: result, working_token
+    character(len=:), allocatable :: result, working_token
     integer :: i, j, var_start, brace_depth, end_pos
+    integer :: result_cap
     character(len=MAX_TOKEN_LEN) :: var_name
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
     logical :: is_quoted, is_single_quoted
     logical :: escapes_already_processed  ! True if lexer already processed escapes
+
+    ! Initialize growing result buffer
+    result_cap = max(len(token) * 4, 16384)
+    allocate(character(len=result_cap) :: result)
 
     ! Check if token was originally quoted (from lexer metadata or token inspection)
     is_quoted = .false.
@@ -1355,7 +1363,6 @@ contains
       working_token = token
     end if
 
-    result = ''
     i = 1
     j = 1
     ! For quoted tokens, use len(token) to preserve trailing whitespace
@@ -1380,6 +1387,8 @@ contains
     in_single_quote_literal = .false.
 
     do while (i <= end_pos)
+      ! Grow result buffer if needed (headroom for single-char writes)
+      call ensure_result_cap(j + 256)
       ! Check for single-quote literal START sentinel (char(2))
       if (working_token(i:i) == char(2)) then
         in_single_quote_literal = .true.
@@ -1488,6 +1497,7 @@ contains
           ! $@ - all positional parameters
           var_value = get_shell_variable(shell, '@')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1496,6 +1506,7 @@ contains
           ! $# - number of positional parameters
           var_value = get_shell_variable(shell, '#')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1504,6 +1515,7 @@ contains
           ! $* - all positional parameters as single word
           var_value = get_shell_variable(shell, '*')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1512,6 +1524,7 @@ contains
           ! $- - current shell option flags
           var_value = get_shell_variable(shell, '-')
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1529,6 +1542,7 @@ contains
             var_name = working_token(var_start:i-1)
             var_value = get_shell_variable(shell, trim(var_name))
             if (len_trim(var_value) > 0) then
+              call ensure_result_cap(j + len_trim(var_value))
               result(j:j+len_trim(var_value)-1) = trim(var_value)
               j = j + len_trim(var_value)
             end if
@@ -1536,6 +1550,7 @@ contains
             ! $_ - last argument of previous command
             var_value = get_shell_variable(shell, '_')
             if (len_trim(var_value) > 0) then
+              call ensure_result_cap(j + len_trim(var_value))
               result(j:j+len_trim(var_value)-1) = trim(var_value)
               j = j + len_trim(var_value)
             end if
@@ -1546,6 +1561,7 @@ contains
           var_name = working_token(i:i)
           var_value = get_shell_variable(shell, trim(var_name))
           if (len_trim(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1573,6 +1589,7 @@ contains
             ! Evaluate arithmetic expansion with shell context
             var_value = arithmetic_expansion_shell(trim(var_name), shell)
             if (len_trim(var_value) > 0) then
+              call ensure_result_cap(j + len_trim(var_value))
               result(j:j+len_trim(var_value)-1) = trim(var_value)
               j = j + len_trim(var_value)
             end if
@@ -1596,6 +1613,7 @@ contains
             ! Execute command substitution
             call execute_command_substitution(trim(var_name), var_value, shell)
             if (allocated(var_value) .and. len(var_value) > 0) then
+              call ensure_result_cap(j + len(var_value))
               result(j:j+len(var_value)-1) = var_value
               j = j + len(var_value)
             end if
@@ -1625,6 +1643,7 @@ contains
           ! Process parameter expansion
           call process_parameter_expansion(var_name, var_value, shell)
           if (allocated(var_value) .and. len(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1651,6 +1670,7 @@ contains
               ! This is crucial for variables like IFS=' ' where the space must be preserved
               brace_depth = get_shell_variable_length(shell, trim(var_name))
               if (brace_depth > 0) then
+                call ensure_result_cap(j + brace_depth)
                 result(j:j+brace_depth-1) = var_value(1:brace_depth)
                 j = j + brace_depth
               end if
@@ -1658,6 +1678,7 @@ contains
               ! Fall back to environment variables
               var_value = get_environment_var(trim(var_name))
               if (allocated(var_value) .and. len(var_value) > 0) then
+                call ensure_result_cap(j + len(var_value))
                 result(j:j+len(var_value)-1) = var_value
                 j = j + len(var_value)
               else
@@ -1690,6 +1711,7 @@ contains
           ! Execute command substitution
           call execute_command_substitution(trim(var_name), var_value, shell)
           if (allocated(var_value) .and. len(var_value) > 0) then
+            call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
             j = j + len_trim(var_value)
           end if
@@ -1721,7 +1743,19 @@ contains
     end if
 
   contains
-    
+
+    subroutine ensure_result_cap(needed)
+      integer, intent(in) :: needed
+      character(len=:), allocatable :: tmp
+      integer :: new_cap
+      if (needed <= result_cap) return
+      new_cap = max(result_cap * 2, needed + 4096)
+      allocate(character(len=new_cap) :: tmp)
+      if (j > 1) tmp(1:j-1) = result(1:j-1)
+      call move_alloc(tmp, result)
+      result_cap = new_cap
+    end subroutine
+
     function is_alnum(ch) result(res)
       character, intent(in) :: ch
       logical :: res
@@ -1729,7 +1763,7 @@ contains
             (ch >= 'A' .and. ch <= 'Z') .or. &
             (ch >= '0' .and. ch <= '9')
     end function
-    
+
   end subroutine
 
   subroutine read_heredoc(delimiter, content, shell, strip_tabs)
@@ -1855,7 +1889,7 @@ contains
 
     integer :: i, j, var_start, var_end
     character(len=256) :: var_name
-    character(len=1024) :: var_value  ! 1024 to match get_shell_variable return size
+    character(len=:), allocatable :: var_value
 
     output = ''
     i = 1
@@ -2171,24 +2205,15 @@ contains
     character(len=:), allocatable, intent(out) :: output
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=4096) :: temp_output
-    integer :: actual_len
-
     ! POSIX: errexit should not trigger in command substitution
     shell%in_command_substitution = .true.
 
     ! Execute in current shell context to preserve functions, variables, etc.
-    call execute_command_and_capture(shell, command, temp_output, actual_len)
+    call execute_command_and_capture(shell, command, output)
 
     shell%in_command_substitution = .false.
 
-    ! Allocate and copy result, preserving exact length (don't use trim!)
-    if (actual_len > 0) then
-      allocate(character(len=actual_len) :: output)
-      output = temp_output(1:actual_len)
-    else
-      output = ''
-    end if
+    if (.not. allocated(output)) output = ''
 
     ! Remove trailing newlines (but NOT other whitespace like spaces)
     do while (len(output) > 0 .and. output(len(output):len(output)) == char(10))
@@ -2441,7 +2466,7 @@ contains
     end do
   end function
 
-  subroutine process_parameter_expansion(param_expr, result_value, shell)
+  recursive subroutine process_parameter_expansion(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
                          set_shell_variable, is_shell_variable_set, check_nounset, &
@@ -2451,8 +2476,8 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation, index_str
-    character(len=1024) :: assoc_value
-    character(len=256) :: keys(100), offset_str, length_str_temp
+    character(len=:), allocatable :: assoc_value
+    character(len=256) :: keys(500), offset_str, length_str_temp
     integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
     integer :: num_keys, key_idx
     integer :: colon_pos, offset, str_length, second_colon, iostat_val, char_code
@@ -2819,6 +2844,41 @@ contains
           end if
         end if
       end if
+    end if
+
+    ! Handle indirect expansion: ${!ref} or ${!ref:-default} (non-array case)
+    ! Resolve the reference, then recurse with the resolved name + any operators.
+    if (get_keys .and. .not. is_array_access) then
+      block
+        integer :: rend
+        character(len=MAX_TOKEN_LEN) :: ref_var, resolved
+        character(len=:), allocatable :: new_expr
+        ! Extract just the variable name (alphanumeric/underscore)
+        rend = 1
+        do while (rend <= len_trim(var_name))
+          if (.not. (var_name(rend:rend) >= 'a' .and. var_name(rend:rend) <= 'z') .and. &
+              .not. (var_name(rend:rend) >= 'A' .and. var_name(rend:rend) <= 'Z') .and. &
+              .not. (var_name(rend:rend) >= '0' .and. var_name(rend:rend) <= '9') .and. &
+              var_name(rend:rend) /= '_') exit
+          rend = rend + 1
+        end do
+        ref_var = var_name(1:rend-1)
+        resolved = get_shell_variable(shell, trim(ref_var))
+        if (len_trim(resolved) > 0) then
+          ! Construct new param_expr: resolved_name + trailing operators
+          if (rend <= len_trim(var_name)) then
+            new_expr = trim(resolved) // var_name(rend:len_trim(var_name))
+          else
+            new_expr = trim(resolved)
+          end if
+          ! Recurse with resolved expression
+          call process_parameter_expansion(new_expr, result_value, shell)
+          return
+        else
+          result_value = ''
+          return
+        end if
+      end block
     end if
 
     ! Not array access - fall back to original length logic
@@ -3664,7 +3724,10 @@ contains
 
       if (is_assignment) then
         ! This is a prefix assignment
-        if (cmd%num_prefix_assignments < 10) then
+        if (cmd%num_prefix_assignments < MAX_PREFIX_ASSIGNMENTS) then
+          if (.not. allocated(cmd%prefix_assignments)) then
+            allocate(character(len=MAX_TOKEN_LEN) :: cmd%prefix_assignments(MAX_PREFIX_ASSIGNMENTS))
+          end if
           cmd%num_prefix_assignments = cmd%num_prefix_assignments + 1
           cmd%prefix_assignments(cmd%num_prefix_assignments) = trim(token)
         end if
@@ -3704,11 +3767,19 @@ contains
   function is_valid_var_name(name) result(is_valid)
     character(len=*), intent(in) :: name
     logical :: is_valid
-    integer :: i
+    integer :: i, check_len, bracket_pos
     character :: ch
 
     is_valid = .false.
-    if (len_trim(name) == 0) return
+    check_len = len_trim(name)
+    if (check_len == 0) return
+
+    ! Accept array subscript names: var[subscript]
+    bracket_pos = index(name(1:check_len), '[')
+    if (bracket_pos > 0) then
+      check_len = bracket_pos - 1
+      if (check_len == 0) return
+    end if
 
     ! First character must be letter or underscore
     ch = name(1:1)
@@ -3719,7 +3790,7 @@ contains
     end if
 
     ! Remaining characters can be letters, digits, or underscores
-    do i = 2, len_trim(name)
+    do i = 2, check_len
       ch = name(i:i)
       if (.not. ((ch >= 'A' .and. ch <= 'Z') .or. &
                  (ch >= 'a' .and. ch <= 'z') .or. &

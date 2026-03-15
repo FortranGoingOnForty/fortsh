@@ -28,6 +28,7 @@ module lexer
   integer, parameter :: LEX_IN_DOUBLE_QUOTE = 3
   integer, parameter :: LEX_IN_WORD = 4
   integer, parameter :: LEX_IN_OPERATOR = 5
+  integer, parameter :: LEX_IN_DOLLAR_SINGLE_QUOTE = 6
 
   ! Context tracking for [[ ]] test expressions
   ! Inside [[ ]], && || < > are test operators, not shell operators
@@ -251,6 +252,18 @@ contains
           cycle
         end if
 
+        ! Check for $'...' ANSI-C quoting
+        if (ch == '$' .and. pos < input_len .and. next_ch == "'") then
+          state = LEX_IN_DOLLAR_SINGLE_QUOTE
+          token_start = pos
+          token_len = 0
+          current_token = ''
+          continuing_word = .false.
+          token_has_quoted_part = .true.
+          pos = pos + 2  ! Skip $'
+          cycle
+        end if
+
         ! Check for $( or $(( - these should be kept in word tokens for expansion
         if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
           ! This is command substitution or arithmetic - include in word
@@ -347,6 +360,86 @@ contains
           pos = pos + 1
         end if
 
+      ! ============ DOLLAR SINGLE QUOTE STATE ($'...') ============
+      case(LEX_IN_DOLLAR_SINGLE_QUOTE)
+        if (ch == "'") then
+          ! End of $'...' string — add sentinels to mark as quoted
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = char(3)  ! end sentinel
+          end if
+          pos = pos + 1
+          ! Check if next character continues the word
+          if (pos <= input_len) then
+            next_ch = input(pos:pos)
+            if (next_ch == "'" .or. next_ch == '"' .or. next_ch == '\' .or. &
+                is_word_char(next_ch)) then
+              state = LEX_IN_WORD
+              continuing_word = .false.
+              cycle
+            end if
+          end if
+          if (continuing_word) then
+            state = LEX_IN_WORD
+            continuing_word = .false.
+          else
+            call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
+                           token_start, pos-1, .true., quote_type=QUOTE_SINGLE)
+            state = LEX_NORMAL
+          end if
+        else if (ch == '\' .and. pos < input_len) then
+          ! Escape sequences in $'...'
+          next_ch = input(pos+1:pos+1)
+          if (token_len < MAX_TOKEN_LEN) then
+            select case(next_ch)
+            case('a')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(7)   ! bell
+            case('b')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(8)   ! backspace
+            case('e', 'E')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(27)  ! escape
+            case('f')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(12)  ! form feed
+            case('n')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(10)  ! newline
+            case('r')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(13)  ! carriage return
+            case('t')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(9)   ! tab
+            case('v')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(11)  ! vertical tab
+            case('\')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = '\'
+            case("'")
+              token_len = token_len + 1
+              current_token(token_len:token_len) = "'"
+            case default
+              ! Unknown escape — keep both chars
+              token_len = token_len + 1
+              current_token(token_len:token_len) = ch
+              token_len = token_len + 1
+              current_token(token_len:token_len) = next_ch
+            end select
+          end if
+          pos = pos + 2
+        else
+          ! Regular character — add literally
+          if (token_len < MAX_TOKEN_LEN) then
+            token_len = token_len + 1
+            current_token(token_len:token_len) = ch
+          end if
+          pos = pos + 1
+        end if
+
       ! ============ DOUBLE QUOTE STATE ============
       case(LEX_IN_DOUBLE_QUOTE)
         if (ch == '\' .and. pos < input_len) then
@@ -375,7 +468,7 @@ contains
             end if
             pos = pos + 1
           end if
-        else if (ch == '$' .and. pos < input_len .and. input(pos+1:pos+1) == '(') then
+        else if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
           ! Command substitution inside double quotes - need to find matching )
           ! while ignoring quotes inside $()
           if (token_len < MAX_TOKEN_LEN - 1) then
@@ -651,6 +744,13 @@ contains
           token_has_quoted_part = .true.  ! Track that this word contains quoted content
           ! Transition to appropriate quote state
           if (ch == "'") then
+            ! Check for $' (ANSI-C quoting) — the $ is already in the token
+            if (token_len >= 1 .and. current_token(token_len:token_len) == '$') then
+              token_len = token_len - 1  ! Remove the $ from token
+              state = LEX_IN_DOLLAR_SINGLE_QUOTE
+              pos = pos + 1  ! Skip the opening quote
+              cycle
+            end if
             ! Add sentinel char(2) to mark start of single-quoted literal (no expansion)
             if (token_len < MAX_TOKEN_LEN) then
               token_len = token_len + 1

@@ -754,7 +754,7 @@ contains
           logical :: cmd_found
           integer :: ii
           character(len=4096) :: path_var, candidate
-          character(len=1024) :: path_dir
+          character(len=:), allocatable :: path_dir
           integer :: spos, cpos
 
           ! Inline PATH search to avoid command_builtin dependency
@@ -845,13 +845,14 @@ contains
     character(len=:), allocatable :: content_to_write, expanded_content
     logical :: has_redirects, has_heredoc
     ! Prefix assignment handling
-    character(len=1024) :: saved_var_names(10), saved_var_values(10)
+    character(len=MAX_TOKEN_LEN) :: saved_var_names(MAX_PREFIX_ASSIGNMENTS), saved_var_values(MAX_PREFIX_ASSIGNMENTS)
     integer :: num_saved_vars, eq_pos, j
     character(len=MAX_TOKEN_LEN) :: var_name, var_value
-    logical :: var_was_set(10)
+    logical :: var_was_set(MAX_PREFIX_ASSIGNMENTS)
 
     ! Apply prefix assignments to shell variables (save old values first)
     num_saved_vars = 0
+    if (allocated(cmd%prefix_assignments)) then
     do j = 1, cmd%num_prefix_assignments
       eq_pos = index(cmd%prefix_assignments(j), '=')
       if (eq_pos > 1) then
@@ -866,6 +867,7 @@ contains
         call var_set_shell_variable(shell, trim(var_name), trim(var_value))
       end if
     end do
+    end if  ! allocated(prefix_assignments)
 
     ! Check if we have any redirections
     has_redirects = allocated(cmd%output_file) .or. allocated(cmd%input_file) .or. &
@@ -1081,7 +1083,7 @@ contains
     use expansion, only: arithmetic_expansion_shell
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: expr, result_str
+    character(len=:), allocatable :: expr, result_str
     character(len=:), allocatable :: arith_expr
     integer(kind=8) :: result_val
     integer :: iostat
@@ -1211,6 +1213,17 @@ contains
           end do
           index_str = clean_key
         end block
+
+        ! Expand variables/command substitutions in value
+        if (index(var_value, '$') > 0 .or. index(var_value, '~') > 0) then
+          block
+            use parser, only: expand_variables
+            call expand_variables(var_value, expanded_value, shell)
+            if (allocated(expanded_value)) then
+              var_value = expanded_value
+            end if
+          end block
+        end if
 
         ! Check associative array first (numeric keys are valid)
         block
@@ -1361,7 +1374,7 @@ contains
           if (is_int_var .and. actual_value_len > 0) then
             block
               use expansion, only: arithmetic_expansion_shell
-              character(len=1024) :: arith_expr, arith_result
+              character(len=:), allocatable :: arith_expr, arith_result
               arith_expr = '$((' // &
                 var_value(:actual_value_len) // '))'
               arith_result = &
@@ -1824,11 +1837,16 @@ contains
     integer, intent(in) :: num_tokens
 
     type(c_ptr), target :: argv(num_tokens + 1)
-    character(kind=c_char), target :: c_tokens(MAX_TOKEN_LEN+1, num_tokens)
+    integer :: c_tok_len
+    character(kind=c_char), allocatable, target :: c_tokens(:,:)
     integer :: i, j, k
     integer :: ret
     logical :: is_path_command
 
+
+    ! Allocate C token buffer based on actual token character length
+    c_tok_len = len(tokens(1)) + 1
+    allocate(c_tokens(c_tok_len, num_tokens))
 
     ! Convert tokens to C strings
     do i = 1, num_tokens
@@ -1875,8 +1893,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024), allocatable :: function_body(:)
-    character(len=1024) :: saved_positional_params(50)
+    type(string_t), allocatable :: function_body(:)
+    type(string_t), allocatable :: saved_positional_params(:)
     integer :: saved_num_positional
     integer :: i
     type(pipeline_t) :: pipeline
@@ -1884,7 +1902,12 @@ contains
     logical :: function_returned
 
     ! Save current positional parameters (caller's $1, $2, etc.)
-    saved_positional_params = shell%positional_params
+    if (allocated(shell%positional_params)) then
+      allocate(saved_positional_params(size(shell%positional_params)))
+      do i = 1, size(shell%positional_params)
+        saved_positional_params(i)%str = shell%positional_params(i)%str
+      end do
+    end if
     saved_num_positional = shell%num_positional
 
     ! Enter function scope
@@ -1899,11 +1922,10 @@ contains
     ! cmd%tokens(1) is function name, cmd%tokens(2:) are arguments
     shell%num_positional = cmd%num_tokens - 1
     do i = 1, shell%num_positional
-      shell%positional_params(i) = cmd%tokens(i + 1)
+      shell%positional_params(i)%str = cmd%tokens(i + 1)
     end do
 
     ! Get function body
-    allocate(function_body(0))
     function_body = get_function_body(shell, cmd%tokens(1))
 
     function_returned = .false.
@@ -1911,11 +1933,12 @@ contains
     if (allocated(function_body)) then
       ! For defun-style functions (body has no $), append call args
       if (size(function_body) == 1 .and. cmd%num_tokens > 1 .and. &
-          index(function_body(1), '$') == 0) then
+          allocated(function_body(1)%str) .and. &
+          index(function_body(1)%str, '$') == 0) then
         block
           integer :: j
           do j = 2, cmd%num_tokens
-            function_body(1) = trim(function_body(1)) // &
+            function_body(1)%str = trim(function_body(1)%str) // &
                                ' ' // trim(cmd%tokens(j))
           end do
         end block
@@ -1923,9 +1946,9 @@ contains
 
       ! Execute each line of the function
       do i = 1, size(function_body)
-        if (len_trim(function_body(i)) > 0) then
+        if (allocated(function_body(i)%str) .and. len_trim(function_body(i)%str) > 0) then
           ! Expand aliases
-          call expand_alias(shell, trim(function_body(i)), expanded_line)
+          call expand_alias(shell, trim(function_body(i)%str), expanded_line)
 
           ! Parse and execute
           call parse_pipeline(expanded_line, pipeline)
@@ -1968,7 +1991,12 @@ contains
     shell%function_depth = shell%function_depth - 1
 
     ! Restore caller's positional parameters
-    shell%positional_params = saved_positional_params
+    if (allocated(saved_positional_params)) then
+      do i = 1, size(saved_positional_params)
+        shell%positional_params(i)%str = saved_positional_params(i)%str
+      end do
+      deallocate(saved_positional_params)
+    end if
     shell%num_positional = saved_num_positional
   end subroutine
 
@@ -2129,9 +2157,9 @@ contains
           exit
         end if
 
-        call parse_pipeline(shell%control_stack(loop_depth)%loop_body(i), pipeline)
+        call parse_pipeline(shell%control_stack(loop_depth)%loop_body(i)%str, pipeline)
         if (pipeline%num_commands > 0) then
-          call execute_pipeline(pipeline, shell, shell%control_stack(loop_depth)%loop_body(i))
+          call execute_pipeline(pipeline, shell, shell%control_stack(loop_depth)%loop_body(i)%str)
         end if
       end do
 
@@ -2260,8 +2288,8 @@ contains
     logical :: saved_bypass
 
     ! Save the trap command and signal before clearing
-    character(len=1024) :: trap_cmd
-    trap_cmd = shell%pending_trap_command
+    character(len=:), allocatable :: trap_cmd
+    trap_cmd = trim(shell%pending_trap_command)
 
     ! Save current exit status (traps don't affect $?)
     saved_status = shell%last_exit_status
@@ -2295,7 +2323,7 @@ contains
   subroutine execute_inline_then_commands(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: remainder_cmd
+    character(len=:), allocatable :: remainder_cmd
     type(pipeline_t) :: inline_pipeline
     integer :: i
 
@@ -2486,8 +2514,7 @@ contains
 
     character(len=256) :: func_name
     character(len=2048) :: reconstructed
-    ! Reduced from 100 to 50 lines to avoid static storage
-    character(len=1024) :: func_body(50)
+    character(len=:), allocatable :: func_body_line
     integer :: body_count, brace_start, brace_end, paren_pos
 
     is_func_def = .false.
@@ -2531,13 +2558,14 @@ contains
     ! Extract function body (between { and })
     if (brace_end > brace_start + 1) then
       body_count = 1
-      func_body(1) = trim(adjustl(reconstructed(brace_start+1:brace_end-1)))
+      func_body_line = trim(adjustl(reconstructed(brace_start+1:brace_end-1)))
     else
       body_count = 0
+      func_body_line = ''
     end if
 
     ! Register the function
-    call add_function(shell, trim(func_name), func_body, body_count)
+    call add_function(shell, trim(func_name), [func_body_line], body_count)
 
     is_func_def = .true.
   end function
@@ -2595,6 +2623,7 @@ contains
     character(len=MAX_TOKEN_LEN), target :: c_var_name, c_var_value
 
     ! Iterate through all prefix assignments
+    if (.not. allocated(cmd%prefix_assignments)) return
     do i = 1, cmd%num_prefix_assignments
       ! Find the '=' separator
       eq_pos = index(cmd%prefix_assignments(i), '=')
@@ -2620,7 +2649,7 @@ contains
   subroutine process_source_inline(shell)
     use variables, only: set_shell_variable
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: input_line
+    character(len=16384) :: input_line
     integer :: file_unit, iostat, i
     type(pipeline_t) :: pipeline
     character(len=:), allocatable :: expanded_line
@@ -2775,7 +2804,8 @@ contains
     block
       character(len=:), allocatable :: path_alloc
       character(len=4096) :: path_var
-      character(len=1024) :: path_comp, candidate
+      character(len=:), allocatable :: path_comp, candidate
+      character(len=MAX_PATH_LEN) :: candidate_buf
       integer :: spos, epos, cpos
       character(kind=c_char), target :: c_path(1025)
       integer :: ci, acc_status
@@ -2809,7 +2839,8 @@ contains
         path_comp = path_var(spos:epos)
         if (len_trim(path_comp) == 0) path_comp = '.'
 
-        write(candidate, '(a,a,a)') trim(path_comp), '/', trim(cmd_name)
+        write(candidate_buf, '(a,a,a)') trim(path_comp), '/', trim(cmd_name)
+        candidate = trim(candidate_buf)
 
         ! Check executable via C access()
         do ci = 1, len_trim(candidate)
@@ -2818,7 +2849,7 @@ contains
         c_path(len_trim(candidate) + 1) = c_null_char
         acc_status = cache_access(c_path, int(1, c_int))  ! X_OK = 1
         if (acc_status == 0) then
-          full_path = candidate
+          full_path = trim(candidate)
           exit
         end if
 

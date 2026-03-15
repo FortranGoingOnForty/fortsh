@@ -88,6 +88,8 @@ module fd_redirection
   type(saved_fd_t) :: saved_fds(20)
   integer :: num_saved_fds = 0
 
+  public :: save_fd_mark, restore_fds_to_mark
+
 contains
 
   function get_errno_message() result(msg)
@@ -138,7 +140,7 @@ contains
     logical, intent(in), optional :: noclobber
     logical, intent(in), optional :: permanent
     integer(c_int) :: file_fd, flags, mode
-    character(len=1024) :: filename_c
+    character(len=:), allocatable :: filename_c
     logical :: check_noclobber, is_permanent
 
     success = .true.
@@ -458,12 +460,7 @@ contains
   ! Save a file descriptor for later restoration
   subroutine save_fd(fd)
     integer, intent(in) :: fd
-    integer :: i, target_fd
-
-    ! Check if already saved
-    do i = 1, num_saved_fds
-      if (saved_fds(i)%fd == fd) return
-    end do
+    integer :: target_fd
 
     ! Save new fd using dup2 to a high fd number (100+)
     ! This prevents saved fds from conflicting with redirections
@@ -485,9 +482,21 @@ contains
 
   ! Restore all saved file descriptors
   subroutine restore_fds()
+    call restore_fds_to_mark(0)
+  end subroutine
+
+  ! Return current saved fd stack depth (for scoped restore)
+  function save_fd_mark() result(mark)
+    integer :: mark
+    mark = num_saved_fds
+  end function
+
+  ! Restore saved file descriptors back to a given mark (reverse order)
+  subroutine restore_fds_to_mark(mark)
+    integer, intent(in) :: mark
     integer :: i
-    
-    do i = 1, num_saved_fds
+
+    do i = num_saved_fds, mark + 1, -1
       if (saved_fds(i)%is_saved) then
         if (c_dup2(saved_fds(i)%saved_fd, saved_fds(i)%fd) < 0) then
           ! Error restoring file descriptor
@@ -498,8 +507,8 @@ contains
         saved_fds(i)%is_saved = .false.
       end if
     end do
-    
-    num_saved_fds = 0
+
+    num_saved_fds = mark
   end subroutine
 
   ! Parse redirection from token (e.g., "2>file", ">&1", "3<&-")

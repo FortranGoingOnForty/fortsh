@@ -24,7 +24,7 @@ module grammar_parser
     integer :: pos = 1
     integer :: current_line = 1  ! Track line number for LINENO
     logical :: has_error = .false.
-    character(len=1024) :: error_msg = ''
+    character(len=:), allocatable :: error_msg
     character(len=:), allocatable :: raw_input  ! For heredoc extraction
   end type parser_state_t
 
@@ -338,8 +338,8 @@ contains
     integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos
     type(token_t) :: tok, next_tok, peek_tok, delim_tok
     ! Prefix assignments (VAR=value before command)
-    character(len=MAX_TOKEN_LEN) :: assignments(10)
-    integer :: assignment_lens(10)
+    character(len=MAX_TOKEN_LEN) :: assignments(MAX_PREFIX_ASSIGNMENTS)
+    integer :: assignment_lens(MAX_PREFIX_ASSIGNMENTS)
     integer :: num_assignments, eq_pos
     logical :: seen_command
     allocate(words(MAX_TOKENS))
@@ -424,7 +424,7 @@ contains
               merged_word = trim(tok%value) // trim(next_tok%value)
             end if
             ! Check if this is a prefix assignment (before command) or regular word
-            if (.not. seen_command .and. num_assignments < 10) then
+            if (.not. seen_command .and. num_assignments < MAX_PREFIX_ASSIGNMENTS) then
               ! This is a prefix assignment
               num_assignments = num_assignments + 1
               assignments(num_assignments) = merged_word
@@ -452,7 +452,7 @@ contains
             call advance(state)
           else
             ! Just VAR= without value
-            if (.not. seen_command .and. num_assignments < 10) then
+            if (.not. seen_command .and. num_assignments < MAX_PREFIX_ASSIGNMENTS) then
               num_assignments = num_assignments + 1
               assignments(num_assignments) = tok%value
               assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1
@@ -477,7 +477,7 @@ contains
           eq_pos = index(tok%value, '=')
           if (.not. seen_command .and. eq_pos > 1 .and. &
               is_valid_assignment_name(tok%value(1:eq_pos-1)) .and. &
-              num_assignments < 10) then
+              num_assignments < MAX_PREFIX_ASSIGNMENTS) then
             ! This is a prefix assignment
             num_assignments = num_assignments + 1
             assignments(num_assignments) = tok%value
@@ -1476,16 +1476,25 @@ contains
   end subroutine
 
   ! Check if a string is a valid shell variable name for assignments
+  ! Accepts plain names (var) and array subscript names (var[subscript])
   function is_valid_assignment_name(name) result(valid)
     character(len=*), intent(in) :: name
     logical :: valid
-    integer :: i, name_len
+    integer :: i, name_len, bracket_pos
     character :: ch
 
     valid = .false.
     name_len = len_trim(name)
 
     if (name_len == 0) return
+
+    ! Check for array subscript: name[subscript]
+    ! Only validate the base name before the bracket
+    bracket_pos = index(name(1:name_len), '[')
+    if (bracket_pos > 0) then
+      name_len = bracket_pos - 1
+      if (name_len == 0) return
+    end if
 
     ! First character must be letter or underscore
     ch = name(1:1)

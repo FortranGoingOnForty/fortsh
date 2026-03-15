@@ -246,17 +246,17 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
-    
+    character(len=:), allocatable :: condition_cmd
+
     should_execute = .false.  ! Don't execute the if command itself
-    
+
     ! Parse if condition: if [ condition ] or if command
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'if: missing condition'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Build condition command from tokens (skip "if")
     condition_cmd = ''
     do i = 2, cmd%num_tokens
@@ -284,17 +284,17 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
-    
+    character(len=:), allocatable :: condition_cmd
+
     should_execute = .false.  ! Don't execute the while command itself
-    
+
     ! Parse while condition: while [ condition ] or while command
     if (cmd%num_tokens < 2) then
       write(error_unit, '(a)') 'while: missing condition'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Build condition command from tokens (skip "while")
     condition_cmd = ''
     do i = 2, cmd%num_tokens
@@ -326,7 +326,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
+    character(len=:), allocatable :: condition_cmd
 
     should_execute = .false.  ! Don't execute the until command itself
 
@@ -455,7 +455,7 @@ contains
       ! No 'in' clause - POSIX: iterate over positional parameters ($@)
       final_count = min(shell%num_positional, 100)
       do i = 1, final_count
-        final_items(i) = trim(shell%positional_params(i))
+        final_items(i) = trim(shell%positional_params(i)%str)
       end do
     end if
 
@@ -660,7 +660,7 @@ contains
     logical, intent(out) :: should_execute
     logical :: condition_result
     integer :: i
-    character(len=1024) :: condition_cmd
+    character(len=:), allocatable :: condition_cmd
 
     should_execute = .false.  ! Don't execute the "elif" keyword itself
 
@@ -728,7 +728,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical, intent(out) :: should_execute
 
-    character(len=1024) :: remainder_cmd
+    character(len=:), allocatable :: remainder_cmd
     integer :: i
 
     should_execute = .false.  ! Don't execute the "do" keyword itself
@@ -742,6 +742,12 @@ contains
     ! "do" marks the start of the loop body - start capturing commands
     if (.not. allocated(shell%control_stack(shell%control_depth)%loop_body)) then
       allocate(shell%control_stack(shell%control_depth)%loop_body(100))
+      block
+        integer :: k
+        do k = 1, 100
+          shell%control_stack(shell%control_depth)%loop_body(k)%str = ''
+        end do
+      end block
     end if
 
     shell%control_stack(shell%control_depth)%loop_body_count = 0
@@ -1024,7 +1030,7 @@ contains
     type(command_t) :: cmd
     character(len=256) :: tokens(50), expanded_token
     integer :: num_tokens, i, pos, start_pos, test_exit_status
-    character(len=1024) :: trimmed_cmd
+    character(len=:), allocatable :: trimmed_cmd
     character(len=:), allocatable :: expanded_result
     character(len=1) :: quote_char
 
@@ -1271,7 +1277,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024) :: case_value  ! Increased to match condition_cmd length
+    character(len=:), allocatable :: case_value
     character(len=256) :: pattern
     logical :: pattern_matches
     integer :: i
@@ -1443,7 +1449,7 @@ contains
 
     if (shell%control_stack(shell%control_depth)%loop_body_count <= 100) then
       shell%control_stack(shell%control_depth)%loop_body(&
-        shell%control_stack(shell%control_depth)%loop_body_count) = command_line
+        shell%control_stack(shell%control_depth)%loop_body_count)%str = command_line
     end if
   end subroutine
 
@@ -1464,9 +1470,9 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable, intent(out) :: output
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: result
+    character(len=4096) :: result
     character(len=256) :: var_name
-    character(len=1024) :: var_value
+    character(len=:), allocatable :: var_value
     integer :: i, j, var_start
 
     result = ''

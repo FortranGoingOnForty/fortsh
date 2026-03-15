@@ -41,8 +41,8 @@ contains
     integer, intent(in), optional :: stored_len
     character(len=*), intent(out) :: expanded
 
-    character(len=1024) :: result  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
-    character(len=1024) :: var_expanded  ! Buffer for variable/command expansion
+    character(len=MAX_VAR_VALUE_LEN) :: result  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
+    character(len=MAX_VAR_VALUE_LEN) :: var_expanded  ! Buffer for variable/command expansion
     integer :: i, j, prompt_len
     integer, parameter :: RESULT_CAPACITY = 1024
     character(len=256) :: replacement  ! Fixed-length buffer (avoid flang-new allocatable string bugs)
@@ -114,7 +114,7 @@ contains
 
     ! Use allocatable to avoid stack allocation
     character(len=:), allocatable :: result
-    character(len=1024) :: var_expanded  ! Buffer for variable/command expansion
+    character(len=MAX_VAR_VALUE_LEN) :: var_expanded  ! Buffer for variable/command expansion
     integer :: i, j, prompt_len, result_capacity
     character(len=:), allocatable :: replacement  ! Heap allocation to avoid stack overflow
 

@@ -97,13 +97,13 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, total_tokens, temp_cap
     character(len=:), allocatable :: expanded
-    character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
+    type(string_t), allocatable :: temp_tokens(:)
     integer, allocatable :: temp_token_lengths(:)  ! Track actual lengths of expanded tokens
     logical, allocatable :: temp_token_quoted(:)  ! Track if original token was quoted
     logical :: is_format_string
     ! Heap-allocated to avoid static storage in recursive context
-    character(len=MAX_TOKEN_LEN), allocatable :: split_words(:)
-    integer :: split_cap
+    character(len=:), allocatable :: split_words(:)
+    integer :: split_cap, split_char_len
     character(len=256) :: ifs_to_use
     integer :: word_count, k, ifs_check_i, ifs_len_to_use
     logical :: should_split, has_quotes, has_equals, has_escaped, has_ifs_char, ifs_explicitly_set
@@ -111,7 +111,8 @@ contains
     logical :: was_originally_quoted
 
     split_cap = 256
-    allocate(split_words(split_cap))
+    split_char_len = MAX_TOKEN_LEN
+    allocate(character(len=split_char_len) :: split_words(split_cap))
 
     ! Allocate temporary storage for expanded tokens
     temp_cap = max(cmd%num_tokens * 10, 256)
@@ -197,8 +198,8 @@ contains
         do j = 1, shell%num_positional
           total_tokens = total_tokens + 1
           if (total_tokens > temp_cap) call grow_temp_arrays()
-          temp_tokens(total_tokens) = trim(shell%positional_params(j))
-          temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j))
+          temp_tokens(total_tokens)%str = trim(shell%positional_params(j)%str)
+          temp_token_lengths(total_tokens) = len_trim(shell%positional_params(j)%str)
           temp_token_quoted(total_tokens) = .true.  ! Positional params from "$@" are quoted
         end do
         cycle  ! Skip normal token processing
@@ -358,13 +359,13 @@ contains
                         br_nlen = len_trim(br_num)
                         total_tokens = total_tokens + 1
                         if (br_plen > 0 .and. br_slen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen) // br_suffix
+                          temp_tokens(total_tokens)%str = br_prefix // br_num(1:br_nlen) // br_suffix
                         else if (br_plen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen)
+                          temp_tokens(total_tokens)%str = br_prefix // br_num(1:br_nlen)
                         else if (br_slen > 0) then
-                          temp_tokens(total_tokens) = br_num(1:br_nlen) // br_suffix
+                          temp_tokens(total_tokens)%str = br_num(1:br_nlen) // br_suffix
                         else
-                          temp_tokens(total_tokens) = br_num(1:br_nlen)
+                          temp_tokens(total_tokens)%str = br_num(1:br_nlen)
                         end if
                         temp_token_lengths(total_tokens) = br_plen + br_nlen + br_slen
                         temp_token_quoted(total_tokens) = .false.
@@ -376,13 +377,13 @@ contains
                         br_nlen = len_trim(br_num)
                         total_tokens = total_tokens + 1
                         if (br_plen > 0 .and. br_slen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen) // br_suffix
+                          temp_tokens(total_tokens)%str = br_prefix // br_num(1:br_nlen) // br_suffix
                         else if (br_plen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // br_num(1:br_nlen)
+                          temp_tokens(total_tokens)%str = br_prefix // br_num(1:br_nlen)
                         else if (br_slen > 0) then
-                          temp_tokens(total_tokens) = br_num(1:br_nlen) // br_suffix
+                          temp_tokens(total_tokens)%str = br_num(1:br_nlen) // br_suffix
                         else
-                          temp_tokens(total_tokens) = br_num(1:br_nlen)
+                          temp_tokens(total_tokens)%str = br_num(1:br_nlen)
                         end if
                         temp_token_lengths(total_tokens) = br_plen + br_nlen + br_slen
                         temp_token_quoted(total_tokens) = .false.
@@ -413,13 +414,13 @@ contains
                       do while (br_cc <= br_ec)
                         total_tokens = total_tokens + 1
                         if (br_plen > 0 .and. br_slen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // char(br_cc) // br_suffix
+                          temp_tokens(total_tokens)%str = br_prefix // char(br_cc) // br_suffix
                         else if (br_plen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // char(br_cc)
+                          temp_tokens(total_tokens)%str = br_prefix // char(br_cc)
                         else if (br_slen > 0) then
-                          temp_tokens(total_tokens) = char(br_cc) // br_suffix
+                          temp_tokens(total_tokens)%str = char(br_cc) // br_suffix
                         else
-                          temp_tokens(total_tokens) = char(br_cc)
+                          temp_tokens(total_tokens)%str = char(br_cc)
                         end if
                         temp_token_lengths(total_tokens) = br_plen + 1 + br_slen
                         temp_token_quoted(total_tokens) = .false.
@@ -429,13 +430,13 @@ contains
                       do while (br_cc >= br_ec)
                         total_tokens = total_tokens + 1
                         if (br_plen > 0 .and. br_slen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // char(br_cc) // br_suffix
+                          temp_tokens(total_tokens)%str = br_prefix // char(br_cc) // br_suffix
                         else if (br_plen > 0) then
-                          temp_tokens(total_tokens) = br_prefix // char(br_cc)
+                          temp_tokens(total_tokens)%str = br_prefix // char(br_cc)
                         else if (br_slen > 0) then
-                          temp_tokens(total_tokens) = char(br_cc) // br_suffix
+                          temp_tokens(total_tokens)%str = char(br_cc) // br_suffix
                         else
-                          temp_tokens(total_tokens) = char(br_cc)
+                          temp_tokens(total_tokens)%str = char(br_cc)
                         end if
                         temp_token_lengths(total_tokens) = br_plen + 1 + br_slen
                         temp_token_quoted(total_tokens) = .false.
@@ -461,16 +462,16 @@ contains
                     total_tokens = total_tokens + 1
                     if (total_tokens > temp_cap) call grow_temp_arrays()
                     if (allocated(var_expanded)) then
-                      temp_tokens(total_tokens) = var_expanded
+                      temp_tokens(total_tokens)%str = var_expanded
                       temp_token_lengths(total_tokens) = len(var_expanded)
                     else
-                      temp_tokens(total_tokens) = brace_words(bw_i)
+                      temp_tokens(total_tokens)%str = brace_words(bw_i)
                       temp_token_lengths(total_tokens) = len_trim(brace_words(bw_i))
                     end if
                   else
                     total_tokens = total_tokens + 1
                     if (total_tokens > temp_cap) call grow_temp_arrays()
-                    temp_tokens(total_tokens) = brace_words(bw_i)
+                    temp_tokens(total_tokens)%str = brace_words(bw_i)
                     temp_token_lengths(total_tokens) = len_trim(brace_words(bw_i))
                   end if
                   temp_token_quoted(total_tokens) = .false.
@@ -540,12 +541,14 @@ contains
       if (should_split) then
         ! Split the expanded string using IFS characters
         word_count = 0
-        ! Grow split_words if expanded string could produce more words than capacity
-        ! Worst case: every other char is an IFS separator → len/2 + 1 words
-        if (allocated(expanded) .and. len(expanded) / 2 + 1 > split_cap) then
-          deallocate(split_words)
-          split_cap = len(expanded) / 2 + 1
-          allocate(split_words(split_cap))
+        ! Grow split_words if expanded string needs more capacity or longer char length
+        if (allocated(expanded)) then
+          if (len(expanded) / 2 + 1 > split_cap .or. len(expanded) > split_char_len) then
+            deallocate(split_words)
+            split_cap = max(split_cap, len(expanded) / 2 + 1)
+            split_char_len = max(split_char_len, len(expanded))
+            allocate(character(len=split_char_len) :: split_words(split_cap))
+          end if
         end if
         ! Pass ifs_to_use with exact length - use substring to avoid trailing blanks
         if (ifs_len_to_use > 0) then
@@ -560,7 +563,7 @@ contains
         do j = 1, word_count
           total_tokens = total_tokens + 1
           if (total_tokens > temp_cap) call grow_temp_arrays()
-          temp_tokens(total_tokens) = split_words(j)
+          temp_tokens(total_tokens)%str = split_words(j)
           temp_token_lengths(total_tokens) = len_trim(split_words(j))
           ! Split tokens from unquoted expansion are not quoted
           temp_token_quoted(total_tokens) = .false.
@@ -584,7 +587,7 @@ contains
         end if
         total_tokens = total_tokens + 1
         if (total_tokens > temp_cap) call grow_temp_arrays()
-        temp_tokens(total_tokens) = expanded
+        temp_tokens(total_tokens)%str = expanded
         ! Track actual length of expanded token (use len for allocatable to get real length)
         if (allocated(expanded)) then
           temp_token_lengths(total_tokens) = len(expanded)
@@ -596,12 +599,27 @@ contains
       end if
     end do
 
-    ! Replace command tokens with expanded ones — use move_alloc to avoid
-    ! allocating + copying a second massive array for large expansions.
-    ! temp_tokens may be oversized (next power of 2) but that waste is far
-    ! cheaper than allocating + copying hundreds of MB.
-    if (allocated(cmd%tokens)) deallocate(cmd%tokens)
-    call move_alloc(temp_tokens, cmd%tokens)
+    ! Copy string_t temp_tokens to cmd%tokens uniform-length character array.
+    ! Find max token length to allocate cmd%tokens with sufficient character width.
+    block
+      integer :: max_tok_len, tt
+      max_tok_len = MAX_TOKEN_LEN
+      do tt = 1, total_tokens
+        if (allocated(temp_tokens(tt)%str)) then
+          max_tok_len = max(max_tok_len, len(temp_tokens(tt)%str))
+        end if
+      end do
+      if (allocated(cmd%tokens)) deallocate(cmd%tokens)
+      allocate(character(len=max_tok_len) :: cmd%tokens(total_tokens))
+      do tt = 1, total_tokens
+        if (allocated(temp_tokens(tt)%str)) then
+          cmd%tokens(tt) = temp_tokens(tt)%str
+        else
+          cmd%tokens(tt) = ''
+        end if
+      end do
+      deallocate(temp_tokens)
+    end block
     cmd%num_tokens = total_tokens
 
     ! Update token_lengths and token_quoted — move to avoid extra allocation
@@ -651,10 +669,10 @@ contains
 
     subroutine grow_temp_arrays(min_cap)
       integer, intent(in), optional :: min_cap
-      character(len=MAX_TOKEN_LEN), allocatable :: new_tokens(:)
+      type(string_t), allocatable :: new_tokens(:)
       integer, allocatable :: new_lengths(:)
       logical, allocatable :: new_quoted(:)
-      integer :: new_cap
+      integer :: new_cap, gk
 
       new_cap = temp_cap * 2
       if (present(min_cap)) then
@@ -667,7 +685,13 @@ contains
       allocate(new_quoted(new_cap))
       new_lengths = 0
       new_quoted = .false.
-      new_tokens(1:temp_cap) = temp_tokens(1:temp_cap)
+      do gk = 1, temp_cap
+        if (allocated(temp_tokens(gk)%str)) then
+          new_tokens(gk)%str = temp_tokens(gk)%str
+        else
+          new_tokens(gk)%str = ''
+        end if
+      end do
       new_lengths(1:temp_cap) = temp_token_lengths(1:temp_cap)
       new_quoted(1:temp_cap) = temp_token_quoted(1:temp_cap)
       call move_alloc(new_tokens, temp_tokens)
@@ -684,8 +708,8 @@ contains
     type(shell_state_t), intent(in) :: shell
 
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_tokens(:)
-    character(len=MAX_TOKEN_LEN), allocatable :: original_tokens(:)
-    integer :: expanded_count, i
+    character(len=:), allocatable :: original_tokens(:)
+    integer :: expanded_count, i, tok_char_len
     logical :: has_expandable
 
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens == 0) return
@@ -693,8 +717,11 @@ contains
     ! Skip glob expansion if noglob option is enabled (set -f)
     if (shell%option_noglob) return
 
-    ! Save original tokens
-    allocate(original_tokens(cmd%num_tokens))
+    ! Preserve the character width from expand_tokens (may be > MAX_TOKEN_LEN)
+    tok_char_len = len(cmd%tokens(1))
+
+    ! Save original tokens with matching character width
+    allocate(character(len=tok_char_len) :: original_tokens(cmd%num_tokens))
     do i = 1, cmd%num_tokens
       original_tokens(i) = cmd%tokens(i)
     end do
@@ -747,7 +774,7 @@ contains
     if (allocated(cmd%tokens)) deallocate(cmd%tokens)
 
     if (expanded_count > 0) then
-      allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(expanded_count))
+      allocate(character(len=max(tok_char_len, MAX_TOKEN_LEN)) :: cmd%tokens(expanded_count))
       do i = 1, expanded_count
         cmd%tokens(i) = expanded_tokens(i)
       end do
@@ -771,7 +798,7 @@ contains
       cmd%token_escaped = .false.
     else
       ! No expansion occurred - restore original
-      allocate(character(len=MAX_TOKEN_LEN) :: cmd%tokens(cmd%num_tokens))
+      allocate(character(len=tok_char_len) :: cmd%tokens(cmd%num_tokens))
       do i = 1, cmd%num_tokens
         cmd%tokens(i) = original_tokens(i)
       end do
@@ -785,70 +812,76 @@ contains
   subroutine process_command_escapes(cmd)
     type(command_t), intent(inout) :: cmd
     integer :: i, j, k, token_len
-    character(len=MAX_TOKEN_LEN) :: result
     logical :: in_quotes
     character(len=1) :: quote_char, backslash
+    integer :: result_len
 
     backslash = char(92)  ! ASCII for backslash
 
+    ! Use the character length of the token array for result buffer
+    result_len = len(cmd%tokens(1))
+
     do i = 1, cmd%num_tokens
       token_len = len_trim(cmd%tokens(i))
-      result = ''
-      k = 0  ! Count of characters written to result
-      j = 1
-      in_quotes = .false.
-      quote_char = ' '
+      block
+        character(len=result_len) :: result
+        result = ''
+        k = 0  ! Count of characters written to result
+        j = 1
+        in_quotes = .false.
+        quote_char = ' '
 
-      do while (j <= token_len)
-        ! Track quote state
-        if (.not. in_quotes .and. (cmd%tokens(i)(j:j) == '"' .or. cmd%tokens(i)(j:j) == "'")) then
-          in_quotes = .true.
-          quote_char = cmd%tokens(i)(j:j)
-          k = k + 1
-          result(k:k) = cmd%tokens(i)(j:j)
-          j = j + 1
-        else if (in_quotes .and. cmd%tokens(i)(j:j) == quote_char) then
-          in_quotes = .false.
-          k = k + 1
-          result(k:k) = cmd%tokens(i)(j:j)
-          j = j + 1
-        else if (.not. in_quotes .and. cmd%tokens(i)(j:j) == backslash .and. j < token_len) then
-          ! Check what character follows the backslash
-          ! Only process structural escapes (space, glob characters)
-          if (cmd%tokens(i)(j+1:j+1) == ' ' .or. &
-              cmd%tokens(i)(j+1:j+1) == '*' .or. &
-              cmd%tokens(i)(j+1:j+1) == '?' .or. &
-              cmd%tokens(i)(j+1:j+1) == '[') then
-            ! Structural escape - skip backslash, keep next char
-            j = j + 1
+        do while (j <= token_len)
+          ! Track quote state
+          if (.not. in_quotes .and. (cmd%tokens(i)(j:j) == '"' .or. cmd%tokens(i)(j:j) == "'")) then
+            in_quotes = .true.
+            quote_char = cmd%tokens(i)(j:j)
             k = k + 1
             result(k:k) = cmd%tokens(i)(j:j)
             j = j + 1
-          else
-            ! Non-structural escape (like \n, \t) - keep both backslash and next char
+          else if (in_quotes .and. cmd%tokens(i)(j:j) == quote_char) then
+            in_quotes = .false.
             k = k + 1
-            result(k:k) = backslash
+            result(k:k) = cmd%tokens(i)(j:j)
             j = j + 1
-            if (j <= token_len) then
+          else if (.not. in_quotes .and. cmd%tokens(i)(j:j) == backslash .and. j < token_len) then
+            ! Check what character follows the backslash
+            ! Only process structural escapes (space, glob characters)
+            if (cmd%tokens(i)(j+1:j+1) == ' ' .or. &
+                cmd%tokens(i)(j+1:j+1) == '*' .or. &
+                cmd%tokens(i)(j+1:j+1) == '?' .or. &
+                cmd%tokens(i)(j+1:j+1) == '[') then
+              ! Structural escape - skip backslash, keep next char
+              j = j + 1
               k = k + 1
               result(k:k) = cmd%tokens(i)(j:j)
               j = j + 1
+            else
+              ! Non-structural escape (like \n, \t) - keep both backslash and next char
+              k = k + 1
+              result(k:k) = backslash
+              j = j + 1
+              if (j <= token_len) then
+                k = k + 1
+                result(k:k) = cmd%tokens(i)(j:j)
+                j = j + 1
+              end if
             end if
+          else
+            ! Regular character
+            k = k + 1
+            result(k:k) = cmd%tokens(i)(j:j)
+            j = j + 1
           end if
-        else
-          ! Regular character
-          k = k + 1
-          result(k:k) = cmd%tokens(i)(j:j)
-          j = j + 1
-        end if
-      end do
+        end do
 
-      ! Only copy the actual content (k characters)
-      if (k > 0) then
-        cmd%tokens(i) = result(1:k)
-      else
-        cmd%tokens(i) = ''
-      end if
+        ! Only copy the actual content (k characters)
+        if (k > 0) then
+          cmd%tokens(i) = result(1:k)
+        else
+          cmd%tokens(i) = ''
+        end if
+      end block
     end do
   end subroutine
 

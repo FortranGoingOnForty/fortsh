@@ -15,8 +15,9 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: optstring, optname
-    character(len=1024) :: current_arg
-    character(len=1024) :: optind_str, optarg_str
+    character(len=:), allocatable :: current_arg
+    character(len=:), allocatable :: optind_str, optarg_str
+    character(len=20) :: fmt_buf
     integer :: optind, argc, current_pos, i
     character :: opt_char
     logical :: found_option, requires_arg, silent_mode
@@ -29,6 +30,7 @@ contains
     
     optstring = cmd%tokens(2)
     optname = cmd%tokens(3)
+    current_arg = ''
     silent_mode = (optstring(1:1) == ':')
     
     ! Get current OPTIND value
@@ -60,11 +62,12 @@ contains
       end if
       
       if (optind <= argc) then
-        write(optind_str, '(I0)') optind
+        write(fmt_buf, '(I0)') optind
+        optind_str = trim(fmt_buf)
         current_arg = get_shell_variable(shell, trim(optind_str))
       end if
     end if
-    
+
     ! Check if we're done processing options
     if (optind > argc .or. len_trim(current_arg) == 0 .or. current_arg(1:1) /= '-') then
       call set_shell_variable(shell, trim(optname), '?')
@@ -76,7 +79,8 @@ contains
     if (current_arg == '--') then
       ! End of options
       optind = optind + 1
-      write(optind_str, '(I0)') optind
+      write(fmt_buf, '(I0)') optind
+      optind_str = trim(fmt_buf)
       call set_shell_variable(shell, 'OPTIND', trim(optind_str))
       call set_shell_variable(shell, trim(optname), '?')
       shell%last_exit_status = 1
@@ -103,10 +107,11 @@ contains
     if (current_pos > len_trim(current_arg)) then
       optind = optind + 1
       current_pos = 2
-      write(optind_str, '(I0)') optind
+      write(fmt_buf, '(I0)') optind
+      optind_str = trim(fmt_buf)
       call set_shell_variable(shell, 'OPTIND', trim(optind_str))
       call set_shell_variable(shell, 'OPTPOS', '')
-      
+
       ! Get next argument
       if (cmd%num_tokens > 3) then
         if (optind + 3 <= cmd%num_tokens) then
@@ -115,10 +120,11 @@ contains
           current_arg = ''
         end if
       else
-        write(optind_str, '(I0)') optind
+        write(fmt_buf, '(I0)') optind
+        optind_str = trim(fmt_buf)
         current_arg = get_shell_variable(shell, trim(optind_str))
       end if
-      
+
       if (len_trim(current_arg) == 0 .or. current_arg(1:1) /= '-') then
         call set_shell_variable(shell, trim(optname), '?')
         shell%last_exit_status = 1
@@ -156,19 +162,21 @@ contains
         current_pos = 2
       end if
       
-      write(optind_str, '(I0)') optind
+      write(fmt_buf, '(I0)') optind
+      optind_str = trim(fmt_buf)
       call set_shell_variable(shell, 'OPTIND', trim(optind_str))
       if (current_pos == 2) then
         call set_shell_variable(shell, 'OPTPOS', '')
       else
-        write(optarg_str, '(I0)') current_pos
+        write(fmt_buf, '(I0)') current_pos
+        optarg_str = trim(fmt_buf)
         call set_shell_variable(shell, 'OPTPOS', trim(optarg_str))
       end if
-      
+
       shell%last_exit_status = 0
       return
     end if
-    
+
     ! Valid option found
     call set_shell_variable(shell, trim(optname), opt_char)
     
@@ -191,7 +199,8 @@ contains
             optarg_str = ''
           end if
         else
-          write(optind_str, '(I0)') optind
+          write(fmt_buf, '(I0)') optind
+          optind_str = trim(fmt_buf)
           optarg_str = get_shell_variable(shell, trim(optind_str))
           if (len_trim(optarg_str) > 0) then
             optind = optind + 1
@@ -223,13 +232,15 @@ contains
     end if
 
     ! Update OPTIND and OPTPOS
-    write(optind_str, '(I0)') optind
+    write(fmt_buf, '(I0)') optind
+    optind_str = trim(fmt_buf)
     call set_shell_variable(shell, 'OPTIND', trim(optind_str))
-    
+
     if (current_pos == 2) then
       call set_shell_variable(shell, 'OPTPOS', '')
     else
-      write(optarg_str, '(I0)') current_pos
+      write(fmt_buf, '(I0)') current_pos
+      optarg_str = trim(fmt_buf)
       call set_shell_variable(shell, 'OPTPOS', trim(optarg_str))
     end if
     

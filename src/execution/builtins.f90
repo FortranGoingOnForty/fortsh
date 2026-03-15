@@ -252,65 +252,30 @@ contains
     use grammar_parser, only: parse_command_line
     use ast_executor, only: execute_ast_node
     use command_tree, only: command_node_t, destroy_command_node
-    use executor, only: execute_pipeline
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: exit_code, iostat, i
+    integer :: exit_code, iostat
     character(len=4096) :: trap_command
-    type(pipeline_t) :: trap_pipeline
     type(command_node_t), pointer :: trap_ast
     integer :: saved_exit_status, trap_exit_code
 
     ! Execute EXIT trap before exiting (TRAP_EXIT = 0)
-    ! Don't execute if we're already in a trap or if EXIT trap was already executed
-    ! Don't execute inherited traps (visible in subshell but not executed)
     if (.not. shell%executing_trap .and. .not. shell%exit_trap_executed .and. &
         .not. is_trap_inherited(shell, 0)) then
-      ! Get the trap command for EXIT signal (0)
       trap_command = get_trap_command(shell, 0)
 
       if (len_trim(trap_command) > 0) then
-        ! Mark EXIT trap as executed
         shell%exit_trap_executed = .true.
-
-        ! Save current exit status
         saved_exit_status = shell%last_exit_status
-
-        ! Set flag to prevent recursive trap execution
         shell%executing_trap = .true.
 
-        ! Parse and execute the trap command
-        if (shell%use_new_parser) then
-          trap_ast => parse_command_line(trim(trap_command))
-          if (associated(trap_ast)) then
-            trap_exit_code = execute_ast_node(trap_ast, shell)
-            call destroy_command_node(trap_ast)
-          end if
-        else
-          call parse_pipeline(trim(trap_command), trap_pipeline)
-          if (.not. trap_pipeline%parse_error .and. trap_pipeline%num_commands > 0) then
-            call execute_pipeline(trap_pipeline, shell, trim(trap_command))
-          end if
-
-          ! Clean up pipeline
-          if (allocated(trap_pipeline%commands)) then
-            do i = 1, trap_pipeline%num_commands
-              if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
-              if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
-              if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
-              if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
-              if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
-              if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
-              if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
-            end do
-            deallocate(trap_pipeline%commands)
-          end if
+        trap_ast => parse_command_line(trim(trap_command))
+        if (associated(trap_ast)) then
+          trap_exit_code = execute_ast_node(trap_ast, shell)
+          call destroy_command_node(trap_ast)
         end if
 
-        ! Clear flag
         shell%executing_trap = .false.
-
-        ! Restore exit status (trap shouldn't affect exit code)
         shell%last_exit_status = saved_exit_status
       end if
     end if
@@ -538,7 +503,8 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
-    character(len=MAX_TOKEN_LEN) :: var_name, var_value
+    character(len=MAX_TOKEN_LEN) :: var_name
+    character(len=:), allocatable :: var_value
     logical :: print_mode, found, unexport_mode
     character(len=:), allocatable :: env_entry
 
@@ -612,17 +578,22 @@ contains
       if (eq_pos > 0) then
         ! VAR=value form - set and export
         var_name = cmd%tokens(i)(:eq_pos-1)
-        var_value = cmd%tokens(i)(eq_pos+1:)
+        if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
+            cmd%token_lengths(i) > eq_pos) then
+          var_value = cmd%tokens(i)(eq_pos+1:cmd%token_lengths(i))
+        else
+          var_value = trim(cmd%tokens(i)(eq_pos+1:))
+        end if
 
         ! Set as shell variable first
-        call set_shell_variable(shell, trim(var_name), trim(var_value))
+        call set_shell_variable(shell, trim(var_name), var_value)
 
         ! Mark as exported
         do j = 1, shell%num_variables
           if (trim(shell%variables(j)%name) == trim(var_name)) then
             shell%variables(j)%exported = .true.
             ! Also set in environment
-            if (.not. set_environment_var(trim(var_name), trim(var_value))) then
+            if (.not. set_environment_var(trim(var_name), var_value)) then
               write(error_unit, '(a)') 'export: failed to set environment variable'
               shell%last_exit_status = 1
               return
@@ -1097,7 +1068,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024) :: filename, path_var, dir, candidate
+    character(len=:), allocatable :: filename, path_var, dir, candidate
     character(len=:), allocatable :: path_str
     logical :: file_exists, found_in_path
     integer :: i, path_start, path_end, path_len
@@ -1187,12 +1158,18 @@ contains
       ! Allocate positional_params if not already allocated
       if (.not. allocated(shell%positional_params)) then
         allocate(shell%positional_params(50))  ! Default size
+        block
+          integer :: k
+          do k = 1, 50
+            shell%positional_params(k)%str = ''
+          end do
+        end block
       end if
 
       do i = 3, cmd%num_tokens
         shell%num_positional = shell%num_positional + 1
         if (shell%num_positional <= size(shell%positional_params)) then
-          shell%positional_params(shell%num_positional) = trim(cmd%tokens(i))
+          shell%positional_params(shell%num_positional)%str = trim(cmd%tokens(i))
         end if
       end do
     end if
@@ -1602,7 +1579,7 @@ contains
   subroutine builtin_trap(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: action
+    character(len=:), allocatable :: action
     character(len=256) :: signal_spec
     integer :: i, j, k, signum
     logical :: list_mode, remove_mode
@@ -1750,7 +1727,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i
     character(len=256) :: alias_name, alias_command
-    character(len=1024) :: full_arg
+    character(len=:), allocatable :: full_arg
 
     if (cmd%num_tokens == 1) then
       ! Show all aliases
@@ -2177,7 +2154,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=1024) :: function_body(1)
+    character(len=:), allocatable :: function_body
     character(len=256) :: func_name
     integer :: i
 
@@ -2191,24 +2168,24 @@ contains
 
     ! Reconstruct the function body from all remaining tokens
     ! This handles cases where the parser split the quoted string
-    function_body(1) = trim(cmd%tokens(3))
+    function_body = trim(cmd%tokens(3))
     do i = 4, cmd%num_tokens
-      function_body(1) = trim(function_body(1)) // ' ' // trim(cmd%tokens(i))
+      function_body = trim(function_body) // ' ' // trim(cmd%tokens(i))
     end do
 
     ! Strip quotes from function body
-    if (len_trim(function_body(1)) >= 2) then
-      if (function_body(1)(1:1) == '"' .or. function_body(1)(1:1) == "'") then
+    if (len(function_body) >= 2) then
+      if (function_body(1:1) == '"' .or. function_body(1:1) == "'") then
         ! Check if last character is also a quote
-        if (function_body(1)(len_trim(function_body(1)):len_trim(function_body(1))) == '"' .or. &
-            function_body(1)(len_trim(function_body(1)):len_trim(function_body(1))) == "'") then
+        if (function_body(len(function_body):len(function_body)) == '"' .or. &
+            function_body(len(function_body):len(function_body)) == "'") then
           ! Remove first and last character (quotes)
-          function_body(1) = function_body(1)(2:len_trim(function_body(1))-1)
+          function_body = function_body(2:len(function_body)-1)
         end if
       end if
     end if
 
-    call add_function(shell, func_name, function_body, 1)
+    call add_function(shell, func_name, [function_body], 1)
     shell%last_exit_status = 0
   end subroutine
 
@@ -2305,21 +2282,21 @@ contains
     type(shell_state_t), intent(inout) :: shell
     
     integer :: timeout_seconds, i
-    character(len=1024) :: command
-    
+    character(len=:), allocatable :: command
+
     if (cmd%num_tokens < 3) then
       write(error_unit, '(a)') 'timeout: usage: timeout DURATION COMMAND...'
       shell%last_exit_status = 1
       return
     end if
-    
+
     read(cmd%tokens(2), *, iostat=i) timeout_seconds
     if (i /= 0 .or. timeout_seconds <= 0) then
       write(error_unit, '(a)') 'timeout: invalid duration'
       shell%last_exit_status = 1
       return
     end if
-    
+
     ! Reconstruct command from remaining tokens
     command = ''
     do i = 3, cmd%num_tokens
@@ -2340,7 +2317,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: command_name
-    character(len=1024) :: full_path
+    character(len=:), allocatable :: full_path
     integer :: i
     logical :: any_not_found
 
@@ -2364,6 +2341,7 @@ contains
         write(output_unit, '(a)') trim(command_name) // ' is a function'
       else
         ! Try to find in PATH
+        allocate(character(len=MAX_PATH_LEN) :: full_path)
         if (find_executable_in_path(shell, command_name, full_path)) then
           write(output_unit, '(a)') trim(command_name) // ' is ' // trim(full_path)
         else
@@ -2476,6 +2454,11 @@ contains
                   ! This keeps it shadowing the global but treated as unset
                   shell%local_vars(lv_depth, lv_i)%value = ''
                   shell%local_vars(lv_depth, lv_i)%value_len = -1
+                  ! Special handling: restore default IFS when unset
+                  if (trim(var_name) == 'IFS') then
+                    shell%ifs = ' ' // char(9) // char(10)
+                    shell%ifs_len = -1
+                  end if
                   found_local = .true.
                   exit
                 end if
@@ -2505,6 +2488,11 @@ contains
                 shell%variables(j)%exported = .false.
                 shell%variables(j)%array_size = 0
                 shell%variables(j)%assoc_size = 0
+                ! Special handling: restore default IFS when unset
+                if (trim(var_name) == 'IFS') then
+                  shell%ifs = ' ' // char(9) // char(10)
+                  shell%ifs_len = -1
+                end if
                 exit
               end if
             end do
@@ -2655,7 +2643,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i, eq_pos, depth, var_index, fi, start_arg
     character(len=256) :: var_name
-    character(len=1024) :: var_value
+    character(len=:), allocatable :: var_value
     logical :: integer_flag, readonly_flag, array_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
 
@@ -2755,11 +2743,10 @@ contains
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
-            character(len=1024) :: arith_expr, arith_result
+            character(len=:), allocatable :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
-            arith_result = &
-              arithmetic_expansion_shell( &
-                trim(arith_expr), shell)
+            arith_result = trim(arithmetic_expansion_shell( &
+                trim(arith_expr), shell))
             var_value = arith_result
           end block
         end if
@@ -3706,7 +3693,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, iostat
-    character(len=1024) :: expr, arith_expr, result_str
+    character(len=:), allocatable :: expr, arith_expr, result_str
     integer(kind=8) :: result_val
 
     ! Default to success
@@ -3748,7 +3735,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: eq_pos, i, j, arg_idx
     character(len=256) :: var_name
-    character(len=1024) :: var_value
+    character(len=:), allocatable :: var_value
     logical :: readonly_flag, export_flag, print_mode, print_funcs
     logical :: array_flag, assoc_array_flag, found, integer_flag, global_flag
     character(len=MAX_TOKEN_LEN) :: flag_str
@@ -3817,7 +3804,9 @@ contains
             write(output_unit, '(a)') '{'
             if (allocated(shell%functions(i)%body)) then
               do j = 1, shell%functions(i)%body_lines
-                write(output_unit, '(a)') '    ' // trim(shell%functions(i)%body(j))
+                if (allocated(shell%functions(i)%body(j)%str)) then
+                  write(output_unit, '(a)') '    ' // trim(shell%functions(i)%body(j)%str)
+                end if
               end do
             end if
             write(output_unit, '(a)') '}'
@@ -3941,10 +3930,10 @@ contains
         if (integer_flag .and. len_trim(var_value) > 0) then
           block
             use expansion, only: arithmetic_expansion_shell
-            character(len=1024) :: arith_expr, arith_result
+            character(len=:), allocatable :: arith_expr, arith_result
             arith_expr = '$((' // trim(var_value) // '))'
-            arith_result = &
-              arithmetic_expansion_shell(trim(arith_expr), shell)
+            arith_result = trim(arithmetic_expansion_shell( &
+              trim(arith_expr), shell))
             var_value = arith_result
           end block
         end if
@@ -4143,10 +4132,14 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical :: list_mode, no_line_numbers, reverse_order, subst_mode
     character(len=:), allocatable :: editor, old_str, new_str
-    character(len=1024) :: line, tmpfile, edit_cmd
+    character(len=:), allocatable :: line, tmpfile, edit_cmd
+    character(len=40) :: fmt_buf
     integer :: first, last, i, arg_idx, iostat, tmp_unit
     integer :: eq_pos, history_count
     logical :: found
+
+    ! Pre-allocate line for intent(out) calls and Fortran read
+    allocate(character(len=4096) :: line)
 
     ! Initialize flags
     list_mode = .false.
@@ -4364,7 +4357,8 @@ contains
     end if
 
     ! Create temporary file with commands to edit
-    write(tmpfile, '(a,i15)') '/tmp/fortsh_fc_', c_getpid()
+    write(fmt_buf, '(a,i15)') '/tmp/fortsh_fc_', c_getpid()
+    tmpfile = trim(adjustl(fmt_buf))
 
     open(newunit=tmp_unit, file=trim(tmpfile), status='replace', action='write', iostat=iostat)
     if (iostat /= 0) then
@@ -4383,7 +4377,7 @@ contains
     close(tmp_unit)
 
     ! Launch editor
-    write(edit_cmd, '(a,1x,a)') trim(editor), trim(tmpfile)
+    edit_cmd = trim(editor) // ' ' // trim(tmpfile)
     i = c_system(trim(edit_cmd) // c_null_char)
 
     ! Read back edited commands and execute them
@@ -4415,11 +4409,12 @@ contains
   function find_history_by_prefix(prefix) result(hist_index)
     character(len=*), intent(in) :: prefix
     integer :: hist_index
-    character(len=1024) :: line
+    character(len=:), allocatable :: line
     logical :: found
     integer :: i, count, pos
 
     count = get_history_count()
+    allocate(character(len=4096) :: line)
 
     ! Search backwards from most recent
     do i = count, 1, -1
@@ -4938,7 +4933,7 @@ contains
   ! Execute EXIT trap inline (to avoid circular dependency with executor module)
   subroutine execute_exit_trap_inline(shell)
     type(shell_state_t), intent(inout) :: shell
-    character(len=1024) :: trap_cmd
+    character(len=:), allocatable :: trap_cmd
     integer :: saved_status
     type(pipeline_t) :: trap_pipeline
     integer :: i

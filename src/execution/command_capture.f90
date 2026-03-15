@@ -79,7 +79,7 @@ contains
   subroutine execute_command_and_capture(shell, command, output, output_len)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command
-    character(len=*), intent(out) :: output
+    character(len=:), allocatable, intent(out) :: output
     integer, intent(out), optional :: output_len  ! Actual content length
 
     integer(c_int) :: pipe_fds(2)
@@ -87,9 +87,10 @@ contains
     integer(c_pid_t) :: pid
     character(kind=c_char), target :: buffer(4096)
     integer(c_ssize_t) :: bytes_read
-    integer :: total_len, i
+    integer :: total_len, i, buf_cap
     integer(c_int), target :: wstatus
     type(c_ptr) :: wstatus_ptr
+    character(len=:), allocatable :: buf
 
     output = ''
     if (present(output_len)) output_len = 0
@@ -143,18 +144,23 @@ contains
       ! Close write end of pipe
       ret = close(pipe_fds(2))
 
-      ! Read output from pipe
+      ! Read output from pipe into growing buffer
+      buf_cap = 8192
+      allocate(character(len=buf_cap) :: buf)
       total_len = 0
       do
         bytes_read = read(pipe_fds(1), c_loc(buffer), int(size(buffer), c_size_t))
         if (bytes_read <= 0) exit
 
+        ! Grow buffer if needed
+        if (total_len + int(bytes_read) > buf_cap) then
+          call grow_capture_buffer(buf, buf_cap, total_len)
+        end if
+
         ! Copy buffer to output
         do i = 1, int(bytes_read)
-          if (total_len < len(output)) then
-            total_len = total_len + 1
-            output(total_len:total_len) = buffer(i)
-          end if
+          total_len = total_len + 1
+          buf(total_len:total_len) = buffer(i)
         end do
       end do
 
@@ -174,16 +180,36 @@ contains
     end if
 
     ! Remove trailing newlines for command substitution
-    do while (total_len > 0 .and. output(total_len:total_len) == char(10))
+    do while (total_len > 0)
+      if (buf(total_len:total_len) /= char(10)) exit
       total_len = total_len - 1
     end do
-    if (total_len < len(output)) then
-      output = output(1:total_len)
+
+    if (total_len > 0) then
+      output = buf(1:total_len)
+    else
+      output = ''
     end if
+
+    if (allocated(buf)) deallocate(buf)
 
     ! Return the actual content length (preserves trailing whitespace info)
     if (present(output_len)) output_len = total_len
 
   end subroutine execute_command_and_capture
+
+  subroutine grow_capture_buffer(buf, cap, content_len)
+    character(len=:), allocatable, intent(inout) :: buf
+    integer, intent(inout) :: cap
+    integer, intent(in) :: content_len
+    character(len=:), allocatable :: tmp
+    integer :: new_cap
+
+    new_cap = cap * 2
+    allocate(character(len=new_cap) :: tmp)
+    if (content_len > 0) tmp(1:content_len) = buf(1:content_len)
+    call move_alloc(tmp, buf)
+    cap = new_cap
+  end subroutine
 
 end module command_capture

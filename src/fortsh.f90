@@ -7,12 +7,12 @@ program fortran_shell
   use signal_handler
   use signal_handling
   use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash, &
-                    needs_compound_continuation, remove_line_continuations
+                    needs_compound_continuation, remove_line_continuations, process_substitutions
 
   use grammar_parser  ! New grammar-aware parser
   use ast_executor, only: execute_ast, register_trap_evaluator
   use command_tree    ! Command tree for new parser
-  use executor
+  use executor, only: init_completion_executor, init_control_flow_callbacks
   use job_control
   use readline
   use shell_config
@@ -23,20 +23,20 @@ program fortran_shell
   use prompt_formatting
   use command_capture_callback, only: init_command_capture  ! For command substitution
   use builtins, only: init_builtins  ! Initialize builtin function pointers
+  use coprocess, only: init_coprocess_registry
   use version, only: print_version, print_help
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   use iso_c_binding, only: c_int
   implicit none
 
   type(shell_state_t), allocatable :: shell
-  type(pipeline_t) :: pipeline
   character(len=16384) :: input_line, proc_subst_line
   character(len=:), allocatable :: expanded_line, history_expanded
-  character(len=1024) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
-  character(len=1024) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
+  character(len=MAX_VAR_VALUE_LEN) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
+  character(len=MAX_VAR_VALUE_LEN) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
   character(len=:), allocatable :: rprompt_value  ! RPROMPT variable value
   integer :: iostat, i, num_args
-  character(len=1024) :: arg1, command_string
+  character(len=MAX_PATH_LEN) :: arg1, command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
   character(len=:), allocatable :: script_file
   ! Command duration tracking
@@ -93,7 +93,7 @@ program fortran_shell
       execute_script_file = .true.
       ! If there's a script file after -n, use it
       if (num_args >= 2) then
-        if (.not. allocated(script_file)) allocate(character(len=1024) :: script_file)
+        if (.not. allocated(script_file)) allocate(character(len=MAX_PATH_LEN) :: script_file)
         call get_command_argument(2, script_file)
         execute_script_file = .true.
       end if
@@ -176,7 +176,7 @@ program fortran_shell
     ! For -c 'command' arg0 arg1 arg2: arg0 becomes $0, arg1 arg2 become $1 $2
     if (num_args >= 3) then
       block
-        character(len=1024) :: c_arg
+        character(len=MAX_PATH_LEN) :: c_arg
         integer :: c_idx
         ! Third argument becomes $0
         call get_command_argument(3, c_arg)
@@ -194,7 +194,7 @@ program fortran_shell
           end if
           do c_idx = 4, num_args
             call get_command_argument(c_idx, c_arg)
-            shell%positional_params(c_idx - 3) = trim(c_arg)
+            shell%positional_params(c_idx - 3)%str = trim(c_arg)
           end do
         end if
       end block
@@ -216,53 +216,20 @@ program fortran_shell
       write(error_unit, '(A)') trim(command_string)
     end if
 
-    ! Use new parser if feature flag is enabled
-    if (shell%use_new_parser) then
-      ! NEW PARSER PATH: Parse to AST and execute directly
-      ! Convert backticks to $() first
-      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
-      ast_root => parse_command_line(converted_line)
-      if (associated(ast_root)) then
-        exit_code = execute_ast(ast_root, shell)
-        shell%last_exit_status = exit_code
-        call destroy_command_node(ast_root)
-        ! Handle source commands that were the last/only command in -c string
-        if (shell%should_source) then
-          call process_source_file(shell)
-        end if
-      else if (last_parse_had_error) then
-        ! Parse error occurred (not just empty command)
-        shell%last_exit_status = 2
+    ! Parse to AST and execute
+    converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+    ast_root => parse_command_line(converted_line)
+    if (associated(ast_root)) then
+      exit_code = execute_ast(ast_root, shell)
+      shell%last_exit_status = exit_code
+      call destroy_command_node(ast_root)
+      ! Handle source commands that were the last/only command in -c string
+      if (shell%should_source) then
+        call process_source_file(shell)
       end if
-    else
-      ! OLD PARSER PATH: Parse to pipeline and execute
-      call parse_pipeline(proc_subst_line, pipeline)
-
-      ! Check for syntax errors
-      if (pipeline%parse_error) then
-        shell%last_exit_status = 2  ! Syntax error
-      else if (pipeline%num_commands > 0) then
-        call execute_pipeline(pipeline, shell, trim(command_string))
-
-        ! Check if we need to replay loop body (for loops, while, until)
-        if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-          call replay_loop_if_needed(shell)
-        end if
-
-        ! Clean up pipeline
-        if (allocated(pipeline%commands)) then
-          do i = 1, pipeline%num_commands
-            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-          end do
-          deallocate(pipeline%commands)
-        end if
-      end if
+    else if (last_parse_had_error) then
+      ! Parse error occurred (not just empty command)
+      shell%last_exit_status = 2
     end if
 
     ! Process any sourced files queued by the command
@@ -466,139 +433,51 @@ program fortran_shell
       write(error_unit, '(A)') trim(expanded_line)
     end if
 
-    ! Parse and execute (use new parser if feature flag is enabled)
-    if (shell%use_new_parser) then
-      ! NEW PARSER PATH: Parse to AST and execute directly
-      call system_clock(cmd_start_time, clock_rate)
+    ! Parse and execute via AST
+    call system_clock(cmd_start_time, clock_rate)
 
-      ! Convert backticks to $() first
-      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
-      ast_root => parse_command_line(converted_line)
-      if (associated(ast_root)) then
-        ! Store current command for job descriptions
-        shell%current_command = converted_line
+    converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+    ast_root => parse_command_line(converted_line)
+    if (associated(ast_root)) then
+      ! Store current command for job descriptions
+      shell%current_command = converted_line
 
-        ! Check if noexec mode is enabled (set -n)
-        ! POSIX: In noexec mode, we parse but don't execute (syntax check only)
-        ! POSIX: noexec is ignored in interactive shells
-        if (shell%option_noexec .and. .not. shell%is_interactive) then
-          ! Parse was successful, just return success status
-          shell%last_exit_status = 0
-          exit_code = 0
-        else
-          ! Normal execution
-          exit_code = execute_ast(ast_root, shell)
-          shell%last_exit_status = exit_code
-        end if
-
-        call destroy_command_node(ast_root)
-
-        ! Calculate and display duration if > 1 second
-        call system_clock(cmd_end_time)
-        cmd_duration_ms = (cmd_end_time - cmd_start_time) * 1000 / clock_rate
-        cmd_duration_sec = real(cmd_duration_ms) / 1000.0
-
-        if (shell%is_interactive .and. cmd_duration_sec >= 1.0) then
-          if (shell%term_supports_color) then
-            write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
-                                             cmd_duration_sec, 's' // char(27) // '[0m'
-          else
-            write(output_unit, '(a,f0.1,a)') 'Executed in ', cmd_duration_sec, 's'
-          end if
-        end if
-
-        ! Update terminal title after command execution
-        if (shell%is_interactive .and. shell%term_supports_color) then
-          call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
-        end if
-
-        ! Increment command number for next prompt
-        shell%command_number = shell%command_number + 1
-        call increment_prompt_history()
-      else if (last_parse_had_error) then
-        ! Parse error occurred (not just empty command)
-        shell%last_exit_status = 2
+      ! POSIX: In noexec mode, parse but don't execute (ignored in interactive shells)
+      if (shell%option_noexec .and. .not. shell%is_interactive) then
+        shell%last_exit_status = 0
+        exit_code = 0
+      else
+        exit_code = execute_ast(ast_root, shell)
+        shell%last_exit_status = exit_code
       end if
-    else
-      ! OLD PARSER PATH: Parse to pipeline and execute
-      call parse_pipeline(proc_subst_line, pipeline)
 
-      ! Check for syntax errors
-      if (pipeline%parse_error) then
-        shell%last_exit_status = 2  ! Syntax error
-      else if (pipeline%num_commands > 0) then
-        ! Track command duration (Fish-style)
-        call system_clock(cmd_start_time, clock_rate)
-
-        ! Check if noexec mode is enabled (set -n)
-        ! POSIX: In noexec mode, we parse but don't execute (syntax check only)
-        ! POSIX: noexec is ignored in interactive shells
-        if (.not. (shell%option_noexec .and. .not. shell%is_interactive)) then
-          call execute_pipeline(pipeline, shell, expanded_line)
-        else
-          ! Syntax check only - parse was successful, so set success status
-          shell%last_exit_status = 0
-        end if
-
-        ! Update terminal title after command execution
-        if (shell%is_interactive .and. shell%term_supports_color) then
-          call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
-        end if
-
-      ! Exit immediately if exit command was executed
-      if (.not. shell%running) then
-        ! Clean up pipeline before exiting
-        if (allocated(pipeline%commands)) then
-          do i = 1, pipeline%num_commands
-            if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-            if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-            if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-            if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-            if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-            if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-            if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-          end do
-          deallocate(pipeline%commands)
-        end if
-        exit  ! Exit the main loop immediately
-      end if
+      call destroy_command_node(ast_root)
 
       ! Calculate and display duration if > 1 second
       call system_clock(cmd_end_time)
       cmd_duration_ms = (cmd_end_time - cmd_start_time) * 1000 / clock_rate
       cmd_duration_sec = real(cmd_duration_ms) / 1000.0
 
-      ! Display duration if > 1 second (Fish-style)
       if (shell%is_interactive .and. cmd_duration_sec >= 1.0) then
-        write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
-                                         cmd_duration_sec, 's' // char(27) // '[0m'
+        if (shell%term_supports_color) then
+          write(output_unit, '(a,f0.1,a)') char(27) // '[2m' // 'Executed in ', &
+                                           cmd_duration_sec, 's' // char(27) // '[0m'
+        else
+          write(output_unit, '(a,f0.1,a)') 'Executed in ', cmd_duration_sec, 's'
+        end if
       end if
 
-      ! Check if we need to replay loop body (only if NOT currently capturing)
-      if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-        call replay_loop_if_needed(shell)
+      ! Update terminal title after command execution
+      if (shell%is_interactive .and. shell%term_supports_color) then
+        call set_terminal_title(trim(shell%username) // '@' // trim(shell%hostname) // ': ' // trim(shell%cwd))
       end if
 
-      ! Increment command number and history number for next prompt
+      ! Increment command number for next prompt
       shell%command_number = shell%command_number + 1
       call increment_prompt_history()
+    else if (last_parse_had_error) then
+      shell%last_exit_status = 2
     end if
-
-      ! Clean up pipeline
-      if (allocated(pipeline%commands)) then
-        do i = 1, pipeline%num_commands
-          if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-          if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-          if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-          if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-          if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-          if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-          if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-        end do
-
-        deallocate(pipeline%commands)
-      end if
-    end if  ! End of old parser path
   end do
 
   ! Execute EXIT trap if one is set
@@ -975,9 +854,8 @@ contains
     use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
     character(len=16384) :: input_line, proc_subst_line, converted_line
-    character(len=1024) :: continuation_line
-    integer :: file_unit, iostat, i, exit_code
-    type(pipeline_t) :: pipeline
+    character(len=16384) :: continuation_line
+    integer :: file_unit, iostat, exit_code
     type(command_node_t), pointer :: ast_root
     character(len=:), allocatable :: expanded_line, history_expanded
 
@@ -1049,67 +927,24 @@ contains
         write(error_unit, '(A)') trim(input_line)
       end if
 
-      ! Parse and execute (use new AST parser by default)
-      if (shell%use_new_parser) then
-        ! NEW PARSER PATH: Parse to AST and execute directly
-        converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
-        ast_root => parse_command_line(converted_line)
-        if (associated(ast_root)) then
-          ! Check noexec mode (syntax check only)
-          if (shell%option_noexec) then
-            exit_code = 0
-            shell%last_exit_status = 0
-          else
-            exit_code = execute_ast(ast_root, shell)
-            shell%last_exit_status = exit_code
-          end if
-          ! Don't destroy AST nodes yet - defer cleanup
-          ! (function bodies need to remain alive in cache)
-          ! TODO: Implement proper AST node lifecycle management
-          !call destroy_command_node(ast_root)
-
-          ! Handle nested source commands (e.g., script calls source)
-          if (shell%should_source) then
-            call process_source_file(shell)
-          end if
-        else if (last_parse_had_error) then
-          ! Parse error occurred (not just empty command)
-          shell%last_exit_status = 2
+      ! Parse and execute via AST
+      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+      ast_root => parse_command_line(converted_line)
+      if (associated(ast_root)) then
+        if (shell%option_noexec) then
+          exit_code = 0
+          shell%last_exit_status = 0
+        else
+          exit_code = execute_ast(ast_root, shell)
+          shell%last_exit_status = exit_code
         end if
-      else
-        ! OLD PARSER PATH: Parse to pipeline and execute
-        call parse_pipeline(proc_subst_line, pipeline)
 
-        ! Check for syntax errors
-        if (pipeline%parse_error) then
-          shell%last_exit_status = 2  ! Syntax error
-        else if (pipeline%num_commands > 0) then
-          ! Check noexec mode (syntax check only)
-          if (.not. shell%option_noexec) then
-            call execute_pipeline(pipeline, shell, expanded_line)
-          else
-            shell%last_exit_status = 0
-          end if
-
-          ! Check if we need to replay loop body (only if NOT currently capturing)
-          if (shell%control_depth == 0 .or. .not. shell%control_stack(shell%control_depth)%capturing_loop_body) then
-            call replay_loop_if_needed(shell)
-          end if
-
-          ! Clean up pipeline
-          if (allocated(pipeline%commands)) then
-            do i = 1, pipeline%num_commands
-              if (allocated(pipeline%commands(i)%tokens)) deallocate(pipeline%commands(i)%tokens)
-              if (allocated(pipeline%commands(i)%input_file)) deallocate(pipeline%commands(i)%input_file)
-              if (allocated(pipeline%commands(i)%output_file)) deallocate(pipeline%commands(i)%output_file)
-              if (allocated(pipeline%commands(i)%error_file)) deallocate(pipeline%commands(i)%error_file)
-              if (allocated(pipeline%commands(i)%heredoc_delimiter)) deallocate(pipeline%commands(i)%heredoc_delimiter)
-              if (allocated(pipeline%commands(i)%heredoc_content)) deallocate(pipeline%commands(i)%heredoc_content)
-              if (allocated(pipeline%commands(i)%here_string)) deallocate(pipeline%commands(i)%here_string)
-            end do
-            deallocate(pipeline%commands)
-          end if
+        ! Handle nested source commands (e.g., script calls source)
+        if (shell%should_source) then
+          call process_source_file(shell)
         end if
+      else if (last_parse_had_error) then
+        shell%last_exit_status = 2
       end if
 
       ! Stop execution if exit command was encountered
@@ -1174,9 +1009,12 @@ contains
     if (.not. allocated(shell%positional_params)) then
       allocate(shell%positional_params(50))
       shell%positional_params_capacity = 50
+      do i = 1, 50
+        shell%positional_params(i)%str = ''
+      end do
     end if
     if (.not. allocated(shell%local_vars)) then
-      allocate(shell%local_vars(MAX_CONTROL_DEPTH, 20))
+      allocate(shell%local_vars(MAX_CONTROL_DEPTH, MAX_LOCAL_VARS_PER_SCOPE))
     end if
     if (.not. allocated(shell%local_var_counts)) then
       allocate(shell%local_var_counts(MAX_CONTROL_DEPTH))
@@ -1303,12 +1141,34 @@ contains
     call system_clock(shell%shell_start_time)
     shell%oldpwd = ''
     shell%last_arg = ''
+    shell%pending_trap_command = ''
+    shell%current_command = ''
+    shell%ps1 = '%F{green}\u@\h%f :: %F{blue}\w%f\n> '
     shell%current_line_number = 0
 
     ! Initialize jobs array
     do i = 1, MAX_JOBS
       shell%jobs(i)%job_id = 0
     end do
+
+    ! Initialize aliases array
+    do i = 1, size(shell%aliases)
+      shell%aliases(i)%name = ''
+      shell%aliases(i)%command = ''
+    end do
+
+    ! Initialize traps array
+    do i = 1, size(shell%traps)
+      shell%traps(i)%command = ''
+    end do
+
+    ! Initialize control stack
+    do i = 1, size(shell%control_stack)
+      shell%control_stack(i)%condition_cmd = ''
+    end do
+
+    ! Initialize coprocess registry (module-level, not part of shell_state_t)
+    call init_coprocess_registry()
 
     ! Initialize functions array
     do i = 1, size(shell%functions)
@@ -1328,18 +1188,6 @@ contains
       call set_performance_monitoring(.true.)
     end if
 
-    ! New parser is now THE DEFAULT!
-    ! Use FORTSH_USE_OLD_PARSER=1 to revert to old parser
-    shell%use_new_parser = .true.
-
-    ! Allow opt-out to old parser
-    temp = get_environment_var('FORTSH_USE_OLD_PARSER')
-    if (len(temp) > 0 .and. (trim(temp) == '1' .or. trim(temp) == 'true')) then
-      shell%use_new_parser = .false.
-      if (shell%is_interactive) then
-        write(output_unit, '(a)') 'Using legacy parser (new parser is default)'
-      end if
-    end if
   end subroutine
 
   subroutine execute_trap_for_signal(shell, signum)
@@ -1349,9 +1197,8 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer, intent(in) :: signum
     character(len=4096) :: trap_command
-    type(pipeline_t) :: trap_pipeline
     type(command_node_t), pointer :: trap_ast
-    integer :: saved_exit_status, i, trap_exit_code
+    integer :: saved_exit_status, trap_exit_code
 
     ! Get the trap command for this signal
     trap_command = get_trap_command(shell, signum)
@@ -1376,40 +1223,13 @@ contains
     ! Mark EXIT trap as executed if this is an EXIT trap
     if (signum == 0) shell%exit_trap_executed = .true.
 
-    ! Parse the trap command (use new parser if feature flag is enabled)
-    if (shell%use_new_parser) then
-      ! Use AST parser for new parser mode
-      trap_ast => parse_command_line(trim(trap_command))
-      if (associated(trap_ast)) then
-        trap_exit_code = execute_ast_node(trap_ast, shell)
-        call destroy_command_node(trap_ast)
-      else if (last_parse_had_error) then
-        ! Parse error occurred in trap command (not just empty)
-        shell%last_exit_status = 2
-      end if
-    else
-      call parse_pipeline(trim(trap_command), trap_pipeline)
-
-      ! Check for syntax errors
-      if (trap_pipeline%parse_error) then
-        shell%last_exit_status = 2  ! Syntax error
-      else if (trap_pipeline%num_commands > 0) then
-        call execute_pipeline(trap_pipeline, shell, trim(trap_command))
-      end if
-
-      ! Clean up pipeline
-      if (allocated(trap_pipeline%commands)) then
-        do i = 1, trap_pipeline%num_commands
-          if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
-          if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
-          if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
-          if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
-          if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
-          if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
-          if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
-        end do
-        deallocate(trap_pipeline%commands)
-      end if
+    ! Parse and execute trap command via AST
+    trap_ast => parse_command_line(trim(trap_command))
+    if (associated(trap_ast)) then
+      trap_exit_code = execute_ast_node(trap_ast, shell)
+      call destroy_command_node(trap_ast)
+    else if (last_parse_had_error) then
+      shell%last_exit_status = 2
     end if
 
     ! Clear flag

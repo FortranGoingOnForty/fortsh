@@ -166,8 +166,9 @@ contains
   function get_shell_variable(shell, name) result(value)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
-    character(len=1024) :: value
+    character(len=:), allocatable :: value
     integer :: i, depth
+    character(len=20) :: fmt_buf
 
     value = ''
 
@@ -193,13 +194,16 @@ contains
     ! Handle special variables
     select case (trim(name))
       case ('$')
-        write(value, '(i0)') shell%shell_pid
+        write(fmt_buf, '(i0)') shell%shell_pid
+        value = trim(adjustl(fmt_buf))
         return
       case ('!')
-        write(value, '(i15)') shell%last_bg_pid
+        write(fmt_buf, '(i0)') shell%last_bg_pid
+        value = trim(adjustl(fmt_buf))
         return
       case ('?')
-        write(value, '(i15)') shell%last_exit_status
+        write(fmt_buf, '(i0)') shell%last_exit_status
+        value = trim(adjustl(fmt_buf))
         return
       case ('0')
         value = trim(shell%shell_name)
@@ -213,13 +217,16 @@ contains
         value = get_shell_option_flags(shell)
         return
       case ('PPID')
-        write(value, '(i0)') int(shell%parent_pid)
+        write(fmt_buf, '(i0)') int(shell%parent_pid)
+        value = trim(adjustl(fmt_buf))
         return
       case ('UID')
-        write(value, '(i15)') shell%uid
+        write(fmt_buf, '(i0)') shell%uid
+        value = trim(adjustl(fmt_buf))
         return
       case ('EUID')
-        write(value, '(i15)') shell%euid
+        write(fmt_buf, '(i0)') shell%euid
+        value = trim(adjustl(fmt_buf))
         return
       case ('PWD')
         value = trim(shell%cwd)
@@ -228,27 +235,34 @@ contains
         value = trim(shell%oldpwd)
         return
       case ('RANDOM')
-        ! Generate random number 0-32767
-        call get_random_number(value)
+        write(fmt_buf, '(i0)') get_random_int()
+        value = trim(adjustl(fmt_buf))
         return
       case ('SECONDS')
-        ! Seconds since shell start
-        call get_seconds_since_start(shell, value)
+        write(fmt_buf, '(i0)') get_elapsed_seconds(shell)
+        value = trim(adjustl(fmt_buf))
         return
       case ('LINENO')
-        write(value, '(i0)') shell%current_line_number
+        write(fmt_buf, '(i0)') shell%current_line_number
+        value = trim(adjustl(fmt_buf))
         return
       case ('#')
-        ! Number of positional parameters
-        write(value, '(I0)') shell%num_positional
+        write(fmt_buf, '(I0)') shell%num_positional
+        value = trim(adjustl(fmt_buf))
         return
       case ('*')
-        ! All positional parameters as single word (IFS separated)
-        call get_all_positional_params(shell, value, .true.)
+        block
+          character(len=4096) :: params_buf
+          call get_all_positional_params(shell, params_buf, .true.)
+          value = trim(params_buf)
+        end block
         return
       case ('@')
-        ! All positional parameters as separate words
-        call get_all_positional_params(shell, value, .false.)
+        block
+          character(len=4096) :: params_buf
+          call get_all_positional_params(shell, params_buf, .false.)
+          value = trim(params_buf)
+        end block
         return
       case ('IFS')
         ! Internal field separator - use ifs_len to preserve whitespace
@@ -274,10 +288,12 @@ contains
         value = trim(shell%histfile)
         return
       case ('HISTSIZE')
-        write(value, '(i15)') shell%histsize
+        write(fmt_buf, '(i0)') shell%histsize
+        value = trim(adjustl(fmt_buf))
         return
       case ('HISTFILESIZE')
-        write(value, '(i15)') shell%histfilesize
+        write(fmt_buf, '(i0)') shell%histfilesize
+        value = trim(adjustl(fmt_buf))
         return
       case ('HISTCONTROL')
         value = trim(shell%histcontrol)
@@ -288,7 +304,7 @@ contains
     if (is_numeric(trim(name))) then
       i = string_to_int(trim(name))
       if (i >= 1 .and. i <= shell%num_positional) then
-        value = trim(shell%positional_params(i))
+        value = trim(shell%positional_params(i)%str)
         return
       else
         value = ''
@@ -379,7 +395,7 @@ contains
     character(len=*), intent(in) :: name
     integer :: var_len
     integer :: i, depth
-    character(len=1024) :: temp_value
+    character(len=20) :: temp_value
 
     var_len = 0
 
@@ -522,7 +538,7 @@ contains
     integer :: eq_pos, bracket_pos, bracket_end, array_index, read_status
     integer :: actual_value_len, i
     character(len=256) :: var_name, index_str
-    character(len=1024) :: var_value  ! Must match get_shell_variable return type
+    character(len=:), allocatable :: var_value
     character(len=:), allocatable :: expanded_value
     character(len=1) :: quote_char_temp
 
@@ -637,9 +653,9 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: var_name, array_expr
     ! Use allocatable array to avoid static storage
-    character(len=1024), allocatable :: values(:)
+    type(string_t), allocatable :: values(:)
     integer :: count, start_pos, pos, capacity
-    character(len=1024) :: content
+    character(len=:), allocatable :: content
     logical :: in_quotes
     
     ! Remove parentheses
@@ -664,12 +680,14 @@ contains
           if (count > capacity) then
             call grow_string_array(values, capacity)
           end if
-          values(count) = content(start_pos:pos-1)
+          values(count)%str = content(start_pos:pos-1)
           ! Remove quotes if present
-          if (len_trim(values(count)) >= 2) then
-            if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
-                (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
-              values(count) = values(count)(2:len_trim(values(count))-1)
+          if (len_trim(values(count)%str) >= 2) then
+            if ((values(count)%str(1:1) == '"' .and. &
+                 values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == '"') .or. &
+                (values(count)%str(1:1) == "'" .and. &
+                 values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == "'")) then
+              values(count)%str = values(count)%str(2:len_trim(values(count)%str)-1)
             end if
           end if
         end if
@@ -677,7 +695,7 @@ contains
       end if
       pos = pos + 1
     end do
-    
+
     ! Handle last value
     if (start_pos <= len_trim(content)) then
       count = count + 1
@@ -685,18 +703,20 @@ contains
       if (count > capacity) then
         call grow_string_array(values, capacity)
       end if
-      values(count) = content(start_pos:)
+      values(count)%str = content(start_pos:)
       ! Remove quotes if present
-      if (len_trim(values(count)) >= 2) then
-        if ((values(count)(1:1) == '"' .and. values(count)(len_trim(values(count)):len_trim(values(count))) == '"') .or. &
-            (values(count)(1:1) == "'" .and. values(count)(len_trim(values(count)):len_trim(values(count))) == "'")) then
-          values(count) = values(count)(2:len_trim(values(count))-1)
+      if (len_trim(values(count)%str) >= 2) then
+        if ((values(count)%str(1:1) == '"' .and. &
+             values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == '"') .or. &
+            (values(count)%str(1:1) == "'" .and. &
+             values(count)%str(len_trim(values(count)%str):len_trim(values(count)%str)) == "'")) then
+          values(count)%str = values(count)%str(2:len_trim(values(count)%str)-1)
         end if
       end if
     end if
-    
+
     if (count > 0) then
-      call set_array_variable(shell, var_name, values(1:count), count)
+      call set_array_variable_string_t(shell, var_name, values(1:count), count)
     end if
 
     ! Clean up allocatable array
@@ -705,16 +725,22 @@ contains
 
   ! Helper subroutine to grow string array
   subroutine grow_string_array(array, current_size)
-    character(len=1024), allocatable, intent(inout) :: array(:)
+    type(string_t), allocatable, intent(inout) :: array(:)
     integer, intent(inout) :: current_size
-    character(len=1024), allocatable :: new_array(:)
-    integer :: new_size
+    type(string_t), allocatable :: new_array(:)
+    integer :: new_size, k
 
     new_size = current_size * 2
     allocate(new_array(new_size))
 
     ! Copy existing data
-    new_array(1:current_size) = array(1:current_size)
+    do k = 1, current_size
+      if (allocated(array(k)%str)) then
+        new_array(k)%str = array(k)%str
+      else
+        new_array(k)%str = ''
+      end if
+    end do
 
     ! Swap arrays
     call move_alloc(new_array, array)
@@ -729,7 +755,7 @@ contains
     character(len=2048) :: result
     integer :: i, j, var_start, brace_end
     character(len=256) :: var_name
-    character(len=1024) :: expansion_result, var_value  ! Must match get_shell_variable return type
+    character(len=:), allocatable :: expansion_result, var_value
     character(len=:), allocatable :: env_value
     
     result = ''
@@ -838,18 +864,18 @@ contains
     character(len=*), intent(in) :: body_lines(:)
     integer, intent(in) :: body_count
     integer :: i, j
-    
+
     ! Find empty slot or replace existing function
     do i = 1, size(shell%functions)
       if (trim(shell%functions(i)%name) == trim(name) .or. len_trim(shell%functions(i)%name) == 0) then
         shell%functions(i)%name = name
         shell%functions(i)%body_lines = body_count
-        
+
         if (allocated(shell%functions(i)%body)) deallocate(shell%functions(i)%body)
         allocate(shell%functions(i)%body(body_count))
-        
+
         do j = 1, body_count
-          shell%functions(i)%body(j) = body_lines(j)
+          shell%functions(i)%body(j)%str = trim(body_lines(j))
         end do
 
         ! Update function count to include this function
@@ -877,14 +903,16 @@ contains
   function get_function_body(shell, name) result(body)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
-    character(len=1024), allocatable :: body(:)
-    integer :: i
+    type(string_t), allocatable :: body(:)
+    integer :: i, j
 
     do i = 1, shell%num_functions
       if (trim(shell%functions(i)%name) == trim(name)) then
         if (allocated(shell%functions(i)%body)) then
           allocate(body(shell%functions(i)%body_lines))
-          body = shell%functions(i)%body(1:shell%functions(i)%body_lines)
+          do j = 1, shell%functions(i)%body_lines
+            body(j)%str = shell%functions(i)%body(j)%str
+          end do
         end if
         return
       end if
@@ -897,22 +925,24 @@ contains
     character(len=*), intent(in) :: name
     character(len=*), intent(in) :: values(:)
     integer, intent(in) :: count
-    integer :: i, empty_slot
-    
+    integer :: i, k, empty_slot
+
     empty_slot = -1
-    
+
     ! Check if variable already exists
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
         if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
         allocate(shell%variables(i)%array_values(count))
-        shell%variables(i)%array_values(1:count) = values(1:count)
+        do k = 1, count
+          shell%variables(i)%array_values(k)%str = trim(values(k))
+        end do
         shell%variables(i)%array_size = count
         shell%variables(i)%is_array = .true.
         return
       end if
     end do
-    
+
     ! Find empty slot
     do i = 1, size(shell%variables)
       if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
@@ -920,7 +950,7 @@ contains
         exit
       end if
     end do
-    
+
     ! Add new array variable
     if (empty_slot > 0) then
       shell%variables(empty_slot)%name = name
@@ -928,7 +958,54 @@ contains
       shell%variables(empty_slot)%array_size = count
       if (allocated(shell%variables(empty_slot)%array_values)) deallocate(shell%variables(empty_slot)%array_values)
       allocate(shell%variables(empty_slot)%array_values(count))
-      shell%variables(empty_slot)%array_values(1:count) = values(1:count)
+      do k = 1, count
+        shell%variables(empty_slot)%array_values(k)%str = trim(values(k))
+      end do
+      shell%num_variables = shell%num_variables + 1
+    end if
+  end subroutine
+
+  subroutine set_array_variable_string_t(shell, name, values, count)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: name
+    type(string_t), intent(in) :: values(:)
+    integer, intent(in) :: count
+    integer :: i, k, empty_slot
+
+    empty_slot = -1
+
+    ! Check if variable already exists
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
+        allocate(shell%variables(i)%array_values(count))
+        do k = 1, count
+          shell%variables(i)%array_values(k)%str = values(k)%str
+        end do
+        shell%variables(i)%array_size = count
+        shell%variables(i)%is_array = .true.
+        return
+      end if
+    end do
+
+    ! Find empty slot
+    do i = 1, size(shell%variables)
+      if (shell%variables(i)%name(1:1) == char(0) .or. trim(shell%variables(i)%name) == '') then
+        empty_slot = i
+        exit
+      end if
+    end do
+
+    ! Add new array variable
+    if (empty_slot > 0) then
+      shell%variables(empty_slot)%name = name
+      shell%variables(empty_slot)%is_array = .true.
+      shell%variables(empty_slot)%array_size = count
+      if (allocated(shell%variables(empty_slot)%array_values)) deallocate(shell%variables(empty_slot)%array_values)
+      allocate(shell%variables(empty_slot)%array_values(count))
+      do k = 1, count
+        shell%variables(empty_slot)%array_values(k)%str = values(k)%str
+      end do
       shell%num_variables = shell%num_variables + 1
     end if
   end subroutine
@@ -939,8 +1016,8 @@ contains
     character(len=*), intent(in) :: name
     integer, intent(in) :: index
     character(len=*), intent(in) :: value
-    integer :: i, empty_slot, new_size
-    character(len=1024), allocatable :: temp_array(:)
+    integer :: i, k, empty_slot, new_size
+    type(string_t), allocatable :: temp_array(:)
 
     ! Check if variable already exists
     do i = 1, shell%num_variables
@@ -951,30 +1028,40 @@ contains
           shell%variables(i)%is_array = .true.
           if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
           allocate(shell%variables(i)%array_values(index))
-          shell%variables(i)%array_values(:) = ''
+          do k = 1, index
+            shell%variables(i)%array_values(k)%str = ''
+          end do
           shell%variables(i)%array_size = index
         else if (.not. allocated(shell%variables(i)%array_values)) then
           ! Array exists but not allocated (from declare -a)
           allocate(shell%variables(i)%array_values(index))
-          shell%variables(i)%array_values(:) = ''
+          do k = 1, index
+            shell%variables(i)%array_values(k)%str = ''
+          end do
           shell%variables(i)%array_size = index
         else if (index > shell%variables(i)%array_size) then
           ! Need to expand the array (sparse array support)
           new_size = index
           allocate(temp_array(new_size))
-          temp_array(:) = ''
+          do k = 1, new_size
+            temp_array(k)%str = ''
+          end do
           if (shell%variables(i)%array_size > 0 .and. allocated(shell%variables(i)%array_values)) then
-            temp_array(1:shell%variables(i)%array_size) = shell%variables(i)%array_values(1:shell%variables(i)%array_size)
+            do k = 1, shell%variables(i)%array_size
+              temp_array(k)%str = shell%variables(i)%array_values(k)%str
+            end do
           end if
           if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
           allocate(shell%variables(i)%array_values(new_size))
-          shell%variables(i)%array_values = temp_array
+          do k = 1, new_size
+            shell%variables(i)%array_values(k)%str = temp_array(k)%str
+          end do
           shell%variables(i)%array_size = new_size
           deallocate(temp_array)
         end if
 
         ! Set the element
-        shell%variables(i)%array_values(index) = value
+        shell%variables(i)%array_values(index)%str = value
         return
       end if
     end do
@@ -993,8 +1080,10 @@ contains
       shell%variables(empty_slot)%is_array = .true.
       shell%variables(empty_slot)%array_size = index
       allocate(shell%variables(empty_slot)%array_values(index))
-      shell%variables(empty_slot)%array_values(:) = ''
-      shell%variables(empty_slot)%array_values(index) = value
+      do k = 1, index
+        shell%variables(empty_slot)%array_values(k)%str = ''
+      end do
+      shell%variables(empty_slot)%array_values(index)%str = value
       shell%num_variables = shell%num_variables + 1
     end if
   end subroutine
@@ -1003,7 +1092,7 @@ contains
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
     integer, intent(in) :: index
-    character(len=1024) :: value
+    character(len=:), allocatable :: value
     integer :: i, actual_index
 
     value = ''
@@ -1016,7 +1105,7 @@ contains
           actual_index = shell%variables(i)%array_size + actual_index + 1
         end if
         if (actual_index >= 1 .and. actual_index <= shell%variables(i)%array_size) then
-          value = shell%variables(i)%array_values(actual_index)
+          value = shell%variables(i)%array_values(actual_index)%str
         end if
         return
       end if
@@ -1037,15 +1126,16 @@ contains
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name) .and. shell%variables(i)%is_array) then
         do j = 1, shell%variables(i)%array_size
-          if (len_trim(shell%variables(i)%array_values(j)) == 0) cycle
+          if (.not. allocated(shell%variables(i)%array_values(j)%str)) cycle
+          if (len_trim(shell%variables(i)%array_values(j)%str) == 0) cycle
           if (.not. first) then
             result_str(pos:pos) = ' '
             pos = pos + 1
           end if
           first = .false.
-          result_str(pos:pos+len_trim(shell%variables(i)%array_values(j))-1) = &
-            trim(shell%variables(i)%array_values(j))
-          pos = pos + len_trim(shell%variables(i)%array_values(j))
+          result_str(pos:pos+len_trim(shell%variables(i)%array_values(j)%str)-1) = &
+            trim(shell%variables(i)%array_values(j)%str)
+          pos = pos + len_trim(shell%variables(i)%array_values(j)%str)
         end do
         return
       end if
@@ -1131,14 +1221,24 @@ contains
           end if
         end do
         
-        ! Add new key-value pair
-        if (shell%variables(i)%assoc_size < size(shell%variables(i)%assoc_entries)) then
-          shell%variables(i)%assoc_size = shell%variables(i)%assoc_size + 1
-          shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%key = key
-          shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%value = value
-        else
-          write(error_unit, '(a)') 'associative array: too many entries'
+        ! Add new key-value pair — grow array if needed
+        if (shell%variables(i)%assoc_size >= size(shell%variables(i)%assoc_entries)) then
+          block
+            type(assoc_array_entry_t), allocatable :: new_entries(:)
+            integer :: old_size, new_size, k
+            old_size = size(shell%variables(i)%assoc_entries)
+            new_size = old_size * 2
+            allocate(new_entries(new_size))
+            do k = 1, old_size
+              new_entries(k)%key = shell%variables(i)%assoc_entries(k)%key
+              new_entries(k)%value = shell%variables(i)%assoc_entries(k)%value
+            end do
+            call move_alloc(new_entries, shell%variables(i)%assoc_entries)
+          end block
         end if
+        shell%variables(i)%assoc_size = shell%variables(i)%assoc_size + 1
+        shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%key = key
+        shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%value = value
         return
       end if
     end do
@@ -1149,7 +1249,7 @@ contains
   function get_assoc_array_value(shell, array_name, key) result(value)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: array_name, key
-    character(len=1024) :: value
+    character(len=:), allocatable :: value
     
     integer :: i, j
     
@@ -1240,12 +1340,12 @@ contains
   ! POSIX parameter expansion implementation
   subroutine expand_parameter(param_expr, result, shell)
     character(len=*), intent(in) :: param_expr
-    character(len=*), intent(out) :: result
+    character(len=:), allocatable, intent(out) :: result
     type(shell_state_t), intent(inout) :: shell
     
     character(len=256) :: param_name, default_value
-    character(len=1024) :: var_value  ! Must match get_shell_variable return type
-    character(len=1024) :: expanded_pattern_buf
+    character(len=:), allocatable :: var_value
+    character(len=:), allocatable :: expanded_pattern_buf
     integer :: colon_pos, dash_pos, plus_pos, eq_pos, question_pos
     integer :: percent_pos, hash_pos, percent2_pos, hash2_pos
     logical :: has_colon
@@ -1576,12 +1676,12 @@ contains
     shell%num_positional = actual_count
     
     do i = 1, actual_count
-      shell%positional_params(i) = params(i)
+      shell%positional_params(i)%str = params(i)
     end do
-    
+
     ! Clear any remaining parameters
     do i = actual_count + 1, size(shell%positional_params)
-      shell%positional_params(i) = ''
+      shell%positional_params(i)%str = ''
     end do
   end subroutine
   
@@ -1614,8 +1714,8 @@ contains
         result(pos:pos) = separator
         pos = pos + 1
       end if
-      result(pos:pos+len_trim(shell%positional_params(i))-1) = trim(shell%positional_params(i))
-      pos = pos + len_trim(shell%positional_params(i))
+      result(pos:pos+len_trim(shell%positional_params(i)%str)-1) = trim(shell%positional_params(i)%str)
+      pos = pos + len_trim(shell%positional_params(i)%str)
     end do
   end subroutine
   
@@ -1628,12 +1728,12 @@ contains
     
     ! Shift parameters left
     do i = 1, shell%num_positional - shift_count
-      shell%positional_params(i) = shell%positional_params(i + shift_count)
+      shell%positional_params(i)%str = shell%positional_params(i + shift_count)%str
     end do
-    
+
     ! Clear the shifted parameters
     do i = shell%num_positional - shift_count + 1, shell%num_positional
-      shell%positional_params(i) = ''
+      shell%positional_params(i)%str = ''
     end do
     
     shell%num_positional = shell%num_positional - shift_count
@@ -1749,6 +1849,24 @@ contains
 
     write(value, '(i15)') elapsed
   end subroutine
+
+  function get_random_int() result(rand_int)
+    integer :: rand_int
+    real :: rand_val
+    call random_number(rand_val)
+    rand_int = int(rand_val * 32768.0)
+  end function
+
+  function get_elapsed_seconds(shell) result(elapsed)
+    type(shell_state_t), intent(in) :: shell
+    integer :: elapsed, current_time
+    call system_clock(current_time)
+    if (shell%shell_start_time > 0) then
+      elapsed = (current_time - shell%shell_start_time) / 1000
+    else
+      elapsed = 0
+    end if
+  end function
 
   ! Get the actual stored length of a variable (for ${#var} expansion)
   ! Returns -1 if variable not found or doesn't have stored length

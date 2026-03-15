@@ -12,11 +12,11 @@ module directory_builtin
   integer, parameter :: MAX_DIR_STACK = 32
   
   type :: dir_stack_t
-    character(len=1024) :: directories(MAX_DIR_STACK)
+    character(len=MAX_PATH_LEN) :: directories(MAX_DIR_STACK)
     integer :: top
   end type
 
-  type(dir_stack_t), save :: dir_stack = dir_stack_t(directories=repeat(' ', 1024), top=0)
+  type(dir_stack_t), save :: dir_stack = dir_stack_t(directories=repeat(' ', MAX_PATH_LEN), top=0)
 
   interface
     function chdir_c(path) bind(c, name='chdir') result(status)
@@ -38,11 +38,13 @@ contains
   ! Replace $HOME prefix with ~ for display
   function tilde_abbreviate(path) result(abbreviated)
     character(len=*), intent(in) :: path
-    character(len=1024) :: abbreviated
-    character(len=1024) :: home_dir
+    character(len=MAX_PATH_LEN) :: abbreviated
+    character(len=:), allocatable :: home_dir
+    character(len=MAX_PATH_LEN) :: home_buf
     integer :: home_len, path_len
 
-    call get_environment_variable('HOME', home_dir)
+    call get_environment_variable('HOME', home_buf)
+    home_dir = trim(home_buf)
     home_len = len_trim(home_dir)
     path_len = len_trim(path)
 
@@ -62,8 +64,9 @@ contains
   subroutine builtin_pushd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    character(len=1024) :: new_dir, current_dir
+
+    character(len=:), allocatable :: new_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     integer :: arg_index, status
     logical :: no_change, swap_top
     
@@ -174,8 +177,9 @@ contains
   subroutine builtin_popd(cmd, shell)
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    
-    character(len=1024) :: new_dir, current_dir
+
+    character(len=:), allocatable :: new_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     integer :: arg_index, status, n
     logical :: no_change
     character(len=16) :: n_str
@@ -311,7 +315,8 @@ contains
 
   subroutine print_directory_stack(long_fmt)
     logical, intent(in), optional :: long_fmt
-    character(len=1024) :: current_dir, display_dir
+    character(len=MAX_PATH_LEN) :: current_dir
+    character(len=:), allocatable :: display_dir
     integer :: i, status
     logical :: use_long
 
@@ -343,7 +348,8 @@ contains
 
   subroutine print_directory_stack_lines(long_fmt)
     logical, intent(in), optional :: long_fmt
-    character(len=1024) :: current_dir, display_dir
+    character(len=MAX_PATH_LEN) :: current_dir
+    character(len=:), allocatable :: display_dir
     integer :: i, status
     logical :: use_long
 
@@ -373,7 +379,7 @@ contains
   end subroutine
 
   subroutine print_directory_stack_verbose()
-    character(len=1024) :: current_dir
+    character(len=MAX_PATH_LEN) :: current_dir
     integer :: i, status
 
     call get_current_dir(current_dir, status)

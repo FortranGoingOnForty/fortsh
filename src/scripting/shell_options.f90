@@ -74,7 +74,7 @@ contains
         ! Set remaining arguments as positional parameters
         param_idx = 1
         do while (i <= cmd%num_tokens .and. param_idx <= 50)
-          shell%positional_params(param_idx) = trim(cmd%tokens(i))
+          shell%positional_params(param_idx)%str = trim(cmd%tokens(i))
           write(param_idx_str, '(I0)') param_idx
           call set_shell_variable(shell, trim(param_idx_str), trim(cmd%tokens(i)))
           param_idx = param_idx + 1
@@ -92,7 +92,7 @@ contains
         shell%num_positional = 0
         param_idx = 1
         do while (i <= cmd%num_tokens .and. param_idx <= 50)
-          shell%positional_params(param_idx) = trim(cmd%tokens(i))
+          shell%positional_params(param_idx)%str = trim(cmd%tokens(i))
           write(param_idx_str, '(I0)') param_idx
           call set_shell_variable(shell, trim(param_idx_str), trim(cmd%tokens(i)))
           param_idx = param_idx + 1
@@ -408,7 +408,7 @@ contains
     use system_interface, only: c_write
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: command_line
-    character(len=1024) :: expanded_ps4
+    character(len=:), allocatable :: expanded_ps4
     character(len=2048) :: trace_line
     integer :: ps4_actual_len, trace_len
     character(kind=c_char), target, allocatable :: c_trace(:)

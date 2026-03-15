@@ -48,7 +48,7 @@ module pooled_types
     integer :: num_redirections = 0
 
     ! Prefix assignments remain as fixed-size for now
-    character(len=256) :: prefix_assignments(10) = ''
+    character(len=256), allocatable :: prefix_assignments(:)
     integer :: num_prefix_assignments = 0
   end type pooled_command_t
 
@@ -257,8 +257,12 @@ contains
     pooled_cmd%heredoc_quoted = legacy_cmd%heredoc_quoted
     pooled_cmd%redirections = legacy_cmd%redirections
     pooled_cmd%num_redirections = legacy_cmd%num_redirections
-    pooled_cmd%prefix_assignments = legacy_cmd%prefix_assignments
     pooled_cmd%num_prefix_assignments = legacy_cmd%num_prefix_assignments
+    if (allocated(legacy_cmd%prefix_assignments) .and. legacy_cmd%num_prefix_assignments > 0) then
+      allocate(character(len=256) :: pooled_cmd%prefix_assignments(legacy_cmd%num_prefix_assignments))
+      pooled_cmd%prefix_assignments(:legacy_cmd%num_prefix_assignments) = &
+        legacy_cmd%prefix_assignments(:legacy_cmd%num_prefix_assignments)
+    end if
 
     ! Convert tokens
     if (allocated(legacy_cmd%tokens)) then

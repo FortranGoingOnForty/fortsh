@@ -22,11 +22,12 @@ contains
   function parameter_expansion(shell, expression) result(expanded)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: expression
-    character(len=2048) :: expanded
+    character(len=:), allocatable :: expanded
 
     character(len=256) :: var_name, operation, param1, param2, replacement
-    character(len=1024) :: pattern  ! 1024 to match get_shell_variable return size
-    character(len=1024) :: var_value
+    character(len=32) :: num_buf
+    character(len=:), allocatable :: pattern
+    character(len=:), allocatable :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos, equals_pos, question_pos
     integer :: offset, length, i, at_pos
     character :: transform_op
@@ -79,11 +80,10 @@ contains
         if (is_associative_array(shell, trim(array_name))) then
           if (is_keys_expansion .and. is_all_expansion) then
             ! ${!array[@]} - return all keys
-            allocate(keys(50))  ! Match size in get_assoc_array_keys
+            allocate(keys(500))  ! Match size in get_assoc_array_keys
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             expanded = ''
-            do j = 1, min(num_keys, 50)
-              if (len_trim(expanded) + len_trim(keys(j)) + 2 > 2048) exit  ! Prevent overflow
+            do j = 1, min(num_keys, 500)
               if (j > 1) expanded = trim(expanded) // ' '
               expanded = trim(expanded) // trim(keys(j))
             end do
@@ -91,20 +91,20 @@ contains
             return
           else if (is_length_expansion .and. is_all_expansion) then
             ! ${#array[@]} - return number of keys
-            allocate(keys(50))
+            allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             deallocate(keys)
-            write(expanded, '(I0)') num_keys
+            write(num_buf, '(I0)') num_keys
+            expanded = trim(num_buf)
             return
           else if (is_all_expansion) then
             ! ${array[@]} - return all values
             ! Get all keys, then get value for each key
-            allocate(keys(50))
+            allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             expanded = ''
-            do j = 1, min(num_keys, 50)
+            do j = 1, min(num_keys, 500)
               var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
-              if (len_trim(expanded) + len_trim(var_value) + 2 > 2048) exit  ! Prevent overflow
               if (j > 1) expanded = trim(expanded) // ' '
               expanded = trim(expanded) // trim(var_value)
             end do
@@ -127,6 +127,41 @@ contains
           end if
         end if
       end if
+    end if
+
+    ! ========================================================================
+    ! Handle indirect expansion prefix: ${!ref...}
+    ! Resolve !name to the variable name it references, then continue with
+    ! normal operator handling so ${!ref:-default} works correctly.
+    ! ========================================================================
+    if (len_trim(var_name) > 1 .and. var_name(1:1) == '!' .and. index(var_name, '[') == 0) then
+      block
+        integer :: ref_end
+        character(len=4096) :: ref_name, resolved_name
+        ! Extract reference variable name (alphanumeric/underscore chars after !)
+        ref_end = 2
+        do while (ref_end <= len_trim(var_name))
+          if (.not. (var_name(ref_end:ref_end) >= 'a' .and. var_name(ref_end:ref_end) <= 'z') .and. &
+              .not. (var_name(ref_end:ref_end) >= 'A' .and. var_name(ref_end:ref_end) <= 'Z') .and. &
+              .not. (var_name(ref_end:ref_end) >= '0' .and. var_name(ref_end:ref_end) <= '9') .and. &
+              var_name(ref_end:ref_end) /= '_') exit
+          ref_end = ref_end + 1
+        end do
+        ref_name = var_name(2:ref_end-1)
+        resolved_name = get_shell_variable(shell, trim(ref_name))
+        if (len_trim(resolved_name) > 0) then
+          ! Replace !ref with resolved name, keep any trailing operators
+          if (ref_end <= len_trim(var_name)) then
+            var_name = trim(resolved_name) // var_name(ref_end:len_trim(var_name))
+          else
+            var_name = trim(resolved_name)
+          end if
+        else
+          ! Reference variable is unset — expand to empty
+          expanded = ''
+          return
+        end if
+      end block
     end if
 
     ! Check for various expansion operations (need to check in right order!)
@@ -312,7 +347,8 @@ contains
       ! Check if this is just ${#} (number of positional params)
       if (len_trim(var_name) == 1) then
         ! ${#} alone - return number of positional parameters
-        write(expanded, '(I0)') shell%num_positional
+        write(num_buf, '(I0)') shell%num_positional
+        expanded = trim(num_buf)
         return
       else if (len_trim(var_name) > 1) then
         ! ${#var} length expansion
@@ -321,7 +357,8 @@ contains
         ! Check for special parameters
         if (trim(operation) == '@' .or. trim(operation) == '*') then
           ! ${#@} or ${#*} - return number of positional parameters
-          write(expanded, '(I0)') shell%num_positional
+          write(num_buf, '(I0)') shell%num_positional
+          expanded = trim(num_buf)
           return
         else if (len(trim(operation)) > 0) then
           ! Check if it's a positional parameter (digit)
@@ -329,7 +366,8 @@ contains
           if (i == 0 .and. j > 0) then
             ! ${#1}, ${#2}, etc. - return length of specific positional parameter
             if (j <= shell%num_positional) then
-              write(expanded, '(I0)') len_trim(shell%positional_params(j))
+              write(num_buf, '(I0)') len_trim(shell%positional_params(j)%str)
+              expanded = trim(num_buf)
             else
               expanded = '0'
             end if
@@ -337,7 +375,8 @@ contains
           else
             ! Regular variable length
             var_value = get_shell_variable(shell, trim(operation))
-            write(expanded, '(I0)') len_trim(var_value)
+            write(num_buf, '(I0)') len_trim(var_value)
+            expanded = trim(num_buf)
             return
           end if
         end if
@@ -569,8 +608,9 @@ contains
       ! ${#var} length expansion
       operation = var_name(hash_pos+1:)
       var_value = get_shell_variable(shell, trim(operation))
-      write(expanded, '(I0)') len_trim(var_value)
-      
+      write(num_buf, '(I0)') len_trim(var_value)
+      expanded = trim(num_buf)
+
     else
       ! Simple variable expansion
       var_value = get_shell_variable(shell, trim(var_name))
@@ -1542,7 +1582,7 @@ contains
     integer(kind=8) :: value, right_val, current_val
     integer :: pos, op_len, iostat
     character(len=512) :: var_name, right_expr, var_value_str
-    character(len=1024) :: temp_value
+    character(len=:), allocatable :: temp_value
 
     ! Check for assignment operators (right-to-left associative, so find rightmost)
     pos = find_rightmost_assignment(expr, op_len)
@@ -2042,7 +2082,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, current_val
     character(len=512) :: rest, var_name, var_value_str, trimmed_expr
-    character(len=1024) :: temp_value
+    character(len=:), allocatable :: temp_value
     integer :: iostat
 
     if (len_trim(expr) == 0) then; value = 0; return; end if
@@ -2142,7 +2182,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, new_val
     character(len=512) :: inner_expr, temp_expr, var_name, var_value_str
-    character(len=1024) :: var_value
+    character(len=:), allocatable :: var_value
     integer :: iostat, paren_end, expr_len
 
     if (len_trim(expr) == 0) then; value = 0; return; end if
@@ -2428,7 +2468,7 @@ contains
     character(len=:), allocatable :: result
     integer :: i, start_pos, bracket_count, result_capacity, result_pos
     character(len=256) :: var_expr
-    character(len=2048) :: var_value
+    character(len=:), allocatable :: var_value
     logical :: in_single_quote, in_double_quote
 
     ! Allocate with initial capacity
@@ -2653,7 +2693,7 @@ contains
     integer :: i, field_idx, input_len
     logical :: prev_was_ifs, is_ifs_char, is_whitespace_ifs
     logical :: prev_was_nonws_ifs  ! Previous was non-whitespace IFS
-    character(len=1024) :: current_field
+    character(len=:), allocatable :: current_field
     logical :: has_whitespace_ifs
 
     field_count = 0
@@ -3256,8 +3296,8 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: output
     ! Use allocatable array to avoid static storage
-    character(len=1024), allocatable :: words(:)
-    character(len=1024) :: temp_result
+    type(string_t), allocatable :: words(:)
+    character(len=:), allocatable :: temp_result
     integer :: word_count, i, j, out_pos, capacity
     character(len=:), allocatable :: final_result
     integer :: final_result_capacity, final_result_len
@@ -3265,6 +3305,7 @@ contains
 
     ! Allocate initial array
     allocate(words(20))  ! Start with reasonable size
+    allocate(character(len=max(1, len_trim(input))) :: temp_result)
     capacity = 20
 
     ! Allocate final_result buffer to avoid stack allocation
@@ -3284,7 +3325,7 @@ contains
           if (word_count > capacity) then
             call grow_expansion_array(words, capacity)
           end if
-          words(word_count) = temp_result(:out_pos-1)
+          words(word_count)%str = temp_result(:out_pos-1)
           out_pos = 1
         end if
       else
@@ -3299,14 +3340,14 @@ contains
       if (word_count > capacity) then
         call grow_expansion_array(words, capacity)
       end if
-      words(word_count) = temp_result(:out_pos-1)
+      words(word_count)%str = temp_result(:out_pos-1)
     end if
 
     ! Recursively expand each word and recombine
     do i = 1, word_count
-      if (index(words(i), '{') > 0) then
+      if (index(words(i)%str, '{') > 0) then
         ! Still has braces - recurse
-        temp_result = expand_braces(trim(words(i)))
+        temp_result = expand_braces(trim(words(i)%str))
         if (final_result_len > 0) then
           temp_piece = ' ' // trim(temp_result)
         else
@@ -3315,9 +3356,9 @@ contains
       else
         ! No braces - use as-is
         if (final_result_len > 0) then
-          temp_piece = ' ' // trim(words(i))
+          temp_piece = ' ' // trim(words(i)%str)
         else
-          temp_piece = trim(words(i))
+          temp_piece = trim(words(i)%str)
         end if
       end if
 
@@ -3346,7 +3387,7 @@ contains
   function add_braces_to_words(words_str, prefix, suffix) result(output)
     character(len=*), intent(in) :: words_str, prefix, suffix
     character(len=:), allocatable :: output
-    character(len=1024) :: result_buf, word_buf
+    character(len=:), allocatable :: result_buf, word_buf
     integer :: i, word_start, word_len
 
     result_buf = ''
@@ -3387,16 +3428,22 @@ contains
 
   ! Helper subroutine to grow expansion array
   subroutine grow_expansion_array(array, current_size)
-    character(len=1024), allocatable, intent(inout) :: array(:)
+    type(string_t), allocatable, intent(inout) :: array(:)
     integer, intent(inout) :: current_size
-    character(len=1024), allocatable :: new_array(:)
-    integer :: new_size
+    type(string_t), allocatable :: new_array(:)
+    integer :: new_size, k
 
     new_size = current_size * 2
     allocate(new_array(new_size))
 
     ! Copy existing data
-    new_array(1:current_size) = array(1:current_size)
+    do k = 1, current_size
+      if (allocated(array(k)%str)) then
+        new_array(k)%str = array(k)%str
+      else
+        new_array(k)%str = ''
+      end if
+    end do
 
     ! Swap arrays
     call move_alloc(new_array, array)
@@ -3408,7 +3455,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
     character(len=*), intent(out) :: output
-    character(len=1024) :: home_dir
+    character(len=:), allocatable :: home_dir
     character(len=:), allocatable :: env_home
     integer :: tilde_pos
 
@@ -3491,11 +3538,13 @@ contains
   subroutine expand_word(shell, input, expanded_words, word_count)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: input
-    character(len=1024), intent(out) :: expanded_words(:)
+    type(string_t), intent(out) :: expanded_words(:)
     integer, intent(out) :: word_count
 
     character(len=:), allocatable :: temp_result, brace_expanded
-    character(len=1024) :: tilde_expanded, quote_removed
+    character(len=:), allocatable :: tilde_expanded, quote_removed
+    character(len=:), allocatable :: temp_split_words(:)
+    integer :: k
 
     word_count = 1
 
@@ -3503,6 +3552,8 @@ contains
     brace_expanded = expand_braces(input)
 
     ! Step 1: Tilde expansion
+    ! Pre-allocate for intent(out) character(len=*) parameter
+    allocate(character(len=len(brace_expanded) + 4096) :: tilde_expanded)
     call tilde_expansion(shell, brace_expanded, tilde_expanded)
 
     ! Step 2: Parameter and variable expansion
@@ -3517,10 +3568,16 @@ contains
     ! Check if the original input was entirely quoted with no expansions inside.
     if (is_quoted_literal(input)) then
       ! Skip field splitting for quoted literals
-      expanded_words(1) = quote_removed
+      expanded_words(1)%str = quote_removed
       word_count = 1
     else
-      call word_split(shell, quote_removed, expanded_words, word_count)
+      ! Use temp buffer for word_split (expects character(len=*) array)
+      allocate(character(len=max(1, len(quote_removed))) :: temp_split_words(size(expanded_words)))
+      call word_split(shell, quote_removed, temp_split_words, word_count)
+      do k = 1, word_count
+        expanded_words(k)%str = trim(temp_split_words(k))
+      end do
+      deallocate(temp_split_words)
     end if
 
     ! POSIX: If field splitting results in zero words (empty unquoted expansion),

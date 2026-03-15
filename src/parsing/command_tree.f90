@@ -90,7 +90,7 @@ module command_tree
   ! Simple Command Data
   ! =====================================
   type :: simple_command_data_t
-    character(len=MAX_TOKEN_LEN), allocatable :: words(:)     ! Command words
+    character(len=:), allocatable :: words(:)                  ! Command words (deferred-length)
     integer, allocatable :: word_lengths(:)                   ! Actual length of each word (for trailing space preservation)
     logical, allocatable :: word_was_quoted(:)                ! Track quoted tokens for old executor
     logical, allocatable :: word_was_escaped(:)               ! Track escaped tokens (prevent glob expansion)
@@ -245,7 +245,7 @@ contains
     allocate(node)
     node%node_type = NODE_SIMPLE
     allocate(node%simple_cmd)
-    allocate(node%simple_cmd%words(num_words))
+    allocate(character(len=MAX_TOKEN_LEN) :: node%simple_cmd%words(num_words))
     node%simple_cmd%num_words = num_words
     do i = 1, num_words
       node%simple_cmd%words(i) = words(i)

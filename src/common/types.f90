@@ -17,6 +17,19 @@ module shell_types
   integer, parameter :: MAX_JOBS = 100
   integer, parameter :: MAX_HEREDOC_LEN = 65536
   integer, parameter :: MAX_CONTROL_DEPTH = 20
+  integer, parameter :: MAX_SHELL_VARS = 512
+  integer, parameter :: MAX_ALIASES = 256
+  integer, parameter :: MAX_FUNCTIONS = 128
+  integer, parameter :: MAX_TRAPS = 64
+  integer, parameter :: MAX_HASHED_CMDS = 128
+  integer, parameter :: MAX_VAR_NAME_LEN = 256
+  integer, parameter :: MAX_VAR_VALUE_LEN = 4096
+  integer, parameter :: MAX_LOCAL_VARS_PER_SCOPE = 64
+
+  ! Variable-length string wrapper for allocatable arrays (like bash char*)
+  type :: string_t
+    character(len=:), allocatable :: str
+  end type string_t
 
   ! Command separator types
   integer, parameter :: SEP_NONE = 0
@@ -67,6 +80,7 @@ module shell_types
   ! Pending heredoc entry for -c flag processing
   ! =====================================
   integer, parameter :: MAX_PENDING_HEREDOCS = 10
+  integer, parameter :: MAX_PREFIX_ASSIGNMENTS = 20
 
   type :: pending_heredoc_entry_t
     character(len=4096) :: content = ''
@@ -156,7 +170,7 @@ module shell_types
     type(redirection_t) :: redirections(10)
     integer :: num_redirections = 0
     ! Prefix assignments (VAR=value command)
-    character(len=MAX_TOKEN_LEN) :: prefix_assignments(10) = ''  ! VAR=value pairs
+    character(len=MAX_TOKEN_LEN), allocatable :: prefix_assignments(:)  ! VAR=value pairs
     integer :: num_prefix_assignments = 0
     ! Skip expansion flag (words already expanded in pipeline)
     logical :: skip_expansion = .false.
@@ -181,21 +195,21 @@ module shell_types
 
   ! Associative array entry
   type :: assoc_array_entry_t
-    character(len=256) :: key
-    character(len=1024) :: value
+    character(len=MAX_VAR_NAME_LEN) :: key
+    character(len=:), allocatable :: value
   end type assoc_array_entry_t
 
   ! Simple shell variable entry
   type :: shell_var_t
-    character(len=256) :: name
-    character(len=1024) :: value
+    character(len=MAX_VAR_NAME_LEN) :: name
+    character(len=:), allocatable :: value  ! heap-allocated, no fixed limit (like bash char*)
     integer :: value_len = 0           ! Actual length of value (preserves trailing spaces)
     logical :: is_array = .false.
     logical :: is_assoc_array = .false.
     logical :: readonly = .false.      ! Variable is read-only
     logical :: exported = .false.      ! Variable is exported to environment
     logical :: is_integer = .false.    ! Variable has integer attribute (declare -i)
-    character(len=1024), allocatable :: array_values(:)
+    type(string_t), allocatable :: array_values(:)
     integer :: array_size = 0
     type(assoc_array_entry_t), allocatable :: assoc_entries(:)
     integer :: assoc_size = 0
@@ -203,8 +217,8 @@ module shell_types
 
   ! Shell alias entry
   type :: shell_alias_t
-    character(len=256) :: name
-    character(len=1024) :: command
+    character(len=MAX_VAR_NAME_LEN) :: name
+    character(len=:), allocatable :: command
   end type shell_alias_t
 
   ! Control flow block state
@@ -218,10 +232,10 @@ module shell_types
     character(len=MAX_TOKEN_LEN), allocatable :: for_values(:)  ! parsed for-loop values
     integer :: for_index = 0         ! current index in for loop
     integer :: for_count = 0         ! total count of for loop values
-    character(len=1024) :: condition_cmd = ''  ! while condition command (must match control_flow usage)
+    character(len=:), allocatable :: condition_cmd  ! while condition command
     integer :: loop_start_line = 0   ! for loop replay
     ! Loop body buffering for proper iteration
-    character(len=1024), allocatable :: loop_body(:)  ! commands in loop body
+    type(string_t), allocatable :: loop_body(:)  ! commands in loop body
     integer :: loop_body_count = 0   ! number of commands in loop body
     logical :: capturing_loop_body = .false.  ! currently capturing commands
     integer :: capture_nesting_depth = 0  ! track nested loops during capture
@@ -242,17 +256,17 @@ module shell_types
 
   ! Shell function definition
   type :: shell_function_t
-    character(len=256) :: name
-    character(len=1024), allocatable :: body(:)  ! function body lines
+    character(len=MAX_VAR_NAME_LEN) :: name
+    type(string_t), allocatable :: body(:)  ! function body lines
     integer :: body_lines = 0
-    character(len=256) :: params(10)  ! parameter names
+    character(len=MAX_VAR_NAME_LEN) :: params(10)  ! parameter names
     integer :: param_count = 0
   end type shell_function_t
 
   ! Shell trap definition
   type :: shell_trap_t
     integer :: signal = 0
-    character(len=1024) :: command = ''
+    character(len=:), allocatable :: command
     logical :: active = .false.
     logical :: inherited = .false.  ! Trap inherited from parent (visible but not executed)
   end type shell_trap_t
@@ -297,19 +311,19 @@ module shell_types
     integer :: current_job_id = 0   ! %% or %+ (most recent job)
     integer :: previous_job_id = 0  ! %- (previous job)
     ! Shell variables (local scope)
-    type(shell_var_t) :: variables(50)
+    type(shell_var_t) :: variables(MAX_SHELL_VARS)
     integer :: num_variables = 0
     ! Shell aliases
-    type(shell_alias_t) :: aliases(50)
+    type(shell_alias_t) :: aliases(MAX_ALIASES)
     integer :: num_aliases = 0
     ! Shell functions
-    type(shell_function_t) :: functions(20)
+    type(shell_function_t) :: functions(MAX_FUNCTIONS)
     integer :: num_functions = 0
     ! Shell traps
-    type(shell_trap_t) :: traps(20)
+    type(shell_trap_t) :: traps(MAX_TRAPS)
     integer :: num_traps = 0
     ! Pending trap execution (to avoid circular dependency in signal_handling)
-    character(len=1024) :: pending_trap_command = ''
+    character(len=:), allocatable :: pending_trap_command
     integer :: pending_trap_signal = 0
     logical :: executing_trap = .false.  ! Prevent recursive trap execution
     logical :: exit_trap_executed = .false.  ! Track if EXIT trap has been executed
@@ -321,7 +335,7 @@ module shell_types
     logical :: in_pipeline_child = .false.   ! In forked pipeline child (skip setpgid/tcsetpgrp in execute_external)
     logical :: last_from_and_or = .false.     ! Last result was from an AND-OR list (suppress errexit check)
     ! Command hash table
-    type(command_hash_entry_t) :: command_hash(50)
+    type(command_hash_entry_t) :: command_hash(MAX_HASHED_CMDS)
     integer :: num_hashed_commands = 0
     ! Control flow state
     type(control_block_t) :: control_stack(MAX_CONTROL_DEPTH)
@@ -339,8 +353,6 @@ module shell_types
     logical :: option_pipefail = .false.       ! set -o pipefail
     logical :: option_verbose = .false.        ! set -v (verbose)
     logical :: option_xtrace = .false.         ! set -x (trace execution)
-    ! Parser selection (experimental feature)
-    logical :: use_new_parser = .false.        ! Use grammar-aware parser (FORTSH_USE_NEW_PARSER=1)
     logical :: option_noclobber = .false.      ! set -C (no clobber)
     logical :: option_monitor = .false.        ! set -m (job control)
     logical :: option_allexport = .false.      ! set -a (auto export)
@@ -379,7 +391,7 @@ module shell_types
     integer(c_pid_t) :: last_bg_pid = 0        ! $! (last background process)
     character(len=256) :: shell_name = 'fortsh' ! $0 (shell name)
     integer(c_pid_t) :: parent_pid = 0         ! $PPID (parent process ID)
-    character(len=1024) :: last_arg = ''       ! $_ (last argument of previous command)
+    character(len=:), allocatable :: last_arg               ! $_ (last argument of previous command)
     integer :: uid = 0                         ! $UID (user ID)
     integer :: euid = 0                        ! $EUID (effective user ID)
     integer :: shell_start_time = 0            ! For $SECONDS
@@ -387,7 +399,7 @@ module shell_types
     character(len=MAX_PATH_LEN) :: oldpwd = '' ! $OLDPWD (previous working directory)
     logical :: is_login_shell = .false.        ! Started as login shell
     ! Prompt strings
-    character(len=1024) :: ps1 = '%F{green}\u@\h%f :: %F{blue}\w%f\n> ' ! 2-line prompt with zsh colors
+    character(len=:), allocatable :: ps1    ! PS1 prompt string (heap-allocated, no fixed limit)
     integer :: ps1_len = 0                     ! Actual length of PS1 (preserves trailing spaces)
     character(len=256) :: ps2 = '> '              ! Continuation prompt
     integer :: ps2_len = 0                     ! Actual length of PS2
@@ -397,7 +409,7 @@ module shell_types
     integer :: ps4_len = 0                     ! Actual length of PS4
     integer :: command_number = 0              ! For \# in prompts
     ! Positional parameters (allocatable to avoid large stack allocation on macOS)
-    character(len=1024), allocatable :: positional_params(:) ! $1, $2, ..., $n
+    type(string_t), allocatable :: positional_params(:) ! $1, $2, ..., $n
     integer :: num_positional = 0             ! $# (number of positional parameters)
     integer :: positional_params_capacity = 0 ! Allocated size of positional_params
     ! Field splitting
@@ -436,7 +448,7 @@ module shell_types
     logical :: has_pending_heredoc = .false.
 
     ! Current command being executed (for job descriptions)
-    character(len=1024) :: current_command = ''
+    character(len=:), allocatable :: current_command
   end type shell_state_t
 
 end module shell_types
