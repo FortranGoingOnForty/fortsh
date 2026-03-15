@@ -133,6 +133,8 @@ contains
     ! Handle indirect expansion prefix: ${!ref...}
     ! Resolve !name to the variable name it references, then continue with
     ! normal operator handling so ${!ref:-default} works correctly.
+    ! NOTE: Only one level of indirection is resolved (no recursion).
+    ! Circular references (x->y->x) safely stop after one resolution.
     ! ========================================================================
     if (len_trim(var_name) > 1 .and. var_name(1:1) == '!' .and. index(var_name, '[') == 0) then
       block
