@@ -73,6 +73,24 @@ jobs:
       - name: Run builtin tests
         run: ./tests/builtins/run_builtin_tests.sh --verbose
 
+  stress-tests:
+    name: Stress Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gfortran
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran
+
+      - name: Build fortsh
+        run: make release
+
+      - name: Run stress tests
+        run: ./tests/builtins/test_stress.sh
+        timeout-minutes: 10
+
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
