@@ -1331,6 +1331,12 @@ contains
           pgid = pids(1)
         end if
         ret = c_setpgid(pids(i), pgid)
+      else
+        ! Fork failed — close all pipes and return
+        write(error_unit, '(A)') 'fortsh: fork: resource temporarily unavailable'
+        call close_all_pipes(pipefd, num_pipes)
+        exit_status = 1
+        return
       end if
     end do
 
