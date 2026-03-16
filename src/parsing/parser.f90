@@ -10,7 +10,9 @@ module parser
   use error_handling
   use performance
   use iso_fortran_env, only: error_unit, input_unit
-  use iso_c_binding, only: c_char, c_int, c_ptr, c_size_t, c_f_pointer, c_null_char
+#ifdef USE_C_STRINGS
+  use iso_c_binding, only: c_char, c_int, c_ptr, c_size_t, c_f_pointer
+#endif
   implicit none
 
   ! Export backtick conversion for new parser
