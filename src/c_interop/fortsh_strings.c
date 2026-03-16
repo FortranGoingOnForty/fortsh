@@ -438,3 +438,24 @@ int fortsh_pattern_replace_alloc(const char* input, int input_len,
 void fortsh_free_string(char* ptr) {
     if (ptr) free(ptr);
 }
+
+/*
+ * Pattern replace reading input from a fortsh_buffer_t handle.
+ * Avoids passing large Fortran strings through the Fortran→C boundary.
+ * Result is malloc'd; caller must free via fortsh_free_string.
+ */
+int fortsh_buffer_pattern_replace(const fortsh_buffer_t* input_buf,
+                                   const char* pattern, int pat_len,
+                                   const char* replacement, int repl_len,
+                                   int replace_all,
+                                   char** result_out) {
+    if (!input_buf || !input_buf->data) {
+        *result_out = NULL;
+        return 0;
+    }
+    return fortsh_pattern_replace_alloc(
+        input_buf->data, (int)input_buf->length,
+        pattern, pat_len,
+        replacement, repl_len,
+        replace_all, result_out);
+}
