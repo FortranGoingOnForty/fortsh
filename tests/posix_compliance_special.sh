@@ -1222,7 +1222,7 @@ section "394. COMPLEX PIPELINES"
 # =====================================
 
 result=$("$FORTSH_BIN" -c 'echo "hello world" | tr " " "\n" | wc -l' 2>&1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "pipeline with tr and wc"
 else
     fail "pipeline with tr and wc" "2" "$result"
@@ -1247,14 +1247,14 @@ section "395. COMMAND GROUPING"
 # =====================================
 
 result=$("$FORTSH_BIN" -c '{ echo a; echo b; echo c; } | wc -l' 2>&1)
-if [ "$result" = "3" ]; then
+if [ "$result" -eq 3 ] 2>/dev/null; then
     pass "brace group to pipeline"
 else
     fail "brace group to pipeline" "3" "$result"
 fi
 
 result=$("$FORTSH_BIN" -c '(echo x; echo y) | wc -l' 2>&1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "subshell to pipeline"
 else
     fail "subshell to pipeline" "2" "$result"
@@ -1367,7 +1367,7 @@ else
 fi
 
 result=$("$FORTSH_BIN" -c '{ echo a; echo b >&2; } 2>&1 | wc -l' 2>&1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "redirect stderr to stdout in pipeline"
 else
     fail "redirect stderr to stdout in pipeline" "2" "$result"
