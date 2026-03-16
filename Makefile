@@ -97,13 +97,6 @@ else
   $(info C string library DISABLED - using native Fortran strings)
 endif
 
-# macOS ARM64: increase stack size to 16MB (flang-new uses ~2x more stack per frame)
-ifeq ($(UNAME_S),Darwin)
-  ifeq ($(UNAME_M),arm64)
-    LDFLAGS += -Wl,-stack_size,0x1000000
-  endif
-endif
-
 # Directory structure
 SRCDIR = src
 BUILDDIR = build
