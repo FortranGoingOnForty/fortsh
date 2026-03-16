@@ -354,7 +354,7 @@ contains
     logical :: should_execute, trap_executed, negate_exit_status
     integer(int64) :: exec_start_time
     integer :: i
-    character(len=2048) :: reconstructed_cmd
+    character(len=256) :: reconstructed_cmd
     character(len=MAX_TOKEN_LEN), allocatable :: temp_tokens(:)
     type(pipeline_t) :: pipeline
 
