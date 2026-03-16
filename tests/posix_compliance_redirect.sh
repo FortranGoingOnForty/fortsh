@@ -711,7 +711,7 @@ fi
 
 # Input from /dev/null
 result=$("$FORTSH_BIN" -c 'cat < /dev/null | wc -c' 2>&1)
-if [ "$result" = "0" ]; then
+if [ "$result" -eq 0 ] 2>/dev/null; then
     pass "Input from /dev/null is empty"
 else
     fail "Input from /dev/null is empty" "0" "$result"
@@ -772,7 +772,7 @@ fi
 
 # Redirect in while loop
 result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done > "'"$TEST_DIR"'/while_redir.txt"; wc -l < "'"$TEST_DIR"'/while_redir.txt"' 2>&1)
-if [ "$result" = "3" ]; then
+if [ "$result" -eq 3 ] 2>/dev/null; then
     pass "Redirect while loop output"
 else
     fail "Redirect while loop output" "3" "$result"
@@ -780,7 +780,7 @@ fi
 
 # Redirect in for loop
 result=$("$FORTSH_BIN" -c 'for x in a b c; do echo $x; done > "'"$TEST_DIR"'/for_redir.txt"; wc -l < "'"$TEST_DIR"'/for_redir.txt"' 2>&1)
-if [ "$result" = "3" ]; then
+if [ "$result" -eq 3 ] 2>/dev/null; then
     pass "Redirect for loop output"
 else
     fail "Redirect for loop output" "3" "$result"
@@ -832,7 +832,7 @@ section "461. PIPELINE WITH SUBSHELL"
 
 # Subshell in pipeline
 result=$("$FORTSH_BIN" -c '(echo a; echo b) | wc -l' 2>&1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "Subshell in pipeline"
 else
     fail "Subshell in pipeline" "2" "$result"
@@ -840,7 +840,7 @@ fi
 
 # Brace group in pipeline
 result=$("$FORTSH_BIN" -c '{ echo x; echo y; } | wc -l' 2>&1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "Brace group in pipeline"
 else
     fail "Brace group in pipeline" "2" "$result"
