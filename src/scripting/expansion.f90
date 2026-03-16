@@ -412,76 +412,35 @@ contains
           replace_all = .false.
         end if
 
-        ! Use C buffer for var_value to avoid allocatable churn on large strings
-        ebuf = c_buf_create(256_c_size_t)
-        call get_var_to_buf(shell, trim(operation), ebuf)
-        vlen = int(c_buf_length(ebuf))
+        var_value = get_shell_variable(shell, trim(operation))
 
         ! Check for anchor prefix in pattern
         if (len_trim(pattern) > 0 .and. pattern(1:1) == '#') then
           ! Anchored at start: ${var/#pat/repl}
           pattern = pattern(2:)
-          ! Need var_value as Fortran string for comparison — extract from C buffer
-          allocate(character(len=max(1,vlen)) :: var_value)
-          if (vlen > 0) copied = c_buf_to_fortran(ebuf, var_value, int(vlen, c_size_t))
-          call c_buf_destroy(ebuf)
-
           if (len_trim(pattern) == 0) then
-            ebuf = c_buf_create(int(len_trim(replacement) + vlen + 1, c_size_t))
-            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
-            if (vlen > 0) rc = c_buf_append_chars(ebuf, var_value, int(vlen, c_size_t))
-            buf_len = c_buf_length(ebuf)
-            allocate(character(len=int(buf_len)) :: expanded)
-            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            call c_buf_destroy(ebuf)
-          else if (vlen >= len_trim(pattern) .and. &
+            expanded = trim(replacement) // trim(var_value)
+          else if (len_trim(var_value) >= len_trim(pattern) .and. &
                    var_value(1:len_trim(pattern)) == trim(pattern)) then
-            ebuf = c_buf_create(int(len_trim(replacement) + vlen + 1, c_size_t))
-            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
-            j = len_trim(pattern) + 1
-            if (j <= vlen) rc = c_buf_append_chars(ebuf, var_value(j:vlen), int(vlen - j + 1, c_size_t))
-            buf_len = c_buf_length(ebuf)
-            allocate(character(len=int(buf_len)) :: expanded)
-            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            call c_buf_destroy(ebuf)
+            expanded = trim(replacement) // var_value(len_trim(pattern)+1:len_trim(var_value))
           else
-            expanded = var_value(1:vlen)
+            expanded = var_value
           end if
-          deallocate(var_value)
         else if (len_trim(pattern) > 0 .and. pattern(1:1) == '%') then
           ! Anchored at end: ${var/%pat/repl}
           pattern = pattern(2:)
-          allocate(character(len=max(1,vlen)) :: var_value)
-          if (vlen > 0) copied = c_buf_to_fortran(ebuf, var_value, int(vlen, c_size_t))
-          call c_buf_destroy(ebuf)
-
           if (len_trim(pattern) == 0) then
-            ebuf = c_buf_create(int(vlen + len_trim(replacement) + 1, c_size_t))
-            if (vlen > 0) rc = c_buf_append_chars(ebuf, var_value, int(vlen, c_size_t))
-            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
-            buf_len = c_buf_length(ebuf)
-            allocate(character(len=int(buf_len)) :: expanded)
-            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            call c_buf_destroy(ebuf)
-          else if (vlen >= len_trim(pattern) .and. &
-                   var_value(vlen-len_trim(pattern)+1:vlen) == trim(pattern)) then
-            ebuf = c_buf_create(int(vlen + len_trim(replacement) + 1, c_size_t))
-            j = vlen - len_trim(pattern)
-            if (j > 0) rc = c_buf_append_chars(ebuf, var_value(1:j), int(j, c_size_t))
-            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
-            buf_len = c_buf_length(ebuf)
-            allocate(character(len=int(buf_len)) :: expanded)
-            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            call c_buf_destroy(ebuf)
+            expanded = trim(var_value) // trim(replacement)
+          else if (len_trim(var_value) >= len_trim(pattern) .and. &
+                   var_value(len_trim(var_value)-len_trim(pattern)+1:len_trim(var_value)) == &
+                   trim(pattern)) then
+            expanded = var_value(1:len_trim(var_value)-len_trim(pattern)) // trim(replacement)
           else
-            expanded = var_value(1:vlen)
+            expanded = var_value
           end if
-          deallocate(var_value)
         else
-          ! Non-anchored replace: C buffer → C replace → C buffer → one Fortran alloc
-          call pattern_replace_cbuf_to_expanded(ebuf, vlen, trim(pattern), trim(replacement), &
-                                                replace_all, expanded)
-          call c_buf_destroy(ebuf)
+          call pattern_replace(trim(var_value), trim(pattern), trim(replacement), &
+                              replace_all, expanded)
         end if
         return
       end if
@@ -1037,6 +996,7 @@ contains
     call c_free_string(c_result_ptr)
   end subroutine
 
+#ifdef USE_C_STRINGS
   ! Pattern replace: C buffer in → C replace → result stored in C buffer,
   ! extracted to Fortran allocatable via c_buf_to_fortran (single memcpy).
   subroutine pattern_replace_cbuf_to_expanded(input_buf, in_len, pattern, replacement, &
@@ -1089,6 +1049,7 @@ contains
 
     call c_free_string(c_result_ptr)
   end subroutine
+#endif
 
   ! Remove suffix matching pattern (greedy or non-greedy)
   subroutine remove_suffix(input, pattern, greedy, output)
@@ -2713,7 +2674,8 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
-
+#ifdef USE_C_STRINGS
+    ! flang-new path: C-backed buffer avoids allocatable churn
     type(c_ptr) :: rbuf
     integer :: i, start_pos, bracket_count, rc, vlen
     integer(c_size_t) :: buf_len, copied
@@ -2721,7 +2683,6 @@ contains
     character(len=:), allocatable :: var_value
     logical :: in_single_quote, in_double_quote
 
-    ! C-backed buffer — all appends go through malloc, no Fortran allocatable churn
     rbuf = c_buf_create(int(len(input) * 2 + 256, c_size_t))
 
     i = 1
@@ -2904,8 +2865,154 @@ contains
       expanded = ''
     end if
     call c_buf_destroy(rbuf)
+#else
+    ! gfortran path: native Fortran allocatable (safe on x86_64)
+    character(len=:), allocatable :: result
+    integer :: i, start_pos, bracket_count, result_capacity, result_pos
+    character(len=256) :: var_expr
+    character(len=:), allocatable :: var_value
+    logical :: in_single_quote, in_double_quote
+
+    result_capacity = len(input) * 2 + 256
+    allocate(character(len=result_capacity) :: result)
+    result = ''
+    result_pos = 0
+    i = 1
+    in_single_quote = .false.
+    in_double_quote = .false.
+
+    do while (i <= len_trim(input))
+      if (input(i:i) == "'" .and. .not. in_double_quote) then
+        in_single_quote = .not. in_single_quote
+        result = trim(result) // input(i:i)
+        i = i + 1
+        cycle
+      else if (input(i:i) == '"' .and. .not. in_single_quote) then
+        if (i > 1 .and. input(i-1:i-1) == '\') then
+          result(len_trim(result):len_trim(result)) = '"'
+          i = i + 1
+          cycle
+        else
+          in_double_quote = .not. in_double_quote
+          result = trim(result) // input(i:i)
+          i = i + 1
+          cycle
+        end if
+      end if
+
+      if (in_single_quote) then
+        result = trim(result) // input(i:i)
+        i = i + 1
+        cycle
+      end if
+
+      if (i < len_trim(input) - 2 .and. input(i:i+2) == '$((') then
+        start_pos = i
+        bracket_count = 2
+        i = i + 3
+        do while (i <= len_trim(input) .and. bracket_count > 0)
+          if (input(i:i) == '(') bracket_count = bracket_count + 1
+          if (input(i:i) == ')') bracket_count = bracket_count - 1
+          i = i + 1
+        end do
+        if (bracket_count == 0) then
+          var_expr = input(start_pos:i-1)
+          var_value = arithmetic_expansion_shell(var_expr, shell)
+          result = trim(result) // trim(var_value)
+        end if
+      else if (i < len_trim(input) - 1 .and. input(i:i+1) == '$(' .and. &
+               (i >= len_trim(input) - 2 .or. input(i:i+2) /= '$((')) then
+        start_pos = i
+        bracket_count = 1
+        i = i + 2
+        do while (i <= len_trim(input) .and. bracket_count > 0)
+          if (input(i:i) == '"') then
+            i = i + 1
+            do while (i <= len_trim(input))
+              if (input(i:i) == '\' .and. i < len_trim(input)) then
+                i = i + 2
+              else if (input(i:i) == '"') then
+                i = i + 1
+                exit
+              else
+                i = i + 1
+              end if
+            end do
+          else if (input(i:i) == "'") then
+            i = i + 1
+            do while (i <= len_trim(input) .and. input(i:i) /= "'")
+              i = i + 1
+            end do
+            if (i <= len_trim(input)) i = i + 1
+          else if (input(i:i) == '(') then
+            bracket_count = bracket_count + 1
+            i = i + 1
+          else if (input(i:i) == ')') then
+            bracket_count = bracket_count - 1
+            i = i + 1
+          else
+            i = i + 1
+          end if
+        end do
+        if (bracket_count == 0) then
+          var_expr = input(start_pos+2:i-2)
+          shell%in_command_substitution = .true.
+          call execute_command_and_capture(shell, trim(var_expr), var_value)
+          shell%in_command_substitution = .false.
+          result = trim(result) // trim(var_value)
+        end if
+      else if (i < len_trim(input) - 1 .and. input(i:i+1) == '${') then
+        start_pos = i
+        bracket_count = 1
+        i = i + 2
+        do while (i <= len_trim(input) .and. bracket_count > 0)
+          if (input(i:i) == '{') bracket_count = bracket_count + 1
+          if (input(i:i) == '}') bracket_count = bracket_count - 1
+          i = i + 1
+        end do
+        if (bracket_count == 0) then
+          var_expr = input(start_pos:i-1)
+          var_value = parameter_expansion(shell, var_expr)
+          result = trim(result) // trim(var_value)
+        end if
+      else if (input(i:i) == '$') then
+        if (i > 1 .and. input(i-1:i-1) == '\') then
+          result = trim(result) // '$'
+          i = i + 1
+          cycle
+        else
+          start_pos = i + 1
+          i = i + 1
+          if (i <= len_trim(input)) then
+          if (index('$!?0-_#*@', input(i:i)) > 0) then
+            var_expr = input(i:i)
+            var_value = get_shell_variable(shell, trim(var_expr))
+            result = trim(result) // trim(var_value)
+            i = i + 1
+          else if (is_alnum(input(i:i)) .or. input(i:i) == '_') then
+            do while (i <= len_trim(input) .and. (is_alnum(input(i:i)) .or. input(i:i) == '_'))
+              i = i + 1
+            end do
+            var_expr = input(start_pos:i-1)
+            var_value = get_shell_variable(shell, trim(var_expr))
+            result = trim(result) // trim(var_value)
+          else
+            result = trim(result) // '$'
+          end if
+        else
+          result = trim(result) // '$'
+        end if
+        end if
+      else
+        result = trim(result) // input(i:i)
+        i = i + 1
+      end if
+    end do
+    expanded = trim(result)
+#endif
   end subroutine
 
+#ifdef USE_C_STRINGS
   ! Run parameter_expansion and append result to a C buffer.
   ! For the common case (result < 2KB), uses the standard allocatable path.
   ! For the pattern-replace path that can produce large results, writes
@@ -3011,6 +3118,7 @@ contains
 
     call get_shell_variable_to_cbuf(shell, name, dest_buf)
   end subroutine
+#endif
 
   function is_alnum(c) result(is_valid)
     character, intent(in) :: c
