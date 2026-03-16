@@ -48,20 +48,23 @@ else
   CFLAGS = -Wall -Wextra -fPIC -g -O2
 endif
 
-# Warning flags (flang-new doesn't support -Wall/-Wextra)
+# Warning flags and intrinsics (flang-new doesn't support -Wall/-Wextra/-fall-intrinsics)
 ifeq ($(FC),flang-new)
     WARN_FLAGS =
     WARN_FLAGS_RELEASE =
+    # flang-new supports F2018 flush() natively; -fall-intrinsics is gfortran-only
+    INTRINSICS_FLAG =
 else
     WARN_FLAGS = -Wall -Wextra
     WARN_FLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation
+    # -fall-intrinsics allows GNU extensions like flush() with -std=f2018
+    INTRINSICS_FLAG = -fall-intrinsics
 endif
 
 # Development flags (verbose warnings, debug symbols)
-# -fall-intrinsics allows GNU extensions like flush() with -std=f2018
-FCFLAGS = $(WARN_FLAGS) -std=f2018 -fall-intrinsics -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
+FCFLAGS = $(WARN_FLAGS) -std=f2018 $(INTRINSICS_FLAG) -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 # Production flags (minimal warnings, optimized, no debug symbols)
-FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) -std=f2018 -fall-intrinsics -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
+FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) -std=f2018 $(INTRINSICS_FLAG) -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 
 # C string library (for flang-new workaround)
 # Automatically enable on macOS ARM64 unless explicitly disabled
@@ -75,8 +78,8 @@ ifeq ($(UNAME_S),Darwin)
   endif
 endif
 
-# Core C objects needed on all platforms (fd operations, terminal size)
-CORE_C_OBJS = $(BUILDDIR)/c_interop/fd_wrapper.o $(BUILDDIR)/c_interop/terminal_size.o
+# Core C objects needed on all platforms (fd operations, terminal size, string ops)
+CORE_C_OBJS = $(BUILDDIR)/c_interop/fd_wrapper.o $(BUILDDIR)/c_interop/terminal_size.o $(BUILDDIR)/c_interop/fortsh_strings.o
 
 ifeq ($(USE_C_STRINGS),1)
   C_STRING_LIB = $(BUILDDIR)/c_interop/libfortsh_strings.a
@@ -387,7 +390,11 @@ test: $(TARGET)
 	@echo "Running basic functionality test..."
 	@echo "echo 'Hello from Fortsh!'" | $(TARGET)
 
+ifeq ($(FC),flang-new)
+debug: FCFLAGS += -g
+else
 debug: FCFLAGS += -g -fbacktrace -fcheck=bounds
+endif
 debug: $(TARGET)
 
 release: FCFLAGS = $(FCFLAGS_RELEASE)
@@ -534,9 +541,9 @@ check: $(TARGET)
 smoke-test: $(TARGET)
 	@echo "Running smoke tests..."
 	@echo "echo 'Hello from Fortsh!'" | $(TARGET) && echo "✓ Basic execution works"
-	@echo -e "help\nexit" | $(TARGET) >/dev/null && echo "✓ Help command works"
-	@echo -e "echo *.txt\nexit" | $(TARGET) >/dev/null && echo "✓ Glob expansion works"
-	@echo -e "perf on\necho 'test'\nperf\nexit" | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
+	@printf 'help\nexit\n' | $(TARGET) >/dev/null && echo "✓ Help command works"
+	@printf 'echo *.txt\nexit\n' | $(TARGET) >/dev/null && echo "✓ Glob expansion works"
+	@printf 'perf on\necho test\nperf\nexit\n' | $(TARGET) >/dev/null && echo "✓ Performance monitoring works"
 	@echo "All smoke tests passed!"
 
 # macOS ARM64 specific tests - only run on Darwin arm64
