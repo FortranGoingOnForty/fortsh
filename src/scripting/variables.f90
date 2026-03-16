@@ -6,7 +6,18 @@ module variables
   use shell_types
   use system_interface
   use iso_fortran_env, only: output_unit, error_unit
+  use iso_c_binding, only: c_ptr, c_char, c_int, c_size_t
   implicit none
+
+  interface
+    function c_vbuf_append_chars(handle, str, slen) result(rc) bind(C, name='fortsh_buffer_append_chars')
+      import :: c_ptr, c_int, c_char, c_size_t
+      type(c_ptr), value :: handle
+      character(kind=c_char), intent(in) :: str(*)
+      integer(c_size_t), value :: slen
+      integer(c_int) :: rc
+    end function
+  end interface
 
 contains
 
@@ -328,6 +339,84 @@ contains
     ! Handle environment variables if not found in shell variables
     value = get_environment_var(trim(name))
   end function
+
+  ! Copy variable value directly into a C buffer — no allocatable intermediaries.
+  ! This avoids the flang-new heap corruption that occurs when large (>2KB)
+  ! allocatable strings are returned from get_shell_variable.
+  subroutine get_shell_variable_to_cbuf(shell, name, cbuf)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    type(c_ptr), intent(in) :: cbuf
+    integer :: i, depth, vlen, rc
+    character(len=20) :: fmt_buf
+
+    ! Check local variables first
+    if (shell%function_depth > 0) then
+      do depth = shell%function_depth, 1, -1
+        if (depth <= size(shell%local_var_counts)) then
+          do i = 1, shell%local_var_counts(depth)
+            if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
+              if (shell%local_vars(depth, i)%value_len == -1) return
+              vlen = len_trim(shell%local_vars(depth, i)%value)
+              if (vlen > 0) rc = c_vbuf_append_chars(cbuf, &
+                  shell%local_vars(depth, i)%value, int(vlen, c_size_t))
+              return
+            end if
+          end do
+        end if
+      end do
+    end if
+
+    ! Handle special variables (small strings, safe to use fmt_buf)
+    select case (trim(name))
+      case ('$')
+        write(fmt_buf, '(i0)') shell%shell_pid
+        vlen = len_trim(fmt_buf)
+        rc = c_vbuf_append_chars(cbuf, fmt_buf, int(vlen, c_size_t))
+        return
+      case ('!')
+        write(fmt_buf, '(i0)') shell%last_bg_pid
+        vlen = len_trim(fmt_buf)
+        rc = c_vbuf_append_chars(cbuf, fmt_buf, int(vlen, c_size_t))
+        return
+      case ('?')
+        write(fmt_buf, '(i0)') shell%last_exit_status
+        vlen = len_trim(fmt_buf)
+        rc = c_vbuf_append_chars(cbuf, fmt_buf, int(vlen, c_size_t))
+        return
+      case ('0')
+        vlen = len_trim(shell%shell_name)
+        if (vlen > 0) rc = c_vbuf_append_chars(cbuf, shell%shell_name, int(vlen, c_size_t))
+        return
+      case ('_')
+        vlen = len_trim(shell%last_arg)
+        if (vlen > 0) rc = c_vbuf_append_chars(cbuf, shell%last_arg, int(vlen, c_size_t))
+        return
+    end select
+
+    ! Handle regular shell variables — copy directly from storage, no allocatable
+    do i = 1, shell%num_variables
+      if (trim(shell%variables(i)%name) == trim(name)) then
+        if (shell%variables(i)%value_len > 0) then
+          vlen = shell%variables(i)%value_len
+        else
+          vlen = len_trim(shell%variables(i)%value)
+        end if
+        if (vlen > 0) rc = c_vbuf_append_chars(cbuf, &
+            shell%variables(i)%value, int(vlen, c_size_t))
+        return
+      end if
+    end do
+
+    ! Fall back to environment (small strings, safe)
+    ! Use get_shell_variable for the env fallback since env vars are small
+    block
+      character(len=:), allocatable :: env_val
+      env_val = get_environment_var(trim(name))
+      vlen = len_trim(env_val)
+      if (vlen > 0) rc = c_vbuf_append_chars(cbuf, env_val, int(vlen, c_size_t))
+    end block
+  end subroutine
 
   function is_shell_variable_set(shell, name) result(is_set)
     type(shell_state_t), intent(in) :: shell
