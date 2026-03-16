@@ -308,3 +308,99 @@ int fortsh_buffer_compare(const fortsh_buffer_t* buf, const char* str) {
 
     return strcmp(buf->data, str);
 }
+
+/* ============================================================================
+ * String Operations (non-buffer, direct C string functions)
+ * ============================================================================ */
+
+int fortsh_pattern_replace(const char* input, int input_len,
+                           const char* pattern, int pat_len,
+                           const char* replacement, int repl_len,
+                           int replace_all,
+                           char* output, int output_cap) {
+    if (!input || !pattern || !replacement || !output || pat_len <= 0 || output_cap <= 0) {
+        if (output && output_cap > 0) output[0] = '\0';
+        return 0;
+    }
+
+    int out_pos = 0;
+    int i = 0;
+
+    while (i < input_len && out_pos < output_cap - 1) {
+        /* Check if pattern matches at position i */
+        if (i + pat_len <= input_len && memcmp(input + i, pattern, pat_len) == 0) {
+            /* Copy replacement */
+            int copy_len = repl_len;
+            if (out_pos + copy_len > output_cap - 1) {
+                copy_len = output_cap - 1 - out_pos;
+            }
+            if (copy_len > 0) {
+                memcpy(output + out_pos, replacement, copy_len);
+                out_pos += copy_len;
+            }
+            i += pat_len;
+
+            if (!replace_all) {
+                /* Copy rest of input */
+                int rest = input_len - i;
+                if (out_pos + rest > output_cap - 1) {
+                    rest = output_cap - 1 - out_pos;
+                }
+                if (rest > 0) {
+                    memcpy(output + out_pos, input + i, rest);
+                    out_pos += rest;
+                }
+                break;
+            }
+        } else {
+            output[out_pos++] = input[i++];
+        }
+    }
+
+    output[out_pos] = '\0';
+    return out_pos;
+}
+
+/*
+ * Full pattern replace with C-managed memory.
+ * Fortran passes raw strings (not null-terminated), C handles all allocation.
+ * Returns result via caller-provided pointer to a C-allocated buffer.
+ * Caller must call fortsh_free_string() on the result.
+ */
+int fortsh_pattern_replace_alloc(const char* input, int input_len,
+                                 const char* pattern, int pat_len,
+                                 const char* replacement, int repl_len,
+                                 int replace_all,
+                                 char** result_out) {
+    *result_out = NULL;
+
+    if (!input || !pattern || !replacement || pat_len <= 0) {
+        /* No pattern: return copy of input */
+        *result_out = (char*)malloc(input_len + 1);
+        if (!*result_out) return 0;
+        memcpy(*result_out, input, input_len);
+        (*result_out)[input_len] = '\0';
+        return input_len;
+    }
+
+    /* Estimate output size */
+    int out_cap;
+    if (repl_len > pat_len) {
+        out_cap = input_len + (input_len / pat_len + 1) * (repl_len - pat_len) + 2;
+    } else {
+        out_cap = input_len + 2;
+    }
+
+    char* output = (char*)malloc(out_cap);
+    if (!output) return -1;
+
+    int result_len = fortsh_pattern_replace(input, input_len, pattern, pat_len,
+                                            replacement, repl_len, replace_all,
+                                            output, out_cap);
+    *result_out = output;
+    return result_len;
+}
+
+void fortsh_free_string(char* ptr) {
+    if (ptr) free(ptr);
+}

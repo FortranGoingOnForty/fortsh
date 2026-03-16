@@ -199,6 +199,47 @@ int fortsh_buffer_find(const fortsh_buffer_t* buf, const char* pattern);
  */
 int fortsh_buffer_compare(const fortsh_buffer_t* buf, const char* str);
 
+/* ============================================================================
+ * String Operations (non-buffer, direct C string functions)
+ * ============================================================================ */
+
+/**
+ * Pattern replace on raw C strings — bypasses Fortran runtime entirely.
+ * Replaces occurrences of pattern in input, writing result to output.
+ * @param input       Input string (null-terminated)
+ * @param input_len   Length of input string
+ * @param pattern     Pattern to find (null-terminated)
+ * @param pat_len     Length of pattern
+ * @param replacement Replacement string (null-terminated)
+ * @param repl_len    Length of replacement
+ * @param replace_all 1 = replace all occurrences, 0 = first only
+ * @param output      Output buffer (caller-allocated, must be large enough)
+ * @param output_cap  Capacity of output buffer
+ * @return            Length of result string, or -1 on error
+ */
+int fortsh_pattern_replace(const char* input, int input_len,
+                           const char* pattern, int pat_len,
+                           const char* replacement, int repl_len,
+                           int replace_all,
+                           char* output, int output_cap);
+
+/**
+ * Pattern replace with C-managed allocation.
+ * All memory is malloc'd in C — no Fortran allocatable involved.
+ * @param result_out  Pointer to receive C-allocated result string
+ * @return            Length of result, or -1 on error. Caller must free with fortsh_free_string().
+ */
+int fortsh_pattern_replace_alloc(const char* input, int input_len,
+                                 const char* pattern, int pat_len,
+                                 const char* replacement, int repl_len,
+                                 int replace_all,
+                                 char** result_out);
+
+/**
+ * Free a string allocated by fortsh_pattern_replace_alloc.
+ */
+void fortsh_free_string(char* ptr);
+
 #ifdef __cplusplus
 }
 #endif
