@@ -7,7 +7,9 @@ module expansion
   use variables  ! includes check_nounset
   use command_capture, only: execute_command_and_capture
   use iso_fortran_env, only: output_unit, error_unit
+#ifdef USE_C_STRINGS
   use iso_c_binding, only: c_char, c_int, c_null_char, c_ptr, c_f_pointer, c_size_t
+#endif
   implicit none
 
   ! Recursion depth limits
@@ -17,6 +19,7 @@ module expansion
   logical :: arithmetic_error = .false.
   character(len=256) :: arithmetic_error_msg = ''
 
+#ifdef USE_C_STRINGS
   interface
     function c_pattern_replace_alloc(input, input_len, pattern, pat_len, &
                                      replacement, repl_len, replace_all, &
@@ -33,7 +36,6 @@ module expansion
       type(c_ptr), value :: ptr
     end subroutine
 
-    ! C-backed string buffer — all allocation via malloc/realloc, no Fortran allocatable churn
     function c_buf_create(capacity) result(handle) bind(C, name='fortsh_buffer_create')
       import :: c_ptr, c_size_t
       integer(c_size_t), value :: capacity
@@ -79,7 +81,6 @@ module expansion
       type(c_ptr), value :: handle
     end subroutine
 
-    ! Pattern replace reading input from a C buffer handle — no large Fortran strings cross the boundary
     function c_buf_pattern_replace(input_buf, pattern, pat_len, replacement, repl_len, &
                                    replace_all, result_out) result(out_len) &
         bind(C, name='fortsh_buffer_pattern_replace')
@@ -91,6 +92,7 @@ module expansion
       integer(c_int) :: out_len
     end function
   end interface
+#endif
 
 contains
 
@@ -105,7 +107,7 @@ contains
     character(len=:), allocatable :: pattern
     character(len=:), allocatable :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos, equals_pos, question_pos
-    integer :: offset, length, i, at_pos, rc, vlen
+    integer :: offset, length, i, at_pos
     character :: transform_op
     logical :: replace_all, greedy, has_colon, var_is_set, var_is_null
 
@@ -114,9 +116,6 @@ contains
     character(len=256) :: array_name, array_key
     character(len=256), allocatable :: keys(:)
     logical :: is_keys_expansion, is_length_expansion, is_all_expansion
-    ! C buffer for loop-based string building
-    type(c_ptr) :: ebuf
-    integer(c_size_t) :: buf_len, copied
 
     expanded = ''
 
@@ -158,24 +157,15 @@ contains
         ! Handle associative arrays
         if (is_associative_array(shell, trim(array_name))) then
           if (is_keys_expansion .and. is_all_expansion) then
-            ! ${!array[@]} - return all keys (C buffer avoids allocatable churn in loop)
+            ! ${!array[@]} - return all keys
             allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            ebuf = c_buf_create(int(num_keys * 64 + 1, c_size_t))
+            expanded = ''
             do j = 1, min(num_keys, 500)
-              if (j > 1) rc = c_buf_append_char(ebuf, ' ')
-              vlen = len_trim(keys(j))
-              if (vlen > 0) rc = c_buf_append_chars(ebuf, keys(j), int(vlen, c_size_t))
+              if (j > 1) expanded = trim(expanded) // ' '
+              expanded = trim(expanded) // trim(keys(j))
             end do
             deallocate(keys)
-            buf_len = c_buf_length(ebuf)
-            if (buf_len > 0) then
-              allocate(character(len=int(buf_len)) :: expanded)
-              copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            else
-              expanded = ''
-            end if
-            call c_buf_destroy(ebuf)
             return
           else if (is_length_expansion .and. is_all_expansion) then
             ! ${#array[@]} - return number of keys
@@ -186,25 +176,16 @@ contains
             expanded = trim(num_buf)
             return
           else if (is_all_expansion) then
-            ! ${array[@]} - return all values (C buffer avoids allocatable churn)
+            ! ${array[@]} - return all values
             allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            ebuf = c_buf_create(int(num_keys * 128 + 1, c_size_t))
+            expanded = ''
             do j = 1, min(num_keys, 500)
               var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
-              if (j > 1) rc = c_buf_append_char(ebuf, ' ')
-              vlen = len_trim(var_value)
-              if (vlen > 0) rc = c_buf_append_chars(ebuf, var_value, int(vlen, c_size_t))
+              if (j > 1) expanded = trim(expanded) // ' '
+              expanded = trim(expanded) // trim(var_value)
             end do
             deallocate(keys)
-            buf_len = c_buf_length(ebuf)
-            if (buf_len > 0) then
-              allocate(character(len=int(buf_len)) :: expanded)
-              copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            else
-              expanded = ''
-            end if
-            call c_buf_destroy(ebuf)
             return
           else
             ! ${array[key]} - get value for specific key
@@ -295,28 +276,16 @@ contains
         return
       case ('u')
         ! ${var@u} - capitalize first character
-        vlen = len_trim(var_value)
-        if (vlen > 0) then
-          ebuf = c_buf_create(int(vlen + 1, c_size_t))
-          rc = c_buf_append_chars(ebuf, to_upper(var_value(1:1)), 1_c_size_t)
-          if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
-          buf_len = c_buf_length(ebuf)
-          allocate(character(len=int(buf_len)) :: expanded)
-          copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-          call c_buf_destroy(ebuf)
+        if (len_trim(var_value) > 0) then
+          expanded = to_upper(var_value(1:1))
+          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
         end if
         return
       case ('l')
         ! ${var@l} - lowercase first character
-        vlen = len_trim(var_value)
-        if (vlen > 0) then
-          ebuf = c_buf_create(int(vlen + 1, c_size_t))
-          rc = c_buf_append_chars(ebuf, to_lower(var_value(1:1)), 1_c_size_t)
-          if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
-          buf_len = c_buf_length(ebuf)
-          allocate(character(len=int(buf_len)) :: expanded)
-          copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-          call c_buf_destroy(ebuf)
+        if (len_trim(var_value) > 0) then
+          expanded = to_lower(var_value(1:1))
+          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
         end if
         return
       case ('Q')
@@ -345,15 +314,9 @@ contains
           ! ${var^} - uppercase first
           operation = var_name(:i-1)
           var_value = get_shell_variable(shell, trim(operation))
-          vlen = len_trim(var_value)
-          if (vlen > 0) then
-            ebuf = c_buf_create(int(vlen + 1, c_size_t))
-            rc = c_buf_append_chars(ebuf, to_upper(var_value(1:1)), 1_c_size_t)
-            if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
-            buf_len = c_buf_length(ebuf)
-            allocate(character(len=int(buf_len)) :: expanded)
-            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            call c_buf_destroy(ebuf)
+          if (len_trim(var_value) > 0) then
+            expanded = to_upper(var_value(1:1))
+            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
           end if
         end if
         return
@@ -368,15 +331,9 @@ contains
           ! ${var,} - lowercase first
           operation = var_name(:i-1)
           var_value = get_shell_variable(shell, trim(operation))
-          vlen = len_trim(var_value)
-          if (vlen > 0) then
-            ebuf = c_buf_create(int(vlen + 1, c_size_t))
-            rc = c_buf_append_chars(ebuf, to_lower(var_value(1:1)), 1_c_size_t)
-            if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
-            buf_len = c_buf_length(ebuf)
-            allocate(character(len=int(buf_len)) :: expanded)
-            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
-            call c_buf_destroy(ebuf)
+          if (len_trim(var_value) > 0) then
+            expanded = to_lower(var_value(1:1))
+            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
           end if
         end if
         return
@@ -940,10 +897,12 @@ contains
     character(len=*), intent(in) :: input, pattern, replacement
     logical, intent(in) :: replace_all
     character(len=:), allocatable, intent(out) :: output
+#ifdef USE_C_STRINGS
+    ! flang-new path: route through C to avoid allocatable heap corruption
     integer :: in_len, pat_len, repl_len, result_len, rc
     integer(c_int) :: c_replace_all
     type(c_ptr) :: c_result_ptr, ebuf
-    integer(c_size_t) :: buf_len, copied
+    integer(c_size_t) :: copied
     character(kind=c_char), pointer :: raw(:)
 
     in_len = len_trim(input)
@@ -969,19 +928,14 @@ contains
       c_replace_all = 0_c_int
     end if
 
-    ! Build a C buffer with the input — avoids passing the Fortran allocatable
-    ! directly to the C replace function (flang-new can corrupt the reference)
     ebuf = c_buf_create(int(in_len + 1, c_size_t))
     rc = c_buf_append_chars(ebuf, input, int(in_len, c_size_t))
-
-    ! Now call C replace using the C buffer's stable pointer
     result_len = c_pattern_replace_alloc(input, int(in_len, c_int), &
                                          pattern, int(pat_len, c_int), &
                                          replacement, int(repl_len, c_int), &
                                          c_replace_all, c_result_ptr)
     call c_buf_destroy(ebuf)
 
-    ! Extract result: C malloc'd string → C buffer → Fortran via memcpy
     if (result_len > 0) then
       call c_f_pointer(c_result_ptr, raw, [result_len])
       ebuf = c_buf_create(int(result_len + 1, c_size_t))
@@ -992,8 +946,70 @@ contains
     else
       output = ''
     end if
-
     call c_free_string(c_result_ptr)
+#else
+    ! gfortran path: character-by-character scan, no C dependencies
+    integer :: in_len, pat_len, repl_len, i2, j2
+    integer :: out_pos, out_cap
+    logical :: matched
+    character(len=:), allocatable :: result_buf
+
+    in_len = len_trim(input)
+    pat_len = len_trim(pattern)
+    repl_len = len_trim(replacement)
+
+    if (pat_len == 0) then
+      output = input(1:in_len)
+      return
+    end if
+
+    if (repl_len > pat_len) then
+      out_cap = in_len + (in_len / pat_len + 1) * (repl_len - pat_len) + 1
+    else
+      out_cap = in_len + 1
+    end if
+    allocate(character(len=out_cap) :: result_buf)
+    out_pos = 1
+
+    i2 = 1
+    do while (i2 <= in_len)
+      matched = .false.
+      if (i2 + pat_len - 1 <= in_len) then
+        matched = .true.
+        do j2 = 1, pat_len
+          if (input(i2+j2-1:i2+j2-1) /= pattern(j2:j2)) then
+            matched = .false.
+            exit
+          end if
+        end do
+      end if
+      if (matched) then
+        if (repl_len > 0) then
+          result_buf(out_pos:out_pos + repl_len - 1) = replacement(1:repl_len)
+          out_pos = out_pos + repl_len
+        end if
+        i2 = i2 + pat_len
+        if (.not. replace_all) then
+          do while (i2 <= in_len)
+            result_buf(out_pos:out_pos) = input(i2:i2)
+            out_pos = out_pos + 1
+            i2 = i2 + 1
+          end do
+          exit
+        end if
+      else
+        result_buf(out_pos:out_pos) = input(i2:i2)
+        out_pos = out_pos + 1
+        i2 = i2 + 1
+      end if
+    end do
+    if (out_pos > 1) then
+      output = result_buf(1:out_pos - 1)
+    else
+      output = ''
+    end if
+    deallocate(result_buf)
+#endif
   end subroutine
 
 #ifdef USE_C_STRINGS
