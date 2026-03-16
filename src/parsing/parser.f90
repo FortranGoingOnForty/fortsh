@@ -2344,6 +2344,8 @@ contains
   function replace_all(text, pattern, replacement) result(output)
     character(len=*), intent(in) :: text, pattern, replacement
     character(len=:), allocatable :: output
+#ifdef USE_C_STRINGS
+    ! flang-new path: route through C to avoid allocatable heap corruption in loop
     integer :: t_len, p_len, r_len, result_len, rc
     integer(c_int) :: c_result_len
     type(c_ptr) :: c_result_ptr, rbuf
@@ -2396,7 +2398,6 @@ contains
       return
     end if
 
-    ! Route through C: no Fortran allocatable churn in the replace loop
     c_result_len = c_pr_alloc(text, int(t_len, c_int), pattern, int(p_len, c_int), &
                               replacement, int(r_len, c_int), 1_c_int, c_result_ptr)
     result_len = int(c_result_len)
@@ -2412,6 +2413,20 @@ contains
       output = ''
     end if
     call c_pr_free(c_result_ptr)
+#else
+    ! gfortran path: native Fortran allocatable (safe on x86_64 and gfortran ARM64)
+    character(len=:), allocatable :: temp
+    integer :: pos
+
+    output = text
+    do
+      pos = index(output, trim(pattern))
+      if (pos == 0) exit
+      temp = output(:pos-1) // trim(replacement) // &
+        output(pos+len_trim(pattern):)
+      output = temp
+    end do
+#endif
   end function
 
   ! Glob-aware replace all: ${var//pattern/replacement}
