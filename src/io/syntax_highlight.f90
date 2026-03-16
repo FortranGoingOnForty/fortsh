@@ -60,7 +60,7 @@ module syntax_highlight
   integer, parameter, public :: HTOK_DEFAULT         = 16
 
   ! v2 token structure — references positions in input buffer, no string copying
-  type, public :: hl_token_t
+  type :: hl_token_t
     integer :: start_pos = 0
     integer :: end_pos = 0
     integer :: token_type = HTOK_DEFAULT
