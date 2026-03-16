@@ -3228,7 +3228,8 @@ contains
     ! hash with no arguments - display hash table
     if (cmd%num_tokens == 1) then
       if (shell%num_hashed_commands == 0) then
-        write(error_unit, '(a)') 'hash: hash table empty'
+        write(output_unit, '(a)') 'hash: hash table empty'
+        flush(output_unit)
         shell%last_exit_status = 0
         return
       end if
