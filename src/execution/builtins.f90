@@ -3165,10 +3165,10 @@ contains
         shell%last_exit_status = 0
         return
       end if
-      write(output_unit, '(a)') 'hits    command'
+      write(output_unit, '(a,a1,a)') 'hits', achar(9), 'command'
       do i = 1, shell%num_hashed_commands
         if (len_trim(shell%command_hash(i)%command_name) > 0) then
-          write(output_unit, '(i4,4x,a)') shell%command_hash(i)%hits, &
+          write(output_unit, '(i4,a1,a)') shell%command_hash(i)%hits, achar(9), &
             trim(shell%command_hash(i)%full_path)
         end if
       end do
