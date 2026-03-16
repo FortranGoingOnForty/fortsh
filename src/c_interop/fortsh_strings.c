@@ -221,6 +221,40 @@ int fortsh_buffer_append(fortsh_buffer_t* buf, const char* str) {
     return 0;
 }
 
+int fortsh_buffer_grow(fortsh_buffer_t* buf, size_t new_capacity) {
+    if (!buf || !buf->data) return -1;
+    if (new_capacity <= buf->capacity) return 0;  /* already big enough */
+    if (new_capacity > 16*1024*1024) return -1;   /* 16MB sanity cap */
+
+    char* new_data = (char*)realloc(buf->data, new_capacity + 1);
+    if (!new_data) return -1;
+
+    buf->data = new_data;
+    buf->capacity = new_capacity;
+    return 0;
+}
+
+int fortsh_buffer_append_chars(fortsh_buffer_t* buf, const char* str, size_t len) {
+    if (!buf || !buf->data || !str || len == 0) return (buf && len == 0) ? 0 : -1;
+
+    size_t new_len = buf->length + len;
+    if (new_len > buf->capacity) {
+        /* Double or add 256, whichever is larger */
+        size_t grow_to = buf->capacity * 2;
+        if (grow_to < new_len + 256) grow_to = new_len + 256;
+        if (fortsh_buffer_grow(buf, grow_to) != 0) return -1;
+    }
+
+    memcpy(buf->data + buf->length, str, len);
+    buf->length = new_len;
+    buf->data[new_len] = '\0';
+    return 0;
+}
+
+int fortsh_buffer_append_char(fortsh_buffer_t* buf, char ch) {
+    return fortsh_buffer_append_chars(buf, &ch, 1);
+}
+
 void fortsh_buffer_trim(fortsh_buffer_t* buf) {
     if (!buf || !buf->data || buf->length == 0) {
         return;

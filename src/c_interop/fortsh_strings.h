@@ -133,12 +133,37 @@ int fortsh_buffer_insert(fortsh_buffer_t* buf, size_t pos, const char* str);
 int fortsh_buffer_delete(fortsh_buffer_t* buf, size_t start, size_t count);
 
 /**
- * Append string to buffer
+ * Append null-terminated string to buffer
  * @param buf Buffer handle
  * @param str String to append
  * @return 0 on success, -1 on failure (overflow)
  */
 int fortsh_buffer_append(fortsh_buffer_t* buf, const char* str);
+
+/**
+ * Append N bytes from a Fortran string (not null-terminated). Auto-grows.
+ * @param buf Buffer handle
+ * @param str Fortran character data
+ * @param len Number of bytes to append
+ * @return 0 on success, -1 on failure
+ */
+int fortsh_buffer_append_chars(fortsh_buffer_t* buf, const char* str, size_t len);
+
+/**
+ * Append a single character. Auto-grows.
+ * @param buf Buffer handle
+ * @param ch Character to append
+ * @return 0 on success, -1 on failure
+ */
+int fortsh_buffer_append_char(fortsh_buffer_t* buf, char ch);
+
+/**
+ * Grow buffer capacity via realloc, preserving contents.
+ * @param buf Buffer handle
+ * @param new_capacity New capacity (must be >= current length)
+ * @return 0 on success, -1 on failure
+ */
+int fortsh_buffer_grow(fortsh_buffer_t* buf, size_t new_capacity);
 
 /**
  * Trim trailing whitespace (like trim(buffer))
