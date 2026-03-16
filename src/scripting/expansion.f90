@@ -7,6 +7,7 @@ module expansion
   use variables  ! includes check_nounset
   use command_capture, only: execute_command_and_capture
   use iso_fortran_env, only: output_unit, error_unit
+  use iso_c_binding, only: c_char, c_int, c_null_char, c_ptr, c_f_pointer
   implicit none
 
   ! Recursion depth limits
@@ -15,6 +16,23 @@ module expansion
   ! Arithmetic error tracking
   logical :: arithmetic_error = .false.
   character(len=256) :: arithmetic_error_msg = ''
+
+  interface
+    function c_pattern_replace_alloc(input, input_len, pattern, pat_len, &
+                                     replacement, repl_len, replace_all, &
+                                     result_out) result(out_len) bind(C, name='fortsh_pattern_replace_alloc')
+      import :: c_char, c_int, c_ptr
+      character(kind=c_char), intent(in) :: input(*), pattern(*), replacement(*)
+      integer(c_int), value :: input_len, pat_len, repl_len, replace_all
+      type(c_ptr), intent(out) :: result_out
+      integer(c_int) :: out_len
+    end function
+
+    subroutine c_free_string(ptr) bind(C, name='fortsh_free_string')
+      import :: c_ptr
+      type(c_ptr), value :: ptr
+    end subroutine
+  end interface
 
 contains
 
@@ -821,48 +839,56 @@ contains
   subroutine pattern_replace(input, pattern, replacement, replace_all, output)
     character(len=*), intent(in) :: input, pattern, replacement
     logical, intent(in) :: replace_all
-    character(len=*), intent(out) :: output
-    integer :: pos, last_pos
-    character(len=2048) :: temp
+    character(len=:), allocatable, intent(out) :: output
+    integer :: in_len, pat_len, repl_len, result_len, k
+    integer(c_int) :: c_replace_all
+    type(c_ptr) :: c_result_ptr
+    character(kind=c_char), pointer :: c_result_chars(:)
 
-    output = ''
-    temp = input
+    in_len = len_trim(input)
+    pat_len = len_trim(pattern)
+    repl_len = len_trim(replacement)
 
-    if (len_trim(pattern) == 0) then
-      output = input
+    if (pat_len == 0) then
+      output = input(1:in_len)
       return
     end if
 
-    last_pos = 1
-    do
-      pos = index(temp(last_pos:), trim(pattern))
-      if (pos == 0) then
-        ! No more matches, append rest
-        output = trim(output) // temp(last_pos:)
-        exit
-      end if
+    if (replace_all) then
+      c_replace_all = 1_c_int
+    else
+      c_replace_all = 0_c_int
+    end if
 
-      ! Append text before match + replacement
-      pos = last_pos + pos - 1
-      output = trim(output) // temp(last_pos:pos-1) // trim(replacement)
-      last_pos = pos + len_trim(pattern)
+    ! Call C function — it handles ALL allocation internally via malloc
+    result_len = c_pattern_replace_alloc(input, int(in_len, c_int), &
+                                         pattern, int(pat_len, c_int), &
+                                         replacement, int(repl_len, c_int), &
+                                         c_replace_all, c_result_ptr)
 
-      if (.not. replace_all) then
-        ! Only replace first occurrence
-        output = trim(output) // temp(last_pos:)
-        exit
-      end if
-    end do
+    ! Convert C result to Fortran string (single allocatable assignment)
+    if (result_len > 0) then
+      call c_f_pointer(c_result_ptr, c_result_chars, [result_len])
+      allocate(character(len=result_len) :: output)
+      do k = 1, result_len
+        output(k:k) = c_result_chars(k)
+      end do
+    else
+      output = ''
+    end if
+
+    ! Free C-allocated memory
+    call c_free_string(c_result_ptr)
   end subroutine
 
   ! Remove suffix matching pattern (greedy or non-greedy)
   subroutine remove_suffix(input, pattern, greedy, output)
     character(len=*), intent(in) :: input, pattern
     logical, intent(in) :: greedy
-    character(len=*), intent(out) :: output
+    character(len=:), allocatable, intent(out) :: output
     integer :: best_pos, i
 
-    output = input
+    output = input(1:len_trim(input))
 
     if (len_trim(pattern) == 0) return
 
@@ -895,10 +921,10 @@ contains
   subroutine remove_prefix(input, pattern, greedy, output)
     character(len=*), intent(in) :: input, pattern
     logical, intent(in) :: greedy
-    character(len=*), intent(out) :: output
+    character(len=:), allocatable, intent(out) :: output
     integer :: best_pos, i
 
-    output = input
+    output = input(1:len_trim(input))
 
     if (len_trim(pattern) == 0) return
 
