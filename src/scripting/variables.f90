@@ -152,7 +152,7 @@ contains
         shell%variables(i)%value_len = actual_len  ! Store actual length
         ! If exported, update environment
         if (shell%variables(i)%exported) then
-          if (.not. set_environment_var(trim(name), trim(value))) then
+          if (.not. set_environment_var(trim(name), value(1:actual_len))) then
             write(error_unit, '(a)') 'warning: failed to update environment variable'
           end if
         end if
