@@ -1631,6 +1631,7 @@ contains
               write(output_unit, '(a)') 'trap -- ' // "'" // &
                                         trim(shell%traps(k)%command) // "' " // &
                                         trim(signal_number_to_name(signum))
+              flush(output_unit)
               exit
             end if
           end do

@@ -345,6 +345,7 @@ contains
                                   "' " // trim(sig_name)
       end if
     end do
+    flush(output_unit)
   end subroutine
 
   ! Get trap command for a signal (returns empty string if no trap set)
