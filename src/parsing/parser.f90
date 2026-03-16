@@ -10,6 +10,7 @@ module parser
   use error_handling
   use performance
   use iso_fortran_env, only: error_unit, input_unit
+  use iso_c_binding, only: c_char, c_int, c_ptr, c_size_t, c_f_pointer, c_null_char
   implicit none
 
   ! Export backtick conversion for new parser
@@ -2343,17 +2344,74 @@ contains
   function replace_all(text, pattern, replacement) result(output)
     character(len=*), intent(in) :: text, pattern, replacement
     character(len=:), allocatable :: output
-    character(len=:), allocatable :: temp
-    integer :: pos
+    integer :: t_len, p_len, r_len, result_len, rc
+    integer(c_int) :: c_result_len
+    type(c_ptr) :: c_result_ptr, rbuf
+    integer(c_size_t) :: copied
+    character(kind=c_char), pointer :: raw(:)
+    interface
+      function c_pr_alloc(inp, inp_len, pat, pat_len, repl, repl_len, repl_all, res) &
+          result(out_len) bind(C, name='fortsh_pattern_replace_alloc')
+        import :: c_char, c_int, c_ptr
+        character(kind=c_char), intent(in) :: inp(*), pat(*), repl(*)
+        integer(c_int), value :: inp_len, pat_len, repl_len, repl_all
+        type(c_ptr), intent(out) :: res
+        integer(c_int) :: out_len
+      end function
+      subroutine c_pr_free(ptr) bind(C, name='fortsh_free_string')
+        import :: c_ptr
+        type(c_ptr), value :: ptr
+      end subroutine
+      function c_pr_buf_create(cap) result(h) bind(C, name='fortsh_buffer_create')
+        import :: c_ptr, c_size_t
+        integer(c_size_t), value :: cap
+        type(c_ptr) :: h
+      end function
+      subroutine c_pr_buf_destroy(h) bind(C, name='fortsh_buffer_destroy')
+        import :: c_ptr
+        type(c_ptr), value :: h
+      end subroutine
+      function c_pr_buf_append(h, s, l) result(r) bind(C, name='fortsh_buffer_append_chars')
+        import :: c_ptr, c_int, c_char, c_size_t
+        type(c_ptr), value :: h
+        character(kind=c_char), intent(in) :: s(*)
+        integer(c_size_t), value :: l
+        integer(c_int) :: r
+      end function
+      function c_pr_buf_to_f(h, f, l) result(c) bind(C, name='fortsh_buffer_to_fortran')
+        import :: c_ptr, c_size_t, c_char
+        type(c_ptr), value :: h
+        character(kind=c_char) :: f(*)
+        integer(c_size_t), value :: l
+        integer(c_size_t) :: c
+      end function
+    end interface
 
-    output = text
-    do
-      pos = index(output, trim(pattern))
-      if (pos == 0) exit
-      temp = output(:pos-1) // trim(replacement) // &
-        output(pos+len_trim(pattern):)
-      output = temp
-    end do
+    t_len = len_trim(text)
+    p_len = len_trim(pattern)
+    r_len = len_trim(replacement)
+
+    if (p_len == 0 .or. t_len == 0) then
+      output = text(1:t_len)
+      return
+    end if
+
+    ! Route through C: no Fortran allocatable churn in the replace loop
+    c_result_len = c_pr_alloc(text, int(t_len, c_int), pattern, int(p_len, c_int), &
+                              replacement, int(r_len, c_int), 1_c_int, c_result_ptr)
+    result_len = int(c_result_len)
+
+    if (result_len > 0) then
+      call c_f_pointer(c_result_ptr, raw, [result_len])
+      rbuf = c_pr_buf_create(int(result_len + 1, c_size_t))
+      rc = c_pr_buf_append(rbuf, raw, int(result_len, c_size_t))
+      allocate(character(len=result_len) :: output)
+      copied = c_pr_buf_to_f(rbuf, output, int(result_len, c_size_t))
+      call c_pr_buf_destroy(rbuf)
+    else
+      output = ''
+    end if
+    call c_pr_free(c_result_ptr)
   end function
 
   ! Glob-aware replace all: ${var//pattern/replacement}
