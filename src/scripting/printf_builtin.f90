@@ -100,6 +100,7 @@ contains
       ! Output exactly output_len characters to preserve trailing spaces
       if (output_len > 0) then
         write(output_unit, '(a)', advance='no') output_buffer(1:output_len)
+        flush(output_unit)
       end if
 
       ! If no arguments were consumed, we're done (format has no specifiers or no more args)
