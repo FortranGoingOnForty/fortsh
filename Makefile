@@ -66,15 +66,16 @@ FCFLAGS = $(WARN_FLAGS) -std=f2018 $(INTRINSICS_FLAG) -fPIC -g -O0 $(PLATFORM_FL
 # Production flags (minimal warnings, optimized, no debug symbols)
 FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) -std=f2018 $(INTRINSICS_FLAG) -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
 
-# C string library (for flang-new workaround)
-# Automatically enable on macOS ARM64 unless explicitly disabled
-ifeq ($(UNAME_S),Darwin)
+# C string library (flang-new workaround for allocatable heap corruption)
+# Auto-enable when using flang-new on any platform (macOS ARM64, Asahi Linux, etc.)
+# Force override: USE_C_STRINGS=1 make  or  NO_C_STRINGS=1 make
+ifeq ($(NO_C_STRINGS),1)
+  USE_C_STRINGS = 0
+else ifeq ($(FC),flang-new)
+  USE_C_STRINGS = 1
+else ifeq ($(UNAME_S),Darwin)
   ifeq ($(UNAME_M),arm64)
-    ifeq ($(NO_C_STRINGS),1)
-      USE_C_STRINGS = 0
-    else
-      USE_C_STRINGS = 1
-    endif
+    USE_C_STRINGS = 1
   endif
 endif
 
