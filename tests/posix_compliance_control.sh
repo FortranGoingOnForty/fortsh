@@ -939,7 +939,7 @@ fi
 # for with glob pattern
 # Create temp files for glob test
 result=$("$FORTSH_BIN" -c 'cd /tmp && touch _testglob_a _testglob_b && for f in _testglob_*; do echo $f; done | wc -l && rm -f _testglob_*' 2>&1 | head -1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "for with glob expansion"
 else
     fail "for with glob expansion" "2" "$result"
@@ -968,7 +968,7 @@ section "435. WHILE LOOP VARIATIONS"
 
 # while with pipeline
 result=$("$FORTSH_BIN" -c 'i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done | wc -l' 2>&1)
-if [ "$result" = "3" ]; then
+if [ "$result" -eq 3 ] 2>/dev/null; then
     pass "while loop with pipeline"
 else
     fail "while loop with pipeline" "3" "$result"
@@ -1097,7 +1097,7 @@ section "439. BRACE GROUP VARIATIONS"
 
 # brace group in pipeline
 result=$("$FORTSH_BIN" -c '{ echo a; echo b; } | wc -l' 2>&1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "brace group in pipeline"
 else
     fail "brace group in pipeline" "2" "$result"
@@ -1125,7 +1125,7 @@ section "440. SUBSHELL VARIATIONS"
 
 # subshell in pipeline
 result=$("$FORTSH_BIN" -c '(echo a; echo b) | wc -l' 2>&1)
-if [ "$result" = "2" ]; then
+if [ "$result" -eq 2 ] 2>/dev/null; then
     pass "subshell in pipeline"
 else
     fail "subshell in pipeline" "2" "$result"
