@@ -1010,7 +1010,7 @@ fi
 
 # set +f (enable glob)
 result=$("$FORTSH_BIN" -c 'set -f; set +f; ls /*.txt 2>/dev/null | wc -l || echo 0' 2>&1)
-if echo "$result" | grep -qE '^[0-9]+$'; then
+if echo "$result" | grep -qE '^[[:space:]]*[0-9]+[[:space:]]*$'; then
     pass "set +f enables glob"
 else
     fail "set +f enables glob"

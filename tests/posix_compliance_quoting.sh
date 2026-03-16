@@ -660,7 +660,7 @@ section "467. QUOTING SPECIAL PARAMETERS"
 # =====================================
 
 result=$("$FORTSH_BIN" -c 'set -- a b c; echo "$@" | wc -w' 2>&1)
-if [ "$result" = "3" ]; then
+if [ "$result" -eq 3 ] 2>/dev/null; then
     pass 'Quoted $@ preserves args'
 else
     fail 'Quoted $@ preserves args' "3" "$result"
