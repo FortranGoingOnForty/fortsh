@@ -25,6 +25,25 @@ module variables
 
 contains
 
+  ! Safe allocatable string assignment — works around flang-new ARM64 bug where
+  ! allocatable assignment corrupts values >16 bytes. Allocates to exact length
+  ! then copies character-by-character to avoid the substring temporary.
+  subroutine safe_assign_alloc_str(dest, src, src_len)
+    character(len=:), allocatable, intent(inout) :: dest
+    character(len=*), intent(in) :: src
+    integer, intent(in) :: src_len
+    integer :: k
+    if (allocated(dest)) deallocate(dest)
+    if (src_len <= 0) then
+      allocate(character(len=0) :: dest)
+      return
+    end if
+    allocate(character(len=src_len) :: dest)
+    do k = 1, src_len
+      dest(k:k) = src(k:k)
+    end do
+  end subroutine
+
   subroutine set_shell_variable(shell, name, value, value_length)
     use iso_fortran_env, only: error_unit
     type(shell_state_t), intent(inout) :: shell
@@ -49,7 +68,7 @@ contains
         do i = 1, shell%local_var_counts(depth)
           if (trim(shell%local_vars(depth, i)%name) == trim(name)) then
             ! Found existing local variable - update it
-            shell%local_vars(depth, i)%value = value(1:actual_len)
+            call safe_assign_alloc_str(shell%local_vars(depth, i)%value, value, actual_len)
             shell%local_vars(depth, i)%value_len = actual_len
             return
           end if
@@ -148,8 +167,8 @@ contains
           end if
           return
         end if
-        shell%variables(i)%value = value(1:actual_len)
-        shell%variables(i)%value_len = actual_len  ! Store actual length
+        call safe_assign_alloc_str(shell%variables(i)%value, value, actual_len)
+        shell%variables(i)%value_len = actual_len
         ! If exported, update environment
         if (shell%variables(i)%exported) then
           if (.not. set_environment_var(trim(name), value(1:actual_len))) then
@@ -172,8 +191,8 @@ contains
     ! Add new variable
     if (empty_slot > 0) then
       shell%variables(empty_slot)%name = name
-      shell%variables(empty_slot)%value = value(1:actual_len)
-      shell%variables(empty_slot)%value_len = actual_len  ! Store actual length
+      call safe_assign_alloc_str(shell%variables(empty_slot)%value, value, actual_len)
+      shell%variables(empty_slot)%value_len = actual_len
       shell%num_variables = shell%num_variables + 1
     end if
   end subroutine
@@ -1312,11 +1331,12 @@ contains
         ! Check if key already exists
         do j = 1, shell%variables(i)%assoc_size
           if (trim(shell%variables(i)%assoc_entries(j)%key) == trim(key)) then
-            shell%variables(i)%assoc_entries(j)%value = value
+            call safe_assign_alloc_str(shell%variables(i)%assoc_entries(j)%value, &
+                                      value, len_trim(value))
             return
           end if
         end do
-        
+
         ! Add new key-value pair — grow array if needed
         if (shell%variables(i)%assoc_size >= size(shell%variables(i)%assoc_entries)) then
           block
@@ -1327,14 +1347,18 @@ contains
             allocate(new_entries(new_size))
             do k = 1, old_size
               new_entries(k)%key = shell%variables(i)%assoc_entries(k)%key
-              new_entries(k)%value = shell%variables(i)%assoc_entries(k)%value
+              call safe_assign_alloc_str(new_entries(k)%value, &
+                  shell%variables(i)%assoc_entries(k)%value, &
+                  len_trim(shell%variables(i)%assoc_entries(k)%value))
             end do
             call move_alloc(new_entries, shell%variables(i)%assoc_entries)
           end block
         end if
         shell%variables(i)%assoc_size = shell%variables(i)%assoc_size + 1
         shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%key = key
-        shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%value = value
+        call safe_assign_alloc_str( &
+            shell%variables(i)%assoc_entries(shell%variables(i)%assoc_size)%value, &
+            value, len_trim(value))
         return
       end if
     end do
