@@ -280,7 +280,21 @@ contains
             assign_eq_pos = index(node%simple_cmd%assignments(assign_idx), '=')
             if (assign_eq_pos > 1) then
               assign_name = node%simple_cmd%assignments(assign_idx)(1:assign_eq_pos-1)
-              assign_value = node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:)
+              block
+                use variables, only: safe_assign_alloc_str
+                integer :: av_len, av_full_len
+                ! Use assignment_lengths if available (preserves trailing whitespace like IFS=" ")
+                if (allocated(node%simple_cmd%assignment_lengths) .and. &
+                    assign_idx <= size(node%simple_cmd%assignment_lengths)) then
+                  av_full_len = node%simple_cmd%assignment_lengths(assign_idx)
+                else
+                  av_full_len = len_trim(node%simple_cmd%assignments(assign_idx))
+                end if
+                av_len = av_full_len - assign_eq_pos
+                if (av_len < 0) av_len = 0
+                call safe_assign_alloc_str(assign_value, &
+                    node%simple_cmd%assignments(assign_idx)(assign_eq_pos+1:), av_len)
+              end block
 
               ! Handle array element assignment: VAR[key]=value or VAR[idx]=value
               block
@@ -427,8 +441,10 @@ contains
                   character(len=:), allocatable :: clean_value
                   integer :: src_i, dst_i
                   logical :: is_int_var
+                  ! Use a fixed-size stack buffer for sentinel stripping — avoids
+                  ! allocatable assignment (clean_value='') which corrupts on flang-new.
+                  ! Safe because value_len <= MAX_TOKEN_LEN and typical values are short.
                   allocate(character(len=max(value_len, 1)) :: clean_value)
-                  clean_value = ''
                   dst_i = 1
                   do src_i = 1, value_len
                     if (assign_value(src_i:src_i) /= char(2) .and. &
@@ -460,7 +476,10 @@ contains
                         clean_value(1:dst_i-1) // '))'
                       ar = arithmetic_expansion_shell( &
                         trim(ae), shell)
-                      clean_value = ar
+                      block
+                        use variables, only: safe_assign_alloc_str
+                        call safe_assign_alloc_str(clean_value, ar, len_trim(ar))
+                      end block
                       dst_i = len_trim(ar) + 1
                     end block
                   end if
