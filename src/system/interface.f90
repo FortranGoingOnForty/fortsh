@@ -244,7 +244,11 @@ module system_interface
   integer(c_int), parameter :: RLIMIT_MSGQUEUE = 12  ! Maximum bytes in POSIX message queues
 
   ! Infinite limit value
-  integer(c_long), parameter :: RLIM_INFINITY = -1
+#ifdef __APPLE__
+  integer(c_long), parameter :: RLIM_INFINITY = 9223372036854775807_c_long  ! 0x7FFFFFFFFFFFFFFF on macOS
+#else
+  integer(c_long), parameter :: RLIM_INFINITY = -1  ! (unsigned long)-1 on Linux
+#endif
 
   ! C function interfaces
   interface
