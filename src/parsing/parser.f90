@@ -1283,7 +1283,7 @@ contains
     character(len=:), allocatable :: result, working_token
     integer :: i, j, var_start, brace_depth, end_pos
     integer :: result_cap
-    character(len=MAX_TOKEN_LEN) :: var_name
+    character(len=256) :: var_name  ! Variable names are short; was MAX_TOKEN_LEN (4096)
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
     logical :: is_quoted, is_single_quoted
@@ -2533,9 +2533,10 @@ contains
     character(len=:), allocatable, intent(out) :: result_value
     type(shell_state_t), intent(inout) :: shell
 
-    character(len=MAX_TOKEN_LEN) :: var_name, default_value, operation, index_str
+    character(len=256) :: var_name, default_value, operation, index_str
     character(len=:), allocatable :: assoc_value
-    character(len=256) :: keys(500), offset_str, length_str_temp
+    character(len=256), allocatable :: keys(:)
+    character(len=256) :: offset_str, length_str_temp
     integer :: op_pos, op_len, bracket_pos, bracket_end, array_index, array_sz
     integer :: num_keys, key_idx
     integer :: colon_pos, offset, str_length, second_colon, iostat_val, char_code
@@ -2718,6 +2719,7 @@ contains
             ! ${#arr[@]} - return array length
             if (is_associative_array(shell, trim(var_name))) then
               ! For associative arrays, count the keys
+              if (.not. allocated(keys)) allocate(keys(500))
               call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
               write(length_str, '(I0)') num_keys
               result_value = trim(length_str)
@@ -2740,6 +2742,7 @@ contains
             ! ${!arr[@]} - return indices or keys
             if (is_associative_array(shell, trim(var_name))) then
               ! Return keys for associative array
+              if (.not. allocated(keys)) allocate(keys(500))
               call get_assoc_array_keys(shell, trim(var_name), keys, num_keys)
               if (num_keys == 0) then
                 result_value = ''
