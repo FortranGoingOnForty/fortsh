@@ -161,7 +161,7 @@ contains
     integer :: i, func_idx, old_num_positional, eq_pos, fd_mark
     type(pipeline_t) :: temp_pipeline
     type(redirection_t) :: temp_redirect
-    character(len=MAX_TOKEN_LEN) :: cmd_name
+    character(len=256) :: cmd_name  ! Command names are short; was MAX_TOKEN_LEN (4096)
     type(string_t), allocatable :: old_params(:)
     character(len=:), allocatable :: expanded_filename
     logical :: redir_success
@@ -261,8 +261,8 @@ contains
           use variables, only: set_shell_variable
           use parser, only: expand_variables
           integer :: assign_idx, assign_eq_pos, value_len, token_len, saved_status
-          character(len=MAX_TOKEN_LEN) :: assign_name, assign_value
-          character(len=:), allocatable :: expanded_value
+          character(len=256) :: assign_name
+          character(len=:), allocatable :: assign_value, expanded_value
 
           ! Save the exit status before assignment expansion
           ! POSIX: Pure assignment exit status should be 0 unless command substitution fails
@@ -424,9 +424,10 @@ contains
                 ! Preserve whitespace in value by passing explicit length
                 ! Strip sentinel characters that may be embedded
                 block
-                  character(len=MAX_TOKEN_LEN) :: clean_value
+                  character(len=:), allocatable :: clean_value
                   integer :: src_i, dst_i
                   logical :: is_int_var
+                  allocate(character(len=max(value_len, 1)) :: clean_value)
                   clean_value = ''
                   dst_i = 1
                   do src_i = 1, value_len
@@ -545,7 +546,7 @@ contains
         (shell%is_interactive .or. shell%shopt_expand_aliases) .and. &
         .not. shell%bypass_aliases .and. .not. shell%executing_trap) then
       block
-        character(len=MAX_TOKEN_LEN) :: first_word
+        character(len=256) :: first_word
         integer :: alias_i
         first_word = trim(node%simple_cmd%words(1))
         do alias_i = 1, shell%num_aliases
@@ -554,7 +555,7 @@ contains
             block
               use grammar_parser, only: parse_command_line
               use command_tree, only: destroy_command_node
-              character(len=4096) :: expanded_line
+              character(len=:), allocatable :: expanded_line
               type(command_node_t), pointer :: alias_ast
               integer :: word_i
               expanded_line = trim(shell%aliases(alias_i)%command)
@@ -747,7 +748,7 @@ contains
         ! Fire RETURN trap if set (before cleanup, while still in function scope)
         block
           use signal_handling, only: get_trap_command, TRAP_RETURN
-          character(len=4096) :: return_trap_cmd
+          character(len=256) :: return_trap_cmd
           return_trap_cmd = get_trap_command(shell, TRAP_RETURN)
           if (len_trim(return_trap_cmd) > 0 .and. &
               .not. shell%executing_trap) then
