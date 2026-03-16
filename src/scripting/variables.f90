@@ -6,9 +6,12 @@ module variables
   use shell_types
   use system_interface
   use iso_fortran_env, only: output_unit, error_unit
+#ifdef USE_C_STRINGS
   use iso_c_binding, only: c_ptr, c_char, c_int, c_size_t
+#endif
   implicit none
 
+#ifdef USE_C_STRINGS
   interface
     function c_vbuf_append_chars(handle, str, slen) result(rc) bind(C, name='fortsh_buffer_append_chars')
       import :: c_ptr, c_int, c_char, c_size_t
@@ -18,6 +21,7 @@ module variables
       integer(c_int) :: rc
     end function
   end interface
+#endif
 
 contains
 
@@ -340,6 +344,7 @@ contains
     value = get_environment_var(trim(name))
   end function
 
+#ifdef USE_C_STRINGS
   ! Copy variable value directly into a C buffer — no allocatable intermediaries.
   ! This avoids the flang-new heap corruption that occurs when large (>2KB)
   ! allocatable strings are returned from get_shell_variable.
@@ -417,6 +422,7 @@ contains
       if (vlen > 0) rc = c_vbuf_append_chars(cbuf, env_val, int(vlen, c_size_t))
     end block
   end subroutine
+#endif
 
   function is_shell_variable_set(shell, name) result(is_set)
     type(shell_state_t), intent(in) :: shell
