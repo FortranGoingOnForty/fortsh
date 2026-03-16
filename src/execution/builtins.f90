@@ -438,8 +438,24 @@ contains
         end do
 #endif
       else
-        ! Relative path - use physical path from getcwd()
-        shell%cwd = get_current_directory()
+        ! Relative path — resolve logically against $PWD (POSIX default -L behavior)
+        block
+          character(len=MAX_PATH_LEN) :: logical_path
+          integer :: lp_len, slash_pos
+#ifdef USE_MEMORY_POOL
+          logical_path = trim(old_cwd) // '/' // trim(target_dir_ref%data)
+#else
+          logical_path = trim(old_cwd) // '/' // trim(target_dir)
+#endif
+          ! Normalize: resolve . and .. components
+          call normalize_path(logical_path)
+          lp_len = len_trim(logical_path)
+          if (lp_len > 0) then
+            shell%cwd = logical_path(1:lp_len)
+          else
+            shell%cwd = get_current_directory()
+          end if
+        end block
       end if
 
       ! Update PWD and OLDPWD environment variables
@@ -484,6 +500,57 @@ contains
     call pool_release_string(target_dir_ref)
     call dashboard_track_deallocation(MOD_BUILTINS, MAX_PATH_LEN, 4)
 #endif
+  end subroutine
+
+  ! Resolve . and .. components in a path logically (no syscalls)
+  subroutine normalize_path(path)
+    character(len=*), intent(inout) :: path
+    character(len=256) :: components(64)
+    integer :: num_comp, i, start, plen, out_len
+    character(len=len(path)) :: result
+
+    plen = len_trim(path)
+    if (plen == 0) return
+
+    ! Split path on /
+    num_comp = 0
+    start = 1
+    ! Skip leading /
+    if (path(1:1) == '/') start = 2
+
+    do while (start <= plen)
+      i = index(path(start:plen), '/')
+      if (i == 0) then
+        i = plen - start + 1
+      else
+        i = i - 1
+      end if
+      if (i > 0) then
+        if (path(start:start+i-1) == '..') then
+          ! Pop last component
+          if (num_comp > 0) num_comp = num_comp - 1
+        else if (path(start:start+i-1) /= '.' .and. i > 0) then
+          ! Push component
+          num_comp = num_comp + 1
+          components(num_comp) = path(start:start+i-1)
+        end if
+      end if
+      start = start + i + 1
+    end do
+
+    ! Reconstruct
+    result = '/'
+    out_len = 1
+    do i = 1, num_comp
+      if (i > 1) then
+        result(out_len+1:out_len+1) = '/'
+        out_len = out_len + 1
+      end if
+      result(out_len+1:out_len+len_trim(components(i))) = trim(components(i))
+      out_len = out_len + len_trim(components(i))
+    end do
+
+    path = result(1:out_len)
   end subroutine
 
   subroutine builtin_pwd(cmd, shell)
