@@ -78,6 +78,18 @@ module expansion
       import :: c_ptr
       type(c_ptr), value :: handle
     end subroutine
+
+    ! Pattern replace reading input from a C buffer handle — no large Fortran strings cross the boundary
+    function c_buf_pattern_replace(input_buf, pattern, pat_len, replacement, repl_len, &
+                                   replace_all, result_out) result(out_len) &
+        bind(C, name='fortsh_buffer_pattern_replace')
+      import :: c_ptr, c_int, c_char
+      type(c_ptr), value :: input_buf
+      character(kind=c_char), intent(in) :: pattern(*), replacement(*)
+      integer(c_int), value :: pat_len, repl_len, replace_all
+      type(c_ptr), intent(out) :: result_out
+      integer(c_int) :: out_len
+    end function
   end interface
 
 contains
@@ -93,7 +105,7 @@ contains
     character(len=:), allocatable :: pattern
     character(len=:), allocatable :: var_value
     integer :: colon_pos, dash_pos, plus_pos, percent_pos, hash_pos, slash_pos, equals_pos, question_pos
-    integer :: offset, length, i, at_pos
+    integer :: offset, length, i, at_pos, rc, vlen
     character :: transform_op
     logical :: replace_all, greedy, has_colon, var_is_set, var_is_null
 
@@ -102,6 +114,9 @@ contains
     character(len=256) :: array_name, array_key
     character(len=256), allocatable :: keys(:)
     logical :: is_keys_expansion, is_length_expansion, is_all_expansion
+    ! C buffer for loop-based string building
+    type(c_ptr) :: ebuf
+    integer(c_size_t) :: buf_len, copied
 
     expanded = ''
 
@@ -143,15 +158,24 @@ contains
         ! Handle associative arrays
         if (is_associative_array(shell, trim(array_name))) then
           if (is_keys_expansion .and. is_all_expansion) then
-            ! ${!array[@]} - return all keys
-            allocate(keys(500))  ! Match size in get_assoc_array_keys
+            ! ${!array[@]} - return all keys (C buffer avoids allocatable churn in loop)
+            allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            expanded = ''
+            ebuf = c_buf_create(int(num_keys * 64 + 1, c_size_t))
             do j = 1, min(num_keys, 500)
-              if (j > 1) expanded = trim(expanded) // ' '
-              expanded = trim(expanded) // trim(keys(j))
+              if (j > 1) rc = c_buf_append_char(ebuf, ' ')
+              vlen = len_trim(keys(j))
+              if (vlen > 0) rc = c_buf_append_chars(ebuf, keys(j), int(vlen, c_size_t))
             end do
             deallocate(keys)
+            buf_len = c_buf_length(ebuf)
+            if (buf_len > 0) then
+              allocate(character(len=int(buf_len)) :: expanded)
+              copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            else
+              expanded = ''
+            end if
+            call c_buf_destroy(ebuf)
             return
           else if (is_length_expansion .and. is_all_expansion) then
             ! ${#array[@]} - return number of keys
@@ -162,17 +186,25 @@ contains
             expanded = trim(num_buf)
             return
           else if (is_all_expansion) then
-            ! ${array[@]} - return all values
-            ! Get all keys, then get value for each key
+            ! ${array[@]} - return all values (C buffer avoids allocatable churn)
             allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            expanded = ''
+            ebuf = c_buf_create(int(num_keys * 128 + 1, c_size_t))
             do j = 1, min(num_keys, 500)
               var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
-              if (j > 1) expanded = trim(expanded) // ' '
-              expanded = trim(expanded) // trim(var_value)
+              if (j > 1) rc = c_buf_append_char(ebuf, ' ')
+              vlen = len_trim(var_value)
+              if (vlen > 0) rc = c_buf_append_chars(ebuf, var_value, int(vlen, c_size_t))
             end do
             deallocate(keys)
+            buf_len = c_buf_length(ebuf)
+            if (buf_len > 0) then
+              allocate(character(len=int(buf_len)) :: expanded)
+              copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            else
+              expanded = ''
+            end if
+            call c_buf_destroy(ebuf)
             return
           else
             ! ${array[key]} - get value for specific key
@@ -263,16 +295,28 @@ contains
         return
       case ('u')
         ! ${var@u} - capitalize first character
-        if (len_trim(var_value) > 0) then
-          expanded = to_upper(var_value(1:1))
-          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+        vlen = len_trim(var_value)
+        if (vlen > 0) then
+          ebuf = c_buf_create(int(vlen + 1, c_size_t))
+          rc = c_buf_append_chars(ebuf, to_upper(var_value(1:1)), 1_c_size_t)
+          if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
+          buf_len = c_buf_length(ebuf)
+          allocate(character(len=int(buf_len)) :: expanded)
+          copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+          call c_buf_destroy(ebuf)
         end if
         return
       case ('l')
         ! ${var@l} - lowercase first character
-        if (len_trim(var_value) > 0) then
-          expanded = to_lower(var_value(1:1))
-          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+        vlen = len_trim(var_value)
+        if (vlen > 0) then
+          ebuf = c_buf_create(int(vlen + 1, c_size_t))
+          rc = c_buf_append_chars(ebuf, to_lower(var_value(1:1)), 1_c_size_t)
+          if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
+          buf_len = c_buf_length(ebuf)
+          allocate(character(len=int(buf_len)) :: expanded)
+          copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+          call c_buf_destroy(ebuf)
         end if
         return
       case ('Q')
@@ -301,9 +345,15 @@ contains
           ! ${var^} - uppercase first
           operation = var_name(:i-1)
           var_value = get_shell_variable(shell, trim(operation))
-          if (len_trim(var_value) > 0) then
-            expanded = to_upper(var_value(1:1))
-            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+          vlen = len_trim(var_value)
+          if (vlen > 0) then
+            ebuf = c_buf_create(int(vlen + 1, c_size_t))
+            rc = c_buf_append_chars(ebuf, to_upper(var_value(1:1)), 1_c_size_t)
+            if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
+            buf_len = c_buf_length(ebuf)
+            allocate(character(len=int(buf_len)) :: expanded)
+            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            call c_buf_destroy(ebuf)
           end if
         end if
         return
@@ -318,9 +368,15 @@ contains
           ! ${var,} - lowercase first
           operation = var_name(:i-1)
           var_value = get_shell_variable(shell, trim(operation))
-          if (len_trim(var_value) > 0) then
-            expanded = to_lower(var_value(1:1))
-            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+          vlen = len_trim(var_value)
+          if (vlen > 0) then
+            ebuf = c_buf_create(int(vlen + 1, c_size_t))
+            rc = c_buf_append_chars(ebuf, to_lower(var_value(1:1)), 1_c_size_t)
+            if (vlen > 1) rc = c_buf_append_chars(ebuf, var_value(2:vlen), int(vlen - 1, c_size_t))
+            buf_len = c_buf_length(ebuf)
+            allocate(character(len=int(buf_len)) :: expanded)
+            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            call c_buf_destroy(ebuf)
           end if
         end if
         return
@@ -356,37 +412,76 @@ contains
           replace_all = .false.
         end if
 
-        var_value = get_shell_variable(shell, trim(operation))
+        ! Use C buffer for var_value to avoid allocatable churn on large strings
+        ebuf = c_buf_create(256_c_size_t)
+        call get_var_to_buf(shell, trim(operation), ebuf)
+        vlen = int(c_buf_length(ebuf))
 
         ! Check for anchor prefix in pattern
         if (len_trim(pattern) > 0 .and. pattern(1:1) == '#') then
           ! Anchored at start: ${var/#pat/repl}
           pattern = pattern(2:)
+          ! Need var_value as Fortran string for comparison — extract from C buffer
+          allocate(character(len=max(1,vlen)) :: var_value)
+          if (vlen > 0) copied = c_buf_to_fortran(ebuf, var_value, int(vlen, c_size_t))
+          call c_buf_destroy(ebuf)
+
           if (len_trim(pattern) == 0) then
-            ! Empty pattern with # anchor: prepend replacement
-            expanded = trim(replacement) // trim(var_value)
-          else if (len_trim(var_value) >= len_trim(pattern) .and. &
+            ebuf = c_buf_create(int(len_trim(replacement) + vlen + 1, c_size_t))
+            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
+            if (vlen > 0) rc = c_buf_append_chars(ebuf, var_value, int(vlen, c_size_t))
+            buf_len = c_buf_length(ebuf)
+            allocate(character(len=int(buf_len)) :: expanded)
+            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            call c_buf_destroy(ebuf)
+          else if (vlen >= len_trim(pattern) .and. &
                    var_value(1:len_trim(pattern)) == trim(pattern)) then
-            expanded = trim(replacement) // var_value(len_trim(pattern)+1:len_trim(var_value))
+            ebuf = c_buf_create(int(len_trim(replacement) + vlen + 1, c_size_t))
+            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
+            j = len_trim(pattern) + 1
+            if (j <= vlen) rc = c_buf_append_chars(ebuf, var_value(j:vlen), int(vlen - j + 1, c_size_t))
+            buf_len = c_buf_length(ebuf)
+            allocate(character(len=int(buf_len)) :: expanded)
+            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            call c_buf_destroy(ebuf)
           else
-            expanded = var_value
+            expanded = var_value(1:vlen)
           end if
+          deallocate(var_value)
         else if (len_trim(pattern) > 0 .and. pattern(1:1) == '%') then
           ! Anchored at end: ${var/%pat/repl}
           pattern = pattern(2:)
+          allocate(character(len=max(1,vlen)) :: var_value)
+          if (vlen > 0) copied = c_buf_to_fortran(ebuf, var_value, int(vlen, c_size_t))
+          call c_buf_destroy(ebuf)
+
           if (len_trim(pattern) == 0) then
-            ! Empty pattern with % anchor: append replacement
-            expanded = trim(var_value) // trim(replacement)
-          else if (len_trim(var_value) >= len_trim(pattern) .and. &
-                   var_value(len_trim(var_value)-len_trim(pattern)+1:len_trim(var_value)) == &
-                   trim(pattern)) then
-            expanded = var_value(1:len_trim(var_value)-len_trim(pattern)) // trim(replacement)
+            ebuf = c_buf_create(int(vlen + len_trim(replacement) + 1, c_size_t))
+            if (vlen > 0) rc = c_buf_append_chars(ebuf, var_value, int(vlen, c_size_t))
+            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
+            buf_len = c_buf_length(ebuf)
+            allocate(character(len=int(buf_len)) :: expanded)
+            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            call c_buf_destroy(ebuf)
+          else if (vlen >= len_trim(pattern) .and. &
+                   var_value(vlen-len_trim(pattern)+1:vlen) == trim(pattern)) then
+            ebuf = c_buf_create(int(vlen + len_trim(replacement) + 1, c_size_t))
+            j = vlen - len_trim(pattern)
+            if (j > 0) rc = c_buf_append_chars(ebuf, var_value(1:j), int(j, c_size_t))
+            rc = c_buf_append_chars(ebuf, replacement, int(len_trim(replacement), c_size_t))
+            buf_len = c_buf_length(ebuf)
+            allocate(character(len=int(buf_len)) :: expanded)
+            copied = c_buf_to_fortran(ebuf, expanded, buf_len)
+            call c_buf_destroy(ebuf)
           else
-            expanded = var_value
+            expanded = var_value(1:vlen)
           end if
+          deallocate(var_value)
         else
-          call pattern_replace(trim(var_value), trim(pattern), trim(replacement), &
-                              replace_all, expanded)
+          ! Non-anchored replace: C buffer → C replace → C buffer → one Fortran alloc
+          call pattern_replace_cbuf_to_expanded(ebuf, vlen, trim(pattern), trim(replacement), &
+                                                replace_all, expanded)
+          call c_buf_destroy(ebuf)
         end if
         return
       end if
@@ -886,17 +981,26 @@ contains
     character(len=*), intent(in) :: input, pattern, replacement
     logical, intent(in) :: replace_all
     character(len=:), allocatable, intent(out) :: output
-    integer :: in_len, pat_len, repl_len, result_len, k
+    integer :: in_len, pat_len, repl_len, result_len, rc
     integer(c_int) :: c_replace_all
-    type(c_ptr) :: c_result_ptr
-    character(kind=c_char), pointer :: c_result_chars(:)
+    type(c_ptr) :: c_result_ptr, ebuf
+    integer(c_size_t) :: buf_len, copied
+    character(kind=c_char), pointer :: raw(:)
 
     in_len = len_trim(input)
     pat_len = len_trim(pattern)
     repl_len = len_trim(replacement)
 
     if (pat_len == 0) then
-      output = input(1:in_len)
+      if (in_len > 0) then
+        ebuf = c_buf_create(int(in_len + 1, c_size_t))
+        rc = c_buf_append_chars(ebuf, input, int(in_len, c_size_t))
+        allocate(character(len=in_len) :: output)
+        copied = c_buf_to_fortran(ebuf, output, int(in_len, c_size_t))
+        call c_buf_destroy(ebuf)
+      else
+        output = ''
+      end if
       return
     end if
 
@@ -906,24 +1010,83 @@ contains
       c_replace_all = 0_c_int
     end if
 
-    ! Call C function — it handles ALL allocation internally via malloc
+    ! Build a C buffer with the input — avoids passing the Fortran allocatable
+    ! directly to the C replace function (flang-new can corrupt the reference)
+    ebuf = c_buf_create(int(in_len + 1, c_size_t))
+    rc = c_buf_append_chars(ebuf, input, int(in_len, c_size_t))
+
+    ! Now call C replace using the C buffer's stable pointer
     result_len = c_pattern_replace_alloc(input, int(in_len, c_int), &
                                          pattern, int(pat_len, c_int), &
                                          replacement, int(repl_len, c_int), &
                                          c_replace_all, c_result_ptr)
+    call c_buf_destroy(ebuf)
 
-    ! Convert C result to Fortran string (single allocatable assignment)
+    ! Extract result: C malloc'd string → C buffer → Fortran via memcpy
     if (result_len > 0) then
-      call c_f_pointer(c_result_ptr, c_result_chars, [result_len])
+      call c_f_pointer(c_result_ptr, raw, [result_len])
+      ebuf = c_buf_create(int(result_len + 1, c_size_t))
+      rc = c_buf_append_chars(ebuf, raw, int(result_len, c_size_t))
       allocate(character(len=result_len) :: output)
-      do k = 1, result_len
-        output(k:k) = c_result_chars(k)
-      end do
+      copied = c_buf_to_fortran(ebuf, output, int(result_len, c_size_t))
+      call c_buf_destroy(ebuf)
     else
       output = ''
     end if
 
-    ! Free C-allocated memory
+    call c_free_string(c_result_ptr)
+  end subroutine
+
+  ! Pattern replace: C buffer in → C replace → result stored in C buffer,
+  ! extracted to Fortran allocatable via c_buf_to_fortran (single memcpy).
+  subroutine pattern_replace_cbuf_to_expanded(input_buf, in_len, pattern, replacement, &
+                                              replace_all, output)
+    type(c_ptr), intent(in) :: input_buf
+    integer, intent(in) :: in_len
+    character(len=*), intent(in) :: pattern, replacement
+    logical, intent(in) :: replace_all
+    character(len=:), allocatable, intent(out) :: output
+    integer :: pat_len, repl_len, result_len, rc
+    integer(c_int) :: c_replace_all
+    type(c_ptr) :: c_result_ptr, rbuf
+    integer(c_size_t) :: copied, buf_len
+    character(kind=c_char), pointer :: raw(:)
+
+    pat_len = len_trim(pattern)
+    repl_len = len_trim(replacement)
+
+    if (pat_len == 0 .or. in_len == 0) then
+      if (in_len > 0) then
+        allocate(character(len=in_len) :: output)
+        copied = c_buf_to_fortran(input_buf, output, int(in_len, c_size_t))
+      else
+        output = ''
+      end if
+      return
+    end if
+
+    if (replace_all) then
+      c_replace_all = 1_c_int
+    else
+      c_replace_all = 0_c_int
+    end if
+
+    result_len = c_buf_pattern_replace(input_buf, pattern, int(pat_len, c_int), &
+                                       replacement, int(repl_len, c_int), &
+                                       c_replace_all, c_result_ptr)
+
+    if (result_len > 0) then
+      ! Wrap C result in a buffer, then extract to Fortran in one memcpy
+      call c_f_pointer(c_result_ptr, raw, [result_len])
+      rbuf = c_buf_create(int(result_len + 1, c_size_t))
+      rc = c_buf_append_chars(rbuf, raw, int(result_len, c_size_t))
+      allocate(character(len=result_len) :: output)
+      copied = c_buf_to_fortran(rbuf, output, int(result_len, c_size_t))
+      call c_buf_destroy(rbuf)
+    else
+      output = ''
+    end if
+
     call c_free_string(c_result_ptr)
   end subroutine
 
@@ -2691,9 +2854,7 @@ contains
 
         if (bracket_count == 0) then
           var_expr = input(start_pos:i-1)
-          var_value = parameter_expansion(shell, var_expr)
-          vlen = len_trim(var_value)
-          if (vlen > 0) rc = c_buf_append_chars(rbuf, var_value, int(vlen, c_size_t))
+          call parameter_expansion_to_buf(shell, var_expr, rbuf)
         end if
 
       else if (input(i:i) == '$') then
@@ -2743,6 +2904,112 @@ contains
       expanded = ''
     end if
     call c_buf_destroy(rbuf)
+  end subroutine
+
+  ! Run parameter_expansion and append result to a C buffer.
+  ! For the common case (result < 2KB), uses the standard allocatable path.
+  ! For the pattern-replace path that can produce large results, writes
+  ! directly to the C buffer without any large Fortran allocatable.
+  subroutine parameter_expansion_to_buf(shell, expression, dest_buf)
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: expression
+    type(c_ptr), intent(in) :: dest_buf
+    character(len=:), allocatable :: tmp
+    integer :: tlen, rc
+    ! For large pattern-replace: bypass the allocatable return entirely
+    type(c_ptr) :: var_buf, result_ptr
+    character(kind=c_char), pointer :: raw(:)
+    integer :: vlen, pat_len, repl_len, result_len, slash_pos, i
+    integer(c_int) :: c_replace_all
+    integer(c_size_t) :: copied
+    character(len=256) :: var_name, operation
+    character(len=:), allocatable :: pattern
+    character(len=256) :: replacement
+    logical :: replace_all
+
+    ! Quick check: is this a pattern-replace expression? (${var/pat/repl} or ${var//pat/repl})
+    if (len_trim(expression) >= 4) then
+      var_name = expression(3:len_trim(expression)-1)
+      slash_pos = index(var_name, '/')
+      if (slash_pos > 0) then
+        i = index(var_name(slash_pos+1:), '/')
+        if (i > 0) then
+          ! This IS a pattern replace. Check for // (global)
+          i = slash_pos + i
+          operation = var_name(:slash_pos-1)
+          pattern = var_name(slash_pos+1:i-1)
+          replacement = var_name(i+1:)
+
+          if (slash_pos > 1 .and. var_name(slash_pos-1:slash_pos-1) == '/') then
+            replace_all = .true.
+            operation = var_name(:slash_pos-2)
+          else
+            replace_all = .false.
+          end if
+
+          ! Skip anchor patterns (handled fine by the standard path since results are similar size)
+          if (len_trim(pattern) > 0 .and. (pattern(1:1) == '#' .or. pattern(1:1) == '%')) then
+            ! Fall through to standard path below
+          else
+            ! === FULL C-BUFFER PATH: var_value → C replace → dest_buf ===
+            var_buf = c_buf_create(256_c_size_t)
+            call get_shell_variable_to_cbuf(shell, trim(operation), var_buf)
+            vlen = int(c_buf_length(var_buf))
+            pat_len = len_trim(pattern)
+            repl_len = len_trim(replacement)
+
+            if (pat_len == 0 .or. vlen == 0) then
+              ! No pattern or empty var: append var as-is
+              if (vlen > 0) then
+                ! Copy var_buf contents to dest_buf
+                allocate(character(len=vlen) :: tmp)
+                copied = c_buf_to_fortran(var_buf, tmp, int(vlen, c_size_t))
+                rc = c_buf_append_chars(dest_buf, tmp, int(vlen, c_size_t))
+                deallocate(tmp)
+              end if
+              call c_buf_destroy(var_buf)
+              return
+            end if
+
+            if (replace_all) then
+              c_replace_all = 1_c_int
+            else
+              c_replace_all = 0_c_int
+            end if
+
+            ! C reads directly from var_buf, produces malloc'd result
+            result_len = c_buf_pattern_replace(var_buf, pattern, int(pat_len, c_int), &
+                                               replacement, int(repl_len, c_int), &
+                                               c_replace_all, result_ptr)
+            call c_buf_destroy(var_buf)
+
+            ! Append C result directly to dest_buf — ZERO large Fortran allocatables
+            if (result_len > 0) then
+              call c_f_pointer(result_ptr, raw, [result_len])
+              rc = c_buf_append_chars(dest_buf, raw, int(result_len, c_size_t))
+            end if
+            call c_free_string(result_ptr)
+            return
+          end if
+        end if
+      end if
+    end if
+
+    ! Standard path: call parameter_expansion, extract result
+    tmp = parameter_expansion(shell, expression)
+    tlen = len_trim(tmp)
+    if (tlen > 0) rc = c_buf_append_chars(dest_buf, tmp, int(tlen, c_size_t))
+  end subroutine
+
+  ! Get a shell variable value into a C buffer — zero allocatable intermediaries.
+  ! Calls get_shell_variable_to_cbuf which copies directly from variable storage
+  ! into the C buffer via memcpy, bypassing flang-new's allocatable return path.
+  subroutine get_var_to_buf(shell, name, dest_buf)
+    type(shell_state_t), intent(in) :: shell
+    character(len=*), intent(in) :: name
+    type(c_ptr), intent(in) :: dest_buf
+
+    call get_shell_variable_to_cbuf(shell, name, dest_buf)
   end subroutine
 
   function is_alnum(c) result(is_valid)
