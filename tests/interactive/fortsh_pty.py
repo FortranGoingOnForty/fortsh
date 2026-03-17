@@ -79,6 +79,7 @@ class FortshPTY:
         self.child = pexpect.spawn(
             self.fortsh_path,
             encoding="utf-8",
+            codec_errors="replace",  # Handle raw ANSI/highlight bytes without crashing
             timeout=self.timeout,
             env=env,
             dimensions=(24, 80),  # Standard terminal size
