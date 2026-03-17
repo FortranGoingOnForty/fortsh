@@ -7,69 +7,30 @@ on:
     branches: [trunk]
 
 jobs:
+  # ============================================================================
+  # x86_64 Linux (gfortran) — primary CI target
+  # ============================================================================
   posix-tests:
     name: POSIX Compliance Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install gfortran
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gfortran
-
+        run: sudo apt-get update && sudo apt-get install -y gfortran
       - name: Build fortsh
         run: make release
-
       - name: Run POSIX tests
         run: ./tests/run_all_tests.sh --posix-only
-
-  interactive-tests:
-    name: Interactive PTY Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install gfortran
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gfortran
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Build fortsh
-        run: make release
-
-      - name: Install Python dependencies
-        run: |
-          cd tests/interactive
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install -r requirements.txt
-
-      - name: Run interactive tests
-        run: |
-          cd tests/interactive
-          source .venv/bin/activate
-          python run_tests.py
 
   builtin-tests:
     name: Builtin Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install gfortran
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gfortran
-
+        run: sudo apt-get update && sudo apt-get install -y gfortran
       - name: Build fortsh
         run: make release
-
       - name: Run builtin tests
         run: ./tests/builtins/run_builtin_tests.sh --verbose
 
@@ -78,15 +39,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install gfortran
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gfortran
-
+        run: sudo apt-get update && sudo apt-get install -y gfortran
       - name: Build fortsh
         run: make release
-
       - name: Run stress tests
         run: ./tests/builtins/test_stress.sh
         timeout-minutes: 10
@@ -96,14 +52,82 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install gfortran
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gfortran
-
+        run: sudo apt-get update && sudo apt-get install -y gfortran
       - name: Build fortsh
         run: make release
+      - name: Run integration tests
+        run: ./tests/builtins/integration/run_integration_tests.sh --verbose
 
+  interactive-tests:
+    name: Interactive PTY Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build fortsh
+        run: make release
+      - name: Install Python dependencies
+        run: |
+          cd tests/interactive
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+      - name: Run interactive tests
+        run: |
+          cd tests/interactive
+          source .venv/bin/activate
+          python run_tests.py
+
+  # ============================================================================
+  # ARM64 Linux (gfortran) — tests safe_assign and stack reductions on ARM
+  # ============================================================================
+  arm64-linux-tests:
+    name: ARM64 Linux Tests
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build fortsh
+        run: make release
+      - name: Run POSIX tests
+        run: ./tests/run_all_tests.sh --posix-only
+      - name: Run builtin tests
+        run: ./tests/builtins/run_builtin_tests.sh --verbose
+      - name: Run stress tests
+        run: ./tests/builtins/test_stress.sh
+        timeout-minutes: 10
+      - name: Run integration tests
+        run: ./tests/builtins/integration/run_integration_tests.sh --verbose
+
+  # ============================================================================
+  # macOS Apple Silicon (flang-new) — tests C string glue and flang workarounds
+  # ============================================================================
+  macos-arm64-tests:
+    name: macOS ARM64 Tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM (flang-new)
+        run: brew install llvm
+      - name: Build fortsh
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          make release FC=flang-new
+      - name: Run POSIX tests
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          ./tests/run_all_tests.sh --posix-only
+      - name: Run builtin tests
+        run: ./tests/builtins/run_builtin_tests.sh --verbose
+      - name: Run stress tests
+        run: ./tests/builtins/test_stress.sh
+        timeout-minutes: 15
       - name: Run integration tests
         run: ./tests/builtins/integration/run_integration_tests.sh --verbose
