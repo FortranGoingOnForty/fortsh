@@ -3236,6 +3236,7 @@ contains
             end if
           end block
         end do
+        flush(output_unit)
         return
       else if (trim(cmd%tokens(2)) == '-p') then
         path_mode = .true.
