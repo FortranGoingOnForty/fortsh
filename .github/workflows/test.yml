@@ -146,10 +146,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install LLVM (flang-new)
-        run: brew install llvm
-      - name: Add LLVM to PATH
-        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+      - name: Install flang-new
+        run: brew install flang
       - name: Build fortsh
         run: make release
       - name: Run POSIX tests
@@ -162,10 +160,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install LLVM (flang-new)
-        run: brew install llvm
-      - name: Add LLVM to PATH
-        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+      - name: Install flang-new
+        run: brew install flang
       - name: Build fortsh
         run: make release
       - name: Run builtin tests
@@ -178,10 +174,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install LLVM (flang-new)
-        run: brew install llvm
-      - name: Add LLVM to PATH
-        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+      - name: Install flang-new
+        run: brew install flang
       - name: Build fortsh
         run: make release
       - name: Run stress tests
@@ -195,10 +189,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install LLVM (flang-new)
-        run: brew install llvm
-      - name: Add LLVM to PATH
-        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+      - name: Install flang-new
+        run: brew install flang
       - name: Build fortsh
         run: make release
       - name: Run integration tests
