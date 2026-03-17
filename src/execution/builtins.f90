@@ -3639,7 +3639,11 @@ contains
       integer(c_int), intent(in) :: res
       integer(c_long) :: display_value
 
-      if (limit_value == RLIM_INFINITY .or. limit_value < 0) then
+      ! Treat RLIM_INFINITY, negative values, and very large values as "unlimited".
+      ! macOS returns large finite values (e.g. 2^63-1) instead of RLIM_INFINITY
+      ! for some resources. Threshold: > 2^40 (~1 trillion) is effectively unlimited.
+      if (limit_value == RLIM_INFINITY .or. limit_value < 0 .or. &
+          limit_value > 1099511627776_c_long) then
         write(output_unit, '(a)') 'unlimited'
       else
         ! Convert bytes to KB for display
@@ -3685,7 +3689,8 @@ contains
         return
       end if
 
-      if (r%rlim_cur == RLIM_INFINITY .or. r%rlim_cur < 0) then
+      if (r%rlim_cur == RLIM_INFINITY .or. r%rlim_cur < 0 .or. &
+          r%rlim_cur > 1099511627776_c_long) then
         str = 'unlimited'
       else
         ! Convert to appropriate units
