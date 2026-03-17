@@ -9,7 +9,22 @@
 if command -v timeout >/dev/null 2>&1; then
     run_with_timeout() { timeout "$@"; }
 else
-    run_with_timeout() { shift; "$@"; }  # skip timeout arg, run directly
+    # POSIX fallback using temp file for output capture compatibility
+    run_with_timeout() {
+        _rwt_secs="$1"; shift
+        _rwt_tmp=$(mktemp /tmp/fortsh_timeout.XXXXXX)
+        ( "$@" ) > "$_rwt_tmp" 2>&1 &
+        _rwt_pid=$!
+        ( sleep "$_rwt_secs"; kill "$_rwt_pid" 2>/dev/null ) &
+        _rwt_wd=$!
+        wait "$_rwt_pid" 2>/dev/null
+        _rwt_rc=$?
+        kill "$_rwt_wd" 2>/dev/null
+        wait "$_rwt_wd" 2>/dev/null
+        cat "$_rwt_tmp"
+        rm -f "$_rwt_tmp"
+        return $_rwt_rc
+    }
 fi
 
 RED='\033[0;31m'

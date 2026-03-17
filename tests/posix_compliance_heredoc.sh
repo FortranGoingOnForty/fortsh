@@ -177,7 +177,21 @@ fi
 if command -v timeout >/dev/null 2>&1; then
     _timeout() { timeout "$@"; }
 else
-    _timeout() { shift; "$@"; }
+    _timeout() {
+        _to_secs="$1"; shift
+        _to_tmp=$(mktemp /tmp/fortsh_timeout.XXXXXX)
+        ( "$@" ) > "$_to_tmp" 2>&1 &
+        _to_pid=$!
+        ( sleep "$_to_secs"; kill "$_to_pid" 2>/dev/null ) &
+        _to_wd=$!
+        wait "$_to_pid" 2>/dev/null
+        _to_rc=$?
+        kill "$_to_wd" 2>/dev/null
+        wait "$_to_wd" 2>/dev/null
+        cat "$_to_tmp"
+        rm -f "$_to_tmp"
+        return $_to_rc
+    }
 fi
 result=$(_timeout 2 "$FORTSH_BIN" -c 'read x <<EOF
 test input
