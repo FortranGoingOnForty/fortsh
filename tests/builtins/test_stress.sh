@@ -13,8 +13,11 @@ TEST_PREFIX="STRESS"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/test_harness.sh"
 
-# Increase timeout for stress tests
-TEST_TIMEOUT=30
+# Platform-aware timeouts: ARM64 (flang-new) is ~300x slower on loops
+case "$(uname -m)" in
+  arm64|aarch64) TEST_TIMEOUT=90 ;;
+  *)             TEST_TIMEOUT=30 ;;
+esac
 
 # ==========================================
 # 1. Long variable values
@@ -618,11 +621,17 @@ compare_output "continue 2 from inner loop" \
 compare_output "loop 5000 iterations" \
   'x=0; i=0; while [ $i -lt 5000 ]; do x=$((x+1)); i=$((i+1)); done; echo $x'
 
-# 10000 iterations takes ~45s in fortsh — increase timeout
-TEST_TIMEOUT=60
+# 10000 iterations takes ~72s on ARM64, ~1s on x86_64
+case "$(uname -m)" in
+  arm64|aarch64) TEST_TIMEOUT=180 ;;
+  *)             TEST_TIMEOUT=60 ;;
+esac
 compare_output "loop 10000 iterations" \
   'x=0; i=0; while [ $i -lt 10000 ]; do x=$((x+1)); i=$((i+1)); done; echo $x'
-TEST_TIMEOUT=30
+case "$(uname -m)" in
+  arm64|aarch64) TEST_TIMEOUT=90 ;;
+  *)             TEST_TIMEOUT=30 ;;
+esac
 
 compare_output "while with complex condition" \
   'i=0; while [ $i -lt 10 ] && [ $((i % 2)) -eq 0 -o $i -lt 5 ]; do echo $i; i=$((i+1)); done'
