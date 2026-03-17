@@ -5,6 +5,13 @@
 # Runs all individual builtin test suites and aggregates results.
 # Can be called standalone or from the main run_all_tests.sh
 
+# Portable timeout: macOS lacks GNU timeout
+if command -v timeout >/dev/null 2>&1; then
+    run_with_timeout() { timeout "$@"; }
+else
+    run_with_timeout() { shift; "$@"; }  # skip timeout arg, run directly
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -45,11 +52,11 @@ for test_file in "$SCRIPT_DIR"/test_*.sh; do
 
     if [ "$VERBOSE" -eq 1 ]; then
         printf "\n${CYAN}── %s ──${NC}\n" "$suite_name"
-        output=$(timeout 120 "$test_file" 2>&1)
+        output=$(run_with_timeout 120 "$test_file" 2>&1)
         exit_code=$?
         echo "$output"
     else
-        output=$(timeout 120 "$test_file" 2>&1)
+        output=$(run_with_timeout 120 "$test_file" 2>&1)
         exit_code=$?
     fi
 

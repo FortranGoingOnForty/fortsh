@@ -173,7 +173,13 @@ else
 fi
 
 # Note: read with heredoc can hang if not implemented - use timeout
-result=$(timeout 2 "$FORTSH_BIN" -c 'read x <<EOF
+# Portable: macOS lacks GNU timeout
+if command -v timeout >/dev/null 2>&1; then
+    _timeout() { timeout "$@"; }
+else
+    _timeout() { shift; "$@"; }
+fi
+result=$(_timeout 2 "$FORTSH_BIN" -c 'read x <<EOF
 test input
 EOF
 echo "$x"' 2>&1)

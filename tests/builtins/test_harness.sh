@@ -5,6 +5,13 @@
 # Source this file from individual builtin test scripts.
 # Each test file must set TEST_PREFIX before sourcing.
 
+# Portable timeout: macOS lacks GNU timeout
+if command -v timeout >/dev/null 2>&1; then
+    run_with_timeout() { timeout "$@"; }
+else
+    run_with_timeout() { shift; "$@"; }
+fi
+
 # Colors (POSIX-compliant way)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -78,8 +85,8 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-10}"
 # Helper: compare output against bash
 compare_output() {
     test_name="$1"; command="$2"
-    expected=$(timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1)
-    actual=$(timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1)
+    expected=$(run_with_timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1)
+    actual=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1)
     norm_expected=$(normalize_shell_name "$expected")
     norm_actual=$(normalize_shell_name "$actual")
     if [ "$norm_expected" = "$norm_actual" ]; then pass "$test_name"
@@ -89,8 +96,8 @@ compare_output() {
 # Helper: compare exit code only
 compare_exit() {
     test_name="$1"; command="$2"
-    timeout "$TEST_TIMEOUT" bash -c "$command" >/dev/null 2>&1; expected=$?
-    timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" >/dev/null 2>&1; actual=$?
+    run_with_timeout "$TEST_TIMEOUT" bash -c "$command" >/dev/null 2>&1; expected=$?
+    run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" >/dev/null 2>&1; actual=$?
     if [ "$expected" = "$actual" ]; then pass "$test_name"
     else fail "$test_name" "exit $expected" "exit $actual"; fi
 }
@@ -98,8 +105,8 @@ compare_exit() {
 # Helper: compare both output and exit code
 compare_both() {
     test_name="$1"; command="$2"
-    expected_out=$(timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1); expected_exit=$?
-    actual_out=$(timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1); actual_exit=$?
+    expected_out=$(run_with_timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1); expected_exit=$?
+    actual_out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1); actual_exit=$?
     norm_expected=$(normalize_shell_name "$expected_out")
     norm_actual=$(normalize_shell_name "$actual_out")
     if [ "$norm_expected" = "$norm_actual" ] && [ "$expected_exit" = "$actual_exit" ]; then
