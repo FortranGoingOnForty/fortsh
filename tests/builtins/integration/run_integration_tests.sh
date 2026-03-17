@@ -8,6 +8,8 @@
 # Portable timeout: macOS lacks GNU timeout
 if command -v timeout >/dev/null 2>&1; then
     run_with_timeout() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    run_with_timeout() { gtimeout "$@"; }
 else
     run_with_timeout() {
         _rwt_secs="$1"; shift

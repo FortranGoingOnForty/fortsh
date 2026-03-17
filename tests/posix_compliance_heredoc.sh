@@ -176,6 +176,8 @@ fi
 # Portable: macOS lacks GNU timeout
 if command -v timeout >/dev/null 2>&1; then
     _timeout() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    _timeout() { gtimeout "$@"; }
 else
     _timeout() {
         _to_secs="$1"; shift

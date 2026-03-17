@@ -146,8 +146,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new
-        run: brew install flang
+      - name: Install flang-new and coreutils
+        run: brew install flang coreutils
       - name: Build fortsh
         run: make release
       - name: Run POSIX tests
@@ -160,8 +160,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new
-        run: brew install flang
+      - name: Install flang-new and coreutils
+        run: brew install flang coreutils
       - name: Build fortsh
         run: make release
       - name: Run builtin tests
@@ -174,8 +174,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new
-        run: brew install flang
+      - name: Install flang-new and coreutils
+        run: brew install flang coreutils
       - name: Build fortsh
         run: make release
       - name: Run stress tests
@@ -189,8 +189,8 @@ jobs:
       FC: flang-new
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new
-        run: brew install flang
+      - name: Install flang-new and coreutils
+        run: brew install flang coreutils
       - name: Build fortsh
         run: make release
       - name: Run integration tests

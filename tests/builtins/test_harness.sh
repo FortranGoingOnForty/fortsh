@@ -5,9 +5,11 @@
 # Source this file from individual builtin test scripts.
 # Each test file must set TEST_PREFIX before sourcing.
 
-# Portable timeout: macOS lacks GNU timeout
+# Portable timeout: macOS has gtimeout (from coreutils) or no timeout
 if command -v timeout >/dev/null 2>&1; then
     run_with_timeout() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    run_with_timeout() { gtimeout "$@"; }
 else
     run_with_timeout() {
         _rwt_secs="$1"; shift
