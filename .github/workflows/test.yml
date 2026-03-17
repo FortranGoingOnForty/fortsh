@@ -8,10 +8,10 @@ on:
 
 jobs:
   # ============================================================================
-  # x86_64 Linux (gfortran) — primary CI target
+  # x86_64 Linux (gfortran)
   # ============================================================================
   posix-tests:
-    name: POSIX Compliance Tests
+    name: POSIX Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +23,7 @@ jobs:
         run: ./tests/run_all_tests.sh --posix-only
 
   builtin-tests:
-    name: Builtin Unit Tests
+    name: Builtin Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,10 +85,10 @@ jobs:
           python run_tests.py
 
   # ============================================================================
-  # ARM64 Linux (gfortran) — tests safe_assign and stack reductions on ARM
+  # ARM64 Linux (gfortran)
   # ============================================================================
-  arm64-linux-tests:
-    name: ARM64 Linux Tests
+  arm64-linux-posix:
+    name: "ARM64 Linux: POSIX Tests"
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -98,36 +98,108 @@ jobs:
         run: make release
       - name: Run POSIX tests
         run: ./tests/run_all_tests.sh --posix-only
+
+  arm64-linux-builtins:
+    name: "ARM64 Linux: Builtin Tests"
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build fortsh
+        run: make release
       - name: Run builtin tests
         run: ./tests/builtins/run_builtin_tests.sh --verbose
+
+  arm64-linux-stress:
+    name: "ARM64 Linux: Stress Tests"
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build fortsh
+        run: make release
       - name: Run stress tests
         run: ./tests/builtins/test_stress.sh
         timeout-minutes: 10
+
+  arm64-linux-integration:
+    name: "ARM64 Linux: Integration Tests"
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build fortsh
+        run: make release
       - name: Run integration tests
         run: ./tests/builtins/integration/run_integration_tests.sh --verbose
 
   # ============================================================================
-  # macOS Apple Silicon (flang-new) — tests C string glue and flang workarounds
+  # macOS Apple Silicon (flang-new)
   # ============================================================================
-  macos-arm64-tests:
-    name: macOS ARM64 Tests
+  macos-arm64-posix:
+    name: "macOS ARM64: POSIX Tests"
     runs-on: macos-15
+    env:
+      FC: flang-new
     steps:
       - uses: actions/checkout@v4
       - name: Install LLVM (flang-new)
         run: brew install llvm
+      - name: Add LLVM to PATH
+        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
       - name: Build fortsh
-        run: |
-          export PATH="$(brew --prefix llvm)/bin:$PATH"
-          make release FC=flang-new
+        run: make release
       - name: Run POSIX tests
-        run: |
-          export PATH="$(brew --prefix llvm)/bin:$PATH"
-          ./tests/run_all_tests.sh --posix-only
+        run: ./tests/run_all_tests.sh --posix-only
+
+  macos-arm64-builtins:
+    name: "macOS ARM64: Builtin Tests"
+    runs-on: macos-15
+    env:
+      FC: flang-new
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM (flang-new)
+        run: brew install llvm
+      - name: Add LLVM to PATH
+        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+      - name: Build fortsh
+        run: make release
       - name: Run builtin tests
         run: ./tests/builtins/run_builtin_tests.sh --verbose
+
+  macos-arm64-stress:
+    name: "macOS ARM64: Stress Tests"
+    runs-on: macos-15
+    env:
+      FC: flang-new
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM (flang-new)
+        run: brew install llvm
+      - name: Add LLVM to PATH
+        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+      - name: Build fortsh
+        run: make release
       - name: Run stress tests
         run: ./tests/builtins/test_stress.sh
         timeout-minutes: 15
+
+  macos-arm64-integration:
+    name: "macOS ARM64: Integration Tests"
+    runs-on: macos-15
+    env:
+      FC: flang-new
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM (flang-new)
+        run: brew install llvm
+      - name: Add LLVM to PATH
+        run: echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+      - name: Build fortsh
+        run: make release
       - name: Run integration tests
         run: ./tests/builtins/integration/run_integration_tests.sh --verbose
