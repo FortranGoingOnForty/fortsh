@@ -117,7 +117,7 @@ contains
         shell%cwd = trim(new_dir)
       end if
 
-      call print_directory_stack()
+      call print_directory_stack(shell=shell)
     else
       ! Directory specified
       new_dir = cmd%tokens(arg_index)
@@ -161,7 +161,7 @@ contains
         call set_shell_variable(shell, 'PWD', trim(shell%cwd))
       end if
 
-      call print_directory_stack()
+      call print_directory_stack(shell=shell)
     end if
 
     shell%last_exit_status = 0
@@ -258,7 +258,7 @@ contains
       dir_stack%top = dir_stack%top - 1
     end if
     
-    call print_directory_stack()
+    call print_directory_stack(shell=shell)
     shell%last_exit_status = 0
   end subroutine
 
@@ -285,7 +285,7 @@ contains
         one_per_line = .true.
       case ('-v')
         ! Verbose (numbered) output
-        call print_directory_stack_verbose()
+        call print_directory_stack_verbose(shell)
         shell%last_exit_status = 0
         return
       case default
@@ -299,16 +299,57 @@ contains
     if (clear_stack) then
       dir_stack%top = 0
     else if (one_per_line) then
-      call print_directory_stack_lines(long_format)
+      call print_directory_stack_lines(long_format, shell)
     else
-      call print_directory_stack(long_format)
+      call print_directory_stack(long_format, shell)
     end if
     
     shell%last_exit_status = 0
   end subroutine
 
-  subroutine print_directory_stack(long_fmt)
+  subroutine print_directory_stack(long_fmt, shell)
+    use io_helpers, only: write_stdout, write_stdout_nonl
     logical, intent(in), optional :: long_fmt
+    type(shell_state_t), intent(in), optional :: shell
+    character(len=MAX_PATH_LEN) :: current_dir
+    character(len=:), allocatable :: display_dir, line
+    integer :: i, status
+    logical :: use_long
+
+    use_long = .false.
+    if (present(long_fmt)) use_long = long_fmt
+
+    ! Use logical path from shell state if available, else fall back to getcwd
+    if (present(shell)) then
+      current_dir = trim(shell%cwd)
+    else
+      call get_current_dir(current_dir, status)
+    end if
+
+    if (use_long) then
+      display_dir = trim(current_dir)
+    else
+      display_dir = tilde_abbreviate(current_dir)
+    end if
+    line = trim(display_dir)
+
+    do i = dir_stack%top, 1, -1
+      if (use_long) then
+        display_dir = trim(dir_stack%directories(i))
+      else
+        display_dir = tilde_abbreviate(dir_stack%directories(i))
+      end if
+      line = trim(line) // ' ' // trim(display_dir)
+    end do
+
+    ! Use write_stdout so output respects fd redirections (>/dev/null)
+    call write_stdout(trim(line))
+  end subroutine
+
+  subroutine print_directory_stack_lines(long_fmt, shell)
+    use io_helpers, only: write_stdout
+    logical, intent(in), optional :: long_fmt
+    type(shell_state_t), intent(in), optional :: shell
     character(len=MAX_PATH_LEN) :: current_dir
     character(len=:), allocatable :: display_dir
     integer :: i, status
@@ -317,74 +358,47 @@ contains
     use_long = .false.
     if (present(long_fmt)) use_long = long_fmt
 
-    call get_current_dir(current_dir, status)
-    if (status == 0) then
-      if (use_long) then
-        display_dir = current_dir
-      else
-        display_dir = tilde_abbreviate(current_dir)
-      end if
-      write(output_unit, '(a)', advance='no') trim(display_dir)
+    if (present(shell)) then
+      current_dir = trim(shell%cwd)
     else
-      write(output_unit, '(a)', advance='no') '~'
+      call get_current_dir(current_dir, status)
     end if
+
+    if (use_long) then
+      display_dir = trim(current_dir)
+    else
+      display_dir = tilde_abbreviate(current_dir)
+    end if
+    call write_stdout(trim(display_dir))
 
     do i = dir_stack%top, 1, -1
       if (use_long) then
-        display_dir = dir_stack%directories(i)
+        display_dir = trim(dir_stack%directories(i))
       else
         display_dir = tilde_abbreviate(dir_stack%directories(i))
       end if
-      write(output_unit, '(a,a)', advance='no') ' ', trim(display_dir)
-    end do
-    write(output_unit, '(a)') ''
-  end subroutine
-
-  subroutine print_directory_stack_lines(long_fmt)
-    logical, intent(in), optional :: long_fmt
-    character(len=MAX_PATH_LEN) :: current_dir
-    character(len=:), allocatable :: display_dir
-    integer :: i, status
-    logical :: use_long
-
-    use_long = .false.
-    if (present(long_fmt)) use_long = long_fmt
-
-    call get_current_dir(current_dir, status)
-    if (status == 0) then
-      if (use_long) then
-        display_dir = current_dir
-      else
-        display_dir = tilde_abbreviate(current_dir)
-      end if
-      write(output_unit, '(a)') trim(display_dir)
-    else
-      write(output_unit, '(a)') '~'
-    end if
-
-    do i = dir_stack%top, 1, -1
-      if (use_long) then
-        display_dir = dir_stack%directories(i)
-      else
-        display_dir = tilde_abbreviate(dir_stack%directories(i))
-      end if
-      write(output_unit, '(a)') trim(display_dir)
+      call write_stdout(trim(display_dir))
     end do
   end subroutine
 
-  subroutine print_directory_stack_verbose()
+  subroutine print_directory_stack_verbose(shell)
+    use io_helpers, only: write_stdout
+    type(shell_state_t), intent(in), optional :: shell
     character(len=MAX_PATH_LEN) :: current_dir
+    character(len=20) :: num_str
     integer :: i, status
 
-    call get_current_dir(current_dir, status)
-    if (status == 0) then
-      write(output_unit, '(a,a)') ' 0  ', trim(tilde_abbreviate(current_dir))
+    if (present(shell)) then
+      current_dir = trim(shell%cwd)
     else
-      write(output_unit, '(a,a)') ' 0  ', '~'
+      call get_current_dir(current_dir, status)
     end if
 
+    call write_stdout(' 0  ' // trim(tilde_abbreviate(current_dir)))
+
     do i = dir_stack%top, 1, -1
-      write(output_unit, '(I2,a,a)') dir_stack%top - i + 1, '  ', trim(tilde_abbreviate(dir_stack%directories(i)))
+      write(num_str, '(I2)') dir_stack%top - i + 1
+      call write_stdout(trim(num_str) // '  ' // trim(tilde_abbreviate(dir_stack%directories(i))))
     end do
   end subroutine
 
