@@ -645,6 +645,17 @@ contains
       if (eq_pos > 0) then
         ! VAR=value form - set and export
         var_name = cmd%tokens(i)(:eq_pos-1)
+
+        ! Validate variable name: must start with letter or underscore
+        if (len_trim(var_name) == 0 .or. &
+            (.not. (var_name(1:1) >= 'a' .and. var_name(1:1) <= 'z') .and. &
+             .not. (var_name(1:1) >= 'A' .and. var_name(1:1) <= 'Z') .and. &
+             var_name(1:1) /= '_')) then
+          write(error_unit, '(a)') 'export: `' // trim(var_name) // "': not a valid identifier"
+          shell%last_exit_status = 1
+          cycle
+        end if
+
         if (allocated(cmd%token_lengths) .and. i <= size(cmd%token_lengths) .and. &
             cmd%token_lengths(i) > eq_pos) then
           var_value = cmd%tokens(i)(eq_pos+1:cmd%token_lengths(i))
@@ -671,6 +682,17 @@ contains
       else
         ! Just VAR - mark existing variable as exported
         var_name = trim(cmd%tokens(i))
+
+        ! Validate variable name
+        if (len_trim(var_name) == 0 .or. &
+            (.not. (var_name(1:1) >= 'a' .and. var_name(1:1) <= 'z') .and. &
+             .not. (var_name(1:1) >= 'A' .and. var_name(1:1) <= 'Z') .and. &
+             var_name(1:1) /= '_')) then
+          write(error_unit, '(a)') 'export: `' // trim(var_name) // "': not a valid identifier"
+          shell%last_exit_status = 1
+          cycle
+        end if
+
         found = .false.
 
         do j = 1, shell%num_variables
