@@ -91,13 +91,8 @@ contains
       end if
     end do
     
-    ! Get current directory
-    call get_current_dir(current_dir, status)
-    if (status /= 0) then
-      write(error_unit, '(a)') 'pushd: cannot get current directory'
-      shell%last_exit_status = 1
-      return
-    end if
+    ! Use logical path (shell%cwd) instead of physical path (getcwd)
+    current_dir = trim(shell%cwd)
     
     if (arg_index > cmd%num_tokens) then
       ! No directory specified - swap top two directories
@@ -118,11 +113,8 @@ contains
           shell%last_exit_status = 1
           return
         end if
-        ! Update shell cwd after successful change
-        call get_current_dir(current_dir, status)
-        if (status == 0) then
-          shell%cwd = trim(current_dir)
-        end if
+        ! Update shell cwd with logical path from the target directory
+        shell%cwd = trim(new_dir)
       end if
 
       call print_directory_stack()
@@ -160,17 +152,18 @@ contains
           return
         end if
         
-        ! Update PWD variable and shell cwd
-        call get_current_dir(current_dir, status)
-        if (status == 0) then
-          call set_shell_variable(shell, 'PWD', trim(current_dir))
-          shell%cwd = trim(current_dir)
+        ! Update PWD and shell cwd with logical path
+        if (new_dir(1:1) == '/') then
+          shell%cwd = trim(new_dir)
+        else
+          shell%cwd = trim(current_dir) // '/' // trim(new_dir)
         end if
+        call set_shell_variable(shell, 'PWD', trim(shell%cwd))
       end if
 
       call print_directory_stack()
     end if
-    
+
     shell%last_exit_status = 0
   end subroutine
 
@@ -236,12 +229,13 @@ contains
           return
         end if
         
-        ! Update PWD variable and shell cwd
-        call get_current_dir(current_dir, status)
-        if (status == 0) then
-          call set_shell_variable(shell, 'PWD', trim(current_dir))
-          shell%cwd = trim(current_dir)
+        ! Update PWD and shell cwd with logical path
+        if (new_dir(1:1) == '/') then
+          shell%cwd = trim(new_dir)
+        else
+          shell%cwd = trim(current_dir) // '/' // trim(new_dir)
         end if
+        call set_shell_variable(shell, 'PWD', trim(shell%cwd))
       end if
     else
       ! Remove specific entry from stack
