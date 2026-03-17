@@ -235,12 +235,20 @@ module system_interface
   integer(c_int), parameter :: RLIMIT_STACK = 3      ! Maximum stack size
   integer(c_int), parameter :: RLIMIT_CORE = 4       ! Maximum core file size
   integer(c_int), parameter :: RLIMIT_RSS = 5        ! Maximum resident set size
-  integer(c_int), parameter :: RLIMIT_NOFILE = 7     ! Maximum number of open files
-  integer(c_int), parameter :: RLIMIT_AS = 9         ! Address space (virtual memory) limit
-  integer(c_int), parameter :: RLIMIT_NPROC = 6      ! Maximum number of processes
-  integer(c_int), parameter :: RLIMIT_MEMLOCK = 8    ! Maximum locked-in-memory address space
-  integer(c_int), parameter :: RLIMIT_LOCKS = 10     ! Maximum file locks
-  integer(c_int), parameter :: RLIMIT_SIGPENDING = 11 ! Maximum pending signals
+#ifdef __APPLE__
+  ! macOS uses different constant values than Linux for these
+  integer(c_int), parameter :: RLIMIT_MEMLOCK = 6
+  integer(c_int), parameter :: RLIMIT_NPROC = 7
+  integer(c_int), parameter :: RLIMIT_NOFILE = 8
+  integer(c_int), parameter :: RLIMIT_AS = 5         ! Same as RSS on macOS
+#else
+  integer(c_int), parameter :: RLIMIT_NPROC = 6
+  integer(c_int), parameter :: RLIMIT_NOFILE = 7
+  integer(c_int), parameter :: RLIMIT_MEMLOCK = 8
+  integer(c_int), parameter :: RLIMIT_AS = 9
+  integer(c_int), parameter :: RLIMIT_LOCKS = 10
+  integer(c_int), parameter :: RLIMIT_SIGPENDING = 11
+#endif
   integer(c_int), parameter :: RLIMIT_MSGQUEUE = 12  ! Maximum bytes in POSIX message queues
 
   ! Infinite limit value
