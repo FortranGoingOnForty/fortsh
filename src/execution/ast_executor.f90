@@ -17,6 +17,7 @@ module ast_executor
   use job_control
   use glob, only: pattern_matches_no_dotfile_check
   use shell_options, only: check_errexit, trace_command
+  use io_helpers, only: write_stderr
   implicit none
   private
 
@@ -135,9 +136,13 @@ contains
     case default
       ! node_type = 0 usually means uninitialized/invalid AST node from parser
       if (node%node_type == 0) then
-        write(error_unit, '(A)') 'sh: -c: line 1: syntax error: unexpected end of file'
+        call write_stderr('sh: -c: line 1: syntax error: unexpected end of file')
       else
-        write(error_unit, '(A,I0)') 'fortsh: unknown node type: ', node%node_type
+        block
+          character(len=32) :: nt_str
+          write(nt_str, '(i0)') node%node_type
+          call write_stderr('fortsh: unknown node type: ' // trim(nt_str))
+        end block
       end if
       exit_status = 1
     end select
@@ -236,7 +241,7 @@ contains
                   end do
                 end block
               end if
-              write(error_unit, '(a)') 'fortsh: : command not found'
+              call write_stderr('fortsh: : command not found')
               ! Restore file descriptors
               if (node%simple_cmd%num_redirects > 0) then
                 call restore_fds_to_mark(fd_mark)
