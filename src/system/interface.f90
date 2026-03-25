@@ -168,6 +168,30 @@ module system_interface
     integer(c_int)   :: st_gen       ! File generation number (4 bytes)
     integer(c_int)   :: st_lspare    ! Reserved (4 bytes)
     integer(c_long)  :: st_qspare(2) ! Reserved (16 bytes)
+#elif defined(__aarch64__)
+    ! Linux aarch64 stat structure layout (glibc generic 64-bit)
+    ! Field order and sizes differ from x86_64: mode/nlink swapped, nlink is 4B not 8B
+    integer(c_long)  :: st_dev       ! Device (8 bytes) - offset 0
+    integer(c_long)  :: st_ino       ! Inode (8 bytes) - offset 8
+    integer(c_int)   :: st_mode      ! File type and mode (4 bytes) - offset 16
+    integer(c_int)   :: st_nlink     ! Number of hard links (4 bytes) - offset 20
+    integer(c_int)   :: st_uid       ! User ID (4 bytes) - offset 24
+    integer(c_int)   :: st_gid       ! Group ID (4 bytes) - offset 28
+    integer(c_long)  :: st_rdev      ! Device type (8 bytes) - offset 32
+    integer(c_long)  :: pad1         ! __pad1 (8 bytes) - offset 40
+    integer(c_long)  :: st_size      ! Total size in bytes (8 bytes) - offset 48
+    integer(c_int)   :: st_blksize   ! Optimal block size (4 bytes) - offset 56
+    integer(c_int)   :: pad2         ! __pad2 (4 bytes) - offset 60
+    integer(c_long)  :: st_blocks    ! Number of 512-byte blocks (8 bytes) - offset 64
+    ! Time fields (struct timespec = 16 bytes each)
+    integer(c_long)  :: st_atime     ! Access time seconds - offset 72
+    integer(c_long)  :: st_atime_nsec ! Access time nanoseconds - offset 80
+    integer(c_long)  :: st_mtime     ! Modification time seconds - offset 88
+    integer(c_long)  :: st_mtime_nsec ! Modification time nanoseconds - offset 96
+    integer(c_long)  :: st_ctime     ! Status change time seconds - offset 104
+    integer(c_long)  :: st_ctime_nsec ! Status change time nanoseconds - offset 112
+    integer(c_int)   :: glibc_reserved(2) ! Reserved (8 bytes) - offset 120
+    ! Total: 128 bytes
 #else
     ! Linux x86_64 stat structure layout
     integer(c_long)  :: st_dev       ! Device (8 bytes)
