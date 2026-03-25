@@ -144,10 +144,11 @@ jobs:
     runs-on: macos-15
     env:
       FC: flang-new
+      BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
       - name: Install flang-new and coreutils
-        run: brew install flang coreutils
+        run: brew install flang coreutils bash
       - name: Build fortsh
         run: make release
       - name: Run POSIX tests
@@ -158,10 +159,11 @@ jobs:
     runs-on: macos-15
     env:
       FC: flang-new
+      BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
       - name: Install flang-new and coreutils
-        run: brew install flang coreutils
+        run: brew install flang coreutils bash
       - name: Build fortsh
         run: make release
       - name: Run builtin tests
@@ -172,10 +174,11 @@ jobs:
     runs-on: macos-15
     env:
       FC: flang-new
+      BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
       - name: Install flang-new and coreutils
-        run: brew install flang coreutils
+        run: brew install flang coreutils bash
       - name: Build fortsh
         run: make release
       - name: Run stress tests
@@ -187,10 +190,11 @@ jobs:
     runs-on: macos-15
     env:
       FC: flang-new
+      BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
       - name: Install flang-new and coreutils
-        run: brew install flang coreutils
+        run: brew install flang coreutils bash
       - name: Build fortsh
         run: make release
       - name: Run integration tests
