@@ -6,6 +6,7 @@ module variables
   use shell_types
   use system_interface
   use iso_fortran_env, only: output_unit, error_unit
+  use io_helpers, only: write_stderr
 #ifdef USE_C_STRINGS
   use iso_c_binding, only: c_ptr, c_char, c_int, c_size_t
 #endif
@@ -158,8 +159,12 @@ contains
       if (trim(shell%variables(i)%name) == trim(name)) then
         ! Check if variable is readonly
         if (shell%variables(i)%readonly) then
-          write(error_unit, '(a,i0,a)') 'fortsh: line ', shell%current_line_number, ': ' // &
-                                        trim(name) // ': readonly variable'
+          block
+            character(len=32) :: line_str
+            write(line_str, '(i0)') shell%current_line_number
+            call write_stderr('fortsh: line ' // trim(line_str) // ': ' // &
+                              trim(name) // ': readonly variable')
+          end block
           shell%last_exit_status = 1  ! POSIX: readonly assignment failure returns 1
           ! POSIX: In non-interactive shells, stop execution after readonly violation
           if (.not. shell%is_interactive) then
