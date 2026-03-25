@@ -148,9 +148,9 @@ contains
           call skip_newlines(state)
         else if (trim(tok%value) == ';;') then
           ! ;; is only valid in case statements, not here
-          write(error_unit, '(A)') 'sh: -c: line 1: syntax error near unexpected token `;;'''
+          call write_stderr('sh: -c: line 1: syntax error near unexpected token `;;''')
           if (allocated(state%raw_input)) then
-            write(error_unit, '(A)') "sh: -c: line 1: `" // trim(state%raw_input) // "'"
+            call write_stderr("sh: -c: line 1: `" // trim(state%raw_input) // "'")
           end if
           ! Set error and return null
           state%has_error = .true.
@@ -248,7 +248,7 @@ contains
         temp_node => parse_command_node(state)
         if (.not. associated(temp_node)) then
           ! Incomplete pipeline - set error, print message, and exit
-          write(error_unit, '(A)') 'sh: -c: line 1: syntax error: unexpected end of file'
+          call write_stderr('sh: -c: line 1: syntax error: unexpected end of file')
           state%has_error = .true.
           exit
         end if
@@ -1173,9 +1173,9 @@ contains
     call skip_newlines(state)
     ! POSIX: Empty subshell () is a syntax error
     if (.not. associated(commands)) then
-      write(error_unit, '(A)') "sh: -c: line 1: syntax error near unexpected token `)'"
+      call write_stderr("sh: -c: line 1: syntax error near unexpected token `)'")
       if (allocated(state%raw_input)) then
-        write(error_unit, '(A)') "sh: -c: `" // trim(state%raw_input) // "'"
+        call write_stderr("sh: -c: `" // trim(state%raw_input) // "'")
       end if
       state%has_error = .true.
       return
