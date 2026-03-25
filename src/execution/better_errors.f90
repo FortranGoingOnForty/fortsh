@@ -5,6 +5,7 @@
 module better_errors
   use iso_fortran_env, only: error_unit
   use system_interface, only: get_environment_var, c_isatty
+  use io_helpers, only: write_stderr
   use iso_c_binding, only: c_int
   implicit none
   private
@@ -56,13 +57,12 @@ contains
     end if
 
     ! Print main error message in red (POSIX format)
-    write(error_unit, '(a,a,a,a,a)') &
-      trim(color_code(COLOR_RED)), &
-      trim(shell_name), ": ", trim(command), ": " // trim(error_msg)
-
-    ! Only write color reset if using colors
     if (stderr_is_tty()) then
-      write(error_unit, '(a)') trim(color_code(COLOR_RESET))
+      call write_stderr(trim(color_code(COLOR_RED)) // &
+        trim(shell_name) // ': ' // trim(command) // ': ' // trim(error_msg))
+      call write_stderr(trim(color_code(COLOR_RESET)))
+    else
+      call write_stderr(trim(shell_name) // ': ' // trim(command) // ': ' // trim(error_msg))
     end if
 
     ! Only show suggestions if stderr is a TTY (interactive mode)
