@@ -2,6 +2,7 @@
 module grammar_parser
   use iso_fortran_env
   use shell_types
+  use io_helpers, only: write_stderr
   use lexer
   use command_tree, only: command_node_t, create_simple_command, create_pipeline, &
                           create_list, create_if_statement, create_while_loop, &
@@ -122,9 +123,9 @@ contains
       tok = current_token(state)
       if (tok%token_type == TOKEN_OPERATOR .and. &
           (trim(tok%value) == ';' .or. trim(tok%value) == ';;' .or. trim(tok%value) == '&')) then
-        write(error_unit, '(A)') 'sh: -c: line 1: syntax error near unexpected token `' // trim(tok%value) // "'"
+        call write_stderr('sh: -c: line 1: syntax error near unexpected token `' // trim(tok%value) // "'")
         if (allocated(state%raw_input)) then
-          write(error_unit, '(A)') "sh: -c: line 1: `" // trim(state%raw_input) // "'"
+          call write_stderr("sh: -c: line 1: `" // trim(state%raw_input) // "'")
         end if
         state%has_error = .true.
         state%error_msg = 'syntax error near unexpected token ' // trim(tok%value)
