@@ -60,7 +60,11 @@ int fortsh_stat_uid(const char *path) {
 long long fortsh_stat_mtime(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0) return -1;
+#ifdef __APPLE__
+    return (long long)st.st_mtimespec.tv_sec;
+#else
     return (long long)st.st_mtim.tv_sec;
+#endif
 }
 
 long long fortsh_stat_dev(const char *path) {
