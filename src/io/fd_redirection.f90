@@ -6,6 +6,7 @@ module fd_redirection
   use shell_types
   use system_interface, only: get_environment_var, c_null_char, create_pipe
   use iso_fortran_env, only: output_unit, error_unit
+  use io_helpers, only: write_stderr
   use iso_c_binding, only: c_int, c_ptr, c_size_t, c_intptr_t, c_loc
   implicit none
 
@@ -291,13 +292,21 @@ contains
         if (redir%fd < 0) then
           if (.not. is_permanent) call save_fd(FD_STDIN)
           if (c_dup2(redir%target_fd, FD_STDIN) < 0) then
-            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
+            block
+              character(len=32) :: fd_str
+              write(fd_str, '(i0)') redir%target_fd
+              call write_stderr('sh: ' // trim(fd_str) // ': Bad file descriptor')
+            end block
             success = .false.
           end if
         else
           if (.not. is_permanent) call save_fd(redir%fd)
           if (c_dup2(redir%target_fd, redir%fd) < 0) then
-            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
+            block
+              character(len=32) :: fd_str
+              write(fd_str, '(i0)') redir%target_fd
+              call write_stderr('sh: ' // trim(fd_str) // ': Bad file descriptor')
+            end block
             success = .false.
           end if
         end if
@@ -307,13 +316,21 @@ contains
         if (redir%fd < 0) then
           if (.not. is_permanent) call save_fd(FD_STDOUT)
           if (c_dup2(redir%target_fd, FD_STDOUT) < 0) then
-            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
+            block
+              character(len=32) :: fd_str
+              write(fd_str, '(i0)') redir%target_fd
+              call write_stderr('sh: ' // trim(fd_str) // ': Bad file descriptor')
+            end block
             success = .false.
           end if
         else
           if (.not. is_permanent) call save_fd(redir%fd)
           if (c_dup2(redir%target_fd, redir%fd) < 0) then
-            write(error_unit, '(a,i0,a)') 'sh: ', redir%target_fd, ': Bad file descriptor'
+            block
+              character(len=32) :: fd_str
+              write(fd_str, '(i0)') redir%target_fd
+              call write_stderr('sh: ' // trim(fd_str) // ': Bad file descriptor')
+            end block
             success = .false.
           end if
         end if
