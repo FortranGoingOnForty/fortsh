@@ -1648,19 +1648,23 @@ contains
   function test_is_directory(path) result(is_dir)
     character(len=*), intent(in) :: path
     logical :: is_dir
-    integer :: stat_result
-    type(stat_t) :: file_stat
     character(len=len(path)+1), target :: c_path
-
+#ifdef USE_C_STAT
+    integer :: mode
     is_dir = .false.
     c_path = trim(path) // c_null_char
-
+    mode = fortsh_stat_mode(c_loc(c_path))
+    is_dir = (mode >= 0 .and. iand(mode, S_IFDIR) /= 0)
+#else
+    integer :: stat_result
+    type(stat_t) :: file_stat
+    is_dir = .false.
+    c_path = trim(path) // c_null_char
     stat_result = c_stat(c_loc(c_path), file_stat)
     if (stat_result == 0) then
-      ! Check if S_IFDIR bit is set in st_mode
-      ! S_IFDIR = 0040000 (octal) = 16384 (decimal)
       is_dir = iand(int(file_stat%st_mode, c_int), S_IFDIR) /= 0
     end if
+#endif
   end function
 
   ! Set terminal title using OSC sequences
