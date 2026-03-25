@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 // Wrapper for open() that takes mode as a separate parameter
 // This works around a bug in Fortran's C binding where mode_t is not passed correctly
@@ -27,6 +29,50 @@ int fortsh_get_errno(void) {
 
 const char *fortsh_strerror(int errnum) {
     return strerror(errnum);
+}
+
+// Portable file type checks — bypasses Fortran struct stat layout issues
+// across architectures (x86_64 vs aarch64 have different struct stat layouts)
+int fortsh_stat_mode(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    return (int)st.st_mode;
+}
+
+int fortsh_lstat_mode(const char *path) {
+    struct stat st;
+    if (lstat(path, &st) != 0) return -1;
+    return (int)st.st_mode;
+}
+
+long long fortsh_stat_size(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    return (long long)st.st_size;
+}
+
+int fortsh_stat_uid(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    return (int)st.st_uid;
+}
+
+long long fortsh_stat_mtime(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    return (long long)st.st_mtim.tv_sec;
+}
+
+long long fortsh_stat_dev(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    return (long long)st.st_dev;
+}
+
+long long fortsh_stat_ino(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    return (long long)st.st_ino;
 }
 
 // Access environ array by index
