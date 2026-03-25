@@ -3,6 +3,7 @@
 # These tests cover edge cases and behaviors not covered by other test suites
 
 FORTSH_BIN="${FORTSH_BIN:-./bin/fortsh}"
+BASH_REF="${BASH_REF:-bash}"
 
 # Colors
 RED='\033[0;31m'
@@ -66,7 +67,7 @@ compare_posix_output() {
     test_name="$1"
     test_cmd="$2"
 
-    posix_output=$(FORTSH_RC_FILE=/dev/null bash -c "$test_cmd" 2>&1 | normalize_output)
+    posix_output=$(FORTSH_RC_FILE=/dev/null "$BASH_REF" -c "$test_cmd" 2>&1 | normalize_output)
     posix_exit=$?
 
     fortsh_output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1 | normalize_output)
@@ -90,7 +91,7 @@ compare_posix_error() {
     test_name="$1"
     test_cmd="$2"
 
-    posix_output=$(FORTSH_RC_FILE=/dev/null bash -c "$test_cmd" 2>&1)
+    posix_output=$(FORTSH_RC_FILE=/dev/null "$BASH_REF" -c "$test_cmd" 2>&1)
     posix_exit=$?
 
     fortsh_output=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c "$test_cmd" 2>&1)

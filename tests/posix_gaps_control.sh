@@ -25,6 +25,7 @@ FAILED_TESTS_LIST=""
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 FORTSH_BIN="${FORTSH_BIN:-$SCRIPT_DIR/../bin/fortsh}"
+BASH_REF="${BASH_REF:-bash}"
 
 # Check if fortsh exists
 if [ ! -x "$FORTSH_BIN" ]; then
@@ -59,7 +60,7 @@ normalize_output() { sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'; }
 
 compare_posix_output() {
     test_name="$1"; command="$2"
-    posix_out=$(bash -c "$command" 2>&1 | normalize_output)
+    posix_out=$("$BASH_REF" -c "$command" 2>&1 | normalize_output)
     fortsh_out=$("$FORTSH_BIN" -c "$command" 2>&1 | normalize_output)
     if [ "$posix_out" = "$fortsh_out" ]; then pass "$test_name"
     else fail "$test_name" "$posix_out" "$fortsh_out"; fi
@@ -97,7 +98,7 @@ compare_posix_output "for with break" 'for i in 1 2 3; do echo $i; break; done'
 compare_posix_output "for with continue" 'for i in 1 2 3; do if [ $i = 2 ]; then continue; fi; echo $i; done'
 # Inline test with debug output for CI diagnosis
 _glob_cmd="touch /tmp/posix_gaps_for1_$$.txt /tmp/posix_gaps_for2_$$.txt /tmp/posix_gaps_for3_$$.txt 2>/dev/null; for f in /tmp/posix_gaps_for*_$$.txt; do test -f \$f && echo yes; done | head -1; rm -f /tmp/posix_gaps_for*_$$.txt"
-_glob_posix=$(bash -c "$_glob_cmd" 2>&1)
+_glob_posix=$("$BASH_REF" -c "$_glob_cmd" 2>&1)
 _glob_fortsh=$("$FORTSH_BIN" -c "$_glob_cmd" 2>&1)
 _glob_debug="[DEBUG glob] posix_hex=[$(printf '%s' "$_glob_posix" | od -A n -t x1 | tr -d '\n')] fortsh_hex=[$(printf '%s' "$_glob_fortsh" | od -A n -t x1 | tr -d '\n')] posix_raw=[$_glob_posix] fortsh_raw=[$_glob_fortsh]"
 _glob_posix_n=$(printf '%s' "$_glob_posix" | normalize_output)

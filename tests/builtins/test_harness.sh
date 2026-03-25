@@ -47,6 +47,10 @@ FAILED_TESTS_LIST=""
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 FORTSH_BIN="${FORTSH_BIN:-$SCRIPT_DIR/../../bin/fortsh}"
 
+# Reference bash for expected output — must be bash 4+ for assoc arrays, case transforms
+# macOS ships bash 3.2 which lacks these; override with BASH_REF=/opt/homebrew/bin/bash
+BASH_REF="${BASH_REF:-bash}"
+
 # Check if fortsh exists
 if [ ! -x "$FORTSH_BIN" ]; then
     printf "${RED}ERROR${NC}: fortsh binary not found at $FORTSH_BIN\n"
@@ -101,7 +105,7 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-10}"
 # Helper: compare output against bash
 compare_output() {
     test_name="$1"; command="$2"
-    expected=$(run_with_timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1)
+    expected=$(run_with_timeout "$TEST_TIMEOUT" "$BASH_REF" -c "$command" 2>&1)
     actual=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1)
     norm_expected=$(normalize_shell_name "$expected")
     norm_actual=$(normalize_shell_name "$actual")
@@ -112,7 +116,7 @@ compare_output() {
 # Helper: compare exit code only
 compare_exit() {
     test_name="$1"; command="$2"
-    run_with_timeout "$TEST_TIMEOUT" bash -c "$command" >/dev/null 2>&1; expected=$?
+    run_with_timeout "$TEST_TIMEOUT" "$BASH_REF" -c "$command" >/dev/null 2>&1; expected=$?
     run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" >/dev/null 2>&1; actual=$?
     if [ "$expected" = "$actual" ]; then pass "$test_name"
     else fail "$test_name" "exit $expected" "exit $actual"; fi
@@ -121,7 +125,7 @@ compare_exit() {
 # Helper: compare both output and exit code
 compare_both() {
     test_name="$1"; command="$2"
-    expected_out=$(run_with_timeout "$TEST_TIMEOUT" bash -c "$command" 2>&1); expected_exit=$?
+    expected_out=$(run_with_timeout "$TEST_TIMEOUT" "$BASH_REF" -c "$command" 2>&1); expected_exit=$?
     actual_out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$command" 2>&1); actual_exit=$?
     norm_expected=$(normalize_shell_name "$expected_out")
     norm_actual=$(normalize_shell_name "$actual_out")

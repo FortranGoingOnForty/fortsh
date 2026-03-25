@@ -25,6 +25,7 @@ FAILED_TESTS_LIST=""
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 FORTSH_BIN="${FORTSH_BIN:-$SCRIPT_DIR/../bin/fortsh}"
+BASH_REF="${BASH_REF:-bash}"
 
 # Check if fortsh exists
 if [ ! -x "$FORTSH_BIN" ]; then
@@ -1143,7 +1144,7 @@ fi
 # Both bash and fortsh correctly treat this as arithmetic and error
 "$FORTSH_BIN" -c '((echo deep))' >/dev/null 2>&1
 fortsh_exit=$?
-bash -c '((echo deep))' >/dev/null 2>&1
+"$BASH_REF" -c '((echo deep))' >/dev/null 2>&1
 bash_exit=$?
 if [ "$fortsh_exit" -eq "$bash_exit" ]; then
     pass "double paren arithmetic exit"

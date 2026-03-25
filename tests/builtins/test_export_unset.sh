@@ -4,13 +4,13 @@ TEST_PREFIX="[export-unset]"
 
 section "1. export"
 compare_output "export VAR=value" 'export MYVAR=hello; echo $MYVAR'
-compare_output "export preserves in subshell" 'export MYVAR=hello; bash -c "echo \$MYVAR"'
-compare_output "export without value marks for export" 'MYVAR=test; export MYVAR; bash -c "echo \$MYVAR"'
+compare_output "export preserves in subshell" 'export MYVAR=hello; '"$BASH_REF"' -c "echo \$MYVAR"'
+compare_output "export without value marks for export" 'MYVAR=test; export MYVAR; '"$BASH_REF"' -c "echo \$MYVAR"'
 compare_output "export multiple vars" 'export A=1 B=2 C=3; echo $A $B $C'
 compare_exit "export -p succeeds" 'export -p'
 compare_output "export overwrites existing" 'export V=old; export V=new; echo $V'
-compare_output "unexported var not in subshell" 'MYVAR=local; bash -c "echo \${MYVAR:-empty}"'
-compare_output "export -n unexports variable" 'export MYVAR=hello; export -n MYVAR; bash -c "echo \${MYVAR:-gone}"'
+compare_output "unexported var not in subshell" 'MYVAR=local; '"$BASH_REF"' -c "echo \${MYVAR:-empty}"'
+compare_output "export -n unexports variable" 'export MYVAR=hello; export -n MYVAR; '"$BASH_REF"' -c "echo \${MYVAR:-gone}"'
 
 section "2. unset"
 compare_output "unset removes variable" 'MYVAR=hello; unset MYVAR; echo ">${MYVAR}<"'

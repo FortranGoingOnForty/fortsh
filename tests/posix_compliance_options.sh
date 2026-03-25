@@ -25,6 +25,7 @@ FAILED_TESTS_LIST=""
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 FORTSH_BIN="${FORTSH_BIN:-$SCRIPT_DIR/../bin/fortsh}"
+BASH_REF="${BASH_REF:-bash}"
 
 # Check if fortsh exists
 if [ ! -x "$FORTSH_BIN" ]; then
@@ -196,7 +197,7 @@ section "386. SET -v (VERBOSE)"
 # Test that -v option is accepted and runs without error
 "$FORTSH_BIN" -c 'set -v; echo hello' >/dev/null 2>&1
 fortsh_exit=$?
-bash -c 'set -v; echo hello' >/dev/null 2>&1
+"$BASH_REF" -c 'set -v; echo hello' >/dev/null 2>&1
 bash_exit=$?
 if [ "$fortsh_exit" -eq "$bash_exit" ]; then
     pass "set -v runs without error"

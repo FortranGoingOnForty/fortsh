@@ -6,7 +6,7 @@ section "1. declare basic flags"
 compare_output "declare -i integer arithmetic" 'declare -i num=5+3; echo $num'
 compare_output "declare -r is readonly" 'declare -r RO=hello; echo $RO'
 compare_exit "declare -r prevents modification" 'declare -r RO=hello; RO=world 2>/dev/null'
-compare_output "declare -x exports variable" 'declare -x MYEXP=exported; bash -c "echo \$MYEXP"'
+compare_output "declare -x exports variable" 'declare -x MYEXP=exported; '"$BASH_REF"' -c "echo \$MYEXP"'
 compare_output "declare plain variable" 'declare V=hello; echo $V'
 
 section "2. declare arrays"

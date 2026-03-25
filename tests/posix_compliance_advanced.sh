@@ -36,6 +36,7 @@ FAILED_TESTS_LIST=""
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 FORTSH_BIN="${FORTSH_BIN:-$SCRIPT_DIR/../bin/fortsh}"
+BASH_REF="${BASH_REF:-bash}"
 
 # Check if fortsh exists
 if [ ! -x "$FORTSH_BIN" ]; then
@@ -94,7 +95,7 @@ compare_posix_output() {
     fortsh_file="/tmp/posix_adv_$$_fortsh"
 
     # Run in POSIX shell (sh)
-    bash -c "$command" 2>&1 | normalize_output > "$posix_file" || true
+    "$BASH_REF" -c "$command" 2>&1 | normalize_output > "$posix_file" || true
 
     # Run in fortsh
     "$FORTSH_BIN" -c "$command" 2>&1 | normalize_output > "$fortsh_file" || true
@@ -114,7 +115,7 @@ compare_posix_exit_code() {
     test_name="$1"
     command="$2"
 
-    bash -c "$command" > /dev/null 2>&1
+    "$BASH_REF" -c "$command" > /dev/null 2>&1
     posix_exit=$?
 
     "$FORTSH_BIN" -c "$command" > /dev/null 2>&1

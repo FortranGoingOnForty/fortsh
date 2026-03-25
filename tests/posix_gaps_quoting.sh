@@ -25,6 +25,7 @@ FAILED_TESTS_LIST=""
 # Get script directory (POSIX way)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 FORTSH_BIN="${FORTSH_BIN:-$SCRIPT_DIR/../bin/fortsh}"
+BASH_REF="${BASH_REF:-bash}"
 
 # Check if fortsh exists
 if [ ! -x "$FORTSH_BIN" ]; then
@@ -59,7 +60,7 @@ normalize_output() { sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'; }
 
 compare_posix_output() {
     test_name="$1"; command="$2"
-    posix_out=$(bash -c "$command" 2>&1 | normalize_output)
+    posix_out=$("$BASH_REF" -c "$command" 2>&1 | normalize_output)
     fortsh_out=$("$FORTSH_BIN" -c "$command" 2>&1 | normalize_output)
     if [ "$posix_out" = "$fortsh_out" ]; then pass "$test_name"
     else fail "$test_name" "$posix_out" "$fortsh_out"; fi
