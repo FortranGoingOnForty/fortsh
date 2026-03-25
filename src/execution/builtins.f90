@@ -1685,16 +1685,16 @@ contains
 
     ! trap -l (list signals)
     if (cmd%num_tokens == 2 .and. trim(cmd%tokens(2)) == '-l') then
-      write(output_unit, '(a)') 'Available signals:'
-      write(output_unit, '(a)') '  1) SIGHUP    2) SIGINT    3) SIGQUIT   4) SIGILL'
-      write(output_unit, '(a)') '  5) SIGTRAP   6) SIGABRT   7) SIGBUS    8) SIGFPE'
-      write(output_unit, '(a)') '  9) SIGKILL  10) SIGUSR1  11) SIGSEGV  12) SIGUSR2'
-      write(output_unit, '(a)') ' 13) SIGPIPE  14) SIGALRM  15) SIGTERM  16) SIGSTKFLT'
-      write(output_unit, '(a)') ' 17) SIGCHLD  18) SIGCONT  19) SIGSTOP  20) SIGTSTP'
-      write(output_unit, '(a)') ' 21) SIGTTIN  22) SIGTTOU'
-      write(output_unit, '(a)') ''
-      write(output_unit, '(a)') 'Special signals:'
-      write(output_unit, '(a)') '  0) EXIT      DEBUG        ERR          RETURN'
+      call write_stdout('Available signals:')
+      call write_stdout('  1) SIGHUP    2) SIGINT    3) SIGQUIT   4) SIGILL')
+      call write_stdout('  5) SIGTRAP   6) SIGABRT   7) SIGBUS    8) SIGFPE')
+      call write_stdout('  9) SIGKILL  10) SIGUSR1  11) SIGSEGV  12) SIGUSR2')
+      call write_stdout(' 13) SIGPIPE  14) SIGALRM  15) SIGTERM  16) SIGSTKFLT')
+      call write_stdout(' 17) SIGCHLD  18) SIGCONT  19) SIGSTOP  20) SIGTSTP')
+      call write_stdout(' 21) SIGTTIN  22) SIGTTOU')
+      call write_stdout('')
+      call write_stdout('Special signals:')
+      call write_stdout('  0) EXIT      DEBUG        ERR          RETURN')
       shell%last_exit_status = 0
       return
     end if
