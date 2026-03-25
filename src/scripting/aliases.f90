@@ -5,7 +5,7 @@
 module aliases
   use shell_types
   use iso_fortran_env, only: output_unit, error_unit
-  use io_helpers, only: write_stderr
+  use io_helpers, only: write_stderr, write_stdout
   implicit none
 
 contains
@@ -97,8 +97,8 @@ contains
     count = 0
     do i = 1, size(shell%aliases)
       if (shell%aliases(i)%name(1:1) /= char(0) .and. trim(shell%aliases(i)%name) /= '') then
-        write(output_unit, '(a)') 'alias ' // trim(shell%aliases(i)%name) // &
-                                 '=' // "'" // trim(shell%aliases(i)%command) // "'"
+        call write_stdout('alias ' // trim(shell%aliases(i)%name) // &
+                         '=' // "'" // trim(shell%aliases(i)%command) // "'")
         count = count + 1
       end if
     end do
