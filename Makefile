@@ -21,8 +21,13 @@ ifeq ($(UNAME_S),Darwin)
 else
     # Linux: Use gfortran
     FC = gfortran
-    PLATFORM_FLAGS = -cpp
-    $(info Using gfortran on Linux)
+    ifeq ($(UNAME_M),aarch64)
+        PLATFORM_FLAGS = -cpp -DUSE_C_STAT
+        $(info Using gfortran on Linux aarch64 — C stat helpers enabled)
+    else
+        PLATFORM_FLAGS = -cpp
+        $(info Using gfortran on Linux)
+    endif
 endif
 
 # Memory pooling (enabled by default, set NO_MEMPOOL=1 to disable)

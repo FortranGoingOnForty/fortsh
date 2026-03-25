@@ -518,6 +518,49 @@ module system_interface
       integer(c_int) :: c_lstat
     end function
 
+    ! Portable stat helpers — bypass Fortran struct stat layout across architectures
+    function fortsh_stat_mode(pathname) bind(C, name="fortsh_stat_mode")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: pathname
+      integer(c_int) :: fortsh_stat_mode
+    end function
+
+    function fortsh_lstat_mode(pathname) bind(C, name="fortsh_lstat_mode")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: pathname
+      integer(c_int) :: fortsh_lstat_mode
+    end function
+
+    function fortsh_stat_size(pathname) bind(C, name="fortsh_stat_size")
+      import :: c_ptr, c_long_long
+      type(c_ptr), value :: pathname
+      integer(c_long_long) :: fortsh_stat_size
+    end function
+
+    function fortsh_stat_uid(pathname) bind(C, name="fortsh_stat_uid")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: pathname
+      integer(c_int) :: fortsh_stat_uid
+    end function
+
+    function fortsh_stat_mtime(pathname) bind(C, name="fortsh_stat_mtime")
+      import :: c_ptr, c_long_long
+      type(c_ptr), value :: pathname
+      integer(c_long_long) :: fortsh_stat_mtime
+    end function
+
+    function fortsh_stat_dev(pathname) bind(C, name="fortsh_stat_dev")
+      import :: c_ptr, c_long_long
+      type(c_ptr), value :: pathname
+      integer(c_long_long) :: fortsh_stat_dev
+    end function
+
+    function fortsh_stat_ino(pathname) bind(C, name="fortsh_stat_ino")
+      import :: c_ptr, c_long_long
+      type(c_ptr), value :: pathname
+      integer(c_long_long) :: fortsh_stat_ino
+    end function
+
     function c_access(pathname, mode) bind(C, name="access")
       import :: c_ptr, c_int
       type(c_ptr), value :: pathname
@@ -1116,100 +1159,150 @@ contains
   end function
 
   ! File test functions for test builtin support
+  ! On aarch64 Linux, struct stat layout differs from x86_64 (mode/nlink swapped,
+  ! different field sizes). USE_C_STAT routes through C helpers that use system headers.
   function file_exists(path) result(exists)
     character(len=*), intent(in) :: path
     logical :: exists
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    exists = (mode >= 0)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     exists = (ret == 0)
+#endif
   end function
 
   function file_is_regular(path) result(is_reg)
     character(len=*), intent(in) :: path
     logical :: is_reg
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    is_reg = (mode >= 0 .and. iand(mode, S_IFMT) == S_IFREG)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     is_reg = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFREG)
+#endif
   end function
 
   function file_is_directory(path) result(is_dir)
     character(len=*), intent(in) :: path
     logical :: is_dir
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    is_dir = (mode >= 0 .and. iand(mode, S_IFMT) == S_IFDIR)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     is_dir = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFDIR)
+#endif
   end function
 
   function file_is_symlink(path) result(is_link)
     character(len=*), intent(in) :: path
     logical :: is_link
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_lstat_mode(c_loc(c_path))
+    is_link = (mode >= 0 .and. iand(mode, S_IFMT) == S_IFLNK)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
-    ret = c_lstat(c_loc(c_path), statbuf)  ! lstat for symlinks
+    ret = c_lstat(c_loc(c_path), statbuf)
     is_link = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFLNK)
+#endif
   end function
 
   function file_is_block_device(path) result(is_blk)
     character(len=*), intent(in) :: path
     logical :: is_blk
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    is_blk = (mode >= 0 .and. iand(mode, S_IFMT) == S_IFBLK)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     is_blk = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFBLK)
+#endif
   end function
 
   function file_is_char_device(path) result(is_chr)
     character(len=*), intent(in) :: path
     logical :: is_chr
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    is_chr = (mode >= 0 .and. iand(mode, S_IFMT) == S_IFCHR)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     is_chr = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFCHR)
+#endif
   end function
 
   function file_is_fifo(path) result(is_fifo)
     character(len=*), intent(in) :: path
     logical :: is_fifo
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    is_fifo = (mode >= 0 .and. iand(mode, S_IFMT) == S_IFIFO)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     is_fifo = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFIFO)
+#endif
   end function
 
   function file_is_socket(path) result(is_sock)
     character(len=*), intent(in) :: path
     logical :: is_sock
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    is_sock = (mode >= 0 .and. iand(mode, S_IFMT) == S_IFSOCK)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     is_sock = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_IFMT) == S_IFSOCK)
+#endif
   end function
 
   function file_is_readable(path) result(is_readable)
@@ -1249,60 +1342,90 @@ contains
     character(len=*), intent(in) :: path
     logical :: has_suid
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    has_suid = (mode >= 0 .and. iand(mode, S_ISUID) /= 0)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     has_suid = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_ISUID) /= 0)
+#endif
   end function
 
   function file_has_sgid(path) result(has_sgid)
     character(len=*), intent(in) :: path
     logical :: has_sgid
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    has_sgid = (mode >= 0 .and. iand(mode, S_ISGID) /= 0)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     has_sgid = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_ISGID) /= 0)
+#endif
   end function
 
   function file_has_sticky(path) result(has_sticky)
     character(len=*), intent(in) :: path
     logical :: has_sticky
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: mode
+    c_path = trim(path)//c_null_char
+    mode = fortsh_stat_mode(c_loc(c_path))
+    has_sticky = (mode >= 0 .and. iand(mode, S_ISVTX) /= 0)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     has_sticky = (ret == 0 .and. iand(int(statbuf%st_mode, c_int), S_ISVTX) /= 0)
+#endif
   end function
 
   function file_has_size(path) result(has_size)
     character(len=*), intent(in) :: path
     logical :: has_size
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer(c_long_long) :: sz
+    c_path = trim(path)//c_null_char
+    sz = fortsh_stat_size(c_loc(c_path))
+    has_size = (sz > 0)
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     has_size = (ret == 0 .and. statbuf%st_size > 0)
+#endif
   end function
 
   function file_owned_by_euid(path) result(is_owned)
     character(len=*), intent(in) :: path
     logical :: is_owned
     character(len=256), target :: c_path
+#ifdef USE_C_STAT
+    integer :: uid
+    c_path = trim(path)//c_null_char
+    uid = fortsh_stat_uid(c_loc(c_path))
+    is_owned = (uid >= 0 .and. uid == c_geteuid())
+#else
     integer :: ret
     type(stat_t) :: statbuf
-
     c_path = trim(path)//c_null_char
     ret = c_stat(c_loc(c_path), statbuf)
     is_owned = (ret == 0 .and. statbuf%st_uid == c_geteuid())
+#endif
   end function
 
   function file_owned_by_egid(path) result(is_owned)
@@ -1318,9 +1441,16 @@ contains
     character(len=*), intent(in) :: file1, file2
     logical :: is_newer
     character(len=256), target :: c_path1, c_path2
+#ifdef USE_C_STAT
+    integer(c_long_long) :: mt1, mt2
+    c_path1 = trim(file1)//c_null_char
+    c_path2 = trim(file2)//c_null_char
+    mt1 = fortsh_stat_mtime(c_loc(c_path1))
+    mt2 = fortsh_stat_mtime(c_loc(c_path2))
+    is_newer = (mt1 >= 0 .and. mt2 >= 0 .and. mt1 > mt2)
+#else
     integer :: ret1, ret2
     type(stat_t) :: stat1, stat2
-
     c_path1 = trim(file1)//c_null_char
     c_path2 = trim(file2)//c_null_char
     ret1 = c_stat(c_loc(c_path1), stat1)
@@ -1330,15 +1460,23 @@ contains
 #else
     is_newer = (ret1 == 0 .and. ret2 == 0 .and. stat1%st_mtime > stat2%st_mtime)
 #endif
+#endif
   end function
 
   function file_is_older(file1, file2) result(is_older)
     character(len=*), intent(in) :: file1, file2
     logical :: is_older
     character(len=256), target :: c_path1, c_path2
+#ifdef USE_C_STAT
+    integer(c_long_long) :: mt1, mt2
+    c_path1 = trim(file1)//c_null_char
+    c_path2 = trim(file2)//c_null_char
+    mt1 = fortsh_stat_mtime(c_loc(c_path1))
+    mt2 = fortsh_stat_mtime(c_loc(c_path2))
+    is_older = (mt1 >= 0 .and. mt2 >= 0 .and. mt1 < mt2)
+#else
     integer :: ret1, ret2
     type(stat_t) :: stat1, stat2
-
     c_path1 = trim(file1)//c_null_char
     c_path2 = trim(file2)//c_null_char
     ret1 = c_stat(c_loc(c_path1), stat1)
@@ -1348,15 +1486,25 @@ contains
 #else
     is_older = (ret1 == 0 .and. ret2 == 0 .and. stat1%st_mtime < stat2%st_mtime)
 #endif
+#endif
   end function
 
   function file_same_as(file1, file2) result(is_same)
     character(len=*), intent(in) :: file1, file2
     logical :: is_same
     character(len=256), target :: c_path1, c_path2
+#ifdef USE_C_STAT
+    integer(c_long_long) :: dev1, dev2, ino1, ino2
+    c_path1 = trim(file1)//c_null_char
+    c_path2 = trim(file2)//c_null_char
+    dev1 = fortsh_stat_dev(c_loc(c_path1))
+    dev2 = fortsh_stat_dev(c_loc(c_path2))
+    ino1 = fortsh_stat_ino(c_loc(c_path1))
+    ino2 = fortsh_stat_ino(c_loc(c_path2))
+    is_same = (dev1 >= 0 .and. dev2 >= 0 .and. dev1 == dev2 .and. ino1 == ino2)
+#else
     integer :: ret1, ret2
     type(stat_t) :: stat1, stat2
-
     c_path1 = trim(file1)//c_null_char
     c_path2 = trim(file2)//c_null_char
     ret1 = c_stat(c_loc(c_path1), stat1)
@@ -1364,6 +1512,7 @@ contains
     is_same = (ret1 == 0 .and. ret2 == 0 .and. &
                stat1%st_dev == stat2%st_dev .and. &
                stat1%st_ino == stat2%st_ino)
+#endif
   end function
 
   ! Create a named pipe (FIFO)
