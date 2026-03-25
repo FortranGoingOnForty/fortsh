@@ -8,6 +8,7 @@ module shell_options
   use system_interface, only: get_pid, get_ppid
   use readline, only: set_global_editing_mode
   use iso_fortran_env, only: output_unit, error_unit
+  use io_helpers, only: write_stdout
   implicit none
 
 contains
@@ -320,19 +321,21 @@ contains
   end subroutine
 
   ! Show shell variables (simplified version for 'set' without args)
+  ! Uses write_stdout (C-level fd write) instead of Fortran output_unit
+  ! so output respects dup2 redirections on all compilers (flang-new caches fd)
   subroutine show_shell_variables(shell)
     type(shell_state_t), intent(in) :: shell
     integer :: i
-    
-    write(output_unit, '(a)') '# Shell variables:'
+    character(len=64) :: num_str
+
+    call write_stdout('# Shell variables:')
     do i = 1, shell%num_variables
       if (shell%variables(i)%name(1:1) /= char(0) .and. trim(shell%variables(i)%name) /= '') then
         if (shell%variables(i)%is_array) then
-          write(output_unit, '(a)') trim(shell%variables(i)%name) // '=(array)'
+          call write_stdout(trim(shell%variables(i)%name) // '=(array)')
         else if (shell%variables(i)%is_assoc_array) then
-          write(output_unit, '(a)') trim(shell%variables(i)%name) // '=(associative array)'
+          call write_stdout(trim(shell%variables(i)%name) // '=(associative array)')
         else
-          ! Bash: only quote values containing special chars, using single quotes
           block
             character(len=:), allocatable :: val
             logical :: needs_quote
@@ -349,22 +352,25 @@ contains
               end select
             end do
             if (needs_quote) then
-              write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // &
-                                       "'" // val // "'"
+              call write_stdout(trim(shell%variables(i)%name) // '=' // "'" // val // "'")
             else
-              write(output_unit, '(a)') trim(shell%variables(i)%name) // '=' // val
+              call write_stdout(trim(shell%variables(i)%name) // '=' // val)
             end if
           end block
         end if
       end if
     end do
-    
-    write(output_unit, '(a)') '# Special variables:'
-    write(output_unit, '(a,i15)') '$$=', shell%shell_pid
-    write(output_unit, '(a,i15)') '$!=', shell%last_bg_pid
-    write(output_unit, '(a)') '$0=' // trim(shell%shell_name)
-    write(output_unit, '(a,i15)') '$PPID=', shell%parent_pid
-    write(output_unit, '(a,i15)') '$?=', shell%last_exit_status
+
+    call write_stdout('# Special variables:')
+    write(num_str, '(i15)') shell%shell_pid
+    call write_stdout('$$=' // trim(adjustl(num_str)))
+    write(num_str, '(i15)') shell%last_bg_pid
+    call write_stdout('$!=' // trim(adjustl(num_str)))
+    call write_stdout('$0=' // trim(shell%shell_name))
+    write(num_str, '(i15)') shell%parent_pid
+    call write_stdout('$PPID=' // trim(adjustl(num_str)))
+    write(num_str, '(i15)') shell%last_exit_status
+    call write_stdout('$?=' // trim(adjustl(num_str)))
   end subroutine
 
   ! Check if errexit option is enabled and handle command failure
