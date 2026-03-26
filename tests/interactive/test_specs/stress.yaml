@@ -1,0 +1,289 @@
+metadata:
+  category: Stress
+  description: Interactive stress tests for buffer limits, deep nesting, large values, and escape sequences
+tests:
+# ==========================================
+# 1. Long command lines
+# ==========================================
+- name: '1. LONG COMMANDS: 200-char echo'
+  steps:
+  - send_line: echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  expect_output: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  match_type: contains
+
+- name: '1. LONG COMMANDS: long pipeline'
+  steps:
+  - send_line: echo abcdefghij | cat | cat | cat | cat | cat | cat | cat | cat | cat | cat
+  expect_output: abcdefghij
+  match_type: contains
+
+- name: '1. LONG COMMANDS: long variable value'
+  steps:
+  - send_line: X=$(printf '%0200d' 0); echo ${#X}
+  expect_output: '200'
+  match_type: contains
+
+# ==========================================
+# 2. Escape sequences (the gap that triggered this)
+# ==========================================
+- name: '2. ESCAPE SEQUENCES: hex in dollar-single-quote'
+  steps:
+  - send_line: echo $'\x48\x65\x6c\x6c\x6f'
+  expect_output: Hello
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: octal in dollar-single-quote'
+  steps:
+  - send_line: echo $'\110\145\154\154\157'
+  expect_output: Hello
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: mixed escapes'
+  steps:
+  - send_line: echo $'\x41\t\x42\t\x43'
+  expect_output: A
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: tab in dollar-quote'
+  steps:
+  - send_line: echo $'a\tb'
+  expect_output: a
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: newline in dollar-quote'
+  steps:
+  - send_line: echo $'line1\nline2'
+  expect_output: line1
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: single quote in dollar-quote'
+  steps:
+  - send_line: echo $'it'\''s fine'
+  expect_output: it's fine
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: printf hex'
+  steps:
+  - send_line: printf '\x41\x42\x43\n'
+  expect_output: ABC
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: printf %b hex'
+  steps:
+  - send_line: printf '%b' '\x41\x42\x43\n'
+  expect_output: ABC
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: printf octal'
+  steps:
+  - send_line: printf '\101\102\103\n'
+  expect_output: ABC
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: var@E hex'
+  steps:
+  - send_line: X='\x48\x69'; echo "${X@E}"
+  expect_output: Hi
+  match_type: contains
+
+- name: '2. ESCAPE SEQUENCES: var@E octal'
+  steps:
+  - send_line: X='\110\151'; echo "${X@E}"
+  expect_output: Hi
+  match_type: contains
+
+# ==========================================
+# 3. Associative arrays (previously broken on ARM64)
+# ==========================================
+- name: '3. ASSOC ARRAYS: basic set and get'
+  steps:
+  - send_line: declare -A m; m[key]=val; echo ${m[key]}
+  expect_output: val
+  match_type: contains
+
+- name: '3. ASSOC ARRAYS: multiple keys'
+  steps:
+  - send_line: declare -A m; m[a]=1; m[b]=2; m[c]=3; echo ${#m[@]}
+  expect_output: '3'
+  match_type: contains
+
+- name: '3. ASSOC ARRAYS: overwrite'
+  steps:
+  - send_line: declare -A m; m[k]=old; m[k]=new; echo ${m[k]}
+  expect_output: new
+  match_type: contains
+
+- name: '3. ASSOC ARRAYS: key with spaces'
+  steps:
+  - send_line: declare -A m; m["hello world"]=yes; echo ${m["hello world"]}
+  expect_output: 'yes'
+  match_type: contains
+
+# ==========================================
+# 4. Deep nesting
+# ==========================================
+- name: '4. NESTING: nested command substitution'
+  steps:
+  - send_line: echo $(echo $(echo $(echo deep)))
+  expect_output: deep
+  match_type: contains
+
+- name: '4. NESTING: nested parameter expansion'
+  steps:
+  - send_line: A=hello; B=A; echo ${!B}
+  expect_output: hello
+  match_type: contains
+
+- name: '4. NESTING: nested arithmetic'
+  steps:
+  - send_line: echo $(( (1 + 2) * (3 + 4) ))
+  expect_output: '21'
+  match_type: contains
+
+# ==========================================
+# 5. Case transforms (previously broken on macOS)
+# ==========================================
+- name: '5. CASE TRANSFORMS: uppercase all'
+  steps:
+  - send_line: X=hello; echo ${X^^}
+  expect_output: HELLO
+  match_type: contains
+
+- name: '5. CASE TRANSFORMS: lowercase all'
+  steps:
+  - send_line: X=HELLO; echo ${X,,}
+  expect_output: hello
+  match_type: contains
+
+- name: '5. CASE TRANSFORMS: capitalize first'
+  steps:
+  - send_line: X=hello; echo ${X^}
+  expect_output: Hello
+  match_type: contains
+
+# ==========================================
+# 6. C-style for loops
+# ==========================================
+- name: '6. C-STYLE FOR: basic count'
+  steps:
+  - send_line: for ((i=0; i<5; i++)); do printf "%d " $i; done; echo
+  expect_output: 0 1 2 3 4
+  match_type: contains
+
+- name: '6. C-STYLE FOR: countdown'
+  steps:
+  - send_line: for ((i=5; i>0; i--)); do printf "%d " $i; done; echo
+  expect_output: 5 4 3 2 1
+  match_type: contains
+
+# ==========================================
+# 7. Process substitution
+# ==========================================
+- name: '7. PROCESS SUB: diff two commands'
+  steps:
+  - send_line: diff <(echo hello) <(echo hello); echo $?
+  expect_output: '0'
+  match_type: contains
+
+- name: '7. PROCESS SUB: paste two streams'
+  steps:
+  - send_line: paste <(echo a) <(echo b)
+  expect_output: a
+  match_type: contains
+
+# ==========================================
+# 8. Coprocesses
+# ==========================================
+- name: '8. COPROC: basic brace group'
+  steps:
+  - send_line: coproc { echo from_coproc; }; read line <&${COPROC[0]}; echo $line
+  expect_output: from_coproc
+  match_type: contains
+  timeout: 5
+
+# ==========================================
+# 9. Brace expansion with step
+# ==========================================
+- name: '9. BRACE: range with step'
+  steps:
+  - send_line: echo {1..10..2}
+  expect_output: 1 3 5 7 9
+  match_type: contains
+
+- name: '9. BRACE: reverse range'
+  steps:
+  - send_line: echo {5..1}
+  expect_output: 5 4 3 2 1
+  match_type: contains
+
+- name: '9. BRACE: alpha range'
+  steps:
+  - send_line: echo {a..f}
+  expect_output: a b c d e f
+  match_type: contains
+
+# ==========================================
+# 10. File tests (previously broken on aarch64)
+# ==========================================
+- name: '10. FILE TESTS: test -f'
+  steps:
+  - send_line: touch /tmp/fortsh_pty_test_file; test -f /tmp/fortsh_pty_test_file && echo exists
+  expect_output: exists
+  match_type: contains
+
+- name: '10. FILE TESTS: test -d'
+  steps:
+  - send_line: test -d /tmp && echo isdir
+  expect_output: isdir
+  match_type: contains
+
+- name: '10. FILE TESTS: bracket -f'
+  steps:
+  - send_line: touch /tmp/fortsh_pty_test_file; [ -f /tmp/fortsh_pty_test_file ] && echo exists
+  expect_output: exists
+  match_type: contains
+
+- name: '10. FILE TESTS: cleanup'
+  steps:
+  - send_line: rm -f /tmp/fortsh_pty_test_file; echo cleaned
+  expect_output: cleaned
+  match_type: contains
+
+# ==========================================
+# 11. ANSI-C quoting
+# ==========================================
+- name: '11. ANSI-C: backslash literal'
+  steps:
+  - send_line: echo $'backslash:\\'
+  expect_output: 'backslash:'
+  match_type: contains
+
+- name: '11. ANSI-C: double quote in single'
+  steps:
+  - send_line: echo $'say "hi"'
+  expect_output: say "hi"
+  match_type: contains
+
+# ==========================================
+# 12. Regex with BASH_REMATCH
+# ==========================================
+- name: '12. REGEX: basic match'
+  steps:
+  - send_line: '[[ "hello123" =~ ^([a-z]+)([0-9]+)$ ]] && echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"'
+  expect_output: hello 123
+  match_type: contains
+
+# ==========================================
+# 13. Here strings
+# ==========================================
+- name: '13. HERE STRING: basic'
+  steps:
+  - send_line: cat <<< "hello from here"
+  expect_output: hello from here
+  match_type: contains
+
+- name: '13. HERE STRING: with variable'
+  steps:
+  - send_line: X=world; cat <<< "hello $X"
+  expect_output: hello world
+  match_type: contains
