@@ -451,6 +451,12 @@ program fortran_shell
         shell%last_exit_status = exit_code
       end if
 
+      ! Flush output after command execution — flang-new buffers Fortran I/O
+      ! and won't flush to PTY until the buffer fills or process exits.
+      ! Without this, interactive output appears delayed or missing.
+      flush(output_unit)
+      flush(error_unit)
+
       call destroy_command_node(ast_root)
 
       ! Calculate and display duration if > 1 second
