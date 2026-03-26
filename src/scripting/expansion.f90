@@ -169,13 +169,17 @@ contains
         if (is_associative_array(shell, trim(array_name))) then
           if (is_keys_expansion .and. is_all_expansion) then
             ! ${!array[@]} - return all keys
-            allocate(keys(500))
-            call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            result_value = ''
-            do j = 1, min(num_keys, 500)
-              if (j > 1) result_value = trim(result_value) // ' '
-              result_value = trim(result_value) // trim(keys(j))
-            end do
+            block
+              character(len=4096) :: kbuf
+              kbuf = ''
+              allocate(keys(500))
+              call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
+              do j = 1, min(num_keys, 500)
+                if (j > 1) kbuf = trim(kbuf) // ' '
+                kbuf = trim(kbuf) // trim(keys(j))
+              end do
+              result_value = trim(kbuf)
+            end block
             deallocate(keys)
             return
           else if (is_length_expansion .and. is_all_expansion) then
@@ -306,12 +310,16 @@ contains
               return
             end if
           else
-            ! ${arr[i]} — single element
+            ! ${arr[i]} — single element (supports negative indices)
             block
-              integer :: arr_idx, arr_ios
+              integer :: arr_idx, arr_ios, arr_size
               character(len=:), allocatable :: arr_val
               read(array_key, *, iostat=arr_ios) arr_idx
               if (arr_ios == 0) then
+                if (arr_idx < 0) then
+                  arr_size = get_array_size(shell, trim(array_name))
+                  arr_idx = arr_size + arr_idx  ! -1 → last element (0-based)
+                end if
                 arr_val = get_array_element(shell, trim(array_name), arr_idx + 1)
                 if (is_length_expansion) then
                   write(num_buf, '(I0)') len_trim(arr_val)
@@ -450,36 +458,79 @@ contains
       end if
     end if
 
-    ! Now check for other operations
-    colon_pos = index(var_name, ':')
-    dash_pos = index(var_name, '-')
-    plus_pos = index(var_name, '+')
-    equals_pos = index(var_name, '=')
-    question_pos = index(var_name, '?')
-    percent_pos = index(var_name, '%')
-    hash_pos = index(var_name, '#')
-    slash_pos = index(var_name, '/')
+    ! Find operator positions, skipping characters inside nested ${...}
+    colon_pos = 0; dash_pos = 0; plus_pos = 0; equals_pos = 0
+    question_pos = 0; percent_pos = 0; hash_pos = 0; slash_pos = 0
+    block
+      integer :: scan_i, scan_depth
+      scan_depth = 0
+      do scan_i = 1, len_trim(var_name)
+        ! Track brace nesting: skip everything inside ${...}
+        if (scan_i + 1 <= len_trim(var_name) .and. &
+            var_name(scan_i:scan_i) == '$' .and. var_name(scan_i+1:scan_i+1) == '{') then
+          scan_depth = scan_depth + 1
+        else if (var_name(scan_i:scan_i) == '}' .and. scan_depth > 0) then
+          scan_depth = scan_depth - 1
+        end if
+        if (scan_depth > 0) cycle  ! inside nested ${...}, skip
+
+        ! Record first occurrence of each operator
+        select case (var_name(scan_i:scan_i))
+        case (':')
+          if (colon_pos == 0) colon_pos = scan_i
+        case ('-')
+          if (dash_pos == 0) dash_pos = scan_i
+        case ('+')
+          if (plus_pos == 0) plus_pos = scan_i
+        case ('=')
+          if (equals_pos == 0) equals_pos = scan_i
+        case ('?')
+          if (question_pos == 0) question_pos = scan_i
+        case ('%')
+          if (percent_pos == 0) percent_pos = scan_i
+        case ('#')
+          if (hash_pos == 0) hash_pos = scan_i
+        case ('/')
+          if (slash_pos == 0) slash_pos = scan_i
+        end select
+      end do
+    end block
     !     write(error_unit, '(A,A,A,I0)') 'DEBUG AFTER OPS: var_name=[', trim(var_name), '] dash_pos=', dash_pos
 
     ! Pattern replacement: ${var/pattern/replacement} or ${var//pattern/replacement}
-    if (slash_pos > 0) then
-      ! Find second slash to separate pattern from replacement
-      i = index(var_name(slash_pos+1:), '/')
-      if (i > 0) then
-        i = slash_pos + i
-        operation = var_name(:slash_pos-1)
-        pattern = var_name(slash_pos+1:i-1)
-        replacement = var_name(i+1:)
-
-        ! Check if it's replace all (//)
-        if (slash_pos > 1 .and. var_name(slash_pos-1:slash_pos-1) == '/') then
-          replace_all = .true.
-          operation = var_name(:slash_pos-2)
+    ! Only if / appears before # and % (otherwise /*/  in ${var#/*/} is a pattern, not replacement)
+    if (slash_pos > 0 .and. &
+        (hash_pos == 0 .or. slash_pos < hash_pos) .and. &
+        (percent_pos == 0 .or. slash_pos < percent_pos)) then
+      ! Check if it's replace all (//) — look AFTER slash_pos for second /
+      operation = var_name(:slash_pos-1)
+      if (slash_pos < len_trim(var_name) .and. var_name(slash_pos+1:slash_pos+1) == '/') then
+        replace_all = .true.
+        ! Skip both slashes: pattern starts after //
+        i = index(var_name(slash_pos+2:), '/')
+        if (i > 0) then
+          i = slash_pos + 1 + i
+          pattern = var_name(slash_pos+2:i-1)
+          replacement = var_name(i+1:)
         else
-          replace_all = .false.
+          pattern = var_name(slash_pos+2:)
+          replacement = ''
         end if
+      else
+        replace_all = .false.
+        ! Single /: find separator slash after pattern
+        i = index(var_name(slash_pos+1:), '/')
+        if (i > 0) then
+          i = slash_pos + i
+          pattern = var_name(slash_pos+1:i-1)
+          replacement = var_name(i+1:)
+        else
+          pattern = var_name(slash_pos+1:)
+          replacement = ''
+        end if
+      end if
 
-        var_value = get_shell_variable(shell, trim(operation))
+      var_value = get_shell_variable(shell, trim(operation))
 
         ! Check for anchor prefix in pattern
         if (len_trim(pattern) > 0 .and. pattern(1:1) == '#') then
@@ -510,7 +561,6 @@ contains
                               replace_all, result_value)
         end if
         return
-      end if
     end if
 
     ! Suffix removal: ${var%pattern} or ${var%%pattern}
@@ -528,13 +578,9 @@ contains
         pattern = var_name(percent_pos+1:)
       end if
       var_value = get_shell_variable(shell, trim(operation))
-      ! Expand simple $var in pattern
-      if (len_trim(pattern) >= 1 .and. pattern(1:1) == '$') then
-        if (len_trim(pattern) >= 2) then
-          if (pattern(2:2) /= '{' .and. pattern(2:2) /= '(') then
-            pattern = get_shell_variable(shell, trim(pattern(2:)))
-          end if
-        end if
+      ! Expand $var or ${...} in pattern
+      if (index(trim(pattern), '$') > 0) then
+        pattern = expand_word_operand(trim(pattern), shell)
       end if
       call remove_suffix(trim(var_value), trim(pattern), greedy, result_value)
       return
@@ -594,13 +640,9 @@ contains
         pattern = var_name(hash_pos+1:)
       end if
       var_value = get_shell_variable(shell, trim(operation))
-      ! Expand simple $var in pattern
-      if (len_trim(pattern) >= 1 .and. pattern(1:1) == '$') then
-        if (len_trim(pattern) >= 2) then
-          if (pattern(2:2) /= '{' .and. pattern(2:2) /= '(') then
-            pattern = get_shell_variable(shell, trim(pattern(2:)))
-          end if
-        end if
+      ! Expand $var or ${...} in pattern
+      if (index(trim(pattern), '$') > 0) then
+        pattern = expand_word_operand(trim(pattern), shell)
       end if
       call remove_prefix(trim(var_value), trim(pattern), greedy, result_value)
       return
@@ -678,13 +720,13 @@ contains
         ! ${var:-word}: use word if var is unset or null
         if (has_colon) then
           if (.not. var_is_set .or. var_is_null) then
-            result_value = trim(param1)
+            result_value = expand_word_operand(trim(param1), shell)
           else
             result_value = trim(var_value)
           end if
         else
           if (.not. var_is_set) then
-            result_value = trim(param1)
+            result_value = expand_word_operand(trim(param1), shell)
           else
             result_value = trim(var_value)
           end if
@@ -711,13 +753,13 @@ contains
         ! ${var:+word}: use word if var is set and not null
         if (has_colon) then
           if (var_is_set .and. .not. var_is_null) then
-            result_value = trim(param1)
+            result_value = expand_word_operand(trim(param1), shell)
           else
             result_value = ''
           end if
         else
           if (var_is_set) then
-            result_value = trim(param1)
+            result_value = expand_word_operand(trim(param1), shell)
           else
             result_value = ''
           end if
@@ -743,14 +785,14 @@ contains
         if (has_colon) then
           if (.not. var_is_set .or. var_is_null) then
             call set_shell_variable(shell, trim(operation), trim(param1))
-            result_value = trim(param1)
+            result_value = expand_word_operand(trim(param1), shell)
           else
             result_value = trim(var_value)
           end if
         else
           if (.not. var_is_set) then
             call set_shell_variable(shell, trim(operation), trim(param1))
-            result_value = trim(param1)
+            result_value = expand_word_operand(trim(param1), shell)
           else
             result_value = trim(var_value)
           end if
@@ -828,6 +870,81 @@ contains
     end if
 
   end subroutine process_param_expansion
+
+  ! Expand nested ${...} in a word operand (used by default/assign/error/alternate operators)
+  recursive function expand_word_operand(word, shell) result(expanded)
+    character(len=*), intent(in) :: word
+    type(shell_state_t), intent(inout) :: shell
+    character(len=:), allocatable :: expanded
+    integer :: dp, bp, depth
+
+    ! Quick check: if no $, return as-is
+    dp = index(word, '$')
+    if (dp == 0) then
+      expanded = trim(word)
+      return
+    end if
+
+    ! Handle simple $VAR (no braces)
+    if (dp + 1 <= len_trim(word) .and. word(dp+1:dp+1) /= '{') then
+      block
+        integer :: vend
+        character(len=:), allocatable :: vval
+        vend = dp + 1
+        do while (vend <= len_trim(word))
+          if (.not. ((word(vend:vend) >= 'a' .and. word(vend:vend) <= 'z') .or. &
+                     (word(vend:vend) >= 'A' .and. word(vend:vend) <= 'Z') .or. &
+                     (word(vend:vend) >= '0' .and. word(vend:vend) <= '9') .or. &
+                     word(vend:vend) == '_')) exit
+          vend = vend + 1
+        end do
+        if (vend > dp + 1) then
+          vval = get_shell_variable(shell, word(dp+1:vend-1))
+          expanded = word(1:dp-1) // trim(vval)
+          if (vend <= len_trim(word)) then
+            expanded = expanded // expand_word_operand(word(vend:), shell)
+          end if
+          return
+        end if
+      end block
+    end if
+
+    ! Handle ${...} brace expansion
+    dp = index(word, '${')
+
+    ! Find matching } counting nesting depth — start AFTER the opening ${
+    depth = 1
+    bp = dp + 2
+    do while (bp <= len_trim(word))
+      if (bp + 1 <= len_trim(word) .and. word(bp:bp) == '$' .and. word(bp+1:bp+1) == '{') then
+        depth = depth + 1
+        bp = bp + 2
+        cycle
+      else if (word(bp:bp) == '}') then
+        depth = depth - 1
+        if (depth == 0) exit
+      end if
+      bp = bp + 1
+    end do
+
+    if (bp <= len_trim(word)) then
+      ! Recursively expand the inner ${...}
+      block
+        character(len=:), allocatable :: inner_result, prefix, suffix
+        prefix = word(1:dp-1)
+        call process_param_expansion(word(dp+2:bp-1), inner_result, shell)
+        suffix = word(bp+1:len_trim(word))
+        ! Recurse on suffix in case there are more ${...}
+        if (index(suffix, '${') > 0) then
+          expanded = prefix // inner_result // expand_word_operand(suffix, shell)
+        else
+          expanded = prefix // inner_result // suffix
+        end if
+      end block
+    else
+      expanded = trim(word)
+    end if
+  end function
 
   subroutine parse_substring_expansion(input, var_name, offset_str, length_str)
     character(len=*), intent(in) :: input

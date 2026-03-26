@@ -1276,7 +1276,7 @@ contains
   end function
 
   subroutine expand_variables(token, expanded, shell, was_quoted_in)
-    use expansion, only: expand_braces, arithmetic_expansion_shell
+    use expansion, only: expand_braces, arithmetic_expansion_shell, process_param_expansion
     character(len=*), intent(in) :: token
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
@@ -1644,7 +1644,7 @@ contains
           var_name = working_token(var_start:i-2)
 
           ! Process parameter expansion
-          call process_parameter_expansion(var_name, var_value, shell)
+          call process_param_expansion(var_name, var_value, shell)
           if (allocated(var_value) .and. len(var_value) > 0) then
             call ensure_result_cap(j + len_trim(var_value))
             result(j:j+len_trim(var_value)-1) = trim(var_value)
@@ -2541,7 +2541,18 @@ contains
     end do
   end function
 
+  ! Delegate to expansion module's canonical implementation (issue #12 consolidation)
   recursive subroutine process_parameter_expansion(param_expr, result_value, shell)
+    use expansion, only: process_param_expansion
+    character(len=*), intent(in) :: param_expr
+    character(len=:), allocatable, intent(out) :: result_value
+    type(shell_state_t), intent(inout) :: shell
+    call process_param_expansion(param_expr, result_value, shell)
+  end subroutine
+
+  ! Original implementation preserved below for reference during validation.
+  ! TODO: Remove after confirming all tests pass with delegation.
+  subroutine process_parameter_expansion_old(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
                          set_shell_variable, is_shell_variable_set, check_nounset, &
@@ -3602,7 +3613,7 @@ contains
         end if
       end if
     end if
-  end subroutine
+  end subroutine process_parameter_expansion_old
 
   subroutine process_tilde_expansion(token, pos, result, result_pos, shell)
     character(len=*), intent(in) :: token
