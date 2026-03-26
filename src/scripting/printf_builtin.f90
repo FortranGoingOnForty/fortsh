@@ -713,10 +713,39 @@ contains
           output(out_pos:out_pos) = char(7)
         case ('f')
           output(out_pos:out_pos) = char(12)
+        case ('e', 'E')
+          output(out_pos:out_pos) = char(27)
         case ('v')
           output(out_pos:out_pos) = char(11)
         case (char(92))  ! backslash
           output(out_pos:out_pos) = char(92)
+        case ('x')
+          ! Hex escape: \xHH
+          block
+            integer :: hv, hd
+            character :: hc
+            hv = 0; hd = 0
+            pos = pos + 1
+            do while (pos <= input_len .and. hd < 2)
+              hc = input(pos:pos)
+              if (hc >= '0' .and. hc <= '9') then
+                hv = hv * 16 + (ichar(hc) - ichar('0'))
+              else if (hc >= 'a' .and. hc <= 'f') then
+                hv = hv * 16 + (ichar(hc) - ichar('a') + 10)
+              else if (hc >= 'A' .and. hc <= 'F') then
+                hv = hv * 16 + (ichar(hc) - ichar('A') + 10)
+              else
+                exit
+              end if
+              pos = pos + 1
+              hd = hd + 1
+            end do
+            if (hd > 0 .and. hv <= 255) then
+              output(out_pos:out_pos) = char(hv)
+            end if
+            out_pos = out_pos + 1
+            cycle
+          end block
         case ('0', '1', '2', '3', '4', '5', '6', '7')
           ! Octal escape
           octal_str = c
@@ -784,6 +813,8 @@ contains
       output(output_pos:output_pos) = char(7)   ! bell
     case ('f')
       output(output_pos:output_pos) = char(12)  ! form feed
+    case ('e', 'E')
+      output(output_pos:output_pos) = char(27)  ! escape
     case ('v')
       output(output_pos:output_pos) = char(11)  ! vertical tab
     case (char(92))  ! backslash
