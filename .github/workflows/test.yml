@@ -61,6 +61,7 @@ jobs:
 
   interactive-tests:
     name: Interactive PTY Tests
+    if: "!contains(github.event.head_commit.message, '[skip-pty]')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
