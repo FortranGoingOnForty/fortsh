@@ -422,6 +422,59 @@ contains
             case("'")
               token_len = token_len + 1
               current_token(token_len:token_len) = "'"
+            case('"')
+              token_len = token_len + 1
+              current_token(token_len:token_len) = '"'
+            case('x')
+              ! Hex escape: \xHH (up to 2 hex digits)
+              block
+                integer :: hval, hdigits
+                character :: hch
+                hval = 0; hdigits = 0
+                pos = pos + 2  ! skip \x
+                do while (pos <= input_len .and. hdigits < 2)
+                  hch = input(pos:pos)
+                  if (hch >= '0' .and. hch <= '9') then
+                    hval = hval * 16 + (ichar(hch) - ichar('0'))
+                  else if (hch >= 'a' .and. hch <= 'f') then
+                    hval = hval * 16 + (ichar(hch) - ichar('a') + 10)
+                  else if (hch >= 'A' .and. hch <= 'F') then
+                    hval = hval * 16 + (ichar(hch) - ichar('A') + 10)
+                  else
+                    exit
+                  end if
+                  pos = pos + 1
+                  hdigits = hdigits + 1
+                end do
+                if (hdigits > 0 .and. hval <= 255) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = char(hval)
+                end if
+                cycle  ! pos already advanced past hex digits
+              end block
+            case('0', '1', '2', '3', '4', '5', '6', '7')
+              ! Octal escape: \nnn (up to 3 octal digits)
+              block
+                integer :: oval, odigits
+                character :: och
+                oval = 0; odigits = 0
+                pos = pos + 1  ! skip backslash only
+                do while (pos <= input_len .and. odigits < 3)
+                  och = input(pos:pos)
+                  if (och >= '0' .and. och <= '7') then
+                    oval = oval * 8 + (ichar(och) - ichar('0'))
+                  else
+                    exit
+                  end if
+                  pos = pos + 1
+                  odigits = odigits + 1
+                end do
+                if (odigits > 0 .and. oval <= 255) then
+                  token_len = token_len + 1
+                  current_token(token_len:token_len) = char(oval)
+                end if
+                cycle  ! pos already advanced past octal digits
+              end block
             case default
               ! Unknown escape — keep both chars
               token_len = token_len + 1
