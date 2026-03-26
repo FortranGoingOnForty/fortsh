@@ -195,14 +195,112 @@ contains
           end if
         else
           ! Handle indexed arrays
-          if (.not. is_all_expansion) then
+          if (is_all_expansion) then
+            ! ${arr[@]} or ${arr[*]} — all elements
+            if (is_keys_expansion) then
+              ! ${!arr[@]} — list indices of set elements
+              block
+                integer :: ki, arr_count
+                character(len=4096) :: all_str
+                all_str = trim(get_array_all_elements(shell, trim(array_name)))
+                ! Count space-separated words to get indices
+                arr_count = 0
+                expanded = ''
+                do ki = 1, len_trim(all_str)
+                  if (all_str(ki:ki) == ' ') arr_count = arr_count + 1
+                end do
+                if (len_trim(all_str) > 0) arr_count = arr_count + 1
+                ! Generate 0-based indices
+                do ki = 0, arr_count - 1
+                  if (ki > 0) expanded = expanded // ' '
+                  write(num_buf, '(I0)') ki
+                  expanded = expanded // trim(num_buf)
+                end do
+              end block
+              return
+            else if (is_length_expansion) then
+              ! ${#arr[@]} — count of elements
+              block
+                integer :: ki, arr_count
+                character(len=4096) :: all_str
+                all_str = trim(get_array_all_elements(shell, trim(array_name)))
+                arr_count = 0
+                if (len_trim(all_str) > 0) then
+                  arr_count = 1
+                  do ki = 1, len_trim(all_str)
+                    if (all_str(ki:ki) == ' ') arr_count = arr_count + 1
+                  end do
+                end if
+                write(num_buf, '(I0)') arr_count
+                expanded = trim(num_buf)
+              end block
+              return
+            else
+              ! ${arr[@]} — all values, with optional slicing
+              block
+                character(len=4096) :: all_str
+                character(len=256) :: slice_spec
+                integer :: colon_after, sc_pos2, ios1, ios2
+                integer :: s_offset, s_length, w_count, w_start, w_idx, w_out
+                logical :: has_slice
+                all_str = trim(get_array_all_elements(shell, trim(array_name)))
+
+                ! Check for slice syntax after ]: ${arr[@]:offset:length}
+                has_slice = .false.
+                if (bracket_end < len_trim(var_name)) then
+                  slice_spec = var_name(bracket_end+1:)
+                  if (len_trim(slice_spec) > 0 .and. slice_spec(1:1) == ':') then
+                    has_slice = .true.
+                  end if
+                end if
+
+                if (.not. has_slice) then
+                  expanded = trim(all_str)
+                  return
+                end if
+
+                ! Parse :offset or :offset:length
+                slice_spec = slice_spec(2:)  ! skip leading :
+                sc_pos2 = index(trim(slice_spec), ':')
+                if (sc_pos2 > 0) then
+                  read(slice_spec(:sc_pos2-1), *, iostat=ios1) s_offset
+                  read(slice_spec(sc_pos2+1:), *, iostat=ios2) s_length
+                  if (ios2 /= 0) s_length = 9999
+                else
+                  read(slice_spec, *, iostat=ios1) s_offset
+                  s_length = 9999
+                end if
+                if (ios1 /= 0) then
+                  expanded = trim(all_str)
+                  return
+                end if
+
+                ! Split into words and select slice
+                expanded = ''
+                w_count = 0; w_start = 1; w_out = 0
+                do w_idx = 1, len_trim(all_str) + 1
+                  if (w_idx > len_trim(all_str) .or. all_str(w_idx:w_idx) == ' ') then
+                    if (w_idx > w_start) then
+                      if (w_count >= s_offset .and. w_out < s_length) then
+                        if (w_out > 0) expanded = expanded // ' '
+                        expanded = expanded // all_str(w_start:w_idx-1)
+                        w_out = w_out + 1
+                      end if
+                      w_count = w_count + 1
+                    end if
+                    w_start = w_idx + 1
+                  end if
+                end do
+              end block
+              return
+            end if
+          else
+            ! ${arr[i]} — single element
             block
               integer :: arr_idx, arr_ios
               character(len=:), allocatable :: arr_val
-              ! Parse subscript as integer index
               read(array_key, *, iostat=arr_ios) arr_idx
               if (arr_ios == 0) then
-                ! Bash uses 0-based indexing, Fortran 1-based
                 arr_val = get_array_element(shell, trim(array_name), arr_idx + 1)
                 if (is_length_expansion) then
                   write(num_buf, '(I0)') len_trim(arr_val)
