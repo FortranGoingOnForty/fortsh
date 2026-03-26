@@ -569,7 +569,6 @@ Key differences from Linux builds:
 
 ## Known Issues
 
-- macOS ARM64 has a 127-character command line limit (flang-new string buffer constraint). All features work, but long one-liners need to be broken up or put in scripts. See `COMPILER_NOTES.md`.
 - Slower than bash for large scripts (it's Fortran, not a miracle worker)
 - Unicode support varies by system locale
 - Will not make you coffee
