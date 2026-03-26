@@ -222,9 +222,14 @@ contains
             deallocate(keys)
             return
           else
-            ! ${array[key]} - get value for specific key
+            ! ${array[key]} or ${#array[key]} - get value or length for specific key
             var_value = get_assoc_array_value(shell, trim(array_name), trim(array_key))
-            result_value = trim(var_value)
+            if (is_length_expansion) then
+              write(num_buf, '(I0)') len_trim(var_value)
+              result_value = trim(num_buf)
+            else
+              result_value = trim(var_value)
+            end if
             return
           end if
         else
