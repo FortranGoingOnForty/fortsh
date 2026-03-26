@@ -15,7 +15,12 @@ section "1. background execution"
 compare_output "background and wait" 'echo bg & wait; echo done'
 compare_output "background exit status via wait" 'true & wait $!; echo $?'
 compare_output "background false status" 'false & wait $!; echo $?'
-compare_output "multiple background wait all" 'echo a & echo b & wait; echo done'
+# Output order of concurrent background jobs is non-deterministic — sort to normalize
+TEST_NUM=$((TEST_NUM + 1))
+_jc_expected=$(run_with_timeout "$TEST_TIMEOUT" "$BASH_REF" -c 'echo a & echo b & wait; echo done' 2>&1 | sort)
+_jc_actual=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c 'echo a & echo b & wait; echo done' 2>&1 | sort)
+if [ "$_jc_expected" = "$_jc_actual" ]; then pass "multiple background wait all"
+else fail "multiple background wait all" "$_jc_expected" "$_jc_actual"; fi
 compare_output "background dollar-bang" 'sleep 0.01 & [ -n "$!" ] && echo has_pid'
 compare_output "background preserves parent" 'X=before; (X=after) & wait; echo $X'
 
