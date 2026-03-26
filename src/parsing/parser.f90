@@ -1276,7 +1276,7 @@ contains
   end function
 
   subroutine expand_variables(token, expanded, shell, was_quoted_in)
-    use expansion, only: expand_braces, arithmetic_expansion_shell
+    use expansion, only: expand_braces, arithmetic_expansion_shell, process_param_expansion
     character(len=*), intent(in) :: token
     character(len=:), allocatable, intent(out) :: expanded
     type(shell_state_t), intent(inout) :: shell
@@ -2541,9 +2541,17 @@ contains
     end do
   end function
 
-  ! Canonical implementation — expansion module's process_param_expansion is being
-  ! brought to feature parity (issue #12). Delegation deferred until all edge cases pass.
+  ! Delegate to expansion module's canonical implementation (issue #12 consolidation)
   recursive subroutine process_parameter_expansion(param_expr, result_value, shell)
+    use expansion, only: process_param_expansion
+    character(len=*), intent(in) :: param_expr
+    character(len=:), allocatable, intent(out) :: result_value
+    type(shell_state_t), intent(inout) :: shell
+    call process_param_expansion(param_expr, result_value, shell)
+  end subroutine
+
+  ! Original implementation — kept until delegation is confirmed stable.
+  subroutine process_parameter_expansion_original(param_expr, result_value, shell)
     use variables, only: get_array_element, get_array_all_elements, get_array_size, &
                          is_associative_array, get_assoc_array_value, get_assoc_array_keys, &
                          set_shell_variable, is_shell_variable_set, check_nounset, &
@@ -3604,7 +3612,7 @@ contains
         end if
       end if
     end if
-  end subroutine
+  end subroutine process_parameter_expansion_original
 
   subroutine process_tilde_expansion(token, pos, result, result_pos, shell)
     character(len=*), intent(in) :: token
