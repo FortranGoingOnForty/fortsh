@@ -47,7 +47,12 @@ compare_output "PIPESTATUS all zero" 'true | true | true; echo ${PIPESTATUS[@]}'
 section "5. pipeline subshell semantics"
 compare_output "var set in pipeline doesnt leak" 'X=before; echo y | read X; echo $X'
 compare_output "cd in pipeline doesnt affect parent" 'cd /tmp | cat; pwd'
-compare_output "export in pipeline segment" 'echo test | { export PVAR=pipe; echo $PVAR; }; echo ${PVAR:-unset}'
+# Filter out non-deterministic "Broken pipe" errors from comparison
+TEST_NUM=$((TEST_NUM + 1))
+_pp_expected=$(run_with_timeout "$TEST_TIMEOUT" "$BASH_REF" -c 'echo test | { export PVAR=pipe; echo $PVAR; }; echo ${PVAR:-unset}' 2>&1 | grep -v 'Broken pipe')
+_pp_actual=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c 'echo test | { export PVAR=pipe; echo $PVAR; }; echo ${PVAR:-unset}' 2>&1 | grep -v 'Broken pipe')
+if [ "$_pp_expected" = "$_pp_actual" ]; then pass "export in pipeline segment"
+else fail "export in pipeline segment" "$_pp_expected" "$_pp_actual"; fi
 compare_output "cmd sub in pipeline" 'echo "$(echo hello)" | tr h H'
 compare_output "subshell in pipeline" '(echo from_sub) | tr a-z A-Z'
 
