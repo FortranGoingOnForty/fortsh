@@ -6,6 +6,7 @@ module expansion
   use shell_types
   use variables  ! includes check_nounset
   use command_capture, only: execute_command_and_capture
+  use glob, only: pattern_matches_no_dotfile_check
   use iso_fortran_env, only: output_unit, error_unit
 #ifdef USE_C_STRINGS
   use iso_c_binding, only: c_char, c_int, c_null_char, c_ptr, c_f_pointer, c_size_t
@@ -1260,22 +1261,20 @@ contains
 
     i2 = 1
     do while (i2 <= in_len)
+      ! Try glob pattern match at position i2 — find shortest match
       matched = .false.
-      if (i2 + pat_len - 1 <= in_len) then
-        matched = .true.
-        do j2 = 1, pat_len
-          if (input(i2+j2-1:i2+j2-1) /= pattern(j2:j2)) then
-            matched = .false.
-            exit
-          end if
-        end do
-      end if
+      do j2 = 1, in_len - i2 + 1
+        if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
+          matched = .true.
+          exit  ! j2 = matched length
+        end if
+      end do
       if (matched) then
         if (repl_len > 0) then
           result_buf(out_pos:out_pos + repl_len - 1) = replacement(1:repl_len)
           out_pos = out_pos + repl_len
         end if
-        i2 = i2 + pat_len
+        i2 = i2 + j2  ! skip matched portion
         if (.not. replace_all) then
           do while (i2 <= in_len)
             result_buf(out_pos:out_pos) = input(i2:i2)
@@ -1427,52 +1426,11 @@ contains
   end subroutine
 
   ! Simple pattern matching (supports * and ? wildcards)
+  ! Delegate to glob module's pattern matcher which handles *, ?, [...]
   function match_pattern(str, pattern) result(matches)
     character(len=*), intent(in) :: str, pattern
     logical :: matches
-    integer :: s_pos, p_pos, s_len, p_len
-    integer :: star_pos, s_star_pos
-
-    s_len = len_trim(str)
-    p_len = len_trim(pattern)
-    s_pos = 1
-    p_pos = 1
-    star_pos = 0
-    s_star_pos = 0
-
-    do while (s_pos <= s_len)
-      if (p_pos <= p_len) then
-        if (pattern(p_pos:p_pos) == '*') then
-          ! Found *, record position and try to match rest
-          star_pos = p_pos
-          s_star_pos = s_pos
-          p_pos = p_pos + 1
-          cycle
-        else if (pattern(p_pos:p_pos) == '?' .or. pattern(p_pos:p_pos) == str(s_pos:s_pos)) then
-          ! Match single character
-          p_pos = p_pos + 1
-          s_pos = s_pos + 1
-          cycle
-        end if
-      end if
-
-      ! No match, backtrack if we had a *
-      if (star_pos > 0) then
-        p_pos = star_pos + 1
-        s_star_pos = s_star_pos + 1
-        s_pos = s_star_pos
-      else
-        matches = .false.
-        return
-      end if
-    end do
-
-    ! Check remaining pattern for trailing *
-    do while (p_pos <= p_len .and. pattern(p_pos:p_pos) == '*')
-      p_pos = p_pos + 1
-    end do
-
-    matches = (p_pos > p_len)
+    matches = pattern_matches_no_dotfile_check(pattern, str)
   end function
 
   ! ============================================================================
