@@ -333,7 +333,12 @@ compare_posix_output "pipeline with :" ': | echo piped'
 section "271. PIPELINE - LONG CHAINS"
 
 compare_posix_output "5-stage pipeline" 'echo test | cat | cat | cat | cat | cat'
-compare_posix_output "pipeline with failures" 'echo ok | false | cat; echo $?'
+# Pipeline timing can produce non-deterministic pipe errors — filter them out
+TEST_NUM=$((TEST_NUM + 1))
+_pf_expected=$(FORTSH_RC_FILE=/dev/null "$BASH_REF" -c 'echo ok | false | cat; echo $?' 2>&1 | grep -v 'Broken pipe' | normalize_output)
+_pf_actual=$(FORTSH_RC_FILE=/dev/null "$FORTSH_BIN" -c 'echo ok | false | cat; echo $?' 2>&1 | grep -v 'Broken pipe' | normalize_output)
+if [ "$_pf_expected" = "$_pf_actual" ]; then pass "pipeline with failures"
+else fail "pipeline with failures" "$_pf_expected" "$_pf_actual"; fi
 
 # =====================================
 # ALIAS EDGE CASES
