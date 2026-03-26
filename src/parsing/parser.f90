@@ -3033,6 +3033,8 @@ contains
           call process_parameter_expansion(new_expr, result_value, shell)
           return
         else
+          ! Reference variable is unset — error + empty (matches bash)
+          write(error_unit, '(a)') 'fortsh: ' // trim(ref_var) // ': invalid indirect expansion'
           result_value = ''
           return
         end if

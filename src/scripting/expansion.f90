@@ -346,7 +346,8 @@ contains
             var_name = trim(resolved_name)
           end if
         else
-          ! Reference variable is unset — expand to empty
+          ! Reference variable is unset — error + empty (matches bash)
+          call write_stderr('fortsh: ' // trim(ref_name) // ': invalid indirect expansion')
           expanded = ''
           return
         end if
