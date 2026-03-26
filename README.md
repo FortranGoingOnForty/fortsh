@@ -3,15 +3,38 @@
 
 A shell written in Fortran. Because we can.
 
-> **Warning - macOS ARM64 Users**: Due to compiler limitations on apple silicon, command lines are limited to 127 characters. All features work (history, tab completion, syntax highlighting, etc.), but you can't type commands longer than 127 bytes. This is a fundamental limitation of both available compilers: gfortran has 7+ critical bugs (stack corruption, heap corruption, segfaults), while flang-new has a 127-byte string operation limit to prevent heap corruption. We see flang-new as the lesser evil. For details, see COMPILER_NOTES.md.
-
 ## Status
 
-**POSIX compliance**: 3,776/3,776 tests passing across 25 test suites
+**CI**: All green across x86_64 Linux, ARM64 Linux, and macOS ARM64 (Apple Silicon)
+**POSIX compliance**: 3,632+ tests passing across 23 POSIX suites
+**Builtin tests**: 850+ passing | **Integration tests**: 482 passing | **Stress tests**: 204 passing
+**Interactive PTY tests**: 180+ passing
 **bash compatibility**: ~99%
 **Chance you'll miss the other 1%**: Low
 
 Turns out you can write a pretty decent shell in Fortran. Who knew.
+
+## Install
+
+**Homebrew** (macOS / Linux):
+```bash
+brew install FortranGoingOnForty/tap/fortsh
+```
+
+**AUR** (Arch Linux):
+```bash
+yay -S fortsh
+```
+
+**From source**:
+```bash
+git clone https://github.com/FortranGoingOnForty/fortsh.git
+cd fortsh
+make release
+sudo make install    # /usr/local/bin
+```
+
+Binary lands in `bin/fortsh`. Shocking, I know.
 
 ## What Works
 
@@ -19,47 +42,55 @@ Pretty much everything:
 
 - All POSIX required features
 - All the bash stuff people actually use
-- Job control
-- History with Ctrl+R
-- Tab completion
-- History suggestions a la fish
-- fuzzy matching a la fish
+- Job control (fg, bg, jobs, wait)
+- History with Ctrl+R and autosuggestions
+- Tab completion for commands, paths, and variables
+- Syntax highlighting as you type
 - Arrays (indexed and associative)
-- Parameter expansion (`${var#stuff}`, etc.)
+- Full parameter expansion (`${var#pattern}`, `${var//find/replace}`, `${var^^}`, etc.)
 - Process substitution (`<(cmd)`, `>(cmd)`)
-- Brace expansion (`{1..10}`)
+- Brace expansion (`{1..10..2}`, `{a,b}{1,2}`)
+- C-style for loops (`for ((i=0; i<10; i++))`)
+- ANSI-C quoting (`$'\t\n\e[31m'`)
+- Indirect expansion (`${!ref}`, `${!ref:-fallback}`)
+- Coprocesses (`coproc { cmd; }`)
 - Regex matching with capture groups (`BASH_REMATCH`)
-- Vi mode (if you're into that)
+- Vi and Emacs editing modes
+- Per-builtin help texts (`help cd`, `help export`, etc.)
+- fzf integration (file browser, history search, directory jump, git browser)
 
 ## What Doesn't Work
 
 - Some advanced vi mode features (yank/put, marks)
-- Nested brace expansion (who uses this?)
 - Your expectations, probably
 - More?!
 
 ## Building
 
 Requires:
-- A Fortran 2018 compiler (gfortran 8+, or LLVM flang-new for macOS ARM64)
+- A Fortran 2018 compiler (gfortran 8+, or flang-new for macOS ARM64)
 - GNU Make
-- POSIX system (Linux, BSD, macOS)
+- A C compiler (gcc or clang)
+- POSIX system (Linux, macOS)
 - Realistic expectations
 
-**macOS ARM64 Note**: Use `brew install llvm` to get flang-new. See the warning at the top or COMPILER_NOTES.md for details.
-
 ```bash
-git clone https://github.com/FortranGoingOnForty/fortsh.git
-cd fortsh
-make
+make                # dev build (debug symbols, -O0)
+make release        # production build (optimized, stripped)
+make debug          # debug build with bounds checking
+make clean          # remove build/ and bin/
 ```
 
-Binary lands in `bin/fortsh`. Shocking, I know.
+### Platform Matrix
 
-```bash
-sudo make install    # /usr/local/bin
-make dev-install    # ~/.local/bin
-```
+| Platform | Compiler | Notes |
+|----------|----------|-------|
+| Linux x86_64 | gfortran | Primary target |
+| Linux aarch64 | gfortran | Auto-enables C stat helpers for struct layout differences |
+| macOS Intel | gfortran | Works with `-frecursive` |
+| macOS ARM64 | flang-new (LLVM) | Required -- gfortran has 7+ critical bugs. Auto-enables C string library. Install via `brew install flang`. |
+
+The Makefile auto-detects your platform and selects the right compiler and flags. Just run `make`.
 
 ## Using It
 
@@ -101,7 +132,7 @@ Type a directory path, press Enter. That's it.
 ~/Documents/       # Go to ~/Documents
 ```
 
-Works with Tab completion.
+Works with Tab completion. Valid directories highlight green.
 
 ### Keybindings
 
@@ -113,7 +144,7 @@ Works with Tab completion.
 | Alt+Shift+Left | Previous directory |
 | Alt+Shift+Right | Next directory |
 
-**Fuzzy search:**
+**Fuzzy search (requires fzf):**
 
 | Key | Action |
 |-----|--------|
@@ -129,7 +160,7 @@ Works for commands, paths, variables, and command-specific options.
 ### Syntax Highlighting
 
 Colors update as you type:
-- Green = valid commands
+- Green = valid commands and directory paths
 - Red = invalid commands
 - Cyan = numbers
 - Yellow = strings
@@ -187,6 +218,11 @@ text="Hello World"
 echo ${text^^}                  # HELLO WORLD
 echo ${text,,}                  # hello world
 echo ${text^}                   # Hello World (first char)
+
+# Indirect expansion
+ref="path"
+echo ${!ref}                    # /usr/local/bin/fortsh (value of $path)
+echo ${!ref:-fallback}          # works with modifiers too
 ```
 
 ### Arrays (Both Kinds)
@@ -262,6 +298,15 @@ mkdir -p project/{src,test,docs}/{main,utils}
 touch file{1..100}.txt
 ```
 
+### ANSI-C Quoting
+
+```bash
+echo $'tab:\there'              # tab:	here
+echo $'line1\nline2'            # line1 (newline) line2
+echo $'it\'s fine'              # it's fine
+echo $'\e[31mred\e[0m'          # red (in color)
+```
+
 ### Arithmetic
 
 ```bash
@@ -276,6 +321,11 @@ echo $((x % y))                 # 2 (modulo)
 # C-style for loops
 for ((i=0; i<5; i++)); do
     echo "Count: $i"
+done
+
+# Multi-variable
+for ((i=0, j=10; i<j; i++, j--)); do
+    echo "$i $j"
 done
 
 # Inline increment
@@ -327,6 +377,19 @@ ps aux | grep fortsh | grep -v grep | awk '{print $2}' | xargs kill
 command1 | command2 || echo "Pipeline failed with status $?"
 ```
 
+### Coprocesses
+
+```bash
+# Named coproc
+coproc WORKER { while read line; do echo "processed: $line"; done; }
+echo "hello" >&${WORKER[1]}
+read result <&${WORKER[0]}
+echo $result    # processed: hello
+
+# Brace group coproc
+coproc { cat -n; }
+```
+
 ### Job Control
 
 ```bash
@@ -352,11 +415,6 @@ echo "Job completed with status $?"
 ### Control Flow (The Tricky Bits)
 
 ```bash
-# C-style for loop with multiple vars
-for ((i=0, j=10; i<j; i++, j--)); do
-    echo "$i $j"
-done
-
 # Case with multiple patterns
 case $input in
     *.txt|*.md)
@@ -453,11 +511,19 @@ trap - INT
 ## Testing
 
 ```bash
-make test-all           # everything (integration + parity + POSIX)
-make test-posix         # POSIX compliance suite (3,776 tests)
-make test-parity        # bash parity tests
-make test-integration   # integration tests
+make test-posix         # POSIX compliance (~1 min)
+make test-posix-full    # all POSIX suites (~3 min)
+make test-posix-quick   # fast POSIX, skip coverage (~30s)
+make test-bench         # unit bench tests (memory pool, lexer, executor, C strings)
+make test-all           # everything including memory pool tests
 make check              # comprehensive build checks
+```
+
+Individual test suites:
+```bash
+./tests/builtins/run_builtin_tests.sh --verbose
+./tests/builtins/integration/run_integration_tests.sh --verbose
+./tests/builtins/test_stress.sh
 ```
 
 Interactive PTY tests (Python/pexpect):
@@ -478,112 +544,51 @@ All of them: `:`, `.`, `break`, `cd`, `continue`, `echo`, `eval`, `exec`, `exit`
 
 ### bash Compatible
 
-The useful ones: `[[`, `alias`, `bg`, `command`, `compgen`, `complete`, `declare`, `fc`, `fg`, `history`, `jobs`, `kill`, `let`, `local`, `printenv`, `shopt`, `source`, `unalias`, `which`
+The useful ones: `[[`, `alias`, `bg`, `command`, `compgen`, `complete`, `coproc`, `declare`, `fc`, `fg`, `history`, `jobs`, `kill`, `let`, `local`, `printenv`, `shopt`, `source`, `unalias`, `which`
 
 ### fortsh Specific
 
 - `config` - manage config files
 - `memory` - show memory stats
 - `perf` - show performance metrics
+- `help <builtin>` - detailed help for any builtin
+- `defun` - function definition helper
 
-Because why not.
+Every builtin has detailed help: `help cd`, `help export`, `help trap`, etc.
 
-## macOS & Apple Silicon
+## macOS ARM64 Notes
 
-Apple Silicon has been an adventure. Both available Fortran compilers have serious issues on ARM64, so fortsh uses a combination of compiler selection, C interop workarounds, and platform-specific code paths to produce a functional shell. For the full story, see `COMPILER_NOTES.md`.
+Both Fortran compilers have issues on Apple Silicon. fortsh uses flang-new (LLVM) with C interop workarounds. The Makefile handles everything automatically.
 
-### The Compiler Situation
+Install flang-new via `brew install flang`. See `COMPILER_NOTES.md` for the full story on compiler bugs and workarounds.
 
-| Platform | Compiler | Status |
-|----------|----------|--------|
-| Linux | gfortran | Primary target, no issues |
-| macOS Intel | gfortran | Works with `-frecursive` |
-| macOS ARM64 | flang-new (LLVM) | Required — gfortran has 7+ critical bugs |
-
-**Why not gfortran on Apple Silicon?** It has at least 8 confirmed bugs that make it unusable:
-
-1. Stack corruption on arrays >600KB
-2. Deferred-length allocatable strings lose their length descriptor
-3. `intent(out)` subroutine return epilogue segfaults
-4. Allocatable string assignment corrupts the heap
-5. Automatic finalization crashes
-6. Substring slicing (`buffer(:length)`) segfaults
-7. Empty string assignment (`buffer = ''`) corrupts the heap
-8. `flush()` in tight loops corrupts the heap
-
-Install flang-new via `brew install llvm`. The Makefile auto-detects ARM64 and switches compilers.
-
-### The flang-new 128-Byte Limit
-
-flang-new is far more stable, but has one glaring limitation: string buffers larger than 128 bytes cause heap corruption on substring operations and direct assignments. This means **command lines are limited to 127 characters** on Apple Silicon.
-
-Allocating strings >128 bytes works fine. Operating on them doesn't. We tried a "shadow buffer" pattern (1024-byte storage, 128-byte working buffer) — still limited to 128 effective bytes.
-
-### C String Library Workaround
-
-To mitigate flang-new's string bugs, fortsh includes a C string library (`src/c_interop/fortsh_strings.c`) that performs string operations outside the Fortran runtime. This is **auto-enabled on macOS ARM64** and provides:
-
-- Safe substring extraction (the operation that crashes flang-new)
-- Buffer manipulation (insert, delete, append) without heap corruption
-- Fortran-to-C string conversion with proper indexing translation
-
-The `buffer_ops.f90` abstraction layer routes string operations through either native Fortran (Linux) or the C library (macOS ARM64) transparently.
-
-Build flags:
-```bash
-make                    # auto-enables C strings on ARM64
-make NO_C_STRINGS=1     # force native Fortran strings (will crash on ARM64)
-```
-
-### Platform-Specific Code Paths
-
-Beyond the compiler, macOS differs from Linux in ways that required workarounds throughout the codebase:
-
-**Terminal I/O:**
-- `termios_t` struct is 72 bytes on macOS vs 60 on Linux (8-byte vs 4-byte `tcflag_t`)
-- Control character array (`NCCS`) is 20 on macOS vs 32 on Linux
-- `TIOCGWINSZ` ioctl constant differs (`0x40087468` vs `0x5413`)
-- Terminal size detection uses `tput` on macOS (direct ioctl crashes flang-new) vs ioctl on Linux
-
-**Signal numbers:**
-- `SIGTSTP`: 18 on macOS, 20 on Linux
-- `SIGCHLD`: 20 on macOS, 17 on Linux
-- `SIGCONT`: 19 on macOS, 18 on Linux
-- macOS does NOT ignore `SIGTSTP` (breaks `waitpid` by auto-reaping children)
-
-**File system:**
-- `stat_t` is 96 bytes on macOS vs 144 on Linux, with different field ordering
-- macOS has `st_birthtimespec` (birth time) — Linux does not
-- `open()` flags differ: `O_CREAT` is `0x200` on macOS vs `0x40` on Linux
-
-**Other:**
-- BSD `ps` doesn't support `--no-headers` (macOS uses `pid= -o comm=` format instead)
-- Fortran `block` constructs crash flang-new — variables hoisted to subroutine scope
-- Substring temporaries on allocatable strings trigger heap corruption — char-by-char copy used instead
-- `mode_t` not passed correctly through Fortran C binding — C wrapper (`fd_wrapper.c`) casts explicitly
-
-### macOS ARM64 Build
-
-```bash
-brew install llvm
-git clone https://github.com/FortranGoingOnForty/fortsh.git
-cd fortsh
-make            # auto-detects ARM64, uses flang-new + C string library
-```
-
-You'll see:
-```
-Using flang-new on macOS ARM64
-C string library ENABLED - workaround for flang-new >128 byte bug
-```
+Key differences from Linux builds:
+- C string library auto-enabled (works around flang-new string buffer limitations)
+- Platform-specific constants for signals, terminal I/O, file flags, and resource limits
+- Builtin output uses C-level `write()` to respect fd redirections (flang-new's Fortran I/O caches file descriptors)
 
 ## Known Issues
 
-- **macOS ARM64**: 127-character command line limit (flang-new string bug, see above)
+- macOS ARM64 has a 127-character command line limit (flang-new string buffer constraint). All features work, but long one-liners need to be broken up or put in scripts. See `COMPILER_NOTES.md`.
 - Slower than bash for large scripts (it's Fortran, not a miracle worker)
-- Some regex patterns with spaces need escaping (affects ~0.1% of use cases)
 - Unicode support varies by system locale
 - Will not make you coffee
+
+## Project Structure
+
+```
+src/
+├── common/          # Types, errors, string pool, perf monitoring
+├── system/          # OS interface (POSIX syscalls), signals
+├── parsing/         # Lexer, grammar parser, AST, glob
+├── execution/       # AST executor, builtins, job control, pipelines
+├── scripting/       # Variables, expansion, control flow, completion
+├── io/              # Readline (~9000 lines), heredoc, fd redirection
+├── c_interop/       # C FFI: string ops, fd wrapper, terminal size
+└── fortsh.f90       # Main REPL loop
+```
+
+~70,000 lines of Fortran, fully self-contained with no external Fortran library dependencies.
 
 ## Why?
 
@@ -593,40 +598,16 @@ More seriously: started as "can you even do this in Fortran?" Turns out yes. The
 
 It's actually usable now. We're as surprised as you are.
 
-## Project Structure
+## Standards
 
-```
-src/
-├── common/          # Types, errors, perf monitoring
-├── system/          # OS interface, signals, jobs
-├── parsing/         # Lexer, parser, glob
-├── execution/       # Command execution, builtins
-├── scripting/       # Variables, control flow, expansion
-├── io/              # Readline, redirection
-└── fortsh.f90       # Main REPL loop
-```
-
-## Documentation
-
-See `docs/` for:
-- `SHELL_PARITY_STATUS_2025_10_12.md` - current feature status
-- Implementation docs for specific features
-- POSIX compliance tracking
-
-Or just run `help` in the shell.
+POSIX.1-2017 (IEEE Std 1003.1-2017)
+bash 5.x for extensions
 
 ## Contributing
 
 Found a bug? Cool, file an issue.
 Want to add a feature? Check it's not already there (spoiler: it might be).
 Want to make it faster? Please do.
-
-This started as a research project and somehow became production-ready. Contributions welcome.
-
-## Standards
-
-POSIX.1-2017 (IEEE Std 1003.1-2017)
-bash 5.x for extensions
 
 ## License
 
