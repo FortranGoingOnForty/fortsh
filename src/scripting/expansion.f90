@@ -232,24 +232,27 @@ contains
           if (is_all_expansion) then
             ! ${arr[@]} or ${arr[*]} — all elements
             if (is_keys_expansion) then
-              ! ${!arr[@]} — list indices of set elements
+              ! ${!arr[@]} — list indices of set elements (sparse-aware)
               block
-                integer :: ki, arr_count
-                character(len=4096) :: all_str
-                all_str = trim(get_array_all_elements(shell, trim(array_name)))
-                ! Count space-separated words to get indices
-                arr_count = 0
-                result_value = ''
-                do ki = 1, len_trim(all_str)
-                  if (all_str(ki:ki) == ' ') arr_count = arr_count + 1
+                integer :: ki, arr_sz, kpos
+                character(len=4096) :: kbuf
+                character(len=:), allocatable :: elem
+                kbuf = ''; kpos = 1
+                arr_sz = get_array_size(shell, trim(array_name))
+                do ki = 1, arr_sz
+                  elem = get_array_element(shell, trim(array_name), ki)
+                  if (len_trim(elem) > 0) then
+                    if (kpos > 1) then; kbuf(kpos:kpos) = ' '; kpos = kpos + 1; end if
+                    write(num_buf, '(I0)') ki - 1  ! 0-based index
+                    kbuf(kpos:kpos+len_trim(num_buf)-1) = trim(num_buf)
+                    kpos = kpos + len_trim(num_buf)
+                  end if
                 end do
-                if (len_trim(all_str) > 0) arr_count = arr_count + 1
-                ! Generate 0-based indices
-                do ki = 0, arr_count - 1
-                  if (ki > 0) result_value = result_value // ' '
-                  write(num_buf, '(I0)') ki
-                  result_value = result_value // trim(num_buf)
-                end do
+                if (kpos > 1) then
+                  result_value = kbuf(1:kpos-1)
+                else
+                  result_value = ''
+                end if
               end block
               return
             else if (is_length_expansion) then
