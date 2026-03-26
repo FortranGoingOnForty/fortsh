@@ -88,6 +88,32 @@ jobs:
   # ============================================================================
   # ARM64 Linux (gfortran)
   # ============================================================================
+  arm64-linux-interactive:
+    name: "ARM64 Linux: Interactive PTY Tests"
+    if: "!contains(github.event.head_commit.message, '[skip-pty]')"
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build fortsh
+        run: make release
+      - name: Install Python dependencies
+        run: |
+          cd tests/interactive
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+      - name: Run interactive tests
+        run: |
+          cd tests/interactive
+          source .venv/bin/activate
+          python run_tests.py
+
   arm64-linux-posix:
     name: "ARM64 Linux: POSIX Tests"
     runs-on: ubuntu-24.04-arm
@@ -185,6 +211,35 @@ jobs:
       - name: Run stress tests
         run: ./tests/builtins/test_stress.sh
         timeout-minutes: 15
+
+  macos-arm64-interactive:
+    name: "macOS ARM64: Interactive PTY Tests"
+    if: "!contains(github.event.head_commit.message, '[skip-pty]')"
+    runs-on: macos-15
+    env:
+      FC: flang-new
+      BASH_REF: /opt/homebrew/bin/bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install flang-new and coreutils
+        run: brew install flang coreutils bash
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build fortsh
+        run: make release
+      - name: Install Python dependencies
+        run: |
+          cd tests/interactive
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+      - name: Run interactive tests
+        run: |
+          cd tests/interactive
+          source .venv/bin/activate
+          python run_tests.py
 
   macos-arm64-integration:
     name: "macOS ARM64: Integration Tests"
