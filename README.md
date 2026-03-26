@@ -610,7 +610,7 @@ Want to make it faster? Please do.
 
 ## License
 
-MIT. See LICENSE file.
+GPL-3.0. See LICENSE file.
 
 ## Links
 

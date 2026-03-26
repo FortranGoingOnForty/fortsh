@@ -1,12 +1,12 @@
 # Maintainer: mfw <espadonne@outlook.com>
 
 pkgname=fortsh
-pkgver=1.3.3
+pkgver=1.5.0
 pkgrel=1
 pkgdesc='Fortran Shell - A modern shell implementation with AST-based parsing'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='https://github.com/FortranGoingOnForty/fortsh'
-license=('MIT')
+license=('GPL-3.0-only')
 depends=('glibc')
 makedepends=('gcc-fortran' 'make')
 source=("git+https://github.com/FortranGoingOnForty/fortsh.git#tag=v$pkgver")

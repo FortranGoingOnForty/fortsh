@@ -1,9 +1,9 @@
 Name:           fortsh
-Version:        1.3.3
+Version:        1.5.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
-License:        MIT
+License:        GPL-3.0-only
 URL:            https://github.com/FortranGoingOnForty/fortsh
 Source0:        %{name}-%{version}.tar.gz
 
