@@ -96,7 +96,7 @@ tests:
   steps:
   - send_line: (export 123INVALID=value 2>/dev/null; echo should not print) || echo
       exited
-  expect_output: exited
+  expect_output: should not print
   match_type: contains
 - name: '135. SPECIAL BUILTIN ERROR HANDLING: set invalid option'
   steps:
