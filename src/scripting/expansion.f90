@@ -171,14 +171,22 @@ contains
             ! ${!array[@]} - return all keys
             block
               character(len=4096) :: kbuf
-              kbuf = ''
+              integer :: kpos, klen
+              kbuf = ''; kpos = 1
               allocate(keys(500))
               call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
               do j = 1, min(num_keys, 500)
-                if (j > 1) kbuf = trim(kbuf) // ' '
-                kbuf = trim(kbuf) // trim(keys(j))
+                klen = len_trim(keys(j))
+                if (klen == 0) cycle
+                if (kpos > 1) then; kbuf(kpos:kpos) = ' '; kpos = kpos + 1; end if
+                kbuf(kpos:kpos+klen-1) = keys(j)(1:klen)
+                kpos = kpos + klen
               end do
-              result_value = trim(kbuf)
+              if (kpos > 1) then
+                result_value = kbuf(1:kpos-1)
+              else
+                result_value = ''
+              end if
             end block
             deallocate(keys)
             return
@@ -192,14 +200,24 @@ contains
             return
           else if (is_all_expansion) then
             ! ${array[@]} - return all values
-            allocate(keys(500))
-            call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            result_value = ''
-            do j = 1, min(num_keys, 500)
-              var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
-              if (j > 1) result_value = trim(result_value) // ' '
-              result_value = trim(result_value) // trim(var_value)
-            end do
+            block
+              character(len=4096) :: vbuf
+              integer :: vpos, vlen
+              vbuf = ''; vpos = 1
+              allocate(keys(500))
+              call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
+              do j = 1, min(num_keys, 500)
+                var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
+                vlen = len_trim(var_value)
+                if (vpos > 1) then; vbuf(vpos:vpos) = ' '; vpos = vpos + 1; end if
+                if (vlen > 0) then; vbuf(vpos:vpos+vlen-1) = var_value(1:vlen); vpos = vpos + vlen; end if
+              end do
+              if (vpos > 1) then
+                result_value = vbuf(1:vpos-1)
+              else
+                result_value = ''
+              end if
+            end block
             deallocate(keys)
             return
           else
