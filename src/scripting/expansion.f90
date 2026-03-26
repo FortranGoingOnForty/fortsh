@@ -828,7 +828,8 @@ contains
     character(len=*), intent(in) :: input
     character(len=:), allocatable :: output
     character(len=:), allocatable :: temp_output
-    integer :: i, out_pos, capacity
+    integer :: i, out_pos, capacity, esc_hex_val, esc_n_digits
+    character :: esc_ch
 
     ! Allocate with initial capacity
     capacity = len(input) + 100
@@ -863,7 +864,7 @@ contains
         case ('a')
           temp_output(out_pos:out_pos) = char(7)   ! alert/bell
           out_pos = out_pos + 1
-        case ('e')
+        case ('e', 'E')
           temp_output(out_pos:out_pos) = char(27)  ! escape
           out_pos = out_pos + 1
         case ('\')
@@ -875,6 +876,47 @@ contains
         case ("'")
           temp_output(out_pos:out_pos) = "'"       ! single quote
           out_pos = out_pos + 1
+        case ('x')
+          ! Hex escape: \xHH (up to 2 hex digits)
+          esc_hex_val = 0; esc_n_digits = 0
+          i = i + 1  ! skip 'x'
+          do while (i <= len_trim(input) .and. esc_n_digits < 2)
+            esc_ch = input(i:i)
+            if (esc_ch >= '0' .and. esc_ch <= '9') then
+              esc_hex_val = esc_hex_val * 16 + (ichar(esc_ch) - ichar('0'))
+            else if (esc_ch >= 'a' .and. esc_ch <= 'f') then
+              esc_hex_val = esc_hex_val * 16 + (ichar(esc_ch) - ichar('a') + 10)
+            else if (esc_ch >= 'A' .and. esc_ch <= 'F') then
+              esc_hex_val = esc_hex_val * 16 + (ichar(esc_ch) - ichar('A') + 10)
+            else
+              exit
+            end if
+            i = i + 1
+            esc_n_digits = esc_n_digits + 1
+          end do
+          if (esc_n_digits > 0 .and. esc_hex_val <= 255) then
+            temp_output(out_pos:out_pos) = char(esc_hex_val)
+            out_pos = out_pos + 1
+          end if
+          cycle  ! i already advanced past hex digits
+        case ('0', '1', '2', '3', '4', '5', '6', '7')
+          ! Octal escape: \nnn (up to 3 octal digits)
+          esc_hex_val = 0; esc_n_digits = 0
+          do while (i <= len_trim(input) .and. esc_n_digits < 3)
+            esc_ch = input(i:i)
+            if (esc_ch >= '0' .and. esc_ch <= '7') then
+              esc_hex_val = esc_hex_val * 8 + (ichar(esc_ch) - ichar('0'))
+            else
+              exit
+            end if
+            i = i + 1
+            esc_n_digits = esc_n_digits + 1
+          end do
+          if (esc_n_digits > 0 .and. esc_hex_val <= 255) then
+            temp_output(out_pos:out_pos) = char(esc_hex_val)
+            out_pos = out_pos + 1
+          end if
+          cycle  ! i already advanced past octal digits
         case default
           ! Unknown escape - preserve backslash and character
           temp_output(out_pos:out_pos+1) = '\' // input(i:i)
