@@ -637,10 +637,18 @@ contains
             end if
             return
           else
-            ! Regular variable length
-            var_value = get_shell_variable(shell, trim(operation))
-            write(num_buf, '(I0)') len_trim(var_value)
-            result_value = trim(num_buf)
+            ! Regular variable length — use stored length to preserve whitespace
+            block
+              integer :: stored_len
+              call get_variable_length(shell, trim(operation), stored_len)
+              if (stored_len >= 0) then
+                write(num_buf, '(I0)') stored_len
+              else
+                var_value = get_shell_variable(shell, trim(operation))
+                write(num_buf, '(I0)') len_trim(var_value)
+              end if
+              result_value = trim(num_buf)
+            end block
             return
           end if
         end if
