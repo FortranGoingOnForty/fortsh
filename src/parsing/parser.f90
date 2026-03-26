@@ -2626,8 +2626,7 @@ contains
         end if
         return
       case ('E')
-        ! ${var@E} - expand escape sequences
-        ! Use buffer to build the expanded string
+        ! ${var@E} - expand escape sequences (full set: \a \b \e \f \n \r \t \v \\ \' \" \xHH \nnn)
         var_name = ''
         op_pos = 1
         key_idx = 1
@@ -2635,18 +2634,88 @@ contains
           if (current_value(key_idx:key_idx) == '\' .and. key_idx < len_trim(current_value)) then
             key_idx = key_idx + 1
             select case (current_value(key_idx:key_idx))
+            case ('a')
+              var_name(op_pos:op_pos) = char(7)
+              op_pos = op_pos + 1
+            case ('b')
+              var_name(op_pos:op_pos) = char(8)
+              op_pos = op_pos + 1
+            case ('e', 'E')
+              var_name(op_pos:op_pos) = char(27)
+              op_pos = op_pos + 1
+            case ('f')
+              var_name(op_pos:op_pos) = char(12)
+              op_pos = op_pos + 1
             case ('n')
               var_name(op_pos:op_pos) = char(10)
-              op_pos = op_pos + 1
-            case ('t')
-              var_name(op_pos:op_pos) = char(9)
               op_pos = op_pos + 1
             case ('r')
               var_name(op_pos:op_pos) = char(13)
               op_pos = op_pos + 1
+            case ('t')
+              var_name(op_pos:op_pos) = char(9)
+              op_pos = op_pos + 1
+            case ('v')
+              var_name(op_pos:op_pos) = char(11)
+              op_pos = op_pos + 1
             case ('\')
               var_name(op_pos:op_pos) = '\'
               op_pos = op_pos + 1
+            case ("'")
+              var_name(op_pos:op_pos) = "'"
+              op_pos = op_pos + 1
+            case ('"')
+              var_name(op_pos:op_pos) = '"'
+              op_pos = op_pos + 1
+            case ('x')
+              ! Hex escape: \xHH
+              block
+                integer :: hv, hd
+                character :: hc
+                hv = 0; hd = 0
+                key_idx = key_idx + 1
+                do while (key_idx <= len_trim(current_value) .and. hd < 2)
+                  hc = current_value(key_idx:key_idx)
+                  if (hc >= '0' .and. hc <= '9') then
+                    hv = hv * 16 + (ichar(hc) - ichar('0'))
+                  else if (hc >= 'a' .and. hc <= 'f') then
+                    hv = hv * 16 + (ichar(hc) - ichar('a') + 10)
+                  else if (hc >= 'A' .and. hc <= 'F') then
+                    hv = hv * 16 + (ichar(hc) - ichar('A') + 10)
+                  else
+                    exit
+                  end if
+                  key_idx = key_idx + 1
+                  hd = hd + 1
+                end do
+                if (hd > 0 .and. hv <= 255) then
+                  var_name(op_pos:op_pos) = char(hv)
+                  op_pos = op_pos + 1
+                end if
+                cycle
+              end block
+            case ('0', '1', '2', '3', '4', '5', '6', '7')
+              ! Octal escape: \nnn
+              block
+                integer :: ov, od
+                character :: oc
+                ov = 0; od = 0
+                do while (key_idx <= len_trim(current_value) .and. od < 3)
+                  oc = current_value(key_idx:key_idx)
+                  if (oc >= '0' .and. oc <= '7') then
+                    ov = ov * 8 + (ichar(oc) - ichar('0'))
+                  else
+                    exit
+                  end if
+                  key_idx = key_idx + 1
+                  od = od + 1
+                end do
+                if (od > 0 .and. ov <= 255) then
+                  var_name(op_pos:op_pos) = char(ov)
+                  op_pos = op_pos + 1
+                end if
+                cycle
+              end block
             case default
               var_name(op_pos:op_pos) = '\'
               var_name(op_pos+1:op_pos+1) = current_value(key_idx:key_idx)
