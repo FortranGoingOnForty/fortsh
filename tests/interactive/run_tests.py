@@ -68,13 +68,15 @@ class YAMLTestRunner:
         self.verbose = verbose
         self.results: List[TestResult] = []
 
-        # Scale timeout for slower platforms (ARM64, macOS with flang-new)
+        # Scale timeouts and delays for slower platforms (ARM64, macOS with flang-new)
         import platform
         machine = platform.machine().lower()
         if machine in ('arm64', 'aarch64'):
-            self.pty_timeout = 15.0  # 3x default for ARM64
+            self.pty_timeout = 15.0   # 3x default for ARM64
+            self.delay_scale = 3.0    # 3x settling delays
         else:
             self.pty_timeout = 5.0
+            self.delay_scale = 1.0
         self.tests_per_session = tests_per_session
         self._current_session: Optional[FortshPTY] = None
         self._test_count = 0
@@ -105,7 +107,7 @@ class YAMLTestRunner:
                 except:
                     pass
                 gc.collect()
-                time.sleep(0.2)
+                time.sleep(0.2 * self.delay_scale)
 
             self._current_session = FortshPTY(
                 fortsh_path=self.fortsh_path,
@@ -127,15 +129,15 @@ class YAMLTestRunner:
         try:
             # Clear any pending input/interrupt running command
             self._current_session.send_key("C-c")
-            time.sleep(0.1)
+            time.sleep(0.1 * self.delay_scale)
             self._current_session.send_key("C-c")
-            time.sleep(0.1)
+            time.sleep(0.1 * self.delay_scale)
             self._current_session.send_key("C-u")
-            time.sleep(0.1)  # Increased from 0.05s
+            time.sleep(0.1 * self.delay_scale)
 
             # Clear buffer before reset command
             self._current_session.clear_buffer()
-            time.sleep(0.05)  # Let buffer fully clear
+            time.sleep(0.05 * self.delay_scale)
 
             # Reset PS1 to default (matching DEFAULT_PROMPT_PATTERN) and use echo marker
             marker = f"RESET_{self._test_count}"
@@ -148,9 +150,9 @@ class YAMLTestRunner:
                 pass
 
             # Wait for prompt after marker and clear buffer again
-            time.sleep(0.2)
+            time.sleep(0.2 * self.delay_scale)
             self._current_session.clear_buffer()
-            time.sleep(0.05)  # Extra settling time
+            time.sleep(0.05 * self.delay_scale)
         except:
             pass
 
@@ -193,7 +195,7 @@ class YAMLTestRunner:
             self._test_count += 1
 
             # Delay between tests for OS cleanup
-            time.sleep(0.3)
+            time.sleep(0.3 * self.delay_scale)
 
             if result.passed:
                 print(f"  {Fore.GREEN}✓{Style.RESET_ALL} {file_prefix} {test_num}: {result.name}", flush=True)
@@ -299,21 +301,22 @@ class YAMLTestRunner:
 
     def _execute_step(self, fortsh: FortshPTY, step: Dict[str, Any]) -> None:
         """Execute a single test step."""
+        ds = self.delay_scale
         if 'send' in step:
             fortsh.send(step['send'])
-            time.sleep(0.02)  # Small delay for processing
+            time.sleep(0.02 * ds)
         elif 'send_line' in step:
             fortsh.send_line(step['send_line'])
-            time.sleep(0.05)  # Let command complete and output settle
+            time.sleep(0.05 * ds)
         elif 'send_key' in step:
             fortsh.send_key(step['send_key'])
-            time.sleep(0.02)  # Small delay for key processing
+            time.sleep(0.02 * ds)
         elif 'send_keys' in step:
             for key in step['send_keys']:
                 fortsh.send_key(key)
-                time.sleep(0.02)
+                time.sleep(0.02 * ds)
         elif 'wait' in step:
-            time.sleep(step['wait'])
+            time.sleep(step['wait'] * ds)
         elif 'wait_for_prompt' in step:
             fortsh.wait_for_prompt()
         elif 'expect' in step:
