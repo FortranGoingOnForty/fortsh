@@ -864,6 +864,11 @@ contains
 
       do while (i <= input_len)
         ch = input(i:i)
+        ! Backslash escape — skip next character (keeps it in the word)
+        if (ch == '\' .and. i + 1 <= input_len) then
+          i = i + 2
+          cycle
+        end if
         ! Word terminators
         if (ch == ' ' .or. ch == char(9) .or. ch == ';' .or. ch == '|' .or. &
             ch == '&' .or. ch == '>' .or. ch == '<' .or. ch == '(' .or. &
