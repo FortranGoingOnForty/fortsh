@@ -67,6 +67,14 @@ class YAMLTestRunner:
         self.fortsh_path = fortsh_path
         self.verbose = verbose
         self.results: List[TestResult] = []
+
+        # Scale timeout for slower platforms (ARM64, macOS with flang-new)
+        import platform
+        machine = platform.machine().lower()
+        if machine in ('arm64', 'aarch64'):
+            self.pty_timeout = 15.0  # 3x default for ARM64
+        else:
+            self.pty_timeout = 5.0
         self.tests_per_session = tests_per_session
         self._current_session: Optional[FortshPTY] = None
         self._test_count = 0
@@ -101,6 +109,7 @@ class YAMLTestRunner:
 
             self._current_session = FortshPTY(
                 fortsh_path=self.fortsh_path,
+                timeout=self.pty_timeout,
                 env=env or {}
             )
             self._current_session.start(rc_file=rc_file)
@@ -134,7 +143,7 @@ class YAMLTestRunner:
 
             # Wait for the marker to ensure we're at a clean state
             try:
-                self._current_session.expect(marker, timeout=3)
+                self._current_session.expect(marker, timeout=self.pty_timeout)
             except:
                 pass
 
