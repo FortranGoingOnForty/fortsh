@@ -68,12 +68,12 @@ class YAMLTestRunner:
         self.verbose = verbose
         self.results: List[TestResult] = []
 
-        # Scale timeouts and delays for slower platforms (ARM64, macOS with flang-new)
+        # Scale timeouts for slower platforms (ARM64, macOS with flang-new)
         import platform
         machine = platform.machine().lower()
         if machine in ('arm64', 'aarch64'):
-            self.pty_timeout = 15.0   # 3x default for ARM64
-            self.delay_scale = 3.0    # 3x settling delays
+            self.pty_timeout = 10.0   # 2x default for ARM64
+            self.delay_scale = 1.5    # modest delay increase
         else:
             self.pty_timeout = 5.0
             self.delay_scale = 1.0
