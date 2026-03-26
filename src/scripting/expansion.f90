@@ -97,10 +97,24 @@ module expansion
 contains
 
   ! Parameter expansion: ${var:offset:length}
+  ! parameter_expansion — wrapper that strips ${ } and delegates to process_param_expansion
   function parameter_expansion(shell, expression) result(expanded)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: expression
     character(len=:), allocatable :: expanded
+
+    expanded = ''
+    if (len_trim(expression) < 4) return
+    call process_param_expansion(expression(3:len_trim(expression)-1), expanded, shell)
+  end function
+
+  ! process_param_expansion — canonical parameter expansion implementation
+  ! Takes the content between ${ and }, e.g. for ${var:-default} receives "var:-default"
+  ! This is the subroutine that parser.f90 will delegate to after consolidation.
+  recursive subroutine process_param_expansion(param_expr, result_value, shell)
+    character(len=*), intent(in) :: param_expr
+    character(len=:), allocatable, intent(out) :: result_value
+    type(shell_state_t), intent(inout) :: shell
 
     character(len=256) :: var_name, operation, param1, param2, replacement
     character(len=32) :: num_buf
@@ -117,11 +131,8 @@ contains
     character(len=256), allocatable :: keys(:)
     logical :: is_keys_expansion, is_length_expansion, is_all_expansion
 
-    expanded = ''
-
-    ! Remove ${ and }
-    if (len_trim(expression) < 4) return
-    var_name = expression(3:len_trim(expression)-1)
+    result_value = ''
+    var_name = param_expr
 
     ! ========================================================================
     ! Check for array bracket syntax FIRST: ${array[key]}, ${!array[@]}, ${#array[@]}
@@ -160,10 +171,10 @@ contains
             ! ${!array[@]} - return all keys
             allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            expanded = ''
+            result_value = ''
             do j = 1, min(num_keys, 500)
-              if (j > 1) expanded = trim(expanded) // ' '
-              expanded = trim(expanded) // trim(keys(j))
+              if (j > 1) result_value = trim(result_value) // ' '
+              result_value = trim(result_value) // trim(keys(j))
             end do
             deallocate(keys)
             return
@@ -173,24 +184,24 @@ contains
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
             deallocate(keys)
             write(num_buf, '(I0)') num_keys
-            expanded = trim(num_buf)
+            result_value = trim(num_buf)
             return
           else if (is_all_expansion) then
             ! ${array[@]} - return all values
             allocate(keys(500))
             call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
-            expanded = ''
+            result_value = ''
             do j = 1, min(num_keys, 500)
               var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
-              if (j > 1) expanded = trim(expanded) // ' '
-              expanded = trim(expanded) // trim(var_value)
+              if (j > 1) result_value = trim(result_value) // ' '
+              result_value = trim(result_value) // trim(var_value)
             end do
             deallocate(keys)
             return
           else
             ! ${array[key]} - get value for specific key
             var_value = get_assoc_array_value(shell, trim(array_name), trim(array_key))
-            expanded = trim(var_value)
+            result_value = trim(var_value)
             return
           end if
         else
@@ -205,16 +216,16 @@ contains
                 all_str = trim(get_array_all_elements(shell, trim(array_name)))
                 ! Count space-separated words to get indices
                 arr_count = 0
-                expanded = ''
+                result_value = ''
                 do ki = 1, len_trim(all_str)
                   if (all_str(ki:ki) == ' ') arr_count = arr_count + 1
                 end do
                 if (len_trim(all_str) > 0) arr_count = arr_count + 1
                 ! Generate 0-based indices
                 do ki = 0, arr_count - 1
-                  if (ki > 0) expanded = expanded // ' '
+                  if (ki > 0) result_value = result_value // ' '
                   write(num_buf, '(I0)') ki
-                  expanded = expanded // trim(num_buf)
+                  result_value = result_value // trim(num_buf)
                 end do
               end block
               return
@@ -232,7 +243,7 @@ contains
                   end do
                 end if
                 write(num_buf, '(I0)') arr_count
-                expanded = trim(num_buf)
+                result_value = trim(num_buf)
               end block
               return
             else
@@ -255,7 +266,7 @@ contains
                 end if
 
                 if (.not. has_slice) then
-                  expanded = trim(all_str)
+                  result_value = trim(all_str)
                   return
                 end if
 
@@ -271,19 +282,19 @@ contains
                   s_length = 9999
                 end if
                 if (ios1 /= 0) then
-                  expanded = trim(all_str)
+                  result_value = trim(all_str)
                   return
                 end if
 
                 ! Split into words and select slice
-                expanded = ''
+                result_value = ''
                 w_count = 0; w_start = 1; w_out = 0
                 do w_idx = 1, len_trim(all_str) + 1
                   if (w_idx > len_trim(all_str) .or. all_str(w_idx:w_idx) == ' ') then
                     if (w_idx > w_start) then
                       if (w_count >= s_offset .and. w_out < s_length) then
-                        if (w_out > 0) expanded = expanded // ' '
-                        expanded = expanded // all_str(w_start:w_idx-1)
+                        if (w_out > 0) result_value = result_value // ' '
+                        result_value = result_value // all_str(w_start:w_idx-1)
                         w_out = w_out + 1
                       end if
                       w_count = w_count + 1
@@ -304,9 +315,9 @@ contains
                 arr_val = get_array_element(shell, trim(array_name), arr_idx + 1)
                 if (is_length_expansion) then
                   write(num_buf, '(I0)') len_trim(arr_val)
-                  expanded = trim(num_buf)
+                  result_value = trim(num_buf)
                 else
-                  expanded = trim(arr_val)
+                  result_value = trim(arr_val)
                 end if
                 return
               end if
@@ -348,7 +359,7 @@ contains
         else
           ! Reference variable is unset — error + empty (matches bash)
           call write_stderr('fortsh: ' // trim(ref_name) // ': invalid indirect expansion')
-          expanded = ''
+          result_value = ''
           return
         end if
       end block
@@ -367,33 +378,33 @@ contains
       select case (transform_op)
       case ('U')
         ! ${var@U} - convert to uppercase
-        expanded = to_upper(trim(var_value))
+        result_value = to_upper(trim(var_value))
         return
       case ('L')
         ! ${var@L} - convert to lowercase
-        expanded = to_lower(trim(var_value))
+        result_value = to_lower(trim(var_value))
         return
       case ('u')
         ! ${var@u} - capitalize first character
         if (len_trim(var_value) > 0) then
-          expanded = to_upper(var_value(1:1))
-          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+          result_value = to_upper(var_value(1:1))
+          if (len_trim(var_value) > 1) result_value = trim(result_value) // var_value(2:)
         end if
         return
       case ('l')
         ! ${var@l} - lowercase first character
         if (len_trim(var_value) > 0) then
-          expanded = to_lower(var_value(1:1))
-          if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+          result_value = to_lower(var_value(1:1))
+          if (len_trim(var_value) > 1) result_value = trim(result_value) // var_value(2:)
         end if
         return
       case ('Q')
         ! ${var@Q} - shell-quote value (wrap in single quotes, escape embedded quotes)
-        expanded = quote_value(trim(var_value))
+        result_value = quote_value(trim(var_value))
         return
       case ('E')
         ! ${var@E} - expand escape sequences
-        expanded = expand_escape_sequences(trim(var_value))
+        result_value = expand_escape_sequences(trim(var_value))
         return
       end select
     end if
@@ -408,14 +419,14 @@ contains
           ! ${var^^} - uppercase all
           operation = var_name(:i-2)
           var_value = get_shell_variable(shell, trim(operation))
-          expanded = to_upper(trim(var_value))
+          result_value = to_upper(trim(var_value))
         else
           ! ${var^} - uppercase first
           operation = var_name(:i-1)
           var_value = get_shell_variable(shell, trim(operation))
           if (len_trim(var_value) > 0) then
-            expanded = to_upper(var_value(1:1))
-            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+            result_value = to_upper(var_value(1:1))
+            if (len_trim(var_value) > 1) result_value = trim(result_value) // var_value(2:)
           end if
         end if
         return
@@ -425,14 +436,14 @@ contains
           ! ${var,,} - lowercase all
           operation = var_name(:i-2)
           var_value = get_shell_variable(shell, trim(operation))
-          expanded = to_lower(trim(var_value))
+          result_value = to_lower(trim(var_value))
         else
           ! ${var,} - lowercase first
           operation = var_name(:i-1)
           var_value = get_shell_variable(shell, trim(operation))
           if (len_trim(var_value) > 0) then
-            expanded = to_lower(var_value(1:1))
-            if (len_trim(var_value) > 1) expanded = trim(expanded) // var_value(2:)
+            result_value = to_lower(var_value(1:1))
+            if (len_trim(var_value) > 1) result_value = trim(result_value) // var_value(2:)
           end if
         end if
         return
@@ -475,28 +486,28 @@ contains
           ! Anchored at start: ${var/#pat/repl}
           pattern = pattern(2:)
           if (len_trim(pattern) == 0) then
-            expanded = trim(replacement) // trim(var_value)
+            result_value = trim(replacement) // trim(var_value)
           else if (len_trim(var_value) >= len_trim(pattern) .and. &
                    var_value(1:len_trim(pattern)) == trim(pattern)) then
-            expanded = trim(replacement) // var_value(len_trim(pattern)+1:len_trim(var_value))
+            result_value = trim(replacement) // var_value(len_trim(pattern)+1:len_trim(var_value))
           else
-            expanded = var_value
+            result_value = var_value
           end if
         else if (len_trim(pattern) > 0 .and. pattern(1:1) == '%') then
           ! Anchored at end: ${var/%pat/repl}
           pattern = pattern(2:)
           if (len_trim(pattern) == 0) then
-            expanded = trim(var_value) // trim(replacement)
+            result_value = trim(var_value) // trim(replacement)
           else if (len_trim(var_value) >= len_trim(pattern) .and. &
                    var_value(len_trim(var_value)-len_trim(pattern)+1:len_trim(var_value)) == &
                    trim(pattern)) then
-            expanded = var_value(1:len_trim(var_value)-len_trim(pattern)) // trim(replacement)
+            result_value = var_value(1:len_trim(var_value)-len_trim(pattern)) // trim(replacement)
           else
-            expanded = var_value
+            result_value = var_value
           end if
         else
           call pattern_replace(trim(var_value), trim(pattern), trim(replacement), &
-                              replace_all, expanded)
+                              replace_all, result_value)
         end if
         return
       end if
@@ -525,7 +536,7 @@ contains
           end if
         end if
       end if
-      call remove_suffix(trim(var_value), trim(pattern), greedy, expanded)
+      call remove_suffix(trim(var_value), trim(pattern), greedy, result_value)
       return
     end if
 
@@ -536,7 +547,7 @@ contains
       if (len_trim(var_name) == 1) then
         ! ${#} alone - return number of positional parameters
         write(num_buf, '(I0)') shell%num_positional
-        expanded = trim(num_buf)
+        result_value = trim(num_buf)
         return
       else if (len_trim(var_name) > 1) then
         ! ${#var} length expansion
@@ -546,7 +557,7 @@ contains
         if (trim(operation) == '@' .or. trim(operation) == '*') then
           ! ${#@} or ${#*} - return number of positional parameters
           write(num_buf, '(I0)') shell%num_positional
-          expanded = trim(num_buf)
+          result_value = trim(num_buf)
           return
         else if (len(trim(operation)) > 0) then
           ! Check if it's a positional parameter (digit)
@@ -555,16 +566,16 @@ contains
             ! ${#1}, ${#2}, etc. - return length of specific positional parameter
             if (j <= shell%num_positional) then
               write(num_buf, '(I0)') len_trim(shell%positional_params(j)%str)
-              expanded = trim(num_buf)
+              result_value = trim(num_buf)
             else
-              expanded = '0'
+              result_value = '0'
             end if
             return
           else
             ! Regular variable length
             var_value = get_shell_variable(shell, trim(operation))
             write(num_buf, '(I0)') len_trim(var_value)
-            expanded = trim(num_buf)
+            result_value = trim(num_buf)
             return
           end if
         end if
@@ -591,7 +602,7 @@ contains
           end if
         end if
       end if
-      call remove_prefix(trim(var_value), trim(pattern), greedy, expanded)
+      call remove_prefix(trim(var_value), trim(pattern), greedy, result_value)
       return
     end if
 
@@ -621,15 +632,15 @@ contains
               if (i /= 0) length = 0
               if (offset < len_trim(var_value)) then
                 i = min(length, len_trim(var_value) - offset)
-                expanded = var_value(offset+1:offset+i)
+                result_value = var_value(offset+1:offset+i)
               end if
             else
               if (offset < len_trim(var_value)) then
-                expanded = var_value(offset+1:len_trim(var_value))
+                result_value = var_value(offset+1:len_trim(var_value))
               end if
             end if
           else
-            expanded = var_value
+            result_value = var_value
           end if
           return
         end if
@@ -667,18 +678,18 @@ contains
         ! ${var:-word}: use word if var is unset or null
         if (has_colon) then
           if (.not. var_is_set .or. var_is_null) then
-            expanded = trim(param1)
+            result_value = trim(param1)
           else
-            expanded = trim(var_value)
+            result_value = trim(var_value)
           end if
         else
           if (.not. var_is_set) then
-            expanded = trim(param1)
+            result_value = trim(param1)
           else
-            expanded = trim(var_value)
+            result_value = trim(var_value)
           end if
         end if
-    !         write(error_unit, '(A,A,A)') 'DEBUG: expanded=', trim(expanded), '|'
+    !         write(error_unit, '(A,A,A)') 'DEBUG: result_value=', trim(result_value), '|'
 
       else if (plus_pos > 0 .and. (equals_pos == 0 .or. plus_pos < equals_pos) .and. &
                (question_pos == 0 .or. plus_pos < question_pos)) then
@@ -700,15 +711,15 @@ contains
         ! ${var:+word}: use word if var is set and not null
         if (has_colon) then
           if (var_is_set .and. .not. var_is_null) then
-            expanded = trim(param1)
+            result_value = trim(param1)
           else
-            expanded = ''
+            result_value = ''
           end if
         else
           if (var_is_set) then
-            expanded = trim(param1)
+            result_value = trim(param1)
           else
-            expanded = ''
+            result_value = ''
           end if
         end if
 
@@ -732,16 +743,16 @@ contains
         if (has_colon) then
           if (.not. var_is_set .or. var_is_null) then
             call set_shell_variable(shell, trim(operation), trim(param1))
-            expanded = trim(param1)
+            result_value = trim(param1)
           else
-            expanded = trim(var_value)
+            result_value = trim(var_value)
           end if
         else
           if (.not. var_is_set) then
             call set_shell_variable(shell, trim(operation), trim(param1))
-            expanded = trim(param1)
+            result_value = trim(param1)
           else
-            expanded = trim(var_value)
+            result_value = trim(var_value)
           end if
         end if
 
@@ -771,9 +782,9 @@ contains
             end if
             shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
             shell%fatal_expansion_error = .true.  ! Signal to abort execution
-            expanded = ''
+            result_value = ''
           else
-            expanded = trim(var_value)
+            result_value = trim(var_value)
           end if
         else
           if (.not. var_is_set) then
@@ -784,9 +795,9 @@ contains
             end if
             shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
             shell%fatal_expansion_error = .true.  ! Signal to abort execution
-            expanded = ''
+            result_value = ''
           else
-            expanded = trim(var_value)
+            result_value = trim(var_value)
           end if
         end if
       end if
@@ -797,7 +808,7 @@ contains
       operation = var_name(hash_pos+1:)
       var_value = get_shell_variable(shell, trim(operation))
       write(num_buf, '(I0)') len_trim(var_value)
-      expanded = trim(num_buf)
+      result_value = trim(num_buf)
 
     else
       ! Simple variable expansion
@@ -808,15 +819,15 @@ contains
         if (check_nounset(shell, trim(var_name))) then
           shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
           shell%fatal_expansion_error = .true.
-          expanded = ''
+          result_value = ''
           return
         end if
       end if
 
-      expanded = trim(var_value)
+      result_value = trim(var_value)
     end if
 
-  end function
+  end subroutine process_param_expansion
 
   subroutine parse_substring_expansion(input, var_name, offset_str, length_str)
     character(len=*), intent(in) :: input
