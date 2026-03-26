@@ -59,7 +59,7 @@ section() {
 
 # Normalize output by stripping shell name prefix
 normalize_output() {
-    sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'
+    sed -e 's|^[^ ]*bash: |sh: |' -e 's|^[^ ]*fortsh: |sh: |' -e 's/line [0-9]*: //'
 }
 
 # Compare output between sh and fortsh
@@ -83,7 +83,7 @@ compare_posix_output() {
 # Normalize shell error messages by stripping shell name and "line N: " prefix
 # POSIX doesn't mandate error message format, so we normalize for comparison
 normalize_error() {
-    echo "$1" | sed -e 's/^bash: /sh: /g' -e 's/bash: /sh: /g' -e 's/line [0-9]*: //g' -e 's/-c: //g'
+    echo "$1" | sed -e 's|^[^ ]*bash: |sh: |g' -e 's|[^ ]*bash: |sh: |g' -e 's|^[^ ]*fortsh: |sh: |g' -e 's|[^ ]*fortsh: |sh: |g' -e 's/line [0-9]*: //g' -e 's/-c: //g'
 }
 
 # Compare error output, normalizing line number differences

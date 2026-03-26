@@ -84,7 +84,7 @@ section() {
 
 # Normalize shell error messages by stripping shell name and "line N: " prefix
 normalize_output() {
-    sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'
+    sed -e 's|^[^ ]*bash: |sh: |' -e 's|^[^ ]*fortsh: |sh: |' -e 's/line [0-9]*: //'
 }
 
 # Helper function to run command in both shells and compare

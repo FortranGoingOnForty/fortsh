@@ -57,7 +57,7 @@ section() {
     printf "\n${BLUE}==========================================\n%s\n==========================================${NC}\n" "$1"
 }
 
-normalize_output() { sed -e 's/^bash: /sh: /' -e 's/line [0-9]*: //'; }
+normalize_output() { sed -e 's|^[^ ]*bash: |sh: |' -e 's|^[^ ]*fortsh: |sh: |' -e 's/line [0-9]*: //'; }
 
 compare_posix_output() {
     test_name="$1"; command="$2"
