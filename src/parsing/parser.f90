@@ -2700,6 +2700,77 @@ contains
     needs_continuation = .not. in_single_quote .and. .not. in_double_quote
   end function
 
+  ! Detect if a command line has a heredoc operator (<<) whose content hasn't been provided.
+  ! Returns the delimiter string if found, empty if no heredoc pending.
+  function get_heredoc_delimiter(line) result(delimiter)
+    character(len=*), intent(in) :: line
+    character(len=256) :: delimiter
+    integer :: i, dstart, dend, line_len
+    logical :: in_sq, in_dq, strip_tabs, delim_quoted
+
+    delimiter = ''
+    line_len = len_trim(line)
+    in_sq = .false.; in_dq = .false.
+    i = 1
+
+    do while (i < line_len)
+      ! Track quotes
+      if (line(i:i) == "'" .and. .not. in_dq) then
+        in_sq = .not. in_sq
+        i = i + 1; cycle
+      end if
+      if (line(i:i) == '"' .and. .not. in_sq) then
+        in_dq = .not. in_dq
+        i = i + 1; cycle
+      end if
+      if (in_sq .or. in_dq) then
+        i = i + 1; cycle
+      end if
+
+      ! Look for << not inside quotes
+      if (line(i:i) == '<' .and. i + 1 <= line_len .and. line(i+1:i+1) == '<') then
+        i = i + 2
+        ! Skip <<- (strip tabs variant)
+        strip_tabs = .false.
+        if (i <= line_len .and. line(i:i) == '-') then
+          strip_tabs = .true.
+          i = i + 1
+        end if
+        ! Skip whitespace
+        do while (i <= line_len .and. (line(i:i) == ' ' .or. line(i:i) == char(9)))
+          i = i + 1
+        end do
+        if (i > line_len) return
+
+        ! Extract delimiter — may be quoted
+        delim_quoted = .false.
+        if (line(i:i) == "'" .or. line(i:i) == '"') then
+          delim_quoted = .true.
+          dstart = i + 1
+          dend = index(line(dstart:line_len), line(i:i))
+          if (dend > 0) then
+            dend = dstart + dend - 2
+          else
+            dend = line_len  ! unclosed quote
+          end if
+        else
+          dstart = i
+          dend = i
+          do while (dend + 1 <= line_len .and. line(dend+1:dend+1) /= ' ' .and. &
+                    line(dend+1:dend+1) /= char(9) .and. line(dend+1:dend+1) /= ';')
+            dend = dend + 1
+          end do
+        end if
+
+        if (dend >= dstart) then
+          delimiter = line(dstart:dend)
+          return
+        end if
+      end if
+      i = i + 1
+    end do
+  end function
+
   function needs_compound_continuation(input) result(needs_more)
     use lexer, only: tokenize
     character(len=*), intent(in) :: input
