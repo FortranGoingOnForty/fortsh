@@ -5,6 +5,18 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+// macOS kernel bug workaround: set S_CTTYREF on the controlling terminal.
+// On macOS, PTY slave output is discarded when the child process exits unless
+// /dev/tty was opened (which sets S_CTTYREF). Without this, pexpect-based tests
+// lose output from commands that fork short-lived child processes.
+// See: https://github.com/pexpect/pexpect/issues/662
+void fortsh_set_cttyref(void) {
+#ifdef __APPLE__
+    int fd = open("/dev/tty", O_WRONLY);
+    if (fd >= 0) close(fd);
+#endif
+}
+
 // Wrapper for open() that takes mode as a separate parameter
 // This works around a bug in Fortran's C binding where mode_t is not passed correctly
 int fortsh_open(const char *pathname, int flags, int mode) {

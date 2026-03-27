@@ -54,6 +54,14 @@ program fortran_shell
   character(len=16) :: col_str_buf
   character(len=2048) :: embedded_prompt
 
+  ! macOS: set S_CTTYREF on controlling terminal to prevent PTY output loss
+  ! (macOS kernel discards slave PTY buffer on child exit without this flag)
+  interface
+    subroutine fortsh_set_cttyref() bind(C, name="fortsh_set_cttyref")
+    end subroutine
+  end interface
+  call fortsh_set_cttyref()
+
   ! Initialize performance monitoring
   call init_performance_monitoring()
 
