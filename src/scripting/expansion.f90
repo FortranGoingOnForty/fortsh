@@ -1203,6 +1203,8 @@ contains
     character(len=:), allocatable, intent(out) :: output
 #ifdef USE_C_STRINGS
     ! flang-new path: route through C to avoid allocatable heap corruption
+    ! But if pattern contains glob characters ([, *, ?), use Fortran path
+    ! because the C pattern_replace does literal matching only
     integer :: in_len, pat_len, repl_len, result_len, rc
     integer(c_int) :: c_replace_all
     type(c_ptr) :: c_result_ptr, ebuf
@@ -1212,6 +1214,13 @@ contains
     in_len = len_trim(input)
     pat_len = len_trim(pattern)
     repl_len = len_trim(replacement)
+
+    ! Use glob-aware Fortran path for patterns with wildcards/charclasses
+    if (pat_len > 0 .and. (index(pattern(1:pat_len), '[') > 0 .or. &
+        index(pattern(1:pat_len), '*') > 0 .or. index(pattern(1:pat_len), '?') > 0)) then
+      call pattern_replace_glob(input, pattern, replacement, replace_all, output)
+      return
+    end if
 
     if (pat_len == 0) then
       if (in_len > 0) then
@@ -1312,6 +1321,69 @@ contains
     end if
     deallocate(result_buf)
 #endif
+  end subroutine
+
+  ! Glob-aware pattern replace — handles *, ?, [charclass] via glob module
+  ! Used on all platforms; the C path falls through here for glob patterns.
+  subroutine pattern_replace_glob(input, pattern, replacement, replace_all, output)
+    character(len=*), intent(in) :: input, pattern, replacement
+    logical, intent(in) :: replace_all
+    character(len=:), allocatable, intent(out) :: output
+    integer :: in_len, pat_len, repl_len, i2, j2
+    integer :: out_pos, out_cap
+    logical :: matched
+    character(len=:), allocatable :: result_buf
+
+    in_len = len_trim(input)
+    pat_len = len_trim(pattern)
+    repl_len = len_trim(replacement)
+
+    if (pat_len == 0) then
+      output = input(1:in_len)
+      return
+    end if
+
+    out_cap = in_len * 2 + 1
+    allocate(character(len=out_cap) :: result_buf)
+    out_pos = 1
+    i2 = 1
+    do while (i2 <= in_len)
+      matched = .false.
+      do j2 = 1, in_len - i2 + 1
+        if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
+          matched = .true.
+          exit
+        end if
+      end do
+      if (matched) then
+        if (repl_len > 0) then
+          if (out_pos + repl_len - 1 > out_cap) then
+            call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
+          end if
+          result_buf(out_pos:out_pos + repl_len - 1) = replacement(1:repl_len)
+          out_pos = out_pos + repl_len
+        end if
+        i2 = i2 + j2
+        if (.not. replace_all) then
+          do while (i2 <= in_len)
+            result_buf(out_pos:out_pos) = input(i2:i2)
+            out_pos = out_pos + 1
+            i2 = i2 + 1
+          end do
+          exit
+        end if
+      else
+        result_buf(out_pos:out_pos) = input(i2:i2)
+        out_pos = out_pos + 1
+        i2 = i2 + 1
+      end if
+    end do
+    if (out_pos > 1) then
+      output = result_buf(1:out_pos - 1)
+    else
+      output = ''
+    end if
+    deallocate(result_buf)
   end subroutine
 
 #ifdef USE_C_STRINGS
