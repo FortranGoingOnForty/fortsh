@@ -73,7 +73,7 @@ class YAMLTestRunner:
         machine = platform.machine().lower()
         if machine in ('arm64', 'aarch64'):
             self.pty_timeout = 10.0   # 2x default for ARM64
-            self.delay_scale = 1.5    # modest delay increase
+            self.delay_scale = 1.0    # no delay scaling — S_CTTYREF fix addresses root cause
         else:
             self.pty_timeout = 5.0
             self.delay_scale = 1.0
