@@ -1157,6 +1157,15 @@ contains
         ch = utf8_char(1:1)
         char_code = iachar(ch)
 
+        ! Log every character received
+        block
+          integer :: dbu6
+          open(newunit=dbu6, file='/tmp/fortsh_readline_debug.log', &
+               status='unknown', position='append', action='write')
+          write(dbu6, '(A,I0,A,A,A)') 'CHAR: code=', char_code, ' ch=[', ch, ']'
+          close(dbu6)
+        end block
+
         if (char_code == 27) then
         else if (char_code < 32 .or. char_code == 127) then
         end if
