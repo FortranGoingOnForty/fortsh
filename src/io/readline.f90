@@ -1344,9 +1344,11 @@ contains
           if (.not. module_input_state%in_search) call handle_yank(module_input_state)
 
         case(KEY_CTRL_L)
-          ! Clear screen - no-op in search mode or menu mode
+          ! Clear screen - but only if buffer has content (user intent)
+          ! Stale char(12) from Fortran I/O flush appears at readline start — ignore it
           if (.not. module_input_state%in_search .and. &
-              .not. module_input_state%in_menu_select) then
+              .not. module_input_state%in_menu_select .and. &
+              module_input_state%length > 0) then
             call handle_clear_screen(module_input_state, prompt)
           end if
 
