@@ -311,8 +311,21 @@ program fortran_shell
         ! Check if prompt is multi-line
         newline_pos = index(trim(prompt_str), char(10))
         if (newline_pos > 0) then
-          ! TEMP DEBUG: Force single-line prompt to isolate multi-line issue
-          call readline_enhanced('DBG> ', input_line, iostat, keep_raw=.true.)
+          ! Multi-line prompt with RPROMPT: embed RPROMPT in first line
+          first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
+          rprompt_vlen = visual_length(trim(rprompt_str))
+          rprompt_col = shell%term_cols - rprompt_vlen + 1
+
+          if (rprompt_col > first_line_vlen + 4) then
+            write(col_str_buf, '(I0)') rprompt_col
+            embedded_prompt = prompt_str(1:newline_pos-1) // &
+              char(27) // '[' // trim(col_str_buf) // 'G' // &
+              trim(rprompt_str) // &
+              prompt_str(newline_pos:len_trim(prompt_str))
+            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true.)
+          else
+            call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
+          end if
         else
           ! Single-line prompt: pass RPROMPT to readline for its handling
           call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true.)
