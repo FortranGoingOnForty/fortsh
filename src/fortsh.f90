@@ -311,9 +311,8 @@ program fortran_shell
         ! Check if prompt is multi-line
         newline_pos = index(trim(prompt_str), char(10))
         if (newline_pos > 0) then
-          ! Multi-line prompt: skip RPROMPT entirely, just pass full prompt to readline
-          ! TODO: re-enable RPROMPT after fixing cursor positioning
-          call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
+          ! TEMP DEBUG: Force single-line prompt to isolate multi-line issue
+          call readline_enhanced('DBG> ', input_line, iostat, keep_raw=.true.)
         else
           ! Single-line prompt: pass RPROMPT to readline for its handling
           call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true.)
