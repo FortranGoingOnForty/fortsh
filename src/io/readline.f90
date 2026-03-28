@@ -1423,6 +1423,8 @@ contains
                 '  skip_up=', module_input_state%skip_cursor_up_on_redraw, &
                 ' move_up_count=', current_row + prompt_line_count, &
                 ' buf_len=', module_input_state%length
+              write(dbu, '(A,I0,A,A,A)') '  prompt_len_trim=', len_trim(prompt), &
+                ' prompt=[', prompt(1:min(40, len_trim(prompt))), ']'
               close(dbu)
             end block
 
