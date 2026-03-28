@@ -1369,6 +1369,20 @@ contains
         ! Skip redraw when in menu selection mode - menu handles its own display
         ! In test mode, skip full redraw to avoid polluting PTY output
         if (.not. test_mode_initialized) call init_test_mode()
+
+        ! Debug: log dirty state before check
+        block
+          integer :: dbu2
+          open(newunit=dbu2, file='/tmp/fortsh_readline_debug.log', &
+               status='unknown', position='append', action='write')
+          write(dbu2, '(A,L1,A,L1,A,L1,A,I0)') &
+            'LOOP: dirty=', module_input_state%dirty, &
+            ' in_menu=', module_input_state%in_menu_select, &
+            ' test_mode=', test_mode_enabled, &
+            ' char_code=', char_code
+          close(dbu2)
+        end block
+
         if (module_input_state%dirty .and. .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
           ! Search mode: delegate to two-line search display instead of normal redraw
           if (module_input_state%in_search) then
