@@ -311,38 +311,9 @@ program fortran_shell
         ! Check if prompt is multi-line
         newline_pos = index(trim(prompt_str), char(10))
         if (newline_pos > 0) then
-          ! Multi-line prompt with RPROMPT: print first line + RPROMPT manually,
-          ! then pass only the last line to readline to avoid CHA escape corruption.
-          first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
-          rprompt_vlen = visual_length(trim(rprompt_str))
-          rprompt_col = shell%term_cols - rprompt_vlen + 1
-
-          if (rprompt_col > first_line_vlen + 4) then
-            ! Print first line of prompt
-            write(output_unit, '(a)', advance='no') prompt_str(1:newline_pos-1)
-            ! Position cursor at RPROMPT column and print it
-            write(col_str_buf, '(I0)') rprompt_col
-            write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str_buf) // 'G'
-            write(output_unit, '(a)') trim(rprompt_str)
-            flush(output_unit)
-            ! Pass only the last line (after \n) to readline — no CHA escapes
-            block
-              character(len=256) :: last_line
-              last_line = ''
-              last_line = prompt_str(newline_pos+1:min(newline_pos+255, len_trim(prompt_str)))
-              call readline_enhanced(trim(last_line), input_line, iostat, keep_raw=.true.)
-            end block
-          else
-            ! No RPROMPT space — print first line, then pass last line to readline
-            write(output_unit, '(a)') prompt_str(1:newline_pos-1)
-            flush(output_unit)
-            block
-              character(len=256) :: last_line
-              last_line = ''
-              last_line = prompt_str(newline_pos+1:min(newline_pos+255, len_trim(prompt_str)))
-              call readline_enhanced(trim(last_line), input_line, iostat, keep_raw=.true.)
-            end block
-          end if
+          ! Multi-line prompt: skip RPROMPT entirely, just pass full prompt to readline
+          ! TODO: re-enable RPROMPT after fixing cursor positioning
+          call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
         else
           ! Single-line prompt: pass RPROMPT to readline for its handling
           call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true.)
