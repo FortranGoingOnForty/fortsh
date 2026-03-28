@@ -626,14 +626,30 @@ contains
 
     output = input  ! Start with original
 
-    ! Find the first newline - everything before is the command line
-    cmd_line_end = index(input, char(10))
-    if (cmd_line_end == 0) then
-      ! No newline means no heredoc content
-      return
-    end if
-
-    cmd_line = input(1:cmd_line_end-1)
+    ! Find the line containing << — scan all lines, not just the first
+    ! The heredoc operator may be inside a compound command (if/then/fi)
+    block
+      integer :: nl_pos, search_start, ll
+      cmd_line_end = 0
+      search_start = 1
+      do
+        nl_pos = index(input(search_start:), char(10))
+        if (nl_pos == 0) then
+          ll = len_trim(input)
+        else
+          ll = search_start + nl_pos - 2
+        end if
+        ! Check if this line contains << outside quotes
+        if (has_heredoc_outside_quotes(input(search_start:ll))) then
+          cmd_line = input(1:ll)
+          cmd_line_end = ll + 1  ! position after the line (at the newline or past end)
+          exit
+        end if
+        if (nl_pos == 0) exit
+        search_start = search_start + nl_pos
+      end do
+    end block
+    if (cmd_line_end == 0) return
 
     ! Count and collect all heredoc delimiters from the command line
     ! Only match << when it's outside quotes
@@ -918,42 +934,59 @@ contains
         input_line = trim(input_line) // char(10) // trim(continuation_line)
       end do
 
-      ! Read heredoc content from script file and store as pending
+      ! Handle heredocs: either read from file or extract from accumulated input
       block
         character(len=256) :: hd_delim
-        character(len=16384) :: hd_line
+        character(len=16384) :: hd_line, hd_stripped
         character(len=16384) :: hd_content
-        integer :: hd_pos
+        integer :: hd_pos, hd_tab
+        logical :: hd_strip_tabs
         hd_delim = get_heredoc_delimiter(input_line)
         if (len_trim(hd_delim) > 0) then
-          hd_content = ''
-          hd_pos = 1
-          do
-            read(file_unit, '(a)', iostat=iostat) hd_line
-            if (iostat /= 0) exit
-            if (trim(hd_line) == trim(hd_delim)) exit
-            if (hd_pos > 1) then
-              hd_content(hd_pos:hd_pos) = char(10)
-              hd_pos = hd_pos + 1
-            end if
-            hd_content(hd_pos:hd_pos+len_trim(hd_line)-1) = trim(hd_line)
-            hd_pos = hd_pos + len_trim(hd_line)
-          end do
-          ! Store as pending heredoc for the executor to consume
-          ! Add trailing newline (POSIX: heredoc content ends with newline)
-          hd_content(hd_pos:hd_pos) = char(10)
-          hd_pos = hd_pos + 1
-          shell%has_pending_heredoc = .true.
-          shell%pending_heredoc = hd_content(:hd_pos-1)
-          shell%pending_heredoc_delimiter = trim(hd_delim)
-          ! Detect if delimiter was quoted (suppresses expansion)
-          block
-            integer :: dq_pos
-            dq_pos = index(input_line, "'" // trim(hd_delim) // "'")
-            if (dq_pos == 0) dq_pos = index(input_line, '"' // trim(hd_delim) // '"')
-            shell%pending_heredoc_quoted = (dq_pos > 0)
-          end block
-          shell%pending_heredoc_strip_tabs = (index(input_line, '<<-') > 0)
+          ! If compound continuation already consumed the heredoc content
+          ! (delimiter line is in input_line), use -c preprocessor
+          if (has_heredoc_outside_quotes(input_line) .and. &
+              index(input_line, char(10)) > 0) then
+            input_line = preprocess_heredocs_for_c(input_line, shell)
+          else
+            ! Read heredoc content from file
+            hd_strip_tabs = (index(input_line, '<<-') > 0)
+            hd_content = ''
+            hd_pos = 1
+            do
+              read(file_unit, '(a)', iostat=iostat) hd_line
+              if (iostat /= 0) exit
+              if (hd_strip_tabs) then
+                hd_stripped = hd_line
+                hd_tab = 1
+                do while (hd_tab <= len_trim(hd_stripped) .and. hd_stripped(hd_tab:hd_tab) == char(9))
+                  hd_tab = hd_tab + 1
+                end do
+                if (hd_tab > 1) hd_stripped = hd_stripped(hd_tab:)
+                if (trim(hd_stripped) == trim(hd_delim)) exit
+              else
+                if (trim(hd_line) == trim(hd_delim)) exit
+              end if
+              if (hd_pos > 1) then
+                hd_content(hd_pos:hd_pos) = char(10)
+                hd_pos = hd_pos + 1
+              end if
+              hd_content(hd_pos:hd_pos+len_trim(hd_line)-1) = trim(hd_line)
+              hd_pos = hd_pos + len_trim(hd_line)
+            end do
+            hd_content(hd_pos:hd_pos) = char(10)
+            hd_pos = hd_pos + 1
+            shell%has_pending_heredoc = .true.
+            shell%pending_heredoc = hd_content(:hd_pos-1)
+            shell%pending_heredoc_delimiter = trim(hd_delim)
+            block
+              integer :: dq_pos
+              dq_pos = index(input_line, "'" // trim(hd_delim) // "'")
+              if (dq_pos == 0) dq_pos = index(input_line, '"' // trim(hd_delim) // '"')
+              shell%pending_heredoc_quoted = (dq_pos > 0)
+            end block
+            shell%pending_heredoc_strip_tabs = hd_strip_tabs
+          end if
         end if
       end block
 
