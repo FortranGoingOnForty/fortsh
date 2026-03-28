@@ -599,9 +599,11 @@ contains
         in_double_quote = .not. in_double_quote
       end if
 
-      ! Check for << when outside quotes
+      ! Check for << when outside quotes (but NOT <<< which is here-string)
       if (.not. in_single_quote .and. .not. in_double_quote) then
         if (str(i:i+1) == '<<') then
+          ! Skip <<< (here-string)
+          if (i + 2 <= len_trim(str) .and. str(i+2:i+2) == '<') cycle
           has_heredoc = .true.
           return
         end if
@@ -682,9 +684,15 @@ contains
             in_double_quote = .not. in_double_quote
           end if
 
-          ! Check for << when outside quotes
+          ! Check for << when outside quotes (but NOT <<< which is here-string)
           if (.not. in_single_quote .and. .not. in_double_quote) then
             if (cmd_line(search_pos:search_pos+1) == '<<') then
+              ! Skip <<< (here-string)
+              if (search_pos + 2 <= len_trim(cmd_line) .and. &
+                  cmd_line(search_pos+2:search_pos+2) == '<') then
+                search_pos = search_pos + 3
+                cycle
+              end if
               j = search_pos
               exit
             end if

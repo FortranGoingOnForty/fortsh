@@ -2727,8 +2727,13 @@ contains
         i = i + 1; cycle
       end if
 
-      ! Look for << not inside quotes
+      ! Look for << not inside quotes (but NOT <<< which is here-string)
       if (line(i:i) == '<' .and. i + 1 <= line_len .and. line(i+1:i+1) == '<') then
+        ! Skip <<< (here-string, not heredoc)
+        if (i + 2 <= line_len .and. line(i+2:i+2) == '<') then
+          i = i + 3
+          cycle
+        end if
         i = i + 2
         ! Skip <<- (strip tabs variant)
         strip_tabs = .false.
