@@ -959,11 +959,12 @@ contains
 #endif
 
   ! Enhanced readline with character-by-character input processing
-  subroutine readline_enhanced(prompt, line, iostat, rprompt)
+  subroutine readline_enhanced(prompt, line, iostat, rprompt, keep_raw)
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
     character(len=*), intent(in), optional :: rprompt  ! Right-side prompt (like zsh)
+    logical, intent(in), optional :: keep_raw  ! Don't restore terminal on exit (for continuation)
 
     ! Use module-level module_input_state directly (avoids flang-new pointer corruption bug)
     character :: ch
@@ -1643,9 +1644,15 @@ contains
         end if
       end do
       
-      ! Restore terminal
-      if (.not. restore_terminal(module_original_termios)) then
-        ! Warning but don't fail
+      ! Restore terminal (unless keep_raw requested for continuation prompts)
+      if (present(keep_raw)) then
+        if (.not. keep_raw) then
+          if (.not. restore_terminal(module_original_termios)) then
+          end if
+        end if
+      else
+        if (.not. restore_terminal(module_original_termios)) then
+        end if
       end if
     else
       ! Fallback to line-based input
@@ -8740,6 +8747,14 @@ contains
     end if
 
     flush(output_unit)
+  end subroutine
+
+  ! Restore terminal from raw mode — called by REPL after all continuation prompts
+  subroutine restore_readline_terminal()
+    if (module_termios_saved) then
+      if (.not. restore_terminal(module_original_termios)) then
+      end if
+    end if
   end subroutine
 
 end module readline

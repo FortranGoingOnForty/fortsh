@@ -334,11 +334,10 @@ program fortran_shell
           call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str))
         end if
       else
-        call readline_enhanced(trim(prompt_str), input_line, iostat)
+        call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
       end if
     else
       read(input_unit, '(a)', iostat=iostat) input_line
-      ! Note: History will be added after expansion below
     end if
 
     ! Check for terminal resize that may have occurred during readline
@@ -369,9 +368,8 @@ program fortran_shell
     ! Check for unclosed quotes or backslash continuation and continue reading
     do while (has_unclosed_quote(input_line) .or. ends_with_continuation_backslash(input_line))
       if (shell%is_interactive) then
-        ! Full readline with PS2 prompt expansion
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
-        call readline_enhanced(prompt_str, proc_subst_line, iostat)
+        call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true.)
       else
         ! Non-interactive: just read next line
         read(input_unit, '(a)', iostat=iostat) proc_subst_line
@@ -396,23 +394,9 @@ program fortran_shell
     ! Check for unclosed compound commands (if/fi, do/done, case/esac)
     do while (needs_compound_continuation(input_line))
       if (shell%is_interactive) then
-        ! Ensure clean cursor position for continuation prompt
-        write(output_unit, '(a)', advance='no') char(13)  ! CR to column 0
-        write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear to end of line
         flush(output_unit)
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
-        ! Enable readline debug logging for continuation prompts
-        block
-          integer :: dbg_unit
-          open(newunit=dbg_unit, file='/tmp/fortsh_readline_debug.log', &
-               status='replace', action='write')
-          write(dbg_unit, '(A,A,A)') 'PS2 prompt=[', trim(prompt_str), ']'
-          write(dbg_unit, '(A,I0)') 'PS2 prompt visual_len=', visual_length(prompt_str)
-          write(dbg_unit, '(A,I0)') 'PS2 prompt len_trim=', len_trim(prompt_str)
-          write(dbg_unit, '(A,A,A)') 'accumulated input_line=[', trim(input_line), ']'
-          close(dbg_unit)
-        end block
-        call readline_enhanced(prompt_str, proc_subst_line, iostat)
+        call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true.)
       else
         ! Non-interactive: just read next line
         read(input_unit, '(a)', iostat=iostat) proc_subst_line
@@ -429,6 +413,9 @@ program fortran_shell
       ! Append the continuation line with a newline character
       input_line = trim(input_line) // char(10) // trim(proc_subst_line)
     end do
+
+    ! Restore terminal from raw mode (readline keeps raw for continuation prompts)
+    if (shell%is_interactive) call restore_readline_terminal()
 
     ! Expand history (!!, !n, !string, etc.) if needed
     if (needs_history_expansion(input_line)) then
