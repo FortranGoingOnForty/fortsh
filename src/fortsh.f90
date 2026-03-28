@@ -375,14 +375,27 @@ program fortran_shell
     ! Handle line continuation (backslash-newline)
     input_line = remove_line_continuations(input_line)
 
+    ! Log: about to check compound continuation
+    block
+      integer :: dbu_gap
+      open(newunit=dbu_gap, file='/tmp/fortsh_readline_debug.log', &
+           status='unknown', position='append', action='write')
+      write(dbu_gap, '(A,A,A)') 'GAP: before needs_compound, input=[', trim(input_line), ']'
+      close(dbu_gap)
+    end block
+
     ! Check for unclosed compound commands (if/fi, do/done, case/esac)
     do while (needs_compound_continuation(input_line))
+
+      block
+        integer :: dbu_gap2
+        open(newunit=dbu_gap2, file='/tmp/fortsh_readline_debug.log', &
+             status='unknown', position='append', action='write')
+        write(dbu_gap2, '(A)') 'GAP: needs_compound returned TRUE, about to call PS2 readline'
+        close(dbu_gap2)
+      end block
+
       if (shell%is_interactive) then
-        ! Ensure cursor is at column 0 on a clean line before PS2 prompt
-        ! The previous readline may have left cursor mid-line or at RPROMPT position
-        write(output_unit, '(a)', advance='no') char(13)  ! CR
-        write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear to end of line
-        flush(output_unit)
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
         call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true.)
       else

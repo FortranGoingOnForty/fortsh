@@ -1092,7 +1092,17 @@ contains
       end if
     else
       ! No RPROMPT - just print prompt
-      write(output_unit, '(a)', advance='no') prompt
+      ! In raw mode, bare LF doesn't CR — replace with CR+LF for multi-line prompts
+      block
+        integer :: pr_i
+        do pr_i = 1, len_trim(prompt)
+          if (prompt(pr_i:pr_i) == char(10)) then
+            write(output_unit, '(a)', advance='no') char(13) // char(10)  ! CR+LF
+          else
+            write(output_unit, '(a)', advance='no') prompt(pr_i:pr_i)
+          end if
+        end do
+      end block
       write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
     end if
 
@@ -1507,8 +1517,17 @@ contains
             ! Clear from cursor to end of screen
             write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
 
-            ! Redraw prompt and buffer
-            write(output_unit, '(a)', advance='no') prompt
+            ! Redraw prompt and buffer (replace bare LF with CR+LF for raw mode)
+            block
+              integer :: pr_j
+              do pr_j = 1, len_trim(prompt)
+                if (prompt(pr_j:pr_j) == char(10)) then
+                  write(output_unit, '(a)', advance='no') char(13) // char(10)
+                else
+                  write(output_unit, '(a)', advance='no') prompt(pr_j:pr_j)
+                end if
+              end do
+            end block
             write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
