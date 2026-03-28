@@ -6151,6 +6151,7 @@ contains
     integer :: i, slen
     integer :: state
     integer :: terminator_code
+    integer :: last_newline_pos
 
     ! State machine for parsing escape sequences
     integer, parameter :: STATE_NORMAL = 0
@@ -6159,6 +6160,7 @@ contains
     integer, parameter :: STATE_OSC = 3
 
     vlen = 0
+    last_newline_pos = 0
     slen = len_trim(str)
     state = STATE_NORMAL
 
@@ -6175,6 +6177,7 @@ contains
         else if (str(i:i) == char(10)) then  ! LF
           ! Newline resets visual position (for multi-line prompts)
           vlen = 0
+          last_newline_pos = i
           i = i + 1
         else
           ! Regular character - count it (account for wide UTF-8 chars)
@@ -6221,6 +6224,26 @@ contains
         end if
       end select
     end do
+
+    ! Debug: log visual_length result for multi-line prompts
+    if (last_newline_pos > 0 .and. slen > 10) then
+      block
+        integer :: dbu_vl
+        open(newunit=dbu_vl, file='/tmp/fortsh_readline_debug.log', &
+             status='unknown', position='append', action='write')
+        write(dbu_vl, '(A,I0,A,I0,A,I0,A,I0)') &
+          'VLEN: result=', vlen, ' slen=', slen, &
+          ' newline_at=', last_newline_pos, ' chars_after_nl=', slen - last_newline_pos
+        if (last_newline_pos < slen) then
+          write(dbu_vl, '(A)', advance='no') '  after_nl_bytes=['
+          do i = last_newline_pos + 1, min(slen, last_newline_pos + 20)
+            write(dbu_vl, '(I0,A)', advance='no') iachar(str(i:i)), ' '
+          end do
+          write(dbu_vl, '(A)') ']'
+        end if
+        close(dbu_vl)
+      end block
+    end if
   end function
 
   ! ===========================================================================

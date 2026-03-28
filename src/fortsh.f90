@@ -324,14 +324,14 @@ program fortran_shell
               char(27) // '[' // trim(col_str_buf) // 'G' // &
               trim(rprompt_str) // &
               prompt_str(newline_pos:len_trim(prompt_str))
-            call readline_enhanced(trim(embedded_prompt), input_line, iostat)
+            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true.)
           else
             ! Not enough space for RPROMPT — skip it
-            call readline_enhanced(trim(prompt_str), input_line, iostat)
+            call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
           end if
         else
           ! Single-line prompt: pass RPROMPT to readline for its handling
-          call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str))
+          call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true.)
         end if
       else
         call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
