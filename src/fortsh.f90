@@ -326,12 +326,22 @@ program fortran_shell
             write(output_unit, '(a)') trim(rprompt_str)
             flush(output_unit)
             ! Pass only the last line (after \n) to readline — no CHA escapes
-            call readline_enhanced(trim(prompt_str(newline_pos+1:)), input_line, iostat, keep_raw=.true.)
+            block
+              character(len=256) :: last_line
+              last_line = ''
+              last_line = prompt_str(newline_pos+1:min(newline_pos+255, len_trim(prompt_str)))
+              call readline_enhanced(trim(last_line), input_line, iostat, keep_raw=.true.)
+            end block
           else
             ! No RPROMPT space — print first line, then pass last line to readline
             write(output_unit, '(a)') prompt_str(1:newline_pos-1)
             flush(output_unit)
-            call readline_enhanced(trim(prompt_str(newline_pos+1:)), input_line, iostat, keep_raw=.true.)
+            block
+              character(len=256) :: last_line
+              last_line = ''
+              last_line = prompt_str(newline_pos+1:min(newline_pos+255, len_trim(prompt_str)))
+              call readline_enhanced(trim(last_line), input_line, iostat, keep_raw=.true.)
+            end block
           end if
         else
           ! Single-line prompt: pass RPROMPT to readline for its handling
