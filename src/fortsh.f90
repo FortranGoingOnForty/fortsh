@@ -311,22 +311,26 @@ program fortran_shell
         ! Check if prompt is multi-line
         newline_pos = index(trim(prompt_str), char(10))
         if (newline_pos > 0) then
-          ! Multi-line prompt: embed RPROMPT at end of first line using CHA escape
-          ! This ensures RPROMPT survives readline redraws (unlike cursor movement approach)
+          ! Multi-line prompt with RPROMPT: print RPROMPT on first line separately,
+          ! then pass clean prompt to readline (embedded CHA escapes corrupt redraws)
           first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
           rprompt_vlen = visual_length(trim(rprompt_str))
           rprompt_col = shell%term_cols - rprompt_vlen + 1
 
           if (rprompt_col > first_line_vlen + 4) then
-            ! Build: first_line + CHA(col) + rprompt + \n + rest
+            ! Print first line of prompt
+            write(output_unit, '(a)', advance='no') prompt_str(1:newline_pos-1)
+            ! Jump to RPROMPT column and print it
             write(col_str_buf, '(I0)') rprompt_col
-            embedded_prompt = prompt_str(1:newline_pos-1) // &
-              char(27) // '[' // trim(col_str_buf) // 'G' // &
-              trim(rprompt_str) // &
-              prompt_str(newline_pos:len_trim(prompt_str))
-            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true.)
+            write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str_buf) // 'G'
+            write(output_unit, '(a)', advance='no') trim(rprompt_str)
+            ! Print newline + rest of prompt (the "> " part)
+            write(output_unit, '(a)', advance='no') prompt_str(newline_pos:len_trim(prompt_str))
+            flush(output_unit)
+            ! Pass only the LAST line to readline (no RPROMPT embedding, no cursor jumps)
+            call readline_enhanced(prompt_str(newline_pos+1:len_trim(prompt_str)), &
+                                   input_line, iostat, keep_raw=.true.)
           else
-            ! Not enough space for RPROMPT — skip it
             call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
           end if
         else
