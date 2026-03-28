@@ -6162,6 +6162,13 @@ contains
     vlen = 0
     last_newline_pos = 0
     slen = len_trim(str)
+    ! Stop at first null byte (buffer padding)
+    do i = 1, slen
+      if (str(i:i) == char(0)) then
+        slen = i - 1
+        exit
+      end if
+    end do
     state = STATE_NORMAL
 
     i = 1
@@ -6170,6 +6177,9 @@ contains
       case (STATE_NORMAL)
         if (str(i:i) == char(27)) then  ! ESC
           state = STATE_ESC
+          i = i + 1
+        else if (str(i:i) == char(0)) then  ! NUL
+          ! Null byte from buffer padding - skip
           i = i + 1
         else if (str(i:i) == char(13)) then  ! CR
           ! Carriage return - doesn't add to visual length
