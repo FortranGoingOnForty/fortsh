@@ -396,7 +396,11 @@ program fortran_shell
     ! Check for unclosed compound commands (if/fi, do/done, case/esac)
     do while (needs_compound_continuation(input_line))
       if (shell%is_interactive) then
-        ! Full readline with PS2 prompt expansion
+        ! Ensure clean cursor position for continuation prompt
+        ! Move to column 0 and clear the line before PS2 prompt
+        write(output_unit, '(a)', advance='no') char(13)  ! CR to column 0
+        write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear to end of line
+        flush(output_unit)
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
         call readline_enhanced(prompt_str, proc_subst_line, iostat)
       else
