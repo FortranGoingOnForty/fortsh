@@ -311,25 +311,18 @@ program fortran_shell
         ! Check if prompt is multi-line
         newline_pos = index(trim(prompt_str), char(10))
         if (newline_pos > 0) then
-          ! Multi-line prompt with RPROMPT: print RPROMPT on first line separately,
-          ! then pass clean prompt to readline (embedded CHA escapes corrupt redraws)
+          ! Multi-line prompt: embed RPROMPT at end of first line using CHA escape
           first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
           rprompt_vlen = visual_length(trim(rprompt_str))
           rprompt_col = shell%term_cols - rprompt_vlen + 1
 
           if (rprompt_col > first_line_vlen + 4) then
-            ! Print first line of prompt
-            write(output_unit, '(a)', advance='no') prompt_str(1:newline_pos-1)
-            ! Jump to RPROMPT column and print it
             write(col_str_buf, '(I0)') rprompt_col
-            write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str_buf) // 'G'
-            write(output_unit, '(a)', advance='no') trim(rprompt_str)
-            ! Print newline + rest of prompt (the "> " part)
-            write(output_unit, '(a)', advance='no') prompt_str(newline_pos:len_trim(prompt_str))
-            flush(output_unit)
-            ! Pass only the LAST line to readline (no RPROMPT embedding, no cursor jumps)
-            call readline_enhanced(prompt_str(newline_pos+1:len_trim(prompt_str)), &
-                                   input_line, iostat, keep_raw=.true.)
+            embedded_prompt = prompt_str(1:newline_pos-1) // &
+              char(27) // '[' // trim(col_str_buf) // 'G' // &
+              trim(rprompt_str) // &
+              prompt_str(newline_pos:len_trim(prompt_str))
+            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true.)
           else
             call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
           end if
@@ -398,6 +391,10 @@ program fortran_shell
     ! Check for unclosed compound commands (if/fi, do/done, case/esac)
     do while (needs_compound_continuation(input_line))
       if (shell%is_interactive) then
+        ! Ensure cursor is at column 0 on a clean line before PS2 prompt
+        ! The previous readline may have left cursor mid-line or at RPROMPT position
+        write(output_unit, '(a)', advance='no') char(13)  ! CR
+        write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear to end of line
         flush(output_unit)
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
         call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true.)
