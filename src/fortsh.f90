@@ -7,7 +7,8 @@ program fortran_shell
   use signal_handler
   use signal_handling
   use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash, &
-                    needs_compound_continuation, remove_line_continuations, process_substitutions
+                    needs_compound_continuation, remove_line_continuations, process_substitutions, &
+                    get_heredoc_delimiter
 
   use grammar_parser  ! New grammar-aware parser
   use ast_executor, only: execute_ast, register_trap_evaluator
@@ -917,11 +918,44 @@ contains
         input_line = trim(input_line) // char(10) // trim(continuation_line)
       end do
 
-      ! If EOF was reached during compound continuation, still try to parse what we have
-      ! (the parser will report a syntax error for incomplete commands)
-
-      ! Function definitions and all compound commands are now accumulated by
-      ! needs_compound_continuation above and parsed via the AST parser.
+      ! Read heredoc content from script file and store as pending
+      block
+        character(len=256) :: hd_delim
+        character(len=16384) :: hd_line
+        character(len=16384) :: hd_content
+        integer :: hd_pos
+        hd_delim = get_heredoc_delimiter(input_line)
+        if (len_trim(hd_delim) > 0) then
+          hd_content = ''
+          hd_pos = 1
+          do
+            read(file_unit, '(a)', iostat=iostat) hd_line
+            if (iostat /= 0) exit
+            if (trim(hd_line) == trim(hd_delim)) exit
+            if (hd_pos > 1) then
+              hd_content(hd_pos:hd_pos) = char(10)
+              hd_pos = hd_pos + 1
+            end if
+            hd_content(hd_pos:hd_pos+len_trim(hd_line)-1) = trim(hd_line)
+            hd_pos = hd_pos + len_trim(hd_line)
+          end do
+          ! Store as pending heredoc for the executor to consume
+          ! Add trailing newline (POSIX: heredoc content ends with newline)
+          hd_content(hd_pos:hd_pos) = char(10)
+          hd_pos = hd_pos + 1
+          shell%has_pending_heredoc = .true.
+          shell%pending_heredoc = hd_content(:hd_pos-1)
+          shell%pending_heredoc_delimiter = trim(hd_delim)
+          ! Detect if delimiter was quoted (suppresses expansion)
+          block
+            integer :: dq_pos
+            dq_pos = index(input_line, "'" // trim(hd_delim) // "'")
+            if (dq_pos == 0) dq_pos = index(input_line, '"' // trim(hd_delim) // '"')
+            shell%pending_heredoc_quoted = (dq_pos > 0)
+          end block
+          shell%pending_heredoc_strip_tabs = (index(input_line, '<<-') > 0)
+        end if
+      end block
 
       ! Normal line processing
       ! Expand history if needed, then expand aliases
