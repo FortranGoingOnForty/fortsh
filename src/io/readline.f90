@@ -1032,9 +1032,16 @@ contains
     success = enable_raw_mode(module_original_termios)
     if (success) then
       raw_enabled = .true.
-      ! Terminal state already in module_original_termios
       module_termios_saved = .true.
     else
+      ! Log raw mode failure
+      block
+        integer :: dbu3
+        open(newunit=dbu3, file='/tmp/fortsh_readline_debug.log', &
+             status='unknown', position='append', action='write')
+        write(dbu3, '(A)') 'WARNING: raw mode FAILED to enable'
+        close(dbu3)
+      end block
     end if
 
 
@@ -1098,6 +1105,19 @@ contains
     module_cursor_screen_row = prompt_line_count
     module_cursor_screen_col = prompt_visual_len + 1
 
+
+    ! Log readline state
+    block
+      integer :: dbu4
+      open(newunit=dbu4, file='/tmp/fortsh_readline_debug.log', &
+           status='unknown', position='append', action='write')
+      write(dbu4, '(A,L1,A,I0,A,I0,A,I0)') &
+        'READLINE_START: raw=', raw_enabled, &
+        ' prompt_vlen=', prompt_visual_len, &
+        ' prompt_lines=', prompt_line_count, &
+        ' term_cols=', term_cols
+      close(dbu4)
+    end block
 
     if (raw_enabled) then
       ! Enhanced input processing
