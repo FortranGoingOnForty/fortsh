@@ -1410,23 +1410,20 @@ contains
             ! Debug logging for cursor positioning
             block
               integer :: dbu
-              logical :: dbexists
-              inquire(file='/tmp/fortsh_readline_debug.log', exist=dbexists)
-              if (dbexists) then
-                open(newunit=dbu, file='/tmp/fortsh_readline_debug.log', &
-                     status='old', position='append', action='write')
-                write(dbu, '(A,I0,A,I0,A,I0,A,I0,A,I0,A,I0,A,I0)') &
-                  'REDRAW: prompt_vlen=', prompt_visual_len, &
-                  ' cursor_pos=', module_input_state%cursor_pos, &
-                  ' cursor_vpos=', cursor_visual_pos, &
-                  ' row=', current_row, ' col=', current_col, &
-                  ' term_cols=', term_cols, &
-                  ' prompt_lines=', prompt_line_count
-                write(dbu, '(A,L1,A,I0)') &
-                  '  skip_up=', module_input_state%skip_cursor_up_on_redraw, &
-                  ' move_up_count=', current_row + prompt_line_count
-                close(dbu)
-              end if
+              open(newunit=dbu, file='/tmp/fortsh_readline_debug.log', &
+                   status='unknown', position='append', action='write')
+              write(dbu, '(A,I0,A,I0,A,I0,A,I0,A,I0,A,I0,A,I0)') &
+                'REDRAW: prompt_vlen=', prompt_visual_len, &
+                ' cursor_pos=', module_input_state%cursor_pos, &
+                ' cursor_vpos=', cursor_visual_pos, &
+                ' row=', current_row, ' col=', current_col, &
+                ' term_cols=', term_cols, &
+                ' prompt_lines=', prompt_line_count
+              write(dbu, '(A,L1,A,I0,A,I0)') &
+                '  skip_up=', module_input_state%skip_cursor_up_on_redraw, &
+                ' move_up_count=', current_row + prompt_line_count, &
+                ' buf_len=', module_input_state%length
+              close(dbu)
             end block
 
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
