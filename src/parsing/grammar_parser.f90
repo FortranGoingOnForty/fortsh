@@ -606,6 +606,8 @@ contains
               delim_tok = current_token(state)
               if (delim_tok%token_type == TOKEN_WORD) then
                 delimiter = trim(delim_tok%value)
+                ! Strip lexer sentinel chars (char(1)/char(2)/char(3) from quote boundaries)
+                call strip_heredoc_sentinels(delimiter)
                 has_heredoc = .true.
                 saved_heredoc_delimiter = delimiter
                 saved_heredoc_quoted = delim_tok%quoted
@@ -620,6 +622,7 @@ contains
               delim_tok = current_token(state)
               if (delim_tok%token_type == TOKEN_WORD) then
                 delimiter = trim(delim_tok%value)
+                call strip_heredoc_sentinels(delimiter)
                 has_heredoc = .true.
                 saved_heredoc_delimiter = delimiter
                 saved_heredoc_quoted = delim_tok%quoted
@@ -1560,5 +1563,23 @@ contains
 
     valid = .true.
   end function is_valid_assignment_name
+
+  ! Strip lexer sentinel characters from heredoc delimiter
+  ! The lexer inserts char(1)/char(2)/char(3) at quote boundaries
+  subroutine strip_heredoc_sentinels(delim)
+    character(len=*), intent(inout) :: delim
+    character(len=256) :: cleaned
+    integer :: i, j
+
+    cleaned = ''
+    j = 0
+    do i = 1, len_trim(delim)
+      if (delim(i:i) /= char(1) .and. delim(i:i) /= char(2) .and. delim(i:i) /= char(3)) then
+        j = j + 1
+        cleaned(j:j) = delim(i:i)
+      end if
+    end do
+    delim = cleaned
+  end subroutine
 
 end module grammar_parser
