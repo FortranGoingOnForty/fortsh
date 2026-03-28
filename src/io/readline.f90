@@ -6163,12 +6163,16 @@ contains
     last_newline_pos = 0
     slen = len_trim(str)
     ! Stop at first null byte (buffer padding)
-    do i = 1, slen
-      if (str(i:i) == char(0)) then
-        slen = i - 1
-        exit
-      end if
-    end do
+    ! len_trim doesn't strip nulls, so we must scan for them
+    block
+      integer :: null_scan
+      do null_scan = 1, slen
+        if (iachar(str(null_scan:null_scan)) == 0) then
+          slen = null_scan - 1
+          exit
+        end if
+      end do
+    end block
     state = STATE_NORMAL
 
     i = 1
