@@ -311,20 +311,27 @@ program fortran_shell
         ! Check if prompt is multi-line
         newline_pos = index(trim(prompt_str), char(10))
         if (newline_pos > 0) then
-          ! Multi-line prompt: embed RPROMPT at end of first line using CHA escape
+          ! Multi-line prompt with RPROMPT: print first line + RPROMPT manually,
+          ! then pass only the last line to readline to avoid CHA escape corruption.
           first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
           rprompt_vlen = visual_length(trim(rprompt_str))
           rprompt_col = shell%term_cols - rprompt_vlen + 1
 
           if (rprompt_col > first_line_vlen + 4) then
+            ! Print first line of prompt
+            write(output_unit, '(a)', advance='no') prompt_str(1:newline_pos-1)
+            ! Position cursor at RPROMPT column and print it
             write(col_str_buf, '(I0)') rprompt_col
-            embedded_prompt = prompt_str(1:newline_pos-1) // &
-              char(27) // '[' // trim(col_str_buf) // 'G' // &
-              trim(rprompt_str) // &
-              prompt_str(newline_pos:len_trim(prompt_str))
-            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true.)
+            write(output_unit, '(a)', advance='no') char(27) // '[' // trim(col_str_buf) // 'G'
+            write(output_unit, '(a)') trim(rprompt_str)
+            flush(output_unit)
+            ! Pass only the last line (after \n) to readline — no CHA escapes
+            call readline_enhanced(trim(prompt_str(newline_pos+1:)), input_line, iostat, keep_raw=.true.)
           else
-            call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
+            ! No RPROMPT space — print first line, then pass last line to readline
+            write(output_unit, '(a)') prompt_str(1:newline_pos-1)
+            flush(output_unit)
+            call readline_enhanced(trim(prompt_str(newline_pos+1:)), input_line, iostat, keep_raw=.true.)
           end if
         else
           ! Single-line prompt: pass RPROMPT to readline for its handling
