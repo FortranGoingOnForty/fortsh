@@ -1174,10 +1174,12 @@ contains
           end if
 
         case(KEY_CTRL_D)
-          ! Ctrl+D - EOF (no-op in search mode)
+          ! Ctrl+D - EOF on empty line, forward delete on non-empty (bash behavior)
           if (.not. module_input_state%in_search .and. module_input_state%length == 0) then
             iostat = -1
             done = .true.
+          else if (.not. module_input_state%in_search) then
+            call handle_forward_delete_char(module_input_state)
           end if
 
         case(KEY_CTRL_C)
@@ -4140,6 +4142,41 @@ contains
     call update_autosuggestion(input_state)
   end subroutine
 
+  ! Delete character at cursor position (forward delete — Delete key / Ctrl+D)
+  subroutine handle_forward_delete_char(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i, bytes_to_delete, delete_count
+
+    ! Nothing to delete if cursor is at end or buffer is empty
+    if (input_state%cursor_pos >= input_state%length) return
+    if (input_state%length <= 0) return
+
+    ! Exit history mode on edit
+    if (input_state%in_history) then
+      input_state%in_history = .false.
+      input_state%history_pos = 0
+    end if
+    input_state%completions_shown = .false.
+
+    ! Determine how many bytes the character at cursor occupies (UTF-8: 1-4)
+    bytes_to_delete = utf8_char_bytes_at_cursor(input_state)
+    if (bytes_to_delete <= 0) bytes_to_delete = 1
+
+    ! Shift characters left to fill the gap
+    do i = input_state%cursor_pos + 1, input_state%length - bytes_to_delete
+      call state_buffer_set_char(input_state, i, state_buffer_get_char(input_state, i + bytes_to_delete))
+    end do
+    input_state%length = input_state%length - bytes_to_delete
+
+    ! Clear trailing bytes
+    do delete_count = 1, bytes_to_delete
+      call state_buffer_set_char(input_state, input_state%length + delete_count, ' ')
+    end do
+
+    input_state%dirty = .true.
+    call update_autosuggestion(input_state)
+  end subroutine
+
   ! Separate tab completion handler to work around macOS ARM64 crash
   ! This modifies the SAVE'd input_state directly without problematic returns
   subroutine handle_tab_key_separate(input_state)
@@ -5422,9 +5459,9 @@ contains
         if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
         call handle_paste_or_extended(input_state, done)
       case('1', '3', '4', '5', '6')
-        ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C)
+        ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C) or simple (ESC[3~)
         if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
-        call handle_extended_escape_sequence(input_state, done)
+        call handle_extended_escape_sequence(input_state, done, ch2)
       case default
         ! Unknown escape sequence - ignore it
         continue
@@ -5447,6 +5484,9 @@ contains
       case('b')
         ! Alt+b - Move backward one word
         call move_to_previous_word(input_state)
+      case('d')
+        ! Alt+d - Delete forward one word (emacs standard)
+        call handle_kill_word_forward(input_state)
       case('f')
         ! Alt+f - Move forward one word
         call move_to_next_word(input_state)
@@ -5602,9 +5642,10 @@ contains
   end subroutine
 
   ! Handle extended escape sequences like ESC[1;5C (Ctrl+Right Arrow)
-  subroutine handle_extended_escape_sequence(input_state, done)
+  subroutine handle_extended_escape_sequence(input_state, done, initial_digit)
     type(input_state_t), intent(inout) :: input_state
     logical, intent(inout) :: done
+    character, intent(in) :: initial_digit
     character :: ch, modifier, terminator
     logical :: success
     integer :: count
@@ -5661,6 +5702,21 @@ contains
           call handle_alt_right(input_state, done)
         end if
         ! For other extended sequences, we just consume them
+        return
+      else if (ch == '~') then
+        ! Tilde-terminated sequence: ESC[3~ (delete), ESC[1~ (home), ESC[4~ (end), etc.
+        if (.not. input_state%in_search) then
+          select case(initial_digit)
+          case('3')  ! Delete key — forward delete character
+            call handle_forward_delete_char(input_state)
+          case('1')  ! Home key
+            call handle_home(input_state)
+          case('4')  ! End key
+            call handle_end(input_state)
+          case default
+            continue  ! Page up/down — no action
+          end select
+        end if
         return
       else if ((ch >= 'A' .and. ch <= 'Z') .or. (ch >= 'a' .and. ch <= 'z')) then
         ! Found letter terminator without semicolon, done
@@ -6568,7 +6624,42 @@ contains
       input_state%kill_length = 0
     end if
   end subroutine
-  
+
+  ! Alt+d — kill word forward (delete from cursor to end of next word)
+  subroutine handle_kill_word_forward(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: word_end, i, chars_to_delete
+
+    if (input_state%cursor_pos >= input_state%length) return
+
+    word_end = input_state%cursor_pos + 1
+
+    ! Skip whitespace first
+    do while (word_end <= input_state%length .and. state_buffer_get_char(input_state, word_end) == ' ')
+      word_end = word_end + 1
+    end do
+
+    ! Skip word characters
+    do while (word_end <= input_state%length .and. state_buffer_get_char(input_state, word_end) /= ' ')
+      word_end = word_end + 1
+    end do
+
+    chars_to_delete = word_end - input_state%cursor_pos - 1
+    if (chars_to_delete <= 0) return
+
+    ! Shift remaining text left
+    do i = input_state%cursor_pos + 1, input_state%length - chars_to_delete
+      call state_buffer_set_char(input_state, i, state_buffer_get_char(input_state, i + chars_to_delete))
+    end do
+    do i = input_state%length - chars_to_delete + 1, input_state%length
+      call state_buffer_set_char(input_state, i, ' ')
+    end do
+
+    input_state%length = input_state%length - chars_to_delete
+    input_state%dirty = .true.
+    call update_autosuggestion(input_state)
+  end subroutine
+
   subroutine handle_yank(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, insert_len
