@@ -397,11 +397,21 @@ program fortran_shell
     do while (needs_compound_continuation(input_line))
       if (shell%is_interactive) then
         ! Ensure clean cursor position for continuation prompt
-        ! Move to column 0 and clear the line before PS2 prompt
         write(output_unit, '(a)', advance='no') char(13)  ! CR to column 0
         write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear to end of line
         flush(output_unit)
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
+        ! Enable readline debug logging for continuation prompts
+        block
+          integer :: dbg_unit
+          open(newunit=dbg_unit, file='/tmp/fortsh_readline_debug.log', &
+               status='replace', action='write')
+          write(dbg_unit, '(A,A,A)') 'PS2 prompt=[', trim(prompt_str), ']'
+          write(dbg_unit, '(A,I0)') 'PS2 prompt visual_len=', visual_length(prompt_str)
+          write(dbg_unit, '(A,I0)') 'PS2 prompt len_trim=', len_trim(prompt_str)
+          write(dbg_unit, '(A,A,A)') 'accumulated input_line=[', trim(input_line), ']'
+          close(dbg_unit)
+        end block
         call readline_enhanced(prompt_str, proc_subst_line, iostat)
       else
         ! Non-interactive: just read next line
