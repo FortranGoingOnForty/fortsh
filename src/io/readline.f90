@@ -1125,6 +1125,13 @@ contains
         ! Read a complete UTF-8 character (1-4 bytes)
         success = read_utf8_char(utf8_char, utf8_num_bytes)
         if (.not. success) then
+          block
+            integer :: dbu5
+            open(newunit=dbu5, file='/tmp/fortsh_readline_debug.log', &
+                 status='unknown', position='append', action='write')
+            write(dbu5, '(A)') 'READ_CHAR: read_utf8_char returned FALSE (EOF)'
+            close(dbu5)
+          end block
           iostat = -1
           exit
         end if
