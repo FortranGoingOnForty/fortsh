@@ -1036,13 +1036,6 @@ contains
       module_termios_saved = .true.
     else
       ! Log raw mode failure
-      block
-        integer :: dbu3
-        open(newunit=dbu3, file='/tmp/fortsh_readline_debug.log', &
-             status='unknown', position='append', action='write')
-        write(dbu3, '(A)') 'WARNING: raw mode FAILED to enable'
-        close(dbu3)
-      end block
     end if
 
 
@@ -1118,31 +1111,12 @@ contains
 
 
     ! Log readline state
-    block
-      integer :: dbu4
-      open(newunit=dbu4, file='/tmp/fortsh_readline_debug.log', &
-           status='unknown', position='append', action='write')
-      write(dbu4, '(A,L1,A,I0,A,I0,A,I0)') &
-        'READLINE_START: raw=', raw_enabled, &
-        ' prompt_vlen=', prompt_visual_len, &
-        ' prompt_lines=', prompt_line_count, &
-        ' term_cols=', term_cols
-      close(dbu4)
-    end block
-
     if (raw_enabled) then
       ! Enhanced input processing
       do while (.not. done)
         ! Read a complete UTF-8 character (1-4 bytes)
         success = read_utf8_char(utf8_char, utf8_num_bytes)
         if (.not. success) then
-          block
-            integer :: dbu5
-            open(newunit=dbu5, file='/tmp/fortsh_readline_debug.log', &
-                 status='unknown', position='append', action='write')
-            write(dbu5, '(A)') 'READ_CHAR: read_utf8_char returned FALSE (EOF)'
-            close(dbu5)
-          end block
           iostat = -1
           exit
         end if
@@ -1169,14 +1143,6 @@ contains
         char_code = iachar(ch)
 
         ! Log every character received
-        block
-          integer :: dbu6
-          open(newunit=dbu6, file='/tmp/fortsh_readline_debug.log', &
-               status='unknown', position='append', action='write')
-          write(dbu6, '(A,I0,A,A,A)') 'CHAR: code=', char_code, ' ch=[', ch, ']'
-          close(dbu6)
-        end block
-
         if (char_code == 27) then
         else if (char_code < 32 .or. char_code == 127) then
         end if
@@ -1420,20 +1386,6 @@ contains
         ! Skip redraw when in menu selection mode - menu handles its own display
         ! In test mode, skip full redraw to avoid polluting PTY output
         if (.not. test_mode_initialized) call init_test_mode()
-
-        ! Debug: log dirty state before check
-        block
-          integer :: dbu2
-          open(newunit=dbu2, file='/tmp/fortsh_readline_debug.log', &
-               status='unknown', position='append', action='write')
-          write(dbu2, '(A,L1,A,L1,A,L1,A,I0)') &
-            'LOOP: dirty=', module_input_state%dirty, &
-            ' in_menu=', module_input_state%in_menu_select, &
-            ' test_mode=', test_mode_enabled, &
-            ' char_code=', char_code
-          close(dbu2)
-        end block
-
         if (module_input_state%dirty .and. .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
           ! Search mode: delegate to two-line search display instead of normal redraw
           if (module_input_state%in_search) then
@@ -1471,28 +1423,6 @@ contains
             ! Calculate row/col from buffer state not stale screen tracking
             current_row = cursor_visual_pos / term_cols
             current_col = mod(cursor_visual_pos, term_cols)
-
-            ! Debug logging for cursor positioning
-            block
-              integer :: dbu
-              open(newunit=dbu, file='/tmp/fortsh_readline_debug.log', &
-                   status='unknown', position='append', action='write')
-              write(dbu, '(A,I0,A,I0,A,I0,A,I0,A,I0,A,I0,A,I0)') &
-                'REDRAW: prompt_vlen=', prompt_visual_len, &
-                ' cursor_pos=', module_input_state%cursor_pos, &
-                ' cursor_vpos=', cursor_visual_pos, &
-                ' row=', current_row, ' col=', current_col, &
-                ' term_cols=', term_cols, &
-                ' prompt_lines=', prompt_line_count
-              write(dbu, '(A,L1,A,I0,A,I0)') &
-                '  skip_up=', module_input_state%skip_cursor_up_on_redraw, &
-                ' move_up_count=', current_row + prompt_line_count, &
-                ' buf_len=', module_input_state%length
-              write(dbu, '(A,I0,A,A,A)') '  prompt_len_trim=', len_trim(prompt), &
-                ' prompt=[', prompt(1:min(40, len_trim(prompt))), ']'
-              close(dbu)
-            end block
-
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! Move cursor to start of prompt UNLESS we just exited menu mode
             if (.not. module_input_state%skip_cursor_up_on_redraw) then
@@ -6264,22 +6194,6 @@ contains
 
     ! Debug: log visual_length result for multi-line prompts
     if (last_newline_pos > 0 .and. slen > 10) then
-      block
-        integer :: dbu_vl
-        open(newunit=dbu_vl, file='/tmp/fortsh_readline_debug.log', &
-             status='unknown', position='append', action='write')
-        write(dbu_vl, '(A,I0,A,I0,A,I0,A,I0)') &
-          'VLEN: result=', vlen, ' slen=', slen, &
-          ' newline_at=', last_newline_pos, ' chars_after_nl=', slen - last_newline_pos
-        if (last_newline_pos < slen) then
-          write(dbu_vl, '(A)', advance='no') '  after_nl_bytes=['
-          do i = last_newline_pos + 1, min(slen, last_newline_pos + 20)
-            write(dbu_vl, '(I0,A)', advance='no') iachar(str(i:i)), ' '
-          end do
-          write(dbu_vl, '(A)') ']'
-        end if
-        close(dbu_vl)
-      end block
     end if
   end function
 
