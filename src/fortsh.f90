@@ -411,11 +411,10 @@ program fortran_shell
       input_line = trim(input_line) // char(10) // trim(proc_subst_line)
     end do
 
-    ! Pre-process heredocs in accumulated compound commands (interactive mode)
+    ! Pre-process heredocs in accumulated compound commands
     ! The compound continuation loop may have collected heredoc content inline.
     ! Extract it and store as pending so the executor doesn't try to read from stdin.
-    if (shell%is_interactive .and. has_heredoc_outside_quotes(input_line) .and. &
-        index(input_line, char(10)) > 0) then
+    if (has_heredoc_outside_quotes(input_line) .and. index(input_line, char(10)) > 0) then
       input_line = preprocess_heredocs_for_c(input_line, shell)
     end if
 

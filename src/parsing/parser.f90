@@ -1856,9 +1856,7 @@ contains
       read(*, '(a)', iostat=iostat) line
       if (iostat /= 0) exit
 
-      if (trim(line) == trim(delimiter)) exit
-
-      ! Strip leading tabs if requested
+      ! Strip leading tabs BEFORE delimiter comparison (<<- strips tabs)
       if (do_strip_tabs) then
         tab_pos = 1
         do while (tab_pos <= len_trim(line) .and. line(tab_pos:tab_pos) == char(9))
@@ -1866,6 +1864,8 @@ contains
         end do
         line = line(tab_pos:)
       end if
+
+      if (trim(line) == trim(delimiter)) exit
 
       if (pos > 1) then
         buffer(pos:pos) = char(10)  ! newline
