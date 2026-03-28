@@ -5514,6 +5514,23 @@ contains
       case(char(127))
         ! Alt+Backspace - Delete word backward (same as Ctrl+W)
         call handle_kill_word(input_state)
+      case(char(27))
+        ! Alt+ESC sequence — could be Alt+Delete (ESC ESC [ 3 ~)
+        block
+          character :: ach1, ach2, ach3
+          logical :: asuc
+          asuc = read_single_char(ach1)
+          if (asuc .and. ach1 == '[') then
+            asuc = read_single_char(ach2)
+            if (asuc .and. ach2 == '3') then
+              asuc = read_single_char(ach3)
+              if (asuc .and. ach3 == '~') then
+                ! Alt+Delete — kill word forward
+                call handle_kill_word_forward(input_state)
+              end if
+            end if
+          end if
+        end block
       case default
         ! Unknown Alt+key combination
         continue
@@ -5700,6 +5717,12 @@ contains
         else if (modifier == '4' .and. terminator == 'C') then
           ! Alt+Shift+Right - Go to next directory (nextd)
           call handle_alt_right(input_state, done)
+        ! Alt+Delete: modifier=3, initial_digit=3, terminator=~
+        else if (modifier == '3' .and. terminator == '~' .and. initial_digit == '3') then
+          call handle_kill_word_forward(input_state)
+        ! Ctrl+Delete: modifier=5, initial_digit=3, terminator=~
+        else if (modifier == '5' .and. terminator == '~' .and. initial_digit == '3') then
+          call handle_kill_word_forward(input_state)
         end if
         ! For other extended sequences, we just consume them
         return
