@@ -1206,7 +1206,9 @@ contains
             if (module_input_state%suggestion_length > 0) then
               write(output_unit, '(a)', advance='no') char(27) // '[K'
             end if
-            write(output_unit, '()')  ! New line
+            ! In raw mode, \n alone doesn't CR — must send \r\n explicitly
+            write(output_unit, '(a)', advance='no') char(13) // char(10)
+            flush(output_unit)
             done = .true.
           end if
 
