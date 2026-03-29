@@ -1030,12 +1030,17 @@ contains
 
 
     ! Try to enable raw mode (only works in interactive mode)
-    success = enable_raw_mode(module_original_termios)
-    if (success) then
+    ! If already in raw mode (keep_raw from previous call), skip re-enabling
+    ! to avoid overwriting module_original_termios with the raw state
+    if (module_termios_saved) then
+      ! Already have saved original termios and raw mode is active
       raw_enabled = .true.
-      module_termios_saved = .true.
     else
-      ! Log raw mode failure
+      success = enable_raw_mode(module_original_termios)
+      if (success) then
+        raw_enabled = .true.
+        module_termios_saved = .true.
+      end if
     end if
 
 
@@ -8728,6 +8733,7 @@ contains
     if (module_termios_saved) then
       if (.not. restore_terminal(module_original_termios)) then
       end if
+      module_termios_saved = .false.  ! Next readline call will re-save and re-enable
     end if
   end subroutine
 
