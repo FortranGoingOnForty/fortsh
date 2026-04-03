@@ -62,6 +62,8 @@ module readline
   integer, parameter :: KEY_CTRL_G = 7    ! Cancel (alternate to Ctrl+C)
   integer, parameter :: KEY_CTRL_H = 8    ! FZF history browser
   integer, parameter :: KEY_CTRL_T = 20   ! Transpose characters
+  integer, parameter :: KEY_CTRL_N = 14   ! Next history (emacs binding)
+  integer, parameter :: KEY_CTRL_P = 16   ! Previous history (emacs binding)
   integer, parameter :: KEY_ESC = 27
   integer, parameter :: KEY_UP = 65
   integer, parameter :: KEY_DOWN = 66
@@ -1364,6 +1366,18 @@ contains
           ! FZF history browser - no-op in search mode
           if (.not. module_input_state%in_search) then
             call launch_fzf_history_browser(module_input_state, prompt)
+          end if
+
+        case(KEY_CTRL_P)
+          ! Previous history (emacs binding, like Up arrow)
+          if (.not. module_input_state%in_search) then
+            call handle_history_up(module_input_state)
+          end if
+
+        case(KEY_CTRL_N)
+          ! Next history (emacs binding, like Down arrow)
+          if (.not. module_input_state%in_search) then
+            call handle_history_down(module_input_state)
           end if
 
         case(KEY_CTRL_T)
