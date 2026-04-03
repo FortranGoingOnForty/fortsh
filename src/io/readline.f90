@@ -1017,6 +1017,8 @@ contains
       module_input_state%in_search = .false.
       module_input_state%in_process_kill_mode = .false.
       module_input_state%in_signal_input = .false.
+      ! Sync editing mode from global (set -o vi / set -o emacs)
+      module_input_state%editing_mode = global_editing_mode
     end if
 
     ! Initialize variables
