@@ -422,7 +422,11 @@ contains
     integer :: j
     str = ''
     if (slen <= 0) return
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    do j = 1, min(slen, len(str))
+      str(j:j) = state%search_string(j:j)
+    end do
+#elif defined(USE_MEMORY_POOL)
     do j = 1, min(slen, len(str))
       str(j:j) = state%search_string_ref%data(j:j)
     end do
@@ -438,7 +442,9 @@ contains
     type(input_state_t), intent(inout) :: state
     integer, intent(in) :: pos
     character, intent(in) :: ch
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    state%search_string(pos:pos) = ch
+#elif defined(USE_MEMORY_POOL)
     state%search_string_ref%data(pos:pos) = ch
 #else
     state%search_string(pos:pos) = ch
@@ -448,7 +454,9 @@ contains
   ! Clear the search string
   subroutine clear_search_string(state)
     type(input_state_t), intent(inout) :: state
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    state%search_string = ''
+#elif defined(USE_MEMORY_POOL)
     state%search_string_ref%data = ''
 #else
     state%search_string = ''
@@ -1000,7 +1008,9 @@ contains
       module_input_state_initialized = .true.
     else
       ! On subsequent calls, just reset the buffer and cursor
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      call state_buffer_clear(module_input_state)
+#elif defined(USE_MEMORY_POOL)
       ! Check if buffer_ref is still valid, reinitialize if not
       if (.not. associated(module_input_state%buffer_ref%data)) then
         call init_input_state(module_input_state)
@@ -2235,7 +2245,10 @@ contains
     key_char = char(key)
 
     ! Handle pending two-character commands first
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    if (len_trim(input_state%vi_command_buffer) > 0) then
+      select case (input_state%vi_command_buffer(1:1))
+#elif defined(USE_MEMORY_POOL)
     if (len_trim(input_state%vi_command_buffer_ref%data) > 0) then
       select case (input_state%vi_command_buffer_ref%data(1:1))
 #else
@@ -2356,7 +2369,9 @@ contains
       end do
     case (ichar('d'))
       ! Delete with motion - set up for next character
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%vi_command_buffer = 'd'
+#elif defined(USE_MEMORY_POOL)
       input_state%vi_command_buffer_ref%data = 'd'
 #else
       input_state%vi_command_buffer = 'd'
@@ -2366,7 +2381,9 @@ contains
     ! Change (with repeat)
     case (ichar('c'))
       ! Change with motion - set up for next character
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%vi_command_buffer = 'c'
+#elif defined(USE_MEMORY_POOL)
       input_state%vi_command_buffer_ref%data = 'c'
 #else
       input_state%vi_command_buffer = 'c'
@@ -2380,14 +2397,12 @@ contains
     case (ichar('u'))
       ! Undo (simplified)
       call state_buffer_restore(input_state)
-#ifdef USE_MEMORY_POOL
-      input_state%length = len_trim(input_state%original_buffer_ref%data)
-#else
 #ifdef USE_C_STRINGS
       input_state%length = c_string_length(input_state%original_buffer_c)
+#elif defined(USE_MEMORY_POOL)
+      input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
       input_state%length = len_trim(input_state%original_buffer)
-#endif
 #endif
       input_state%cursor_pos = min(input_state%cursor_pos, input_state%length)
       input_state%dirty = .true.
@@ -2395,7 +2410,9 @@ contains
     ! Yank and Put (vi-style copy/paste)
     case (ichar('y'))
       ! Yank with motion - set up for next character
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%vi_command_buffer = 'y'
+#elif defined(USE_MEMORY_POOL)
       input_state%vi_command_buffer_ref%data = 'y'
 #else
       input_state%vi_command_buffer = 'y'
@@ -2415,7 +2432,9 @@ contains
     ! Replace
     case (ichar('r'))
       ! Replace character - wait for next character
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%vi_command_buffer = 'r'
+#elif defined(USE_MEMORY_POOL)
       input_state%vi_command_buffer_ref%data = 'r'
 #else
       input_state%vi_command_buffer = 'r'
@@ -2429,7 +2448,9 @@ contains
     ! Marks
     case (ichar('m'))
       ! Set mark - next character will be the mark name
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%vi_command_buffer = 'm'
+#elif defined(USE_MEMORY_POOL)
       input_state%vi_command_buffer_ref%data = 'm'
 #else
       input_state%vi_command_buffer = 'm'
@@ -2437,7 +2458,9 @@ contains
       input_state%vi_command_count = 1
     case (ichar("'"))
       ! Jump to mark - next character will be the mark name
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%vi_command_buffer = "'"
+#elif defined(USE_MEMORY_POOL)
       input_state%vi_command_buffer_ref%data = "'"
 #else
       input_state%vi_command_buffer = "'"
@@ -2555,7 +2578,9 @@ contains
     end select
 
     ! Clear command buffer
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    input_state%vi_command_buffer = ''
+#elif defined(USE_MEMORY_POOL)
     input_state%vi_command_buffer_ref%data = ''
 #else
     input_state%vi_command_buffer = ''
@@ -2623,7 +2648,9 @@ contains
     end select
 
     ! Clear command buffer
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    input_state%vi_command_buffer = ''
+#elif defined(USE_MEMORY_POOL)
     input_state%vi_command_buffer_ref%data = ''
 #else
     input_state%vi_command_buffer = ''
@@ -2691,7 +2718,9 @@ contains
     end do
 
     ! Clear command buffer
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    input_state%vi_command_buffer = ''
+#elif defined(USE_MEMORY_POOL)
     input_state%vi_command_buffer_ref%data = ''
 #else
     input_state%vi_command_buffer = ''
@@ -3414,8 +3443,9 @@ contains
     end if
 
     ! Use ls command with -F flag to mark directories with / (avoids calling test -d for each file)
+    ! Trailing / on directory forces ls to list contents (not the symlink itself on macOS)
     ! Use tr to convert newlines to spaces for easier parsing
-    ls_command = 'ls -1aF "' // trim(expanded_dir) // '" 2>/dev/null | tr ' // "'" // char(92) // 'n' // "' ' '"
+    ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | tr ' // "'" // char(92) // 'n' // "' ' '"
 
     ! Debug output
     if (debug_enabled) then
@@ -4323,17 +4353,11 @@ contains
             if (last_space_pos > 0) then
 #ifdef __APPLE__
               ! Copy character by character to avoid substring on allocatable (flang-new bug)
-#ifdef USE_MEMORY_POOL
-              input_state%menu_prefix_ref%data = ''
-              do j = 1, last_space_pos
-                input_state%menu_prefix_ref%data(j:j) = tab_partial_input(j:j)
-              end do
-#else
+              ! __APPLE__ implies USE_C_STRINGS, so use allocatable directly
               input_state%menu_prefix = ''
               do j = 1, last_space_pos
                 input_state%menu_prefix(j:j) = tab_partial_input(j:j)
               end do
-#endif
 #else
               ! Linux: Direct substring operation works fine
 #ifdef USE_MEMORY_POOL
@@ -4344,7 +4368,9 @@ contains
 #endif
               input_state%menu_prefix_len = last_space_pos
             else
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+              input_state%menu_prefix = ''
+#elif defined(USE_MEMORY_POOL)
               input_state%menu_prefix_ref%data = ''
 #else
               input_state%menu_prefix = ''
@@ -4405,17 +4431,11 @@ contains
         if (last_space_pos > 0) then
 #ifdef __APPLE__
           ! Copy character by character to avoid substring on allocatable (flang-new bug)
-#ifdef USE_MEMORY_POOL
-          input_state%menu_prefix_ref%data = ''
-          do i = 1, last_space_pos
-            input_state%menu_prefix_ref%data(i:i) = tab_partial_input(i:i)
-          end do
-#else
+          ! __APPLE__ implies USE_C_STRINGS, so use allocatable directly
           input_state%menu_prefix = ''
           do i = 1, last_space_pos
             input_state%menu_prefix(i:i) = tab_partial_input(i:i)
           end do
-#endif
 #else
           ! Linux: Direct substring operation works fine
 #ifdef USE_MEMORY_POOL
@@ -4426,7 +4446,9 @@ contains
 #endif
           input_state%menu_prefix_len = last_space_pos
         else
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+          input_state%menu_prefix = ''
+#elif defined(USE_MEMORY_POOL)
           input_state%menu_prefix_ref%data = ''
 #else
           input_state%menu_prefix = ''
@@ -4587,17 +4609,27 @@ contains
 
     if (last_space_pos > 0) then
       ! Copy character by character to avoid substring on allocatable
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%menu_prefix = ''
+#elif defined(USE_MEMORY_POOL)
       input_state%menu_prefix_ref%data = ''
 #else
       input_state%menu_prefix = ''
 #endif
       do i = 1, last_space_pos
+#ifdef USE_C_STRINGS
         input_state%menu_prefix(i:i) = current_input(i:i)
+#elif defined(USE_MEMORY_POOL)
+        input_state%menu_prefix_ref%data(i:i) = current_input(i:i)
+#else
+        input_state%menu_prefix(i:i) = current_input(i:i)
+#endif
       end do
       input_state%menu_prefix_len = last_space_pos  ! Store length WITH the space
     else
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%menu_prefix = ''
+#elif defined(USE_MEMORY_POOL)
       input_state%menu_prefix_ref%data = ''
 #else
       input_state%menu_prefix = ''
@@ -4811,7 +4843,9 @@ contains
       ! Copy directly from menu_prefix character-by-character (avoid temp assignment)
       ! CRITICAL: Don't use intermediate variable - flang-new bug causes corruption
       do i = 1, input_state%menu_prefix_len
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+        ch = input_state%menu_prefix(i:i)
+#elif defined(USE_MEMORY_POOL)
         ch = input_state%menu_prefix_ref%data(i:i)
 #else
         ch = input_state%menu_prefix(i:i)
@@ -4991,7 +5025,9 @@ contains
       ! Direct assignment creates a temporary that gets corrupted
       current_prefix = ''  ! Initialize
       do i = 1, input_state%menu_prefix_len
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+        current_prefix(i:i) = input_state%menu_prefix(i:i)
+#elif defined(USE_MEMORY_POOL)
         current_prefix(i:i) = input_state%menu_prefix_ref%data(i:i)
 #else
         current_prefix(i:i) = input_state%menu_prefix(i:i)
@@ -5957,14 +5993,12 @@ contains
     else if (input_state%history_pos <= command_history%count) then
       ! Reached the end of history, restore original input
       call state_buffer_restore(input_state)
-#ifdef USE_MEMORY_POOL
-      input_state%length = len_trim(input_state%original_buffer_ref%data)
-#else
 #ifdef USE_C_STRINGS
       input_state%length = c_string_length(input_state%original_buffer_c)
+#elif defined(USE_MEMORY_POOL)
+      input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
       input_state%length = len_trim(input_state%original_buffer)
-#endif
 #endif
       input_state%cursor_pos = input_state%length
       input_state%history_pos = command_history%count + 1
@@ -7382,14 +7416,12 @@ contains
       else
         ! Empty search - restore original buffer on prompt line
         call state_buffer_restore(input_state)
-#ifdef USE_MEMORY_POOL
-        input_state%length = len_trim(input_state%original_buffer_ref%data)
-#else
 #ifdef USE_C_STRINGS
         input_state%length = c_string_length(input_state%original_buffer_c)
+#elif defined(USE_MEMORY_POOL)
+        input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
         input_state%length = len_trim(input_state%original_buffer)
-#endif
 #endif
         input_state%cursor_pos = input_state%length
         input_state%search_match_index = 0
@@ -7411,14 +7443,12 @@ contains
 
     ! Restore original buffer
     call state_buffer_restore(input_state)
-#ifdef USE_MEMORY_POOL
-    input_state%length = len_trim(input_state%original_buffer_ref%data)
-#else
 #ifdef USE_C_STRINGS
     input_state%length = c_string_length(input_state%original_buffer_c)
+#elif defined(USE_MEMORY_POOL)
+    input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
     input_state%length = len_trim(input_state%original_buffer)
-#endif
 #endif
     input_state%cursor_pos = input_state%length
     input_state%search_match_index = 0
@@ -7477,14 +7507,12 @@ contains
     else
       ! Empty query - restore original buffer
       call state_buffer_restore(input_state)
-#ifdef USE_MEMORY_POOL
-      input_state%length = len_trim(input_state%original_buffer_ref%data)
-#else
 #ifdef USE_C_STRINGS
       input_state%length = c_string_length(input_state%original_buffer_c)
+#elif defined(USE_MEMORY_POOL)
+      input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
       input_state%length = len_trim(input_state%original_buffer)
-#endif
 #endif
       input_state%cursor_pos = input_state%length
       input_state%search_match_index = 0
@@ -7510,14 +7538,12 @@ contains
 
     ! Restore original buffer
     call state_buffer_restore(input_state)
-#ifdef USE_MEMORY_POOL
-    input_state%length = len_trim(input_state%original_buffer_ref%data)
-#else
 #ifdef USE_C_STRINGS
     input_state%length = c_string_length(input_state%original_buffer_c)
+#elif defined(USE_MEMORY_POOL)
+    input_state%length = len_trim(input_state%original_buffer_ref%data)
 #else
     input_state%length = len_trim(input_state%original_buffer)
-#endif
 #endif
     input_state%cursor_pos = input_state%length
     input_state%in_search = .false.
@@ -7666,7 +7692,9 @@ contains
       input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
       input_state%vi_yank_length = input_state%length
     else
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+      input_state%vi_yank_buffer = ''
+#elif defined(USE_MEMORY_POOL)
       input_state%vi_yank_buffer_ref%data = ''
 #else
       input_state%vi_yank_buffer = ''
@@ -7735,7 +7763,9 @@ contains
     end if
 
     ! Clear command buffer
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    input_state%vi_command_buffer = ''
+#elif defined(USE_MEMORY_POOL)
     input_state%vi_command_buffer_ref%data = ''
 #else
     input_state%vi_command_buffer = ''
@@ -7762,7 +7792,9 @@ contains
     end if
 
     ! Clear command buffer
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    input_state%vi_command_buffer = ''
+#elif defined(USE_MEMORY_POOL)
     input_state%vi_command_buffer_ref%data = ''
 #else
     input_state%vi_command_buffer = ''
@@ -7778,7 +7810,9 @@ contains
     ! Enter vi search mode
     input_state%vi_in_vi_search = .true.
     input_state%vi_search_forward = forward
-#ifdef USE_MEMORY_POOL
+#ifdef USE_C_STRINGS
+    input_state%vi_search_pattern = ''
+#elif defined(USE_MEMORY_POOL)
     input_state%vi_search_pattern_ref%data = ''
 #else
     input_state%vi_search_pattern = ''
