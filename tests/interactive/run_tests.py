@@ -71,15 +71,28 @@ class YAMLTestRunner:
         # Scale timeouts for slower platforms (ARM64, macOS with flang-new)
         import platform
         machine = platform.machine().lower()
+        system = platform.system().lower()
         if machine in ('arm64', 'aarch64'):
             self.pty_timeout = 10.0   # 2x default for ARM64
-            self.delay_scale = 1.0    # no delay scaling — S_CTTYREF fix addresses root cause
+            self.delay_scale = 1.0
         else:
             self.pty_timeout = 5.0
             self.delay_scale = 1.0
-        self.tests_per_session = tests_per_session
+        # macOS: fewer tests per session to reduce state accumulation issues
+        # with flang-new I/O buffering and readline mode interactions
+        if tests_per_session != 10:
+            # Explicit override from caller
+            self.tests_per_session = tests_per_session
+        elif system == 'darwin':
+            # Fresh session per test on macOS: readline cursor tracking
+            # gets out of sync across reused sessions with flang-new
+            self.tests_per_session = 1
+        else:
+            self.tests_per_session = tests_per_session
         self._current_session: Optional[FortshPTY] = None
         self._test_count = 0
+        self._step_sync_id = 0
+        self._use_marker_sync = (system == 'darwin')
 
     def _get_session(self, env: dict = None, rc_file: str = "/dev/null", fresh: bool = False) -> FortshPTY:
         """
@@ -127,21 +140,29 @@ class YAMLTestRunner:
             return
 
         try:
-            # Clear any pending input/interrupt running command
+            # Exit any special mode the shell might be in:
+            # - Ctrl+G cancels search mode (Ctrl+R/Ctrl+S)
+            # - Escape exits vi insert→command, or is harmless in emacs mode
+            # - Ctrl+C interrupts running commands and clears line
+            # - Ctrl+U kills the line
+            self._current_session.send_key("C-g")
+            time.sleep(0.05)
+            self._current_session.send(chr(27))  # Escape
+            time.sleep(0.05)
             self._current_session.send_key("C-c")
-            time.sleep(0.1 * self.delay_scale)
+            time.sleep(0.1)
             self._current_session.send_key("C-c")
-            time.sleep(0.1 * self.delay_scale)
+            time.sleep(0.1)
             self._current_session.send_key("C-u")
-            time.sleep(0.1 * self.delay_scale)
+            time.sleep(0.1)
 
             # Clear buffer before reset command
             self._current_session.clear_buffer()
-            time.sleep(0.05 * self.delay_scale)
+            time.sleep(0.05)
 
-            # Reset PS1 to default (matching DEFAULT_PROMPT_PATTERN) and use echo marker
+            # Reset PS1 and editing mode, then echo marker
             marker = f"RESET_{self._test_count}"
-            self._current_session.send_line(f"PS1='> '; echo {marker}")
+            self._current_session.send_line(f"set -o emacs; PS1='> '; echo {marker}")
 
             # Wait for the marker to ensure we're at a clean state
             try:
@@ -150,9 +171,9 @@ class YAMLTestRunner:
                 pass
 
             # Wait for prompt after marker and clear buffer again
-            time.sleep(0.2 * self.delay_scale)
+            time.sleep(0.3)
             self._current_session.clear_buffer()
-            time.sleep(0.05 * self.delay_scale)
+            time.sleep(0.05)
         except:
             pass
 
@@ -234,8 +255,11 @@ class YAMLTestRunner:
 
             try:
                 # Execute test steps
-                for step in test.get('steps', []):
-                    self._execute_step(fortsh, step)
+                steps = test.get('steps', [])
+                for i, step in enumerate(steps):
+                    is_last = (i == len(steps) - 1)
+                    next_step = steps[i + 1] if not is_last else None
+                    self._execute_step(fortsh, step, is_last=is_last, next_step=next_step)
 
                 # Get command output
                 if 'expect_output' in test:
@@ -299,15 +323,46 @@ class YAMLTestRunner:
             duration = time.time() - start_time
             return TestResult(name, False, str(e), duration)
 
-    def _execute_step(self, fortsh: FortshPTY, step: Dict[str, Any]) -> None:
+    def _execute_step(self, fortsh: FortshPTY, step: Dict[str, Any], is_last: bool = False,
+                       next_step: Optional[Dict[str, Any]] = None) -> None:
         """Execute a single test step."""
         ds = self.delay_scale
         if 'send' in step:
             fortsh.send(step['send'])
             time.sleep(0.02 * ds)
         elif 'send_line' in step:
-            fortsh.send_line(step['send_line'])
-            time.sleep(0.05 * ds)
+            # Use marker sync only on macOS AND only when the next step is
+            # also a send_line. If next step is send_key/send/wait, the
+            # command may be long-running or interactive — the marker echo
+            # would queue behind it and interfere.
+            next_is_send_line = next_step is not None and 'send_line' in next_step
+            if not is_last and self._use_marker_sync and next_is_send_line:
+                self._step_sync_id += 1
+                marker = f"__STEP_SYNC_{self._step_sync_id}__"
+                fortsh.send_line(step['send_line'])
+                fortsh.send_line(f"echo {marker}")
+                try:
+                    fortsh.expect(marker, timeout=self.pty_timeout)
+                except pexpect.TIMEOUT:
+                    pass
+                time.sleep(0.1 * ds)
+                fortsh.clear_buffer()
+            else:
+                fortsh.send_line(step['send_line'])
+                if self._use_marker_sync and not is_last:
+                    # Check if the command is long-running (next step is 'wait')
+                    next_is_wait = (next_step is not None and 'wait' in next_step)
+                    if not next_is_wait:
+                        # Quick command (e.g. set -o vi) — wait for prompt
+                        try:
+                            fortsh.wait_for_prompt(timeout=self.pty_timeout)
+                        except pexpect.TIMEOUT:
+                            pass
+                    else:
+                        # Long-running command — use fixed delay, test manages timing
+                        time.sleep(0.05 * ds)
+                else:
+                    time.sleep(0.05 * ds)
         elif 'send_key' in step:
             fortsh.send_key(step['send_key'])
             time.sleep(0.02 * ds)
