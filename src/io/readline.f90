@@ -234,6 +234,10 @@ module readline
   ! Module-level editing mode (set by shell via option_vi)
   integer, save :: global_editing_mode = EDITING_MODE_EMACS
 
+  ! Fuzzy completion: off by default (prefix-only like bash/zsh)
+  ! Enable with: set -o fuzzy-complete
+  logical, save :: global_fuzzy_complete = .false.
+
   ! Detect macOS for potential platform-specific workarounds
   logical, save :: is_macos_system = .false.
   logical, save :: macos_detected = .false.
@@ -905,6 +909,11 @@ contains
     else
       global_editing_mode = EDITING_MODE_EMACS
     end if
+  end subroutine
+
+  subroutine set_global_fuzzy_complete(enabled)
+    logical, intent(in) :: enabled
+    global_fuzzy_complete = enabled
   end subroutine
 
   ! Check if we're on macOS (called once at startup)
@@ -6290,10 +6299,11 @@ contains
       return
     end if
 
-    ! For short patterns (1-3 chars), require prefix match for better UX
-    ! This prevents "RE" from matching "parser_enhanced.mod"
-    ! and "tes" from matching "ast_types.mod"
-    if (pattern_len <= 3) then
+    ! Require prefix match unless fuzzy-complete is enabled.
+    ! With fuzzy off (default): behaves like bash/zsh — only prefix matches.
+    ! With fuzzy on (set -o fuzzy-complete): short patterns still require
+    ! prefix, longer patterns allow fuzzy subsequence matching.
+    if (.not. global_fuzzy_complete .or. pattern_len <= 3) then
       is_prefix_match = .true.
       do i = 1, pattern_len
         if (to_lowercase(pattern(i:i)) /= to_lowercase(candidate(i:i))) then

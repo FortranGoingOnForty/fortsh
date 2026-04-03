@@ -6,7 +6,7 @@ module shell_options
   use shell_types
   use variables, only: set_shell_variable
   use system_interface, only: get_pid, get_ppid
-  use readline, only: set_global_editing_mode
+  use readline, only: set_global_editing_mode, set_global_fuzzy_complete
   use iso_fortran_env, only: output_unit, error_unit
   use io_helpers, only: write_stdout
   implicit none
@@ -174,6 +174,9 @@ contains
                   shell%option_errtrace = enable_option
                 case ('functrace')
                   shell%option_functrace = enable_option
+                case ('fuzzy-complete')
+                  shell%option_fuzzy_complete = enable_option
+                  call set_global_fuzzy_complete(enable_option)
                 case ('hashall')
                   shell%option_hashall = enable_option
                 case ('histexpand')

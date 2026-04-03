@@ -376,6 +376,7 @@ module shell_types
     logical :: option_physical = .false.       ! set -o physical (resolve symlinks in cd)
     logical :: option_posix = .false.          ! set -o posix (POSIX mode)
     logical :: option_privileged = .false.     ! set -o privileged (restricted mode)
+    logical :: option_fuzzy_complete = .false. ! set -o fuzzy-complete (fuzzy tab completion)
     integer :: original_stderr_fd = 2          ! Saved copy of original stderr for shell messages
     ! Bash-style shell options (shopt)
     logical :: shopt_nullglob = .false.        ! nullglob (empty glob matches)
