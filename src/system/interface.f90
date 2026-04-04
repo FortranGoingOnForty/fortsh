@@ -839,6 +839,12 @@ contains
     sig = iand(status, 127)
   end function
 
+  function WSTOPSIG(status) result(sig)
+    integer(c_int), intent(in) :: status
+    integer :: sig
+    sig = iand(ishft(status, -8), 255)
+  end function
+
   function execute_and_capture(command) result(output)
     character(len=*), intent(in) :: command
     character(len=:), allocatable :: output

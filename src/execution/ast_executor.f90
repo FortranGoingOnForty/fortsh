@@ -1394,12 +1394,15 @@ contains
         allocate(exit_statuses(num_commands))
 
         do i = 1, num_commands
-          ret = c_waitpid(pids(i), c_loc(wait_status), int(0, c_int))
+          ret = c_waitpid(pids(i), c_loc(wait_status), WUNTRACED)
           if (ret > 0) then
             if (WIFEXITED(wait_status)) then
               exit_statuses(i) = WEXITSTATUS(wait_status)
             else if (WIFSIGNALED(wait_status)) then
               exit_statuses(i) = 128 + WTERMSIG(wait_status)
+            else if (WIFSTOPPED(wait_status)) then
+              ! Process was stopped (Ctrl+Z) — report as 128 + SIGTSTP
+              exit_statuses(i) = 128 + WSTOPSIG(wait_status)
             else
               exit_statuses(i) = 1
             end if
@@ -2962,7 +2965,7 @@ contains
     integer(c_pid_t) :: result
 
     status = 0
-    result = c_waitpid(pid, c_loc(status), int(0, c_int))
+    result = c_waitpid(pid, c_loc(status), WUNTRACED)
     if (result < 0) then
       status = 1
     end if

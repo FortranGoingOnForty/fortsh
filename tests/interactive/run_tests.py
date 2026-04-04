@@ -336,7 +336,9 @@ class YAMLTestRunner:
             # command may be long-running or interactive — the marker echo
             # would queue behind it and interfere.
             next_is_send_line = next_step is not None and 'send_line' in next_step
-            if not is_last and self._use_marker_sync and next_is_send_line:
+            cmd_text = step['send_line'].strip()
+            is_background = cmd_text.endswith('&') and not cmd_text.endswith('&&')
+            if not is_last and self._use_marker_sync and next_is_send_line and not is_background:
                 self._step_sync_id += 1
                 marker = f"__STEP_SYNC_{self._step_sync_id}__"
                 fortsh.send_line(step['send_line'])
@@ -350,19 +352,18 @@ class YAMLTestRunner:
             else:
                 fortsh.send_line(step['send_line'])
                 if self._use_marker_sync and not is_last:
-                    # Check if the command is long-running (next step is 'wait')
+                    # Long-running commands (next step is 'wait') block the
+                    # prompt — don't wait for it, let the test manage timing
                     next_is_wait = (next_step is not None and 'wait' in next_step)
                     if not next_is_wait:
-                        # Quick command (e.g. set -o vi) — wait for prompt
-                        # then clear buffer so stale output doesn't pollute expect
+                        # Quick/background command — wait for prompt to ensure
+                        # shell is ready. Don't clear buffer — tests may need
+                        # to find output from this command (e.g. job status).
                         try:
                             fortsh.wait_for_prompt(timeout=self.pty_timeout)
                         except pexpect.TIMEOUT:
                             pass
-                        time.sleep(0.05)
-                        fortsh.clear_buffer()
                     else:
-                        # Long-running command — use fixed delay, test manages timing
                         time.sleep(0.05 * ds)
                 else:
                     time.sleep(0.05 * ds)
@@ -383,7 +384,6 @@ class YAMLTestRunner:
                         fortsh.wait_for_prompt(timeout=self.pty_timeout)
                     except pexpect.TIMEOUT:
                         time.sleep(0.5)
-                    fortsh.clear_buffer()
                 else:
                     time.sleep(0.5)
             else:
