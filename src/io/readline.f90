@@ -1204,7 +1204,11 @@ contains
               write(output_unit, '()')  ! New line
             end if
           else if (module_input_state%in_search) then
+            ! Accept search result and execute immediately (bash behavior)
             call accept_search(module_input_state, prompt)
+            write(output_unit, '(a)', advance='no') char(13) // char(10)
+            flush(output_unit)
+            done = .true.
           else
             ! Clear shadow text (suggestion) from cursor to end of line before newline
             if (module_input_state%suggestion_length > 0) then

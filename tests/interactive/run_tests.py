@@ -162,7 +162,7 @@ class YAMLTestRunner:
 
             # Reset PS1 and editing mode, then echo marker
             marker = f"RESET_{self._test_count}"
-            self._current_session.send_line(f"set -o emacs; PS1='> '; echo {marker}")
+            self._current_session.send_line(f" set -o emacs; PS1='> '; echo {marker}")  # leading space to exclude from history
 
             # Wait for the marker to ensure we're at a clean state
             try:
@@ -340,7 +340,7 @@ class YAMLTestRunner:
                 self._step_sync_id += 1
                 marker = f"__STEP_SYNC_{self._step_sync_id}__"
                 fortsh.send_line(step['send_line'])
-                fortsh.send_line(f"echo {marker}")
+                fortsh.send_line(f" echo {marker}")  # leading space to exclude from history
                 try:
                     fortsh.expect(marker, timeout=self.pty_timeout)
                 except pexpect.TIMEOUT:
@@ -354,10 +354,13 @@ class YAMLTestRunner:
                     next_is_wait = (next_step is not None and 'wait' in next_step)
                     if not next_is_wait:
                         # Quick command (e.g. set -o vi) — wait for prompt
+                        # then clear buffer so stale output doesn't pollute expect
                         try:
                             fortsh.wait_for_prompt(timeout=self.pty_timeout)
                         except pexpect.TIMEOUT:
                             pass
+                        time.sleep(0.05)
+                        fortsh.clear_buffer()
                     else:
                         # Long-running command — use fixed delay, test manages timing
                         time.sleep(0.05 * ds)
