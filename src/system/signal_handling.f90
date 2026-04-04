@@ -8,7 +8,7 @@ module signal_handling
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
-  ! Signal constants (POSIX standard)
+  ! Signal constants (1-15 are same on Linux and macOS)
   integer(c_int), parameter :: SIGHUP    = 1
   integer(c_int), parameter :: SIGINT    = 2
   integer(c_int), parameter :: SIGQUIT   = 3
@@ -24,6 +24,17 @@ module signal_handling
   integer(c_int), parameter :: SIGPIPE   = 13
   integer(c_int), parameter :: SIGALRM   = 14
   integer(c_int), parameter :: SIGTERM   = 15
+#ifdef __APPLE__
+  ! macOS/Darwin signal numbers (16+ differ from Linux)
+  integer(c_int), parameter :: SIGSTKFLT = 16  ! Not used on macOS
+  integer(c_int), parameter :: SIGCHLD   = 20
+  integer(c_int), parameter :: SIGCONT   = 19
+  integer(c_int), parameter :: SIGSTOP   = 17
+  integer(c_int), parameter :: SIGTSTP   = 18
+  integer(c_int), parameter :: SIGTTIN   = 21
+  integer(c_int), parameter :: SIGTTOU   = 22
+#else
+  ! Linux signal numbers
   integer(c_int), parameter :: SIGSTKFLT = 16
   integer(c_int), parameter :: SIGCHLD   = 17
   integer(c_int), parameter :: SIGCONT   = 18
@@ -31,6 +42,7 @@ module signal_handling
   integer(c_int), parameter :: SIGTSTP   = 20
   integer(c_int), parameter :: SIGTTIN   = 21
   integer(c_int), parameter :: SIGTTOU   = 22
+#endif
 
   ! Special trap signals (bash extensions)
   integer, parameter :: TRAP_EXIT  = 0    ! EXIT pseudo-signal

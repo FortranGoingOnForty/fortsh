@@ -75,18 +75,18 @@ contains
     ! CRITICAL: Set SIGCHLD to default handler
     ! If inherited as SIG_IGN from parent shell, children are auto-reaped on macOS/BSD
     ! This prevents waitpid from working correctly
-    old_handler = c_signal(17, SIG_DFL)  ! SIGCHLD
+    old_handler = c_signal(SIGCHLD, SIG_DFL)
 
     ! Ignore interactive signals for shell itself
-    old_handler = c_signal(2, SIG_IGN)  ! SIGINT
+    old_handler = c_signal(SIGINT, SIG_IGN)
 #ifndef __APPLE__
     ! On Linux/other platforms, ignore SIGTSTP like other shells
-    old_handler = c_signal(20, SIG_IGN) ! SIGTSTP
+    old_handler = c_signal(SIGTSTP, SIG_IGN)
 #endif
     ! On macOS, setting SIGTSTP to SIG_IGN breaks waitpid by causing
     ! children to be auto-reaped, so we leave it at default
-    old_handler = c_signal(21, SIG_IGN) ! SIGTTIN
-    old_handler = c_signal(22, SIG_IGN) ! SIGTTOU
+    old_handler = c_signal(SIGTTIN, SIG_IGN)
+    old_handler = c_signal(SIGTTOU, SIG_IGN)
 
     ! Handle alarm for timeouts
     old_handler = c_signal(SIGALRM, c_funloc(sigalrm_handler))
@@ -227,10 +227,10 @@ contains
       signal_num = SIGKILL
     case ('TERM', 'SIGTERM', '15')
       signal_num = SIGTERM
-    case ('TSTP', 'SIGTSTP', '20')
-      signal_num = 20
-    case ('CONT', 'SIGCONT', '18')
-      signal_num = 18
+    case ('TSTP', 'SIGTSTP')
+      signal_num = SIGTSTP
+    case ('CONT', 'SIGCONT')
+      signal_num = SIGCONT
     case ('EXIT', '0')
       signal_num = 0  ! Special case for exit trap
     case default
