@@ -3492,7 +3492,7 @@ contains
 
     character(len=1024) :: ls_command, expanded_dir  ! Large enough for command
     character(len=:), allocatable :: ls_output_alloc  ! From execute_and_capture
-    character(len=16384) :: ls_output  ! 16KB buffer for large directories
+    character(len=8192) :: ls_output  ! 8KB buffer for large directories (with grep filter)
     character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
     character(len=MAX_LINE_LEN) :: full_path
     character(len=:), allocatable :: home_dir, debug_mode

@@ -1443,16 +1443,16 @@ contains
             case('INT', 'int', 'SIGINT')
               signal_num = 2
             case('STOP', 'stop', 'SIGSTOP')
-  #ifdef __APPLE__
-              signal_num = 18  ! SIGTSTP on macOS
+#ifdef __APPLE__
+              signal_num = 18
 #else
-              signal_num = 20  ! SIGTSTP on Linux
+              signal_num = 20
 #endif
             case('CONT', 'cont', 'SIGCONT')
 #ifdef __APPLE__
-              signal_num = 19  ! SIGCONT on macOS
+              signal_num = 19
 #else
-              signal_num = 18  ! SIGCONT on Linux
+              signal_num = 18
 #endif
             case('HUP', 'hup', 'SIGHUP')
               signal_num = 1
