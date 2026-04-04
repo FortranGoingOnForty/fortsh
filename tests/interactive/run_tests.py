@@ -338,7 +338,13 @@ class YAMLTestRunner:
             next_is_send_line = next_step is not None and 'send_line' in next_step
             cmd_text = step['send_line'].strip()
             is_background = cmd_text.endswith('&') and not cmd_text.endswith('&&')
-            if not is_last and self._use_marker_sync and next_is_send_line and not is_background:
+            # Don't use marker sync for job control commands — their output
+            # interacts with background processes and can swallow the marker
+            first_word = cmd_text.split()[0] if cmd_text else ''
+            is_job_control = first_word in ('bg', 'fg', 'kill', 'disown', 'wait')
+            use_marker = (not is_last and self._use_marker_sync and next_is_send_line
+                          and not is_background and not is_job_control)
+            if use_marker:
                 self._step_sync_id += 1
                 marker = f"__STEP_SYNC_{self._step_sync_id}__"
                 fortsh.send_line(step['send_line'])
@@ -366,7 +372,9 @@ class YAMLTestRunner:
                     else:
                         time.sleep(0.05 * ds)
                 else:
-                    time.sleep(0.05 * ds)
+                    # Last step or non-macOS: short delay. macOS last-step
+                    # needs more time for flang-new I/O to flush.
+                    time.sleep(0.3 if (is_last and self._use_marker_sync) else 0.05 * ds)
         elif 'send_key' in step:
             key = step['send_key']
             fortsh.send_key(key)
