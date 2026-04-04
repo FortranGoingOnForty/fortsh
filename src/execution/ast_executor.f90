@@ -1537,8 +1537,8 @@ contains
                   shell%last_bg_pid = pid
                   ! Track job inline (duplicated code to avoid goto)
                   if (.not. shell%in_background) then
-                    job_command = '<background job>'
-                    if (associated(node%list%left%list%right)) then
+                    job_command = trim(shell%current_command)
+                    if (len_trim(job_command) == 0 .and. associated(node%list%left%list%right)) then
                       if (node%list%left%list%right%node_type == CMD_SIMPLE) then
                         if (associated(node%list%left%list%right%simple_cmd)) then
                           if (node%list%left%list%right%simple_cmd%num_words > 0) then
@@ -1609,24 +1609,9 @@ contains
         shell%last_bg_pid = pid
         ! Only track jobs if we're not already in a background job child
         if (.not. shell%in_background) then
-          ! Reconstruct command string from AST node for job display
-          job_command = '<background job>'  ! Default fallback
-          if (associated(node%list%left)) then
-            if (node%list%left%node_type == CMD_SIMPLE) then
-              if (associated(node%list%left%simple_cmd)) then
-                if (node%list%left%simple_cmd%num_words > 0) then
-                  job_command = ''
-                  do i = 1, node%list%left%simple_cmd%num_words
-                    if (i > 1) then
-                      job_command = trim(job_command) // ' ' // trim(node%list%left%simple_cmd%words(i))
-                    else
-                      job_command = trim(node%list%left%simple_cmd%words(i))
-                    end if
-                  end do
-                end if
-              end if
-            end if
-          end if
+          ! Use the current command text for job display
+          job_command = trim(shell%current_command)
+          if (len_trim(job_command) == 0) job_command = '<background job>'
 
           status = add_job(shell, pid, trim(job_command), .false.)
           ! Only print job notification in interactive mode
