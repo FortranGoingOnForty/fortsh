@@ -72,6 +72,7 @@ contains
                 trim(cmd_name) == 'jobs' .or. &
                 trim(cmd_name) == 'fg' .or. &
                 trim(cmd_name) == 'bg' .or. &
+                trim(cmd_name) == 'disown' .or. &
                 trim(cmd_name) == 'source' .or. &
                 trim(cmd_name) == '.' .or. &
                 trim(cmd_name) == ':' .or. &
@@ -152,6 +153,8 @@ contains
       call builtin_fg(cmd, shell)
     case('bg')
       call builtin_bg(cmd, shell)
+    case('disown')
+      call builtin_disown(cmd, shell)
     case('source', '.')
       call builtin_source(cmd, shell)
     case(':')
@@ -1150,6 +1153,39 @@ contains
     end if
 
     call resume_job_bg(shell, job_id)
+  end subroutine
+
+  subroutine builtin_disown(cmd, shell)
+    use job_control, only: remove_job
+    type(command_t), intent(in) :: cmd
+    type(shell_state_t), intent(inout) :: shell
+    integer :: job_id, i
+
+    if (cmd%num_tokens < 2) then
+      ! Disown current job
+      job_id = shell%current_job_id
+      if (job_id == 0) then
+        ! Find most recent job
+        do i = MAX_JOBS, 1, -1
+          if (shell%jobs(i)%job_id > 0) then
+            job_id = shell%jobs(i)%job_id
+            exit
+          end if
+        end do
+      end if
+    else
+      ! Parse job spec
+      job_id = parse_job_spec(shell, cmd%tokens(2))
+    end if
+
+    if (job_id == 0) then
+      write(error_unit, '(a)') 'disown: no current job'
+      shell%last_exit_status = 1
+      return
+    end if
+
+    call remove_job(shell, job_id)
+    shell%last_exit_status = 0
   end subroutine
 
   subroutine builtin_source(cmd, shell)
