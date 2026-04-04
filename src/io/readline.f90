@@ -3533,20 +3533,20 @@ contains
     ! When pattern is non-empty, filter with grep to avoid buffer overflow on large directories
     ! Use tr to convert newlines to spaces for easier parsing
     ! Filter with grep when pattern exists to limit output size
+    ! No tr needed — execute_and_capture_tabs converts newlines to tabs
     if (pattern_len > 0) then
       ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | grep -i "^' // &
-        trim(pattern) // '" | tr ' // "'" // char(92) // 'n' // "' ' '"
+        trim(pattern) // '"'
     else
-      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | tr ' // &
-        "'" // char(92) // 'n' // "' ' '"
+      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null'
     end if
 
     ! Debug output
     if (debug_enabled) then
     end if
 
-    ! Get output from command (allocatable result)
-    ls_output_alloc = execute_and_capture(ls_command)
+    ! Get output from command — use tab-delimited capture to preserve spaces in filenames
+    ls_output_alloc = execute_and_capture_tabs(ls_command)
 
     ! Copy to fixed buffer (avoids flang-new issues with allocatable strings)
     ls_output = ls_output_alloc(:min(len(ls_output), len(ls_output_alloc)))
@@ -3554,8 +3554,8 @@ contains
     ! Clean up allocatable
     if (allocated(ls_output_alloc)) deallocate(ls_output_alloc)
 
-    ! Parse ls output into individual entries
-    call parse_ls_output(ls_output, entries, num_entries)
+    ! Parse ls output — tab-delimited to preserve spaces in filenames
+    call parse_ls_output(ls_output, entries, num_entries, use_tab_delim=.true.)
 
     ! Debug output
     if (debug_enabled) then
@@ -3658,12 +3658,19 @@ contains
   end function
 
   ! Parse ls output into individual entries
-  subroutine parse_ls_output(output, entries, num_entries)
+  subroutine parse_ls_output(output, entries, num_entries, use_tab_delim)
     character(len=*), intent(in) :: output
     character(len=MAX_LINE_LEN), allocatable, intent(out) :: entries(:)
     integer, intent(out) :: num_entries
+    logical, intent(in), optional :: use_tab_delim
 
     integer :: pos, start, output_len, count_pass
+    logical :: tab_mode
+    character :: delim
+
+    tab_mode = .false.
+    if (present(use_tab_delim)) tab_mode = use_tab_delim
+    delim = merge(char(9), ' ', tab_mode)
 
     output_len = len_trim(output)
 
@@ -3671,8 +3678,9 @@ contains
     num_entries = 0
     pos = 1
     do while (pos <= output_len)
-      ! Skip whitespace
-      do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+      ! Skip delimiter characters
+      do while (pos <= output_len .and. (output(pos:pos) == delim .or. &
+                (.not. tab_mode .and. output(pos:pos) == char(9))))
         pos = pos + 1
       end do
 
@@ -3680,8 +3688,8 @@ contains
 
       start = pos
 
-      ! Find end of entry (space-separated, since execute_and_capture converts newlines to spaces)
-      do while (pos <= output_len .and. output(pos:pos) /= ' ')
+      ! Find end of entry
+      do while (pos <= output_len .and. output(pos:pos) /= delim)
         pos = pos + 1
       end do
 
@@ -3700,8 +3708,9 @@ contains
       count_pass = 0
       pos = 1
       do while (pos <= output_len .and. count_pass < num_entries)
-        ! Skip whitespace
-        do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+        ! Skip delimiter characters
+        do while (pos <= output_len .and. (output(pos:pos) == delim .or. &
+                  (.not. tab_mode .and. output(pos:pos) == char(9))))
           pos = pos + 1
         end do
 
@@ -3710,7 +3719,7 @@ contains
         start = pos
 
         ! Find end of entry
-        do while (pos <= output_len .and. output(pos:pos) /= ' ')
+        do while (pos <= output_len .and. output(pos:pos) /= delim)
           pos = pos + 1
         end do
 

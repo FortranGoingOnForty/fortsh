@@ -911,6 +911,66 @@ contains
     output = temp_output(:pos-1)
   end function
 
+  ! Like execute_and_capture but converts newlines to tabs instead of spaces.
+  ! This preserves filenames with spaces for completion parsing.
+  function execute_and_capture_tabs(command) result(output)
+    character(len=*), intent(in) :: command
+    character(len=:), allocatable :: output
+
+    type(c_ptr) :: pipe_ptr
+    character(kind=c_char), target :: buffer(4096)
+    character(len=65536) :: temp_output
+    type(c_ptr) :: ret_ptr
+    integer :: i, pos, bytes_read
+    character(len=256), target :: c_command
+    character(len=4), target :: c_mode
+
+    c_command = trim(command)//c_null_char
+    c_mode = 'r'//c_null_char
+
+    pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
+    if (.not. c_associated(pipe_ptr)) then
+      allocate(character(len=0) :: output)
+      return
+    end if
+
+    temp_output = ''
+    pos = 1
+
+    do
+      buffer = c_null_char
+      ret_ptr = c_fgets(c_loc(buffer), int(4096, c_int), pipe_ptr)
+      if (.not. c_associated(ret_ptr)) exit
+
+      bytes_read = 0
+      do i = 1, 4096
+        if (buffer(i) == c_null_char) exit
+        bytes_read = bytes_read + 1
+        if (pos > len(temp_output)) exit
+
+        if (buffer(i) == char(10)) then
+          ! Convert newline to tab (preserves spaces in filenames)
+          if (pos > 1 .and. temp_output(pos-1:pos-1) /= char(9)) then
+            temp_output(pos:pos) = char(9)
+            pos = pos + 1
+          end if
+        else
+          temp_output(pos:pos) = buffer(i)
+          pos = pos + 1
+        end if
+      end do
+
+      if (pos > len(temp_output)) exit
+      if (bytes_read == 0) exit
+    end do
+
+    i = c_pclose(pipe_ptr)
+
+    if (allocated(output)) deallocate(output)
+    allocate(character(len=pos-1) :: output)
+    output = temp_output(:pos-1)
+  end function
+
   ! Terminal control functions
   function enable_raw_mode(original_termios) result(success)
     use iso_fortran_env, only: output_unit, error_unit
