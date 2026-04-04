@@ -1005,7 +1005,7 @@ contains
 
       if (is_pure_assignment) then
         ! Execute assignments before redirections
-        call execute_pipeline(temp_pipeline, shell, '')
+        call execute_pipeline(temp_pipeline, shell, trim(shell%current_command))
         exit_status = shell%last_exit_status
 
         ! Clean up and return - skip redirections for pure assignments
@@ -1110,7 +1110,7 @@ contains
 
     ! Execute using existing executor
     ! Note: Pass empty command line - tokens array is what matters
-    call execute_pipeline(temp_pipeline, shell, '')
+    call execute_pipeline(temp_pipeline, shell, trim(shell%current_command))
 
     exit_status = shell%last_exit_status
     ! POSIX: Check errexit after command execution (including assignments with command substitutions)
