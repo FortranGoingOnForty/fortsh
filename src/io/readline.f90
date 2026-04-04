@@ -3470,7 +3470,7 @@ contains
 
     character(len=1024) :: ls_command, expanded_dir  ! Large enough for command
     character(len=:), allocatable :: ls_output_alloc  ! From execute_and_capture
-    character(len=2048) :: ls_output  ! 2KB buffer - large enough for ls but safe for stack
+    character(len=16384) :: ls_output  ! 16KB buffer for large directories
     character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
     character(len=MAX_LINE_LEN) :: full_path
     character(len=:), allocatable :: home_dir, debug_mode
@@ -3508,8 +3508,14 @@ contains
 
     ! Use ls command with -F flag to mark directories with / (avoids calling test -d for each file)
     ! Trailing / on directory forces ls to list contents (not the symlink itself on macOS)
+    ! When pattern is non-empty, filter with grep to avoid buffer overflow on large directories
     ! Use tr to convert newlines to spaces for easier parsing
-    ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | tr ' // "'" // char(92) // 'n' // "' ' '"
+    if (pattern_len > 0) then
+      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | grep -i "^' // &
+        trim(pattern) // '" | tr ' // "'" // char(92) // 'n' // "' ' '"
+    else
+      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | tr ' // "'" // char(92) // 'n' // "' ' '"
+    end if
 
     ! Debug output
     if (debug_enabled) then
