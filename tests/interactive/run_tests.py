@@ -356,13 +356,13 @@ class YAMLTestRunner:
                     # prompt — don't wait for it, let the test manage timing
                     next_is_wait = (next_step is not None and 'wait' in next_step)
                     if not next_is_wait:
-                        # Quick/background command — wait for prompt to ensure
-                        # shell is ready. Don't clear buffer — tests may need
-                        # to find output from this command (e.g. job status).
+                        # Quick/background command — wait for prompt, clear buffer
                         try:
                             fortsh.wait_for_prompt(timeout=self.pty_timeout)
                         except pexpect.TIMEOUT:
                             pass
+                        time.sleep(0.05)
+                        fortsh.clear_buffer()
                     else:
                         time.sleep(0.05 * ds)
                 else:
