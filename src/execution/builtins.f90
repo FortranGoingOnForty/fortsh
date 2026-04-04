@@ -1443,9 +1443,17 @@ contains
             case('INT', 'int', 'SIGINT')
               signal_num = 2
             case('STOP', 'stop', 'SIGSTOP')
-              signal_num = 19
+  #ifdef __APPLE__
+              signal_num = 18  ! SIGTSTP on macOS
+#else
+              signal_num = 20  ! SIGTSTP on Linux
+#endif
             case('CONT', 'cont', 'SIGCONT')
-              signal_num = 18
+#ifdef __APPLE__
+              signal_num = 19  ! SIGCONT on macOS
+#else
+              signal_num = 18  ! SIGCONT on Linux
+#endif
             case('HUP', 'hup', 'SIGHUP')
               signal_num = 1
             case('QUIT', 'quit', 'SIGQUIT')
@@ -1556,13 +1564,29 @@ contains
           case('STKFLT', 'stkflt', 'SIGSTKFLT')
             signal_num = 16
           case('CHLD', 'chld', 'SIGCHLD')
-            signal_num = 17
-          case('CONT', 'cont', 'SIGCONT')
-            signal_num = 18
-          case('STOP', 'stop', 'SIGSTOP')
-            signal_num = 19
-          case('TSTP', 'tstp', 'SIGTSTP')
+#ifdef __APPLE__
             signal_num = 20
+#else
+            signal_num = 17
+#endif
+          case('CONT', 'cont', 'SIGCONT')
+#ifdef __APPLE__
+            signal_num = 19
+#else
+            signal_num = 18
+#endif
+          case('STOP', 'stop', 'SIGSTOP')
+#ifdef __APPLE__
+            signal_num = 18  ! SIGTSTP on macOS
+#else
+            signal_num = 20  ! SIGTSTP on Linux
+#endif
+          case('TSTP', 'tstp', 'SIGTSTP')
+#ifdef __APPLE__
+            signal_num = 18  ! SIGTSTP on macOS
+#else
+            signal_num = 20  ! SIGTSTP on Linux
+#endif
           case('TTIN', 'ttin', 'SIGTTIN')
             signal_num = 21
           case('TTOU', 'ttou', 'SIGTTOU')
@@ -1621,6 +1645,26 @@ contains
       if (ret /= 0) then
         write(error_unit, '(a,i15)') 'kill: failed to kill process ', target_pid
         shell%last_exit_status = 1
+      else
+        ! Update job state when sending SIGCONT to a job
+#ifdef __APPLE__
+        if (signal_num == 19 .and. cmd%tokens(i)(1:1) == '%') then
+#else
+        if (signal_num == 18 .and. cmd%tokens(i)(1:1) == '%') then
+#endif
+          block
+            integer :: jid, ji
+            read(cmd%tokens(i)(2:), *, iostat=iostat) jid
+            if (iostat == 0) then
+              do ji = 1, MAX_JOBS
+                if (shell%jobs(ji)%job_id == jid) then
+                  shell%jobs(ji)%state = JOB_RUNNING
+                  exit
+                end if
+              end do
+            end if
+          end block
+        end if
       end if
     end do
     
