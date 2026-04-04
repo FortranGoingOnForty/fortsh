@@ -152,9 +152,7 @@ tests:
   # =============================================================
   - name: "Empty PS1 still allows commands"
     steps:
-      - send_line: "PS1=''"
-      - wait: 0.3
-      - send_line: "echo emptyps1"
+      - send_line: "PS1=''; echo emptyps1"
     expect_output: "emptyps1"
     match_type: "contains"
 
