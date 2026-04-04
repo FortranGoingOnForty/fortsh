@@ -168,8 +168,17 @@ program fortran_shell
     ! Set HISTCONTROL for history management
     call set_histcontrol(shell%histcontrol)
 
-    ! Load command history from file
-    if (len_trim(shell%histfile) > 0) then
+    ! Check HISTFILE env var override before loading
+    block
+      character(len=:), allocatable :: histfile_env
+      histfile_env = get_environment_var('HISTFILE')
+      if (len(histfile_env) > 0) then
+        shell%histfile = histfile_env
+      end if
+    end block
+
+    ! Load command history from file (skip if /dev/null)
+    if (len_trim(shell%histfile) > 0 .and. trim(shell%histfile) /= '/dev/null') then
       call load_history_from_file(trim(shell%histfile), shell%histsize)
     end if
   end if

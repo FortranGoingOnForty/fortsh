@@ -68,6 +68,7 @@ class FortshPTY:
         # Note: Completion is NOT disabled here - tests can use Tab completion
         env["FORTSH_MINIMAL_ECHO"] = "1"
         env["FORTSH_TEST_MODE"] = "1"
+        env["HISTFILE"] = "/dev/null"  # Don't load/save history from file
 
         # Use /dev/null for clean testing unless specified
         if rc_file is not None:
