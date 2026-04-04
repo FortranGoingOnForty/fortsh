@@ -341,7 +341,7 @@ class YAMLTestRunner:
             # Don't use marker sync for job control commands — their output
             # interacts with background processes and can swallow the marker
             first_word = cmd_text.split()[0] if cmd_text else ''
-            is_job_control = first_word in ('bg', 'fg', 'kill', 'disown', 'wait')
+            is_job_control = first_word in ('bg', 'fg', 'kill', 'disown', 'wait', 'jobs')
             use_marker = (not is_last and self._use_marker_sync and next_is_send_line
                           and not is_background and not is_job_control)
             if use_marker:
@@ -358,19 +358,19 @@ class YAMLTestRunner:
             else:
                 fortsh.send_line(step['send_line'])
                 if self._use_marker_sync and not is_last:
-                    # Long-running commands (next step is 'wait') block the
-                    # prompt — don't wait for it, let the test manage timing
                     next_is_wait = (next_step is not None and 'wait' in next_step)
-                    if not next_is_wait:
-                        # Quick/background command — wait for prompt, clear buffer
+                    if next_is_wait and not is_background and not is_job_control:
+                        # Foreground command followed by explicit wait — likely
+                        # blocking (sleep 10). Don't wait_for_prompt or it blocks.
+                        time.sleep(0.05 * ds)
+                    else:
+                        # Quick command — wait for prompt, clear buffer
                         try:
                             fortsh.wait_for_prompt(timeout=self.pty_timeout)
                         except pexpect.TIMEOUT:
                             pass
                         time.sleep(0.05)
                         fortsh.clear_buffer()
-                    else:
-                        time.sleep(0.05 * ds)
                 else:
                     # Last step or non-macOS: short delay. macOS last-step
                     # needs more time for flang-new I/O to flush.
