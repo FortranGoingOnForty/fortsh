@@ -381,19 +381,26 @@ class YAMLTestRunner:
             if self._use_marker_sync and key in ('C-c', 'C-z') and not is_last:
                 # Signal keys interrupt/suspend commands — shell needs to
                 # process the signal, reap children, and return to readline.
-                # Only wait if more steps follow (next is send/send_key that
-                # needs readline to be ready). If this is the last step or
-                # near-last, let expect_output find the signal message.
-                next_needs_input = (next_step is not None and
-                                    ('send' in next_step or 'send_key' in next_step or
-                                     'send_line' in next_step))
-                if next_needs_input:
+                if key == 'C-c':
+                    # Ctrl+C always returns to prompt — wait for it, clear buffer
                     try:
                         fortsh.wait_for_prompt(timeout=self.pty_timeout)
                     except pexpect.TIMEOUT:
                         time.sleep(0.5)
+                    fortsh.clear_buffer()
                 else:
-                    time.sleep(0.5)
+                    # Ctrl+Z: only wait if next step needs input, otherwise
+                    # let expect_output find the Stopped message
+                    next_needs_input = (next_step is not None and
+                                        ('send' in next_step or 'send_key' in next_step or
+                                         'send_line' in next_step))
+                    if next_needs_input:
+                        try:
+                            fortsh.wait_for_prompt(timeout=self.pty_timeout)
+                        except pexpect.TIMEOUT:
+                            time.sleep(0.5)
+                    else:
+                        time.sleep(0.5)
             else:
                 time.sleep(0.02 * ds)
         elif 'send_keys' in step:
