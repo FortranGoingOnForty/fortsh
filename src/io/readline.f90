@@ -3040,8 +3040,11 @@ contains
           completions(i) = trim(completions(i))
         end do
       else
-        ! Check if last_word contains glob characters
-        if (has_glob_chars(last_word)) then
+        ! Check if completing a variable name ($VAR)
+        if (len_trim(last_word) > 1 .and. last_word(1:1) == '$') then
+          ! Variable completion — match against shell variables
+          call complete_variable_names(last_word, completions, num_completions)
+        else if (has_glob_chars(last_word)) then
           ! Expand glob pattern instead of regular file completion
           call expand_glob_for_completion(last_word, completions, num_completions)
         else
@@ -3276,6 +3279,42 @@ contains
   end subroutine
 
   ! Enhanced command completion with PATH executable scanning
+  subroutine complete_variable_names(prefix_with_dollar, completions, num_completions)
+    character(len=*), intent(in) :: prefix_with_dollar
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
+    integer, intent(out) :: num_completions
+
+    character(len=256) :: var_prefix
+    character(len=4096) :: env_output
+    character(len=:), allocatable :: env_alloc
+    character(len=MAX_LINE_LEN), allocatable :: entries(:)
+    integer :: num_entries, i, score
+
+    num_completions = 0
+    ! Strip the $ from the prefix
+    var_prefix = prefix_with_dollar(2:)
+
+    ! Get variable names from environment (exported + inherited)
+    env_alloc = execute_and_capture('env 2>/dev/null | cut -d= -f1 | tr ' // "'" // char(92) // 'n' // "' ' '")
+    env_output = env_alloc(:min(len(env_output), len(env_alloc)))
+    if (allocated(env_alloc)) deallocate(env_alloc)
+
+    ! Parse into entries
+    call parse_ls_output(env_output, entries, num_entries)
+
+    ! Match against prefix
+    do i = 1, num_entries
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
+      if (len_trim(entries(i)) == 0) cycle
+
+      score = fuzzy_match_score(trim(var_prefix), trim(entries(i)))
+      if (score >= 0) then
+        num_completions = num_completions + 1
+        completions(num_completions) = '$' // trim(entries(i))
+      end if
+    end do
+  end subroutine
+
   subroutine complete_commands_enhanced(prefix, completions, num_completions)
     character(len=*), intent(in) :: prefix
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
