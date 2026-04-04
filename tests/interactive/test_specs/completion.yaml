@@ -184,8 +184,9 @@ tests:
     match_type: "contains"
 
   - name: "Tab completes custom variable"
+    env:
+      MYVAR: "testvalue"
     steps:
-      - send_line: "export MYVAR=testvalue"
       - send: "echo $MYV"
       - send_key: "Tab"
       - send_key: "Enter"

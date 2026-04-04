@@ -3303,7 +3303,7 @@ contains
     var_prefix = prefix_with_dollar(2:)
 
     ! Get variable names from environment (exported + inherited)
-    env_alloc = execute_and_capture('env 2>/dev/null | cut -d= -f1')
+    env_alloc = execute_and_capture('env 2>/dev/null | cut -d= -f1 | tr ' // "'" // char(92) // 'n' // "' ' '")
     env_output = env_alloc(:min(len(env_output), len(env_alloc)))
     if (allocated(env_alloc)) deallocate(env_alloc)
 
@@ -3532,12 +3532,13 @@ contains
     ! Trailing / on directory forces ls to list contents (not the symlink itself on macOS)
     ! When pattern is non-empty, filter with grep to avoid buffer overflow on large directories
     ! Use tr to convert newlines to spaces for easier parsing
-    ! Keep newlines as delimiters to preserve spaces in filenames
+    ! Filter with grep when pattern exists to limit output size
     if (pattern_len > 0) then
       ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | grep -i "^' // &
-        trim(pattern) // '"'
+        trim(pattern) // '" | tr ' // "'" // char(92) // 'n' // "' ' '"
     else
-      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null'
+      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | tr ' // &
+        "'" // char(92) // 'n' // "' ' '"
     end if
 
     ! Debug output
@@ -3670,9 +3671,8 @@ contains
     num_entries = 0
     pos = 1
     do while (pos <= output_len)
-      ! Skip newline/whitespace delimiters
-      do while (pos <= output_len .and. (output(pos:pos) == char(10) .or. &
-                output(pos:pos) == char(13) .or. output(pos:pos) == char(9)))
+      ! Skip whitespace
+      do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
         pos = pos + 1
       end do
 
@@ -3680,9 +3680,8 @@ contains
 
       start = pos
 
-      ! Find end of entry (newline delimiter preserves spaces in filenames)
-      do while (pos <= output_len .and. output(pos:pos) /= char(10) .and. &
-                output(pos:pos) /= char(13) .and. output(pos:pos) /= char(9))
+      ! Find end of entry (space-separated, since execute_and_capture converts newlines to spaces)
+      do while (pos <= output_len .and. output(pos:pos) /= ' ')
         pos = pos + 1
       end do
 
@@ -3701,9 +3700,8 @@ contains
       count_pass = 0
       pos = 1
       do while (pos <= output_len .and. count_pass < num_entries)
-        ! Skip newline/whitespace delimiters
-        do while (pos <= output_len .and. (output(pos:pos) == char(10) .or. &
-                  output(pos:pos) == char(13) .or. output(pos:pos) == char(9)))
+        ! Skip whitespace
+        do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
           pos = pos + 1
         end do
 
@@ -3711,9 +3709,8 @@ contains
 
         start = pos
 
-        ! Find end of entry (newline delimiter)
-        do while (pos <= output_len .and. output(pos:pos) /= char(10) .and. &
-                  output(pos:pos) /= char(13) .and. output(pos:pos) /= char(9))
+        ! Find end of entry
+        do while (pos <= output_len .and. output(pos:pos) /= ' ')
           pos = pos + 1
         end do
 
@@ -3894,12 +3891,34 @@ contains
       ! No completions found
       return
     else if (num_completions == 1) then
-      ! Single completion - add prefix back (preserve spacing)
-      if (last_space_pos > 0) then
-        completed_line = prefix_part(:last_space_pos) // trim(completions(1))
-      else
-        completed_line = trim(completions(1))
-      end if
+      ! Single completion - reconstruct with proper quoting
+      block
+        character(len=1) :: quote_char
+        integer :: lw_len
+
+        lw_len = len_trim(last_word)
+        quote_char = ' '
+
+        ! Check if last_word starts with a quote
+        if (lw_len > 0 .and. (last_word(1:1) == "'" .or. last_word(1:1) == '"')) then
+          quote_char = last_word(1:1)
+        end if
+
+        ! Completions already include the full path from scan_directory.
+        ! Just wrap in quotes if the original word was quoted.
+        if (quote_char /= ' ') then
+          if (last_space_pos > 0) then
+            completed_line = prefix_part(:last_space_pos) // quote_char // &
+              trim(completions(1)) // quote_char
+          else
+            completed_line = quote_char // trim(completions(1)) // quote_char
+          end if
+        else if (last_space_pos > 0) then
+          completed_line = prefix_part(:last_space_pos) // trim(completions(1))
+        else
+          completed_line = trim(completions(1))
+        end if
+      end block
       completed = .true.
     else
       ! Multiple completions
