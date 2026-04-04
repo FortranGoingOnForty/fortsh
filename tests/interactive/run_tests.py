@@ -108,6 +108,7 @@ class YAMLTestRunner:
         """
         needs_new = (
             fresh or
+            (env is not None and len(env) > 0) or  # Custom env requires fresh session
             self._current_session is None or
             not self._current_session.is_running or
             self._test_count % self.tests_per_session == 0
