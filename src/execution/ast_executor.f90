@@ -1391,7 +1391,11 @@ contains
       block
         integer(c_int), target :: wait_status
         integer, allocatable :: exit_statuses(:)
+        logical :: pipeline_stopped
+        integer :: stopped_job_id
+        character(len=1024) :: stopped_cmd
         allocate(exit_statuses(num_commands))
+        pipeline_stopped = .false.
 
         do i = 1, num_commands
           ret = c_waitpid(pids(i), c_loc(wait_status), WUNTRACED)
@@ -1401,8 +1405,31 @@ contains
             else if (WIFSIGNALED(wait_status)) then
               exit_statuses(i) = 128 + WTERMSIG(wait_status)
             else if (WIFSTOPPED(wait_status)) then
-              ! Process was stopped (Ctrl+Z) — report as 128 + SIGTSTP
+              ! Process was stopped (Ctrl+Z) — add to job table as stopped
               exit_statuses(i) = 128 + WSTOPSIG(wait_status)
+              ! Pipeline process was stopped (Ctrl+Z)
+              ! Note: simple commands go through the legacy executor which
+              ! handles WIFSTOPPED, add_job, and Stopped message. This path
+              ! only runs for multi-command pipelines.
+              if (.not. pipeline_stopped) then
+                pipeline_stopped = .true.
+                stopped_cmd = trim(shell%current_command)
+                if (len_trim(stopped_cmd) == 0) stopped_cmd = '<stopped job>'
+                stopped_job_id = add_job(shell, pgid, trim(stopped_cmd), .true.)
+                ! Mark job as stopped in the job table
+                block
+                  integer :: ji
+                  do ji = 1, MAX_JOBS
+                    if (shell%jobs(ji)%job_id == stopped_job_id) then
+                      shell%jobs(ji)%state = JOB_STOPPED
+                      exit
+                    end if
+                  end do
+                end block
+                write(output_unit, '()')
+                write(output_unit, '(a)') 'Stopped'
+                flush(output_unit)
+              end if
             else
               exit_statuses(i) = 1
             end if

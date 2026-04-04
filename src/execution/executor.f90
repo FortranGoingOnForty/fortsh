@@ -1566,6 +1566,16 @@ contains
               shell%last_exit_status = 128 + WTERMSIG(wait_status)
             else if (WIFSTOPPED(wait_status)) then
               job_id = add_job(shell, pgid, original_input, .true.)
+              ! Set state to stopped (add_job defaults to RUNNING)
+              block
+                integer :: ji
+                do ji = 1, MAX_JOBS
+                  if (shell%jobs(ji)%job_id == job_id) then
+                    shell%jobs(ji)%state = JOB_STOPPED
+                    exit
+                  end if
+                end do
+              end block
               write(output_unit, '(a)') 'Stopped'
             end if
           end if
