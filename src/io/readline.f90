@@ -2967,14 +2967,22 @@ contains
     num_completions = 0
     used_programmable_completion = .false.
 
-    ! Find the last word to complete
+    ! Find the last word to complete (respect quotes)
     last_space_pos = 0
-    do i = actual_len, 1, -1
-      if (partial_input(i:i) == ' ') then
-        last_space_pos = i
-        exit
-      end if
-    end do
+    block
+      logical :: in_sq, in_dq
+      in_sq = .false.
+      in_dq = .false.
+      do i = 1, actual_len
+        if (partial_input(i:i) == "'" .and. .not. in_dq) then
+          in_sq = .not. in_sq
+        else if (partial_input(i:i) == '"' .and. .not. in_sq) then
+          in_dq = .not. in_dq
+        else if (partial_input(i:i) == ' ' .and. .not. in_sq .and. .not. in_dq) then
+          last_space_pos = i
+        end if
+      end do
+    end block
 
     if (last_space_pos == 0) then
       last_word = trim(partial_input)
@@ -3295,7 +3303,7 @@ contains
     var_prefix = prefix_with_dollar(2:)
 
     ! Get variable names from environment (exported + inherited)
-    env_alloc = execute_and_capture('env 2>/dev/null | cut -d= -f1 | tr ' // "'" // char(92) // 'n' // "' ' '")
+    env_alloc = execute_and_capture('env 2>/dev/null | cut -d= -f1')
     env_output = env_alloc(:min(len(env_output), len(env_alloc)))
     if (allocated(env_alloc)) deallocate(env_alloc)
 
@@ -3422,9 +3430,9 @@ contains
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
 
-    character(len=MAX_LINE_LEN) :: dir_path, file_pattern
+    character(len=MAX_LINE_LEN) :: dir_path, file_pattern, clean_prefix
     character(len=:), allocatable :: debug_mode
-    integer :: last_slash_pos, i
+    integer :: last_slash_pos, i, cp_len
     logical :: debug_enabled
 
     ! Check if debug mode is enabled
@@ -3432,29 +3440,43 @@ contains
     debug_enabled = (allocated(debug_mode) .and. trim(debug_mode) == '1')
 
     num_completions = 0
-    
+
+    ! Strip leading/trailing quotes from prefix for filesystem access
+    clean_prefix = trim(prefix)
+    cp_len = len_trim(clean_prefix)
+    if (cp_len >= 2) then
+      if ((clean_prefix(1:1) == "'" .and. clean_prefix(cp_len:cp_len) == "'") .or. &
+          (clean_prefix(1:1) == '"' .and. clean_prefix(cp_len:cp_len) == '"')) then
+        clean_prefix = clean_prefix(2:cp_len-1)
+      else if (clean_prefix(1:1) == "'" .or. clean_prefix(1:1) == '"') then
+        ! Unclosed quote (user still typing) — strip leading quote only
+        clean_prefix = clean_prefix(2:cp_len)
+      end if
+    end if
+
     ! Extract directory path and filename pattern
     last_slash_pos = 0
-    do i = len_trim(prefix), 1, -1
-      if (prefix(i:i) == '/') then
+    last_slash_pos = 0
+    do i = len_trim(clean_prefix), 1, -1
+      if (clean_prefix(i:i) == '/') then
         last_slash_pos = i
         exit
       end if
     end do
 
     if (last_slash_pos > 0) then
-      dir_path = prefix(:last_slash_pos-1)
-      file_pattern = prefix(last_slash_pos+1:)
+      dir_path = clean_prefix(:last_slash_pos-1)
+      file_pattern = clean_prefix(last_slash_pos+1:)
       if (len_trim(dir_path) == 0) dir_path = '/'
     else
       dir_path = '.'
-      file_pattern = trim(prefix)
+      file_pattern = trim(clean_prefix)
     end if
 
     ! Preserve explicit "./" prefix: when user typed "./something", dir_path
     ! is "." but completions should include "./" to match what was typed.
     ! Pass "./" as dir_path so scan_directory builds paths with "./" prefix.
-    if (len_trim(prefix) >= 2 .and. prefix(1:2) == './') then
+    if (len_trim(clean_prefix) >= 2 .and. clean_prefix(1:2) == './') then
       if (trim(dir_path) == '.') dir_path = './'
     end if
 
@@ -3510,11 +3532,12 @@ contains
     ! Trailing / on directory forces ls to list contents (not the symlink itself on macOS)
     ! When pattern is non-empty, filter with grep to avoid buffer overflow on large directories
     ! Use tr to convert newlines to spaces for easier parsing
+    ! Keep newlines as delimiters to preserve spaces in filenames
     if (pattern_len > 0) then
       ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | grep -i "^' // &
-        trim(pattern) // '" | tr ' // "'" // char(92) // 'n' // "' ' '"
+        trim(pattern) // '"'
     else
-      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | tr ' // "'" // char(92) // 'n' // "' ' '"
+      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null'
     end if
 
     ! Debug output
@@ -3647,8 +3670,9 @@ contains
     num_entries = 0
     pos = 1
     do while (pos <= output_len)
-      ! Skip whitespace
-      do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+      ! Skip newline/whitespace delimiters
+      do while (pos <= output_len .and. (output(pos:pos) == char(10) .or. &
+                output(pos:pos) == char(13) .or. output(pos:pos) == char(9)))
         pos = pos + 1
       end do
 
@@ -3656,8 +3680,9 @@ contains
 
       start = pos
 
-      ! Find end of entry (space only, since execute_and_capture converts newlines to spaces)
-      do while (pos <= output_len .and. output(pos:pos) /= ' ')
+      ! Find end of entry (newline delimiter preserves spaces in filenames)
+      do while (pos <= output_len .and. output(pos:pos) /= char(10) .and. &
+                output(pos:pos) /= char(13) .and. output(pos:pos) /= char(9))
         pos = pos + 1
       end do
 
@@ -3676,8 +3701,9 @@ contains
       count_pass = 0
       pos = 1
       do while (pos <= output_len .and. count_pass < num_entries)
-        ! Skip whitespace
-        do while (pos <= output_len .and. (output(pos:pos) == ' ' .or. output(pos:pos) == char(9)))
+        ! Skip newline/whitespace delimiters
+        do while (pos <= output_len .and. (output(pos:pos) == char(10) .or. &
+                  output(pos:pos) == char(13) .or. output(pos:pos) == char(9)))
           pos = pos + 1
         end do
 
@@ -3685,8 +3711,9 @@ contains
 
         start = pos
 
-        ! Find end of entry
-        do while (pos <= output_len .and. output(pos:pos) /= ' ')
+        ! Find end of entry (newline delimiter)
+        do while (pos <= output_len .and. output(pos:pos) /= char(10) .and. &
+                  output(pos:pos) /= char(13) .and. output(pos:pos) /= char(9))
           pos = pos + 1
         end do
 
@@ -3832,13 +3859,22 @@ contains
     completed_line = partial_input
 
     ! Find the prefix (command and any earlier arguments)
+    ! Respect quotes: spaces inside quotes don't count as word boundaries
     last_space_pos = 0
-    do i = actual_len, 1, -1
-      if (partial_input(i:i) == ' ') then
-        last_space_pos = i
-        exit
-      end if
-    end do
+    block
+      logical :: in_single_quote, in_double_quote
+      in_single_quote = .false.
+      in_double_quote = .false.
+      do i = 1, actual_len
+        if (partial_input(i:i) == "'" .and. .not. in_double_quote) then
+          in_single_quote = .not. in_single_quote
+        else if (partial_input(i:i) == '"' .and. .not. in_single_quote) then
+          in_double_quote = .not. in_double_quote
+        else if (partial_input(i:i) == ' ' .and. .not. in_single_quote .and. .not. in_double_quote) then
+          last_space_pos = i
+        end if
+      end do
+    end block
 
     if (last_space_pos > 0) then
       prefix_part = partial_input(:last_space_pos)

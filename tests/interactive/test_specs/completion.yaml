@@ -185,7 +185,7 @@ tests:
 
   - name: "Tab completes custom variable"
     steps:
-      - send_line: "MYVAR=testvalue"
+      - send_line: "export MYVAR=testvalue"
       - send: "echo $MYV"
       - send_key: "Tab"
       - send_key: "Enter"
