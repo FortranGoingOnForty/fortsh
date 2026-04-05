@@ -139,7 +139,7 @@ section "149. JOBS BUILTIN OUTPUT"
 test_succeeds "jobs with no jobs" 'jobs'
 test_succeeds "jobs after background" 'sleep 0.5 & jobs; wait'
 # Test that jobs shows running processes
-test_contains "jobs shows running" 'sleep 5 & jobs' 'sleep'
+test_contains "jobs shows running" 'sleep 0.5 & jobs' 'sleep'
 
 section "150. BACKGROUND PIPELINES"
 
