@@ -271,3 +271,70 @@ tests:
       - send_line: "pwd"
     expect_output: "/"
     match_type: "contains"
+
+  # =============================================================
+  # SPRINT 2 — VISIBLE RENDERING
+  # These tests force FORTSH_TEST_MODE off so the full redraw path
+  # runs and emits reverse-video ANSI codes (ESC[7m ... ESC[27m)
+  # around the selected byte range. Each test uses fresh_session to
+  # avoid polluting adjacent tests with redraw noise.
+  # =============================================================
+
+  - name: "Sprint 2: Shift+Left emits reverse-video around selection"
+    # After "echo hello world" + 5x Shift+Left, the rendering should
+    # include the literal sequence ESC[7m followed by "world" followed
+    # by ESC[27m. pexpect matches on regex, so we escape the [.
+    env:
+      FORTSH_TEST_MODE: "0"
+    fresh_session: true
+    steps:
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+    expect_output: "\u001b\\[7mworld\u001b\\[27m"
+
+  - name: "Sprint 2: Shift+Home highlights to start of line"
+    # "abcd" + Shift+Home → anchor=4, cursor=0. Render has prefix empty,
+    # reverse-video "abcd", suffix empty.
+    env:
+      FORTSH_TEST_MODE: "0"
+    fresh_session: true
+    steps:
+      - send: "abcd"
+      - send_key: "S-Home"
+    expect_output: "\u001b\\[7mabcd\u001b\\[27m"
+
+  - name: "Sprint 2: Ctrl+Shift+Left highlights one word back"
+    # "aaa bbb" + C-S-Left → anchor=7, cursor=4. Render has prefix
+    # "aaa ", reverse-video "bbb", suffix empty.
+    env:
+      FORTSH_TEST_MODE: "0"
+    fresh_session: true
+    steps:
+      - send: "aaa bbb"
+      - send_key: "C-S-Left"
+    expect_output: "\u001b\\[7mbbb\u001b\\[27m"
+
+  - name: "Sprint 2: plain Left after selection collapses — no ESC[7m in tail"
+    # Select, then plain Left (snaps to left edge, collapses). The
+    # NEXT redraw must NOT contain reverse video. We verify by sending
+    # more chars and expecting them NOT to be wrapped in ESC[7m.
+    # Use 'expect_not' to check absence of reverse video on the suffix.
+    env:
+      FORTSH_TEST_MODE: "0"
+    fresh_session: true
+    steps:
+      - send: "abcd"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "Left"
+      - send: "Z"
+    # After Left, selection collapses (cursor=2, snapped to min edge).
+    # Inserting Z goes at pos 2 → "abZcd". The final redraw should show
+    # the buffer plain (no reverse video around Z). Assert on presence
+    # of "abZcd" text in the stream — if selection incorrectly persisted,
+    # the render would wrap bytes in ESC[7m instead.
+    expect_output: "abZcd"

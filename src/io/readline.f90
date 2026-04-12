@@ -1147,6 +1147,7 @@ contains
     integer :: suggestion_display_len, available_space
     integer :: current_col, current_row
     integer :: highlighted_len  ! Actual length of highlighted string
+    integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -1657,8 +1658,37 @@ contains
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
 
+              ! Shift-phase selection rendering (Sprint 2): when a selection is
+              ! active, render in three segments — plain prefix, reverse-video
+              ! selection (ESC[7m...ESC[27m), plain suffix. Syntax highlighting
+              ! is skipped for the whole line while a selection is live to avoid
+              ! mis-coloring partial token substrings. Reverse video (#13) is
+              ! preferred over background colors: proven on Terminal.app,
+              ! iTerm2, Ghostty, and the mainstream Linux terminals, and already
+              ! used for prefix search rendering below.
+              if (module_input_state%selection_active) then
+                ! Compute and clamp the byte range.
+                sel_start = min(module_input_state%selection_anchor, module_input_state%cursor_pos)
+                sel_end   = max(module_input_state%selection_anchor, module_input_state%cursor_pos)
+                if (sel_start < 0) sel_start = 0
+                if (sel_end > module_input_state%length) sel_end = module_input_state%length
+                ! Segment 1: plain text from start up to selection start.
+                if (sel_start > 0) then
+                  write(output_unit, '(a)', advance='no') temp_buf(1:sel_start)
+                end if
+                ! Segment 2: selected bytes in reverse video.
+                if (sel_end > sel_start) then
+                  write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                  write(output_unit, '(a)', advance='no') temp_buf(sel_start+1:sel_end)
+                  write(output_unit, '(a)', advance='no') char(27) // '[27m'
+                end if
+                ! Segment 3: plain text from selection end to buffer end.
+                if (sel_end < module_input_state%length) then
+                  write(output_unit, '(a)', advance='no') temp_buf(sel_end+1:module_input_state%length)
+                end if
+
               ! In prefix search mode, render prefix in reverse video + rest plain
-              if (module_input_state%in_prefix_search .and. &
+              else if (module_input_state%in_prefix_search .and. &
                   (module_input_state%prefix_search_idx /= 0 .or. module_input_state%prefix_search_flash)) then
                 ! Prefix in reverse video
                 write(output_unit, '(a)', advance='no') char(27) // '[7m'
