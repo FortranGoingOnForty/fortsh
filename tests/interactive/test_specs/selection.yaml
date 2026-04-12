@@ -338,3 +338,152 @@ tests:
     # of "abZcd" text in the stream — if selection incorrectly persisted,
     # the render would wrap bytes in ESC[7m instead.
     expect_output: "abZcd"
+
+  # =============================================================
+  # SPRINT 3 — SELECTION-AWARE EDITING
+  # Type-over, backspace/delete, Ctrl+W cut, Alt+W copy, Ctrl+Y yank.
+  # All go through the delete_selection / copy_selection_to_kill_buffer
+  # helpers that landed in Sprint 1. Tests run in default test mode —
+  # they assert on the buffer state after executing `echo <final>`.
+  # =============================================================
+
+  - name: "Sprint 3: typing over selection replaces it"
+    # "echo hello world" → Shift+Left x5 moves cursor from 16 to 11,
+    # selecting bytes [11..16) = "world" (NOT the preceding space at 10).
+    # Type 'X' → delete_selection removes "world", insert X at 11 →
+    # buffer "echo hello X". Enter executes.
+    steps:
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send: "X"
+      - send_key: "Enter"
+    expect_output: "hello X"
+    match_type: "contains"
+
+  - name: "Sprint 3: Backspace on selection deletes the whole range"
+    # "echo hello world" → select "world" with 5x Shift+Left → Backspace
+    # removes the 5 chars → buffer "echo hello ". Execute → "hello "
+    # (echo trims trailing whitespace in word split so visible is "hello").
+    steps:
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "Backspace"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Sprint 3: Delete on selection also removes the whole range"
+    steps:
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "Delete"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
+
+  - name: "Sprint 3: Ctrl+W on selection cuts to kill buffer"
+    # Select "world", Ctrl+W cuts → buffer "echo hello ". Move to start
+    # with C-a, yank with C-y → buffer "worldecho hello ".
+    steps:
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "C-w"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "C-y"
+      - send_key: "Enter"
+    expect_output: "world"
+    match_type: "contains"
+
+  - name: "Sprint 3: Alt+W on selection copies without deleting"
+    # Select "world", Alt+W copies to kill buffer (selection collapses,
+    # buffer intact). Move to end with C-e, space, Ctrl+Y yanks "world"
+    # at end → buffer "echo hello world world".
+    steps:
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "M-w"
+      - send_key: "C-e"
+      - send: " "
+      - send_key: "C-y"
+      - send_key: "Enter"
+    expect_output: "hello world world"
+    match_type: "contains"
+
+  - name: "Sprint 3: Ctrl+Y yanks into active selection (paste-over)"
+    # First populate the kill buffer: Ctrl+U kills "first" into kill buf.
+    # Then on the real line, select "world" (bytes [11..16)) and Ctrl+Y —
+    # selection is deleted and "first" is pasted in its place.
+    # Result: "echo hello first" → echo outputs "hello first".
+    steps:
+      - send: "first"
+      - send_key: "C-u"    # kill whole line into kill buffer
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "C-y"
+      - send_key: "Enter"
+    expect_output: "hello first"
+    match_type: "contains"
+
+  - name: "Sprint 3: typing over selection works mid-buffer"
+    # Select "bbb" via M-B, type 'Z' → "aaa Zccc".
+    # (This also verifies word-wise selection + type-over together.)
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "M-b"    # move to start of "ccc" (Alt+b, no shift)
+      - send_key: "M-B"    # select "bbb " wait — M-B extends from end of bbb backward
+      - send: "Z"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    # Trace: cursor at 11 (end). Alt+b → move to start of "ccc" (pos 8).
+    # Alt+Shift+B extends word back → selection covers "ccc" wait no, M-B
+    # moves from 8 backwards to start of "bbb" (pos 4). anchor=8, cursor=4.
+    # Type 'Z': delete_selection removes bytes [4..8) = "bbb ", cursor=4.
+    # Insert Z at 4 → "aaa Zccc". C-a, echo, Enter → "aaa Zccc".
+    expect_output: "aaa Zccc"
+    match_type: "contains"
+
+  - name: "Sprint 3: Ctrl+W with no selection still kills word backward"
+    # Regression guard: Ctrl+W with no selection runs existing kill-word.
+    steps:
+      - send: "echo aaa bbb"
+      - send_key: "C-w"    # kill "bbb"
+      - send: "zzz"
+      - send_key: "Enter"
+    expect_output: "aaa zzz"
+    match_type: "contains"
+
+  - name: "Sprint 3: Backspace with no selection still deletes one char"
+    steps:
+      - send: "abcd"
+      - send_key: "Backspace"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abc"
+    match_type: "contains"

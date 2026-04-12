@@ -699,6 +699,32 @@ contains
     call debug_selection_log('extend', state)
   end subroutine update_selection_on_shift_motion
 
+  ! Copy the selected byte range into the kill buffer. No-op if selection
+  ! is not active. Does NOT modify the main buffer or clear the selection —
+  ! callers decide whether this is a copy (Alt+W) or a cut (Ctrl+W) by
+  ! whether they follow up with delete_selection + collapse.
+  subroutine copy_selection_to_kill_buffer(state)
+    type(input_state_t), intent(inout) :: state
+    integer :: sel_start, sel_end, span
+    character(len=MAX_LINE_LEN) :: temp_buf
+
+    if (.not. state%selection_active) return
+    if (state%selection_anchor < 0) return
+
+    sel_start = min(state%selection_anchor, state%cursor_pos)
+    sel_end   = max(state%selection_anchor, state%cursor_pos)
+    span      = sel_end - sel_start
+
+    if (span <= 0) return
+
+    ! state_buffer_get returns 1-indexed character data; sel_start/sel_end
+    ! are 0-based byte offsets, so the slice is [sel_start+1 .. sel_end].
+    call state_buffer_get(state, temp_buf)
+    call state_kill_buffer_set(state, temp_buf(sel_start+1:sel_end))
+    state%kill_length = span
+    call debug_selection_log('copy-to-kill', state)
+  end subroutine copy_selection_to_kill_buffer
+
   ! Remove the selected byte range from the buffer, set cursor to the left
   ! edge, and clear selection state. No-op if selection is not active.
   ! Unused in Sprint 1 itself, but lands now for use in Sprint 3.
@@ -4212,6 +4238,10 @@ contains
     logical :: debug_utf8
     integer :: debug_stat
 
+    ! Shift-phase type-over (Sprint 3): replace active selection before
+    ! inserting a new multi-byte character.
+    if (input_state%selection_active) call delete_selection(input_state)
+
     ! Check if UTF-8 debug mode is enabled
     call get_environment_variable('FORTSH_DEBUG_UTF8', status=debug_stat)
     debug_utf8 = (debug_stat == 0)
@@ -4294,6 +4324,11 @@ contains
     character, intent(in) :: ch
     integer :: term_cols
     character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
+
+    ! Shift-phase type-over (Sprint 3): typing a character while a selection
+    ! is active replaces the selection. delete_selection removes the bytes,
+    ! moves cursor to the left edge, and clears selection state.
+    if (input_state%selection_active) call delete_selection(input_state)
 
     ! Allocate temp buffer on heap
     allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
@@ -4496,6 +4531,14 @@ contains
     integer :: i
     integer :: bytes_to_delete, delete_count
 
+    ! Shift-phase (Sprint 3): Backspace on an active selection deletes the
+    ! whole range — no further character deletion. The key is "consumed".
+    if (input_state%selection_active) then
+      call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
+
     ! Defensive checks for buffer corruption
     if (input_state%cursor_pos <= 0) return
     if (input_state%length <= 0) return
@@ -4564,6 +4607,14 @@ contains
   subroutine handle_forward_delete_char(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, bytes_to_delete, delete_count
+
+    ! Shift-phase (Sprint 3): Delete on an active selection removes the
+    ! whole range and consumes the key.
+    if (input_state%selection_active) then
+      call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
 
     ! Nothing to delete if cursor is at end or buffer is empty
     if (input_state%cursor_pos >= input_state%length) return
@@ -5942,8 +5993,18 @@ contains
         ! Alt+c - Capitalize word (uppercase first char, lowercase rest)
         call handle_capitalize_word(input_state)
       case('w')
-        ! Alt+w - Accept one word from autosuggestion
-        if (input_state%cursor_pos == input_state%length .and. &
+        ! Alt+w — dual-mode:
+        !   1. If a selection is active, copy it to the kill buffer and
+        !      collapse selection (emacs kill-ring-save). Buffer unchanged;
+        !      Ctrl+Y yanks it back wherever the user moves next.
+        !   2. Else if the cursor is at end-of-buffer with a live autosuggestion,
+        !      accept one word from the suggestion (existing behavior).
+        ! (Sprint 5 adds the system-clipboard mirror.)
+        if (input_state%selection_active) then
+          call copy_selection_to_kill_buffer(input_state)
+          call collapse_selection(input_state)
+          input_state%dirty = .true.  ! force redraw without reverse video
+        else if (input_state%cursor_pos == input_state%length .and. &
             input_state%suggestion_length > 0) then
           call accept_autosuggestion_word(input_state)
         end if
@@ -7177,6 +7238,16 @@ contains
     integer :: word_start, i
     character(len=MAX_LINE_LEN) :: temp_buf
 
+    ! Shift-phase (Sprint 3): Ctrl+W with an active selection becomes a
+    ! cut — copy the selected range to the kill buffer, then remove it.
+    ! No fall-through to kill-word. Ctrl+Y (handle_yank) pastes it back.
+    if (input_state%selection_active) then
+      call copy_selection_to_kill_buffer(input_state)
+      call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
+
     if (input_state%cursor_pos == 0) then
       input_state%kill_length = 0
       return
@@ -7261,7 +7332,13 @@ contains
   subroutine handle_yank(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, insert_len
-    
+
+    ! Shift-phase (Sprint 3): yanking into an active selection first
+    ! deletes the selection, then pastes the kill buffer at the cursor.
+    ! This gives the natural "paste over" behavior. Selection is collapsed
+    ! by delete_selection before the existing yank logic runs.
+    if (input_state%selection_active) call delete_selection(input_state)
+
     if (input_state%kill_length == 0) return
     
     insert_len = min(input_state%kill_length, MAX_LINE_LEN - input_state%length)

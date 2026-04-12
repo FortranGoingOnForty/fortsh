@@ -69,6 +69,7 @@ ALT_F = "\x1bf"  # Forward one word
 ALT_L = "\x1bl"  # Lowercase word
 ALT_T = "\x1bt"  # Transpose words
 ALT_U = "\x1bu"  # Uppercase word
+ALT_W = "\x1bw"  # Copy selection (shift phase) / Accept word from suggestion
 ALT_Y = "\x1by"  # Yank pop
 ALT_DOT = "\x1b."  # Insert last argument
 ALT_BACKSPACE = "\x1b\x7f"  # Delete word backward
@@ -165,6 +166,7 @@ KEYS = {
     "M-l": ALT_L,
     "M-t": ALT_T,
     "M-u": ALT_U,
+    "M-w": ALT_W,
     "M-y": ALT_Y,
     "M-.": ALT_DOT,
     "M-Backspace": ALT_BACKSPACE,
