@@ -1,0 +1,273 @@
+# Text Selection Tests for fortsh
+# shift phase, Sprint 1: selection state + shift/ctrl-shift arrow dispatch.
+#
+# Sprint 1 does NOT render the selection visually (that's Sprint 2). These
+# tests assert BEHAVIORAL differences through subsequent text operations:
+#
+# - Plain Left/Right with an active selection SNAPS cursor to the selection
+#   edge (not a single-char step). A follow-up character insert lands at
+#   the edge position — observably different from a baseline fortsh.
+#
+# - Ctrl+Shift+Left/Right and Alt+Shift+B/F extend selection by a whole
+#   word. A subsequent plain motion + insert reveals where the selection
+#   edge was.
+#
+# Assertion strategy: build a final buffer, prepend `echo `, hit Enter, and
+# match on the echoed output. Echo word-splits trailing whitespace, so
+# expected strings are trimmed-right.
+
+metadata:
+  category: "Text Selection"
+  description: "Shift+Arrow selection state + dispatch (shift phase)"
+  phase: "shift/sprint-1"
+
+tests:
+  # =============================================================
+  # SHIFT+LEFT / SHIFT+RIGHT: char-wise extension + snap collapse
+  # =============================================================
+
+  - name: "Shift+Left extends; plain Right snaps to right edge"
+    # Type abcd, Shift+Left x2 (anchor=4, cursor=2), plain Right snaps
+    # cursor to max(4,2)=4, insert X at 4 → "abcdX".
+    # Baseline: Shift+Left treated as plain Left x2 → cursor=2; plain
+    # Right → cursor=3; X at 3 → "abcXd".
+    steps:
+      - send: "abcd"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcdX"
+    match_type: "contains"
+
+  - name: "Shift+Right extends; plain Left snaps to left edge"
+    # Type abcd, C-a (cursor=0), Shift+Right x2 (anchor=0, cursor=2),
+    # plain Left snaps to min(0,2)=0, insert X at 0 → "Xabcd".
+    # Baseline: Shift+Right → cursor=2; plain Left → cursor=1; X at 1 → "aXbcd".
+    steps:
+      - send: "abcd"
+      - send_key: "C-a"
+      - send_key: "S-Right"
+      - send_key: "S-Right"
+      - send_key: "Left"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "Xabcd"
+    match_type: "contains"
+
+  - name: "Shift+Right then Shift+Left auto-collapses at anchor"
+    # Anchor=0, cursor 0→1→0. update_selection_on_shift_motion
+    # auto-collapses when cursor returns to anchor. Next plain Right
+    # moves normally (one char), not snap.
+    steps:
+      - send: "abcd"
+      - send_key: "C-a"
+      - send_key: "S-Right"
+      - send_key: "S-Left"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aXbcd"
+    match_type: "contains"
+
+  # =============================================================
+  # SHIFT+HOME / SHIFT+END: line-edge extension
+  # =============================================================
+
+  - name: "Shift+End selects to end; plain Left snaps to left edge"
+    # Type abcd, C-a (cursor=0), Shift+End (anchor=0, cursor=4), plain
+    # Left snaps to 0, insert X at 0 → "Xabcd".
+    steps:
+      - send: "abcd"
+      - send_key: "C-a"
+      - send_key: "S-End"
+      - send_key: "Left"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "Xabcd"
+    match_type: "contains"
+
+  - name: "Shift+Home selects to start; plain Right snaps to right edge"
+    # Type abcd (cursor=4), Shift+Home (anchor=4, cursor=0), plain Right
+    # snaps to max(4,0)=4, insert X at 4 → "abcdX".
+    steps:
+      - send: "abcd"
+      - send_key: "S-Home"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcdX"
+    match_type: "contains"
+
+  # =============================================================
+  # CTRL+SHIFT+LEFT / CTRL+SHIFT+RIGHT: word-wise extension
+  # =============================================================
+
+  - name: "Ctrl+Shift+Left word-wise selection snaps to word start"
+    # "aaa bbb" (cursor=7). C-S-Left → move_to_previous_word lands
+    # cursor at 4 (before 'b' of "bbb"), anchor=7. Plain Left snaps
+    # to min(7,4)=4. X at 4 → "aaa Xbbb".
+    steps:
+      - send: "aaa bbb"
+      - send_key: "C-S-Left"
+      - send_key: "Left"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaa Xbbb"
+    match_type: "contains"
+
+  - name: "Ctrl+Shift+Right word-wise selection snaps to word end"
+    # "aaa bbb ccc" (cursor=11). C-a (cursor=0). C-S-Right →
+    # move_to_next_word lands at 3 (end of "aaa"), anchor=0. Plain Right
+    # snaps to max(0,3)=3. X at 3 → "aaaX bbb ccc".
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "C-a"
+      - send_key: "C-S-Right"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaaX bbb ccc"
+    match_type: "contains"
+
+  # =============================================================
+  # ALT+SHIFT+B / ALT+SHIFT+F: emacs-native word-wise selection
+  # (ESC-uppercase is xterm's Alt+Shift+letter encoding.)
+  # =============================================================
+
+  - name: "Alt+Shift+B (ESC uppercase B) extends selection one word back"
+    steps:
+      - send: "aaa bbb"
+      - send_key: "M-B"
+      - send_key: "Left"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaa Xbbb"
+    match_type: "contains"
+
+  - name: "Alt+Shift+F (ESC uppercase F) extends selection one word forward"
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "C-a"
+      - send_key: "M-F"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaaX bbb ccc"
+    match_type: "contains"
+
+  # =============================================================
+  # REGRESSION GUARDS: plain motion with no selection still works
+  # =============================================================
+
+  - name: "Plain Left with no selection still moves one char"
+    steps:
+      - send: "abcd"
+      - send_key: "Left"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcXd"
+    match_type: "contains"
+
+  - name: "Plain Right with no selection still moves one char"
+    steps:
+      - send: "abcd"
+      - send_key: "C-a"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aXbcd"
+    match_type: "contains"
+
+  - name: "Plain Alt+b word-back with no selection still moves one word"
+    # Baseline check: Alt+b (lowercase) still jumps to word start and
+    # does NOT engage selection mode.
+    steps:
+      - send: "aaa bbb"
+      - send_key: "M-b"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaa Xbbb"
+    match_type: "contains"
+
+  - name: "Plain Alt+f word-forward with no selection still moves one word"
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "C-a"
+      - send_key: "M-f"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaaX bbb ccc"
+    match_type: "contains"
+
+  # =============================================================
+  # HISTORY NAVIGATION CLEARS SELECTION (#27)
+  # After Up/Down round-trip, selection must be gone — subsequent
+  # plain motion should NOT snap to an orphan anchor.
+  # =============================================================
+
+  - name: "History Up clears active selection (#27)"
+    # Type "abcd", S-Left x2 → anchor=4, cursor=2, active.
+    # Up enters prefix-search mode. No history entry matches "abcd",
+    # so buffer/cursor stay put — but selection must still be cleared
+    # per #27. Subsequent plain Right then has NO anchor to snap to,
+    # so it moves one char normally: cursor 2 → 3. X at 3 → "abcXd".
+    #
+    # Without #27: collapse_selection is skipped in handle_history_up,
+    # selection stays active (anchor=4, cursor=2). Next plain Right
+    # snaps to max(4,2)=4, X at 4 → "abcdX". Test would fail.
+    steps:
+      - send_line: "echo first"
+      - send: "abcd"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "Up"
+      - send_key: "Right"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcXd"
+    match_type: "contains"
+
+  # =============================================================
+  # REGRESSION GUARD: modifier 4 (Alt+Shift+Arrow) still navigates
+  # directories, not selection — ensure we didn't steal its encoding.
+  # =============================================================
+
+  - name: "Alt+Shift+Up still triggers cd .. (dir nav binding intact)"
+    # Send pwd, then Alt+Shift+Up which fortsh binds to 'cd ..' and
+    # auto-executes, then pwd again. Second pwd should be parent of first.
+    steps:
+      - send_line: "pwd"
+      - send_key: "M-S-Up"
+      - send_line: "pwd"
+    expect_output: "/"
+    match_type: "contains"
