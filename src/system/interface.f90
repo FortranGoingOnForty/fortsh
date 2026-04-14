@@ -1091,12 +1091,23 @@ contains
     ! Assign to result variable at the very end
     success = mode_ok
 
-    ! Enable bracketed paste mode (if raw mode succeeded)
+    ! Enable bracketed paste mode (if raw mode succeeded).
+    ! FORTSH_NO_BRACKETED_PASTE=1 disables the emit — a kill switch for
+    ! bug triage on terminals that mishandle the mode (pattern #20).
     if (success) then
-      ! ESC[?2004h = Enable bracketed paste
-      ! Terminal will wrap pasted text in ESC[200~ ... ESC[201~
-      write(output_unit, '(A)', advance='no') char(27) // '[?2004h'
-      flush(output_unit)
+      block
+        character(len=8) :: no_bp_env
+        integer :: bp_stat
+        logical :: bp_disabled
+        call get_environment_variable('FORTSH_NO_BRACKETED_PASTE', no_bp_env, status=bp_stat)
+        bp_disabled = (bp_stat == 0 .and. trim(no_bp_env) == '1')
+        if (.not. bp_disabled) then
+          ! ESC[?2004h = Enable bracketed paste
+          ! Terminal will wrap pasted text in ESC[200~ ... ESC[201~
+          write(output_unit, '(A)', advance='no') char(27) // '[?2004h'
+          flush(output_unit)
+        end if
+      end block
 
       ! Debug: Check if FORTSH_DEBUG_PASTE is set
       block
@@ -1120,11 +1131,19 @@ contains
     type(termios_t), intent(in) :: original_termios
     logical :: success
     integer :: ret
+    character(len=8) :: no_bp_env
+    integer :: bp_stat
+    logical :: bp_disabled
 
-    ! Disable bracketed paste mode before restoring terminal
-    ! ESC[?2004l = Disable bracketed paste
-    write(output_unit, '(A)', advance='no') char(27) // '[?2004l'
-    flush(output_unit)
+    ! Disable bracketed paste mode before restoring terminal,
+    ! unless FORTSH_NO_BRACKETED_PASTE=1 (we never enabled it).
+    call get_environment_variable('FORTSH_NO_BRACKETED_PASTE', no_bp_env, status=bp_stat)
+    bp_disabled = (bp_stat == 0 .and. trim(no_bp_env) == '1')
+    if (.not. bp_disabled) then
+      ! ESC[?2004l = Disable bracketed paste
+      write(output_unit, '(A)', advance='no') char(27) // '[?2004l'
+      flush(output_unit)
+    end if
 
     ret = c_tcsetattr(STDIN_FD, TCSANOW, original_termios)
     success = (ret == 0)
