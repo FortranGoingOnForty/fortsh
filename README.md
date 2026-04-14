@@ -46,6 +46,7 @@ Pretty much everything:
 - History with Ctrl+R and autosuggestions
 - Tab completion for commands, paths, and variables
 - Syntax highlighting as you type
+- Native text selection with Shift+Arrow + system clipboard (pbcopy / xclip / wl-copy / xsel)
 - Arrays (indexed and associative)
 - Full parameter expansion (`${var#pattern}`, `${var//find/replace}`, `${var^^}`, etc.)
 - Process substitution (`<(cmd)`, `>(cmd)`)
@@ -58,6 +59,7 @@ Pretty much everything:
 - Vi and Emacs editing modes
 - Per-builtin help texts (`help cd`, `help export`, etc.)
 - fzf integration (file browser, history search, directory jump, git browser)
+- Bracketed paste mode (large pastes land atomically)
 
 ## What Doesn't Work
 
@@ -152,6 +154,29 @@ Works with Tab completion. Valid directories highlight green.
 | Alt-J | Search directories |
 | Ctrl-H | Search history |
 | Alt-G | Search git files |
+
+**Text selection** (live since v1.7.0 — works like a GUI editor in the terminal):
+
+| Key | Action |
+|-----|--------|
+| Shift+Left / Shift+Right | Extend selection by character |
+| Shift+Home / Shift+End | Extend selection to line start / end |
+| Shift+Up / Shift+Down | Extend selection line-wise (Home / End on single-line prompt) |
+| Ctrl+Shift+Left / Ctrl+Shift+Right | Extend selection by word |
+| Alt+Shift+B / Alt+Shift+F | Extend selection by word (emacs-native alias) |
+| any plain motion (Left, Home, Alt+b, ...) | Collapse selection — char-motions snap to the appropriate edge |
+| Ctrl+W or Ctrl+X | Cut selection (writes to kill buffer + system clipboard) |
+| Alt+W | Copy selection (kill buffer + system clipboard, no delete) |
+| Ctrl+Y | Paste from kill buffer (deletes selection first if active) |
+| Ctrl+V | Paste from system clipboard (falls back to kill buffer if no tool) |
+| typing a printable char | Replaces the selection in place (type-over) |
+| Backspace / Delete | Removes the entire selection |
+
+System clipboard bridge auto-detects `pbcopy` (macOS), `wl-copy` (Wayland), `xclip` or `xsel` (X11) at startup. If none are installed, cut/copy still work via the in-session kill buffer.
+
+Env flags:
+- `FORTSH_DEBUG_SELECTION=1` — dump selection state to stderr on each mutation
+- `FORTSH_NO_BRACKETED_PASTE=1` — disable `ESC[?2004h` emit (terminal-compat triage)
 
 ### Tab Completion
 
