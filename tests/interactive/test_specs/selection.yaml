@@ -540,3 +540,63 @@ tests:
       - send_key: "Enter"
     expect_output: "hello"
     match_type: "contains"
+
+  # =============================================================
+  # SPRINT 6 — BRACKETED PASTE MODE
+  # The enable (ESC[?2004h) and payload parser (ESC[200~...ESC[201~)
+  # predate the shift phase. Sprint 6 adds the FORTSH_NO_BRACKETED_PASTE
+  # kill switch and verifies the Sprint 3 insert_char_wrapper hook
+  # makes bracketed paste replace an active selection.
+  # =============================================================
+
+  - name: "Sprint 6: bracketed paste inserts at cursor"
+    # Baseline: send a bracketed paste payload. The terminal would send
+    # ESC[200~<text>ESC[201~ when a user pastes. Our parser consumes
+    # the framing and inserts the inner text.
+    steps:
+      - send: "echo "
+      - send: "\u001b[200~pasted_text\u001b[201~"
+      - send_key: "Enter"
+    expect_output: "pasted_text"
+    match_type: "contains"
+
+  - name: "Sprint 6: bracketed paste replaces active selection"
+    # Type "echo hello world", select "world" via Shift+Left x5, then
+    # fire a bracketed paste. The first char of the paste triggers
+    # delete_selection (Sprint 3 insert_char_wrapper hook); subsequent
+    # chars insert normally. Buffer becomes "echo hello BRACKET".
+    steps:
+      - send: "echo hello world"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send: "\u001b[200~BRACKET\u001b[201~"
+      - send_key: "Enter"
+    expect_output: "hello BRACKET"
+    match_type: "contains"
+
+  - name: "Sprint 6: bracketed paste without selection just inserts"
+    # Regression guard: with no active selection, bracketed paste inserts
+    # at cursor without any deletion. Type "aa", paste "BB", Enter → "aaBB".
+    steps:
+      - send: "echo aa"
+      - send: "\u001b[200~BB\u001b[201~"
+      - send_key: "Enter"
+    expect_output: "aaBB"
+    match_type: "contains"
+
+  - name: "Sprint 6: FORTSH_NO_BRACKETED_PASTE kill switch does not crash"
+    # When the kill switch is set, fortsh does NOT emit the enable
+    # sequence (verified manually via pexpect — PTY regex can't easily
+    # assert absence of ESC[?2004h in output). This test just ensures
+    # fortsh still functions with the kill switch set: prompt returns,
+    # echo executes, no crash on startup/teardown.
+    env:
+      FORTSH_NO_BRACKETED_PASTE: "1"
+    fresh_session: true
+    steps:
+      - send_line: "echo hi"
+    expect_output: "hi"
+    match_type: "contains"
