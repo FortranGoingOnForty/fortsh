@@ -732,6 +732,10 @@ contains
     call state_buffer_get(state, temp_buf)
     call state_kill_buffer_set(state, temp_buf(sel_start+1:sel_end))
     state%kill_length = span
+
+    ! Sprint 5: also write to system clipboard (no-op if no tool detected).
+    call clipboard_copy(temp_buf(sel_start+1:sel_end), span)
+
     call debug_selection_log('copy-to-kill', state)
   end subroutine copy_selection_to_kill_buffer
 
