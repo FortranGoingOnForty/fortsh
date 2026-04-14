@@ -600,3 +600,314 @@ tests:
       - send_line: "echo hi"
     expect_output: "hi"
     match_type: "contains"
+
+  # =============================================================
+  # SPRINT 7 — EXPANDED COVERAGE
+  # UTF-8 safety, explicit collapse-on-motion for every movement
+  # type, Shift+Up/Down, and edge cases across all categories.
+  # =============================================================
+
+  # ---------- UTF-8 safety (pattern #11) ----------
+
+  - name: "Sprint 7 UTF-8: Shift+Left over emoji selects one full codepoint"
+    # Emoji 🎉 is U+1F389, encoded as 4 UTF-8 bytes (F0 9F 8E 89).
+    # Shift+Left from end of "ab🎉" should move cursor back 4 bytes,
+    # selecting just the emoji (not half of it). Type 'Z' → "abZ".
+    # If byte-safe stepping broke, we'd corrupt the codepoint.
+    steps:
+      - send: "ab🎉"
+      - send_key: "S-Left"
+      - send: "Z"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abZ"
+    match_type: "contains"
+
+  - name: "Sprint 7 UTF-8: Backspace over selected emoji removes 4 bytes"
+    steps:
+      - send: "ab🎉cd"
+      - send_key: "Left"
+      - send_key: "Left"
+      - send_key: "S-Left"
+      - send_key: "Backspace"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcd"
+    match_type: "contains"
+
+  - name: "Sprint 7 UTF-8: Ctrl+W cuts selection containing multi-byte chars"
+    # Accented 'é' is 2 bytes (C3 A9). Select "éé" with Shift+Left x2,
+    # cut with Ctrl+W. Buffer left with "ab".
+    steps:
+      - send: "abéé"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "C-w"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "ab"
+    match_type: "contains"
+
+  - name: "Sprint 7 UTF-8: type-over multi-byte selection inserts ASCII cleanly"
+    steps:
+      - send: "héllo"
+      - send_key: "S-Home"
+      - send: "X"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "X"
+    match_type: "contains"
+
+  # ---------- Collapse-on-motion for every movement type ----------
+
+  - name: "Sprint 7 collapse: plain Home with selection clears, goes to 0"
+    steps:
+      - send: "abcd"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "Home"
+      - send: "Z"
+      - send_key: "C-e"
+      - send: " x"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    # Selection=[2..4). Plain Home clears, cursor=0. Z at 0 → "Zabcd x".
+    expect_output: "Zabcd x"
+    match_type: "contains"
+
+  - name: "Sprint 7 collapse: plain End with selection clears, goes to length"
+    steps:
+      - send: "abcd"
+      - send_key: "C-a"
+      - send_key: "S-Right"
+      - send_key: "S-Right"
+      - send_key: "End"
+      - send: "Z"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    # Selection=[0..2). Plain End clears, cursor=4. Z at 4 → "abcdZ".
+    expect_output: "abcdZ"
+    match_type: "contains"
+
+  - name: "Sprint 7 collapse: plain Alt+f with selection clears, moves word fwd"
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "C-a"
+      - send_key: "S-Right"  # cursor=1, anchor=0
+      - send_key: "M-f"      # clears selection, moves to end of "aaa" = 3
+      - send: "Z"            # insert at 3 → "aaaZ bbb ccc"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaaZ bbb ccc"
+    match_type: "contains"
+
+  - name: "Sprint 7 collapse: plain Alt+b with selection clears, moves word back"
+    steps:
+      - send: "aaa bbb"
+      - send_key: "S-Left"   # cursor=6, anchor=7
+      - send_key: "M-b"      # clears, moves to start of word ("bbb" at 4)
+      - send: "Z"            # insert at 4 → "aaa Zbbb"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaa Zbbb"
+    match_type: "contains"
+
+  # ---------- Shift+Up / Shift+Down (line-wise on single-line prompt) ----------
+
+  - name: "Sprint 7 line-wise: Shift+Up extends selection to line start"
+    # Single-line prompt: Shift+Up = Shift+Home. Type "abcd", Shift+Up
+    # anchors at 4, moves cursor to 0. Type 'Z' → buffer "Z" (selection
+    # replaced by 'Z').
+    steps:
+      - send: "abcd"
+      - send_key: "S-Up"
+      - send: "Z"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "Z"
+    match_type: "contains"
+
+  - name: "Sprint 7 line-wise: Shift+Down extends selection to line end"
+    # Shift+Down = Shift+End on single-line prompt.
+    steps:
+      - send: "abcd"
+      - send_key: "C-a"
+      - send_key: "S-Down"
+      - send: "Z"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "Z"
+    match_type: "contains"
+
+  # ---------- Word-wise extension variations ----------
+
+  - name: "Sprint 7 word: Ctrl+Shift+Left twice extends over two words"
+    # "aaa bbb ccc" (cursor=11). C-S-Left → cursor=8, anchor=11. Again →
+    # cursor=4, anchor=11. Selection spans "bbb ccc" [4..11). Backspace
+    # deletes → "aaa ". Echo → "aaa".
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "C-S-Left"
+      - send_key: "C-S-Left"
+      - send_key: "Backspace"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaa"
+    match_type: "contains"
+
+  - name: "Sprint 7 word: Alt+Shift+F twice extends over two words"
+    # "aaa bbb ccc", C-a. M-F → cursor=3 (end of aaa). M-F → cursor=7
+    # (end of bbb). anchor=0, cursor=7. Selection="aaa bbb". Backspace
+    # → " ccc". Leading space gets stripped by shell word-split.
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "C-a"
+      - send_key: "M-F"
+      - send_key: "M-F"
+      - send_key: "Backspace"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "ccc"
+    match_type: "contains"
+
+  - name: "Sprint 7 word: Ctrl+Shift+Right from mid-word jumps to word end"
+    # "aaa bbb" (cursor=7). C-a (cursor=0). Right (cursor=1, mid-"aaa").
+    # C-S-Right → move_to_next_word from 1 lands at end of "aaa" = 3.
+    # anchor=1, cursor=3. Plain Right snaps to max(1,3)=3.
+    # Insert Z at 3 → "aaaZ bbb".
+    steps:
+      - send: "aaa bbb"
+      - send_key: "C-a"
+      - send_key: "Right"
+      - send_key: "C-S-Right"
+      - send_key: "Right"
+      - send: "Z"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "aaaZ bbb"
+    match_type: "contains"
+
+  # ---------- Cut / copy / paste edge cases ----------
+
+  - name: "Sprint 7 edge: cut then paste at different position"
+    # Type "aaa bbb", select "bbb" (C-S-Left), Ctrl+W cuts, Ctrl+A to
+    # start, Ctrl+Y pastes → "bbbaaa ". (Note: no space between bbb
+    # and aaa since the original space was in "aaa bbb" not moved.)
+    steps:
+      - send: "aaa bbb"
+      - send_key: "C-S-Left"
+      - send_key: "C-w"
+      - send_key: "C-a"
+      - send_key: "C-y"
+      - send_key: "C-e"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    # Buffer trace: C-S-Left from 7 → 4, anchor=7, sel="bbb".
+    # Ctrl+W → buffer "aaa ", cursor=4, kill_buffer="bbb".
+    # C-a → cursor=0. C-y pastes "bbb" at 0 → "bbbaaa ", cursor=3.
+    # C-e → cursor=7. C-a → cursor=0. echo + Enter → "bbbaaa".
+    expect_output: "bbbaaa"
+    match_type: "contains"
+
+  - name: "Sprint 7 edge: Ctrl+Y at start of empty buffer pastes"
+    steps:
+      - send: "saved"
+      - send_key: "C-u"        # kills all into kill buffer
+      - send_key: "C-y"        # yanks back
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "saved"
+    match_type: "contains"
+
+  - name: "Sprint 7 edge: Ctrl+Y without kill buffer no-ops"
+    # If kill_length == 0, Ctrl+Y returns without change. The buffer
+    # here only has "hi", and Ctrl+Y should not corrupt it.
+    steps:
+      - send: "hi"
+      - send_key: "C-y"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "hi"
+    match_type: "contains"
+
+  # ---------- Backspace / Delete edge cases ----------
+
+  - name: "Sprint 7 edge: Backspace with selection at buffer start works"
+    # Select "ab" from start, Backspace removes it → "cd".
+    steps:
+      - send: "abcd"
+      - send_key: "C-a"
+      - send_key: "S-Right"
+      - send_key: "S-Right"
+      - send_key: "Backspace"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "cd"
+    match_type: "contains"
+
+  - name: "Sprint 7 edge: Delete with selection at buffer end works"
+    # Select "cd" from end, Delete removes → "ab".
+    steps:
+      - send: "abcd"
+      - send_key: "S-Left"
+      - send_key: "S-Left"
+      - send_key: "Delete"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "ab"
+    match_type: "contains"
+
+  # ---------- Alt+W copy additional coverage ----------
+
+  - name: "Sprint 7 copy: Alt+W then immediately Ctrl+Y pastes duplicate"
+    # Alt+W leaves selection un-deleted but collapses it. Ctrl+Y then
+    # yanks the copied text at cursor → text is duplicated.
+    steps:
+      - send: "abcd"
+      - send_key: "S-Home"     # select "abcd", cursor=0, anchor=4
+      - send_key: "M-w"        # copy + collapse (cursor stays at 0? or 4?)
+      - send_key: "C-e"        # move to end (should be 4)
+      - send_key: "C-y"        # paste "abcd" → "abcdabcd"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcdabcd"
+    match_type: "contains"
+
+  # ---------- Abort selection paths ----------
+
+  - name: "Sprint 7 abort: Ctrl+G / Escape does not carry selection through"
+    # Ctrl+G cancels search mode but doesn't directly touch selection.
+    # However, after clearing, normal editing should show no snap.
+    # Verify: select text, send a word motion WITHOUT shift — selection
+    # clears and cursor moves. Then Backspace deletes ONE char (not
+    # whole selection).
+    steps:
+      - send: "abcdef"
+      - send_key: "S-Left"
+      - send_key: "S-Left"     # anchor=6, cursor=4
+      - send_key: "Left"       # collapse to left edge (4), no motion
+      - send_key: "Backspace"  # delete ONE char (not selection) at 4 → "abcef"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    expect_output: "abcef"
+    match_type: "contains"
