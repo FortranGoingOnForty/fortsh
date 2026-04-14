@@ -10,6 +10,29 @@ ARROW_DOWN = "\x1b[B"
 ARROW_RIGHT = "\x1b[C"
 ARROW_LEFT = "\x1b[D"
 
+# Shift-modified arrow / nav keys (xterm modifier 2 = Shift)
+# Used for native text selection (shift phase, Sprint 1+).
+SHIFT_ARROW_UP = "\x1b[1;2A"
+SHIFT_ARROW_DOWN = "\x1b[1;2B"
+SHIFT_ARROW_RIGHT = "\x1b[1;2C"
+SHIFT_ARROW_LEFT = "\x1b[1;2D"
+SHIFT_HOME = "\x1b[1;2H"
+SHIFT_END = "\x1b[1;2F"
+
+# Ctrl+Shift arrow (xterm modifier 6) — word-wise selection extension
+CTRL_SHIFT_ARROW_RIGHT = "\x1b[1;6C"
+CTRL_SHIFT_ARROW_LEFT = "\x1b[1;6D"
+
+# Alt+Shift letter (ESC + uppercase) — emacs-native word-wise selection
+ALT_SHIFT_B = "\x1bB"
+ALT_SHIFT_F = "\x1bF"
+
+# Alt+Shift arrow (xterm modifier 4) — fortsh binds these to dir history
+ALT_SHIFT_UP = "\x1b[1;4A"
+ALT_SHIFT_DOWN = "\x1b[1;4B"
+ALT_SHIFT_LEFT = "\x1b[1;4D"
+ALT_SHIFT_RIGHT = "\x1b[1;4C"
+
 # Control keys (ASCII control characters)
 CTRL_A = "\x01"  # Beginning of line
 CTRL_B = "\x02"  # Back one character
@@ -32,9 +55,9 @@ CTRL_R = "\x12"  # Reverse search
 CTRL_S = "\x13"  # Forward search / Suspend output
 CTRL_T = "\x14"  # Transpose characters
 CTRL_U = "\x15"  # Kill to beginning of line
-CTRL_V = "\x16"  # Quoted insert
-CTRL_W = "\x17"  # Kill word backward
-CTRL_X = "\x18"  # Prefix
+CTRL_V = "\x16"  # Paste from clipboard / kill buffer
+CTRL_W = "\x17"  # Kill word backward / cut selection
+CTRL_X = "\x18"  # Cut selection / process kill mode
 CTRL_Y = "\x19"  # Yank
 CTRL_Z = "\x1a"  # Suspend (SIGTSTP)
 
@@ -46,6 +69,7 @@ ALT_F = "\x1bf"  # Forward one word
 ALT_L = "\x1bl"  # Lowercase word
 ALT_T = "\x1bt"  # Transpose words
 ALT_U = "\x1bu"  # Uppercase word
+ALT_W = "\x1bw"  # Copy selection (shift phase) / Accept word from suggestion
 ALT_Y = "\x1by"  # Yank pop
 ALT_DOT = "\x1b."  # Insert last argument
 ALT_BACKSPACE = "\x1b\x7f"  # Delete word backward
@@ -91,6 +115,28 @@ KEYS = {
     "Right": ARROW_RIGHT,
     "Left": ARROW_LEFT,
 
+    # Shift-modified navigation (for native text selection)
+    "S-Up": SHIFT_ARROW_UP,
+    "S-Down": SHIFT_ARROW_DOWN,
+    "S-Right": SHIFT_ARROW_RIGHT,
+    "S-Left": SHIFT_ARROW_LEFT,
+    "S-Home": SHIFT_HOME,
+    "S-End": SHIFT_END,
+
+    # Ctrl+Shift navigation (word-wise selection)
+    "C-S-Right": CTRL_SHIFT_ARROW_RIGHT,
+    "C-S-Left": CTRL_SHIFT_ARROW_LEFT,
+
+    # Alt+Shift letter (emacs word-wise selection)
+    "M-B": ALT_SHIFT_B,
+    "M-F": ALT_SHIFT_F,
+
+    # Alt+Shift arrows (fortsh directory history, NOT selection)
+    "M-S-Up": ALT_SHIFT_UP,
+    "M-S-Down": ALT_SHIFT_DOWN,
+    "M-S-Left": ALT_SHIFT_LEFT,
+    "M-S-Right": ALT_SHIFT_RIGHT,
+
     # Control keys
     "C-a": CTRL_A,
     "C-b": CTRL_B,
@@ -108,7 +154,9 @@ KEYS = {
     "C-s": CTRL_S,
     "C-t": CTRL_T,
     "C-u": CTRL_U,
+    "C-v": CTRL_V,
     "C-w": CTRL_W,
+    "C-x": CTRL_X,
     "C-y": CTRL_Y,
     "C-z": CTRL_Z,
 
@@ -120,6 +168,7 @@ KEYS = {
     "M-l": ALT_L,
     "M-t": ALT_T,
     "M-u": ALT_U,
+    "M-w": ALT_W,
     "M-y": ALT_Y,
     "M-.": ALT_DOT,
     "M-Backspace": ALT_BACKSPACE,

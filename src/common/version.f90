@@ -7,7 +7,7 @@ module version
   private
   public :: FORTSH_VERSION, print_version, print_help
 
-  character(len=*), parameter :: FORTSH_VERSION = "1.5.0"
+  character(len=*), parameter :: FORTSH_VERSION = "1.7.0"
 
 contains
 
@@ -39,6 +39,7 @@ contains
     write(output_unit, '(a)') '  - Tab completion for commands, files, and variables'
     write(output_unit, '(a)') '  - History search with Ctrl-R'
     write(output_unit, '(a)') '  - Vi and Emacs editing modes'
+    write(output_unit, '(a)') '  - Native text selection (Shift+Arrow) with system clipboard'
     write(output_unit, '(a)') '  - Job control (fg, bg, jobs)'
     write(output_unit, '(a)') '  - Shell functions and aliases'
     write(output_unit, '(a)') '  - Pipes, process substitution, and coprocesses'

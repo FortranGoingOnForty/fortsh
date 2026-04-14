@@ -47,7 +47,8 @@ module readline
   integer, parameter :: KEY_TAB = 9
   integer, parameter :: KEY_CTRL_C = 3
   integer, parameter :: KEY_CTRL_D = 4
-  integer, parameter :: KEY_CTRL_X = 24   ! Process kill mode
+  integer, parameter :: KEY_CTRL_V = 22   ! Paste from system clipboard / kill buffer
+  integer, parameter :: KEY_CTRL_X = 24   ! Cut selection / Process kill mode
   integer, parameter :: KEY_CTRL_A = 1    ! Home (beginning of line)
   integer, parameter :: KEY_CTRL_E = 5    ! End (end of line)
   integer, parameter :: KEY_CTRL_K = 11   ! Kill to end of line
@@ -209,6 +210,13 @@ module readline
     type(string_ref) :: menu_prefix_ref
     type(string_ref) :: selected_process_name_ref
 #endif
+
+    ! Text selection state (shift phase, Sprint 1)
+    ! Appended at end of type per overview.md pattern #5 — do not reorder.
+    ! Selection range is [min(anchor, cursor_pos) .. max(anchor, cursor_pos))
+    ! measured in BYTES (consistent with cursor_pos and length — pattern #11).
+    integer :: selection_anchor = -1      ! -1 = no anchor set
+    logical :: selection_active = .false. ! .true. iff a selection is live
   end type input_state_t
 
   type :: history_t
@@ -257,6 +265,29 @@ module readline
 
   ! Track whether the search status line is currently displayed below the prompt
   logical, save :: module_search_status_shown = .false.
+
+  ! Shift-phase selection state (Sprint 1)
+  ! When .true., the next base movement handler call should extend the active
+  ! selection rather than collapse it. Set by the shift-arrow dispatch in
+  ! handle_extended_escape_sequence immediately before calling a base handler,
+  ! cleared immediately after. Module-level rather than per-state so handlers
+  ! don't need a new parameter (avoids flang-new derived-type ABI issues — #6).
+  logical, save :: module_extending_selection = .false.
+
+  ! FORTSH_DEBUG_SELECTION env flag — dumps selection state to stderr when set.
+  ! Probed once at init; cached. Pattern #20 from overview.md.
+  logical, save :: debug_selection = .false.
+  logical, save :: debug_selection_initialized = .false.
+
+  ! Clipboard bridge state (shift phase, Sprint 5).
+  ! Probed once at init; the detected tool is cached. Pattern #19.
+  integer, parameter :: CLIP_NONE   = 0
+  integer, parameter :: CLIP_PBCOPY = 1  ! macOS
+  integer, parameter :: CLIP_WLCOPY = 2  ! Wayland
+  integer, parameter :: CLIP_XCLIP  = 3  ! X11
+  integer, parameter :: CLIP_XSEL   = 4  ! X11 fallback
+  integer, save :: clipboard_tool = CLIP_NONE
+  logical, save :: clipboard_initialized = .false.
 
 contains
 
@@ -590,6 +621,297 @@ contains
 
   !============================================================================
   ! END BUFFER OPERATION WRAPPERS
+  !============================================================================
+
+  !============================================================================
+  ! TEXT SELECTION HELPERS (shift phase, Sprint 1)
+  !============================================================================
+  ! Three-state machine:
+  !   - Inactive:  selection_anchor = -1, selection_active = .false.
+  !   - Active:    selection_anchor in [0, length], selection_active = .true.,
+  !                selected range = [min(anchor, cursor_pos), max(anchor, cursor_pos))
+  !
+  ! Extending vs collapsing:
+  !   - Shift+motion calls set module_extending_selection=.true. before calling
+  !     a base movement handler, then call update_selection_on_shift_motion()
+  !     after to install/extend the selection against the old cursor position.
+  !   - Plain motion handlers check module_extending_selection at the top; if
+  !     .false. and selection_active, they collapse (char motions snap to the
+  !     appropriate edge; word/line motions just clear state and proceed).
+  !============================================================================
+
+  ! Initialize debug flag from environment (idempotent).
+  subroutine init_debug_selection()
+    integer :: status
+    character(len=8) :: env_val
+    if (debug_selection_initialized) return
+    call get_environment_variable('FORTSH_DEBUG_SELECTION', env_val, status=status)
+    debug_selection = (status == 0 .and. trim(env_val) == '1')
+    debug_selection_initialized = .true.
+  end subroutine init_debug_selection
+
+  ! Emit a debug trace line if FORTSH_DEBUG_SELECTION=1.
+  subroutine debug_selection_log(tag, state)
+    use iso_fortran_env, only: error_unit
+    character(len=*), intent(in) :: tag
+    type(input_state_t), intent(in) :: state
+    if (.not. debug_selection_initialized) call init_debug_selection()
+    if (.not. debug_selection) return
+    if (state%selection_active) then
+      write(error_unit, '(a,a,a,i0,a,i0,a,i0,a,l1)') &
+        '[SEL:', trim(tag), '] cursor_pos=', state%cursor_pos, &
+        ' anchor=', state%selection_anchor, &
+        ' length=', state%length, &
+        ' active=', state%selection_active
+    else
+      write(error_unit, '(a,a,a,i0,a,i0,a,l1)') &
+        '[SEL:', trim(tag), '] cursor_pos=', state%cursor_pos, &
+        ' length=', state%length, &
+        ' active=', state%selection_active
+    end if
+  end subroutine debug_selection_log
+
+  ! Clear selection state (no cursor motion, no dirty flag).
+  ! Caller is responsible for setting dirty if a redraw is needed.
+  subroutine collapse_selection(state)
+    type(input_state_t), intent(inout) :: state
+    if (.not. state%selection_active) return
+    state%selection_anchor = -1
+    state%selection_active = .false.
+    call debug_selection_log('collapse', state)
+  end subroutine collapse_selection
+
+  ! Called AFTER a base movement handler has moved the cursor while
+  ! module_extending_selection is .true. Establishes a new selection anchored
+  ! at old_cursor_pos if one isn't already active, or extends the existing
+  ! one. If the motion brings cursor back to anchor, auto-collapses.
+  subroutine update_selection_on_shift_motion(state, old_cursor_pos)
+    type(input_state_t), intent(inout) :: state
+    integer, intent(in) :: old_cursor_pos
+
+    if (state%cursor_pos == old_cursor_pos) then
+      ! No actual motion occurred (e.g. Shift+Left at pos 0). Leave state alone.
+      return
+    end if
+
+    if (.not. state%selection_active) then
+      ! Starting a fresh selection — anchor at the position before this motion.
+      state%selection_anchor = old_cursor_pos
+      state%selection_active = .true.
+    end if
+
+    ! If the motion brought cursor back to anchor, the selection is empty — collapse.
+    if (state%selection_anchor == state%cursor_pos) then
+      call collapse_selection(state)
+    end if
+
+    ! Selection rendering needs a full redraw (Sprint 2 handles the highlight).
+    state%dirty = .true.
+    call debug_selection_log('extend', state)
+  end subroutine update_selection_on_shift_motion
+
+  ! Copy the selected byte range into the kill buffer. No-op if selection
+  ! is not active. Does NOT modify the main buffer or clear the selection —
+  ! callers decide whether this is a copy (Alt+W) or a cut (Ctrl+W) by
+  ! whether they follow up with delete_selection + collapse.
+  subroutine copy_selection_to_kill_buffer(state)
+    type(input_state_t), intent(inout) :: state
+    integer :: sel_start, sel_end, span
+    character(len=MAX_LINE_LEN) :: temp_buf
+
+    if (.not. state%selection_active) return
+    if (state%selection_anchor < 0) return
+
+    sel_start = min(state%selection_anchor, state%cursor_pos)
+    sel_end   = max(state%selection_anchor, state%cursor_pos)
+    span      = sel_end - sel_start
+
+    if (span <= 0) return
+
+    ! state_buffer_get returns 1-indexed character data; sel_start/sel_end
+    ! are 0-based byte offsets, so the slice is [sel_start+1 .. sel_end].
+    call state_buffer_get(state, temp_buf)
+    call state_kill_buffer_set(state, temp_buf(sel_start+1:sel_end))
+    state%kill_length = span
+
+    ! Sprint 5: also write to system clipboard (no-op if no tool detected).
+    call clipboard_copy(temp_buf(sel_start+1:sel_end), span)
+
+    call debug_selection_log('copy-to-kill', state)
+  end subroutine copy_selection_to_kill_buffer
+
+  ! Remove the selected byte range from the buffer, set cursor to the left
+  ! edge, and clear selection state. No-op if selection is not active.
+  ! Unused in Sprint 1 itself, but lands now for use in Sprint 3.
+  subroutine delete_selection(state)
+    type(input_state_t), intent(inout) :: state
+    integer :: sel_start, sel_end, span, i
+    character(len=MAX_LINE_LEN) :: temp_buf
+
+    if (.not. state%selection_active) return
+    if (state%selection_anchor < 0) then
+      ! Defensive: active flag set without an anchor; just clear state.
+      call collapse_selection(state)
+      return
+    end if
+
+    sel_start = min(state%selection_anchor, state%cursor_pos)
+    sel_end   = max(state%selection_anchor, state%cursor_pos)
+    span      = sel_end - sel_start
+
+    if (span <= 0) then
+      call collapse_selection(state)
+      return
+    end if
+
+    ! Read current buffer, shift bytes after sel_end leftward, rewrite.
+    call state_buffer_get(state, temp_buf)
+    do i = sel_end + 1, state%length
+      call state_buffer_set_char(state, i - span, temp_buf(i:i))
+    end do
+    ! Pad the now-unused tail so stale bytes don't leak on later reads.
+    do i = state%length - span + 1, state%length
+      call state_buffer_set_char(state, i, ' ')
+    end do
+
+    state%length     = state%length - span
+    state%cursor_pos = sel_start
+    state%dirty      = .true.
+    call collapse_selection(state)
+    call debug_selection_log('delete', state)
+  end subroutine delete_selection
+
+  !============================================================================
+  ! END TEXT SELECTION HELPERS
+  !============================================================================
+
+  !============================================================================
+  ! CLIPBOARD BRIDGE (shift phase, Sprint 5)
+  !============================================================================
+  ! Provides system-clipboard copy and paste via external tools.
+  ! Probe order: pbcopy (macOS), wl-copy (Wayland), xclip (X11), xsel (X11).
+  ! If no tool is found, operations no-op gracefully — the in-session
+  ! kill_buffer remains the source of truth. Pattern #19, #22.
+  !============================================================================
+
+  ! Detect the clipboard tool at startup (idempotent).
+  subroutine clipboard_detect()
+    character(len=:), allocatable :: result
+
+    if (clipboard_initialized) return
+    clipboard_initialized = .true.
+
+    ! Probe in preference order. execute_and_capture runs `which <tool>`
+    ! and returns the path if found, or an empty string if not.
+    result = execute_and_capture('which pbcopy 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_PBCOPY
+      return
+    end if
+
+    result = execute_and_capture('which wl-copy 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_WLCOPY
+      return
+    end if
+
+    result = execute_and_capture('which xclip 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_XCLIP
+      return
+    end if
+
+    result = execute_and_capture('which xsel 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_XSEL
+      return
+    end if
+
+    ! No tool found — clipboard_tool stays CLIP_NONE.
+  end subroutine clipboard_detect
+
+  ! Copy text to the system clipboard. No-op if no tool was detected.
+  subroutine clipboard_copy(text, text_len)
+    use iso_c_binding, only: c_ptr, c_null_char, c_loc, c_int, c_associated
+    character(len=*), intent(in) :: text
+    integer, intent(in) :: text_len
+    type(c_ptr) :: pipe_ptr
+    integer(c_int) :: rc
+    character(len=256), target :: c_command
+    character(len=4), target :: c_mode
+    ! Buffer for writing — must be null-terminated for c_fputs.
+    ! Use MAX_LINE_LEN+1 to accommodate the NUL terminator.
+    character(len=MAX_LINE_LEN+1), target :: c_text
+
+    if (.not. clipboard_initialized) call clipboard_detect()
+    if (clipboard_tool == CLIP_NONE) return
+    if (text_len <= 0) return
+
+    ! Build the popen command for the detected tool.
+    select case (clipboard_tool)
+    case (CLIP_PBCOPY)
+      c_command = 'pbcopy' // c_null_char
+    case (CLIP_WLCOPY)
+      c_command = 'wl-copy' // c_null_char
+    case (CLIP_XCLIP)
+      c_command = 'xclip -selection clipboard' // c_null_char
+    case (CLIP_XSEL)
+      c_command = 'xsel --clipboard --input' // c_null_char
+    case default
+      return
+    end select
+
+    c_mode = 'w' // c_null_char
+
+    pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
+    if (.not. c_associated(pipe_ptr)) return
+
+    ! Write the text, null-terminated, to the pipe.
+    c_text = text(1:text_len) // c_null_char
+    rc = c_fputs(c_loc(c_text), pipe_ptr)
+
+    rc = c_pclose(pipe_ptr)
+  end subroutine clipboard_copy
+
+  ! Paste text from the system clipboard into a buffer.
+  ! Returns the number of bytes read (0 if no tool or empty clipboard).
+  subroutine clipboard_paste(buffer, buffer_len, bytes_read)
+    character(len=*), intent(out) :: buffer
+    integer, intent(in) :: buffer_len
+    integer, intent(out) :: bytes_read
+    character(len=:), allocatable :: result
+    character(len=256) :: paste_cmd
+
+    bytes_read = 0
+
+    if (.not. clipboard_initialized) call clipboard_detect()
+    if (clipboard_tool == CLIP_NONE) return
+
+    ! Build the paste command.
+    select case (clipboard_tool)
+    case (CLIP_PBCOPY)
+      paste_cmd = 'pbpaste -Prefer txt 2>/dev/null'
+    case (CLIP_WLCOPY)
+      paste_cmd = 'wl-paste --no-newline 2>/dev/null'
+    case (CLIP_XCLIP)
+      paste_cmd = 'xclip -selection clipboard -o 2>/dev/null'
+    case (CLIP_XSEL)
+      paste_cmd = 'xsel --clipboard --output 2>/dev/null'
+    case default
+      return
+    end select
+
+    result = execute_and_capture(trim(paste_cmd))
+    if (.not. allocated(result)) return
+    if (len_trim(result) == 0) return
+
+    bytes_read = min(len_trim(result), buffer_len)
+    buffer = ''
+    buffer(1:bytes_read) = result(1:bytes_read)
+  end subroutine clipboard_paste
+
+  !============================================================================
+  ! END CLIPBOARD BRIDGE
   !============================================================================
 
   ! Initialize input_state_t with allocated strings
@@ -995,6 +1317,7 @@ contains
     integer :: suggestion_display_len, available_space
     integer :: current_col, current_row
     integer :: highlighted_len  ! Actual length of highlighted string
+    integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -1016,6 +1339,8 @@ contains
       call init_input_state(module_input_state)
       ! Initialize syntax highlighting
       call init_syntax_highlighting()
+      ! Probe for system clipboard tool (Sprint 5 — pattern #19: once at init)
+      call clipboard_detect()
       module_input_state_initialized = .true.
     else
       ! On subsequent calls, just reset the buffer and cursor
@@ -1251,8 +1576,15 @@ contains
           done = .true.
 
         case(KEY_CTRL_X)
-          ! Ctrl+X - Enter process kill mode (no-op in search mode)
-          if (.not. module_input_state%in_search .and. &
+          ! Ctrl+X — dual-mode (Sprint 5):
+          !   1. If a selection is active, CUT (same as Ctrl+W on selection:
+          !      copy to kill buffer + system clipboard, then delete range).
+          !   2. Otherwise, enter process kill mode (existing behavior).
+          if (module_input_state%selection_active) then
+            call copy_selection_to_kill_buffer(module_input_state)
+            call delete_selection(module_input_state)
+            call update_autosuggestion(module_input_state)
+          else if (.not. module_input_state%in_search .and. &
               .not. module_input_state%in_process_kill_mode) then
             call enter_process_kill_mode(module_input_state)
           end if
@@ -1349,6 +1681,13 @@ contains
             call handle_kill_word(module_input_state)
           end if
           
+        case(KEY_CTRL_V)
+          ! Ctrl+V — paste (Sprint 5). Reads from the system clipboard
+          ! first; falls back to the in-session kill_buffer if no
+          ! clipboard tool is available or the clipboard is empty.
+          ! If a selection is active, it's deleted first (paste-over).
+          if (.not. module_input_state%in_search) call handle_paste(module_input_state)
+
         case(KEY_CTRL_Y)
           ! Yank - no-op in search mode
           if (.not. module_input_state%in_search) call handle_yank(module_input_state)
@@ -1505,8 +1844,37 @@ contains
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
 
+              ! Shift-phase selection rendering (Sprint 2): when a selection is
+              ! active, render in three segments — plain prefix, reverse-video
+              ! selection (ESC[7m...ESC[27m), plain suffix. Syntax highlighting
+              ! is skipped for the whole line while a selection is live to avoid
+              ! mis-coloring partial token substrings. Reverse video (#13) is
+              ! preferred over background colors: proven on Terminal.app,
+              ! iTerm2, Ghostty, and the mainstream Linux terminals, and already
+              ! used for prefix search rendering below.
+              if (module_input_state%selection_active) then
+                ! Compute and clamp the byte range.
+                sel_start = min(module_input_state%selection_anchor, module_input_state%cursor_pos)
+                sel_end   = max(module_input_state%selection_anchor, module_input_state%cursor_pos)
+                if (sel_start < 0) sel_start = 0
+                if (sel_end > module_input_state%length) sel_end = module_input_state%length
+                ! Segment 1: plain text from start up to selection start.
+                if (sel_start > 0) then
+                  write(output_unit, '(a)', advance='no') temp_buf(1:sel_start)
+                end if
+                ! Segment 2: selected bytes in reverse video.
+                if (sel_end > sel_start) then
+                  write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                  write(output_unit, '(a)', advance='no') temp_buf(sel_start+1:sel_end)
+                  write(output_unit, '(a)', advance='no') char(27) // '[27m'
+                end if
+                ! Segment 3: plain text from selection end to buffer end.
+                if (sel_end < module_input_state%length) then
+                  write(output_unit, '(a)', advance='no') temp_buf(sel_end+1:module_input_state%length)
+                end if
+
               ! In prefix search mode, render prefix in reverse video + rest plain
-              if (module_input_state%in_prefix_search .and. &
+              else if (module_input_state%in_prefix_search .and. &
                   (module_input_state%prefix_search_idx /= 0 .or. module_input_state%prefix_search_flash)) then
                 ! Prefix in reverse video
                 write(output_unit, '(a)', advance='no') char(27) // '[7m'
@@ -2817,6 +3185,17 @@ contains
   subroutine move_to_next_word(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: pos
+    integer :: old_cursor_pos
+
+    ! Plain word-motion with active selection: clear, then proceed from
+    ! current cursor. No snap — word motion runs through the old cursor
+    ! anyway (#25, #26).
+    if (input_state%selection_active .and. .not. module_extending_selection) then
+      call collapse_selection(input_state)
+      input_state%dirty = .true.
+    end if
+
+    old_cursor_pos = input_state%cursor_pos
 
     pos = input_state%cursor_pos + 1
 
@@ -2847,13 +3226,32 @@ contains
     end if
 
     input_state%dirty = .true.
+
+    if (module_extending_selection) then
+      call update_selection_on_shift_motion(input_state, old_cursor_pos)
+    end if
   end subroutine
 
   subroutine move_to_previous_word(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: pos
-    
-    if (input_state%cursor_pos <= 0) return
+    integer :: old_cursor_pos
+
+    ! Plain word-motion with active selection: clear, then proceed from
+    ! current cursor (#25, #26).
+    if (input_state%selection_active .and. .not. module_extending_selection) then
+      call collapse_selection(input_state)
+      input_state%dirty = .true.
+    end if
+
+    old_cursor_pos = input_state%cursor_pos
+
+    if (input_state%cursor_pos <= 0) then
+      if (module_extending_selection) then
+        call update_selection_on_shift_motion(input_state, old_cursor_pos)
+      end if
+      return
+    end if
 
     pos = input_state%cursor_pos - 1
 
@@ -2872,6 +3270,10 @@ contains
     ! so space position is correct (cursor will be after space, before first char of word)
     input_state%cursor_pos = pos
     input_state%dirty = .true.
+
+    if (module_extending_selection) then
+      call update_selection_on_shift_motion(input_state, old_cursor_pos)
+    end if
   end subroutine
 
   subroutine delete_char_at_cursor(input_state)
@@ -3996,6 +4398,10 @@ contains
     logical :: debug_utf8
     integer :: debug_stat
 
+    ! Shift-phase type-over (Sprint 3): replace active selection before
+    ! inserting a new multi-byte character.
+    if (input_state%selection_active) call delete_selection(input_state)
+
     ! Check if UTF-8 debug mode is enabled
     call get_environment_variable('FORTSH_DEBUG_UTF8', status=debug_stat)
     debug_utf8 = (debug_stat == 0)
@@ -4078,6 +4484,11 @@ contains
     character, intent(in) :: ch
     integer :: term_cols
     character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
+
+    ! Shift-phase type-over (Sprint 3): typing a character while a selection
+    ! is active replaces the selection. delete_selection removes the bytes,
+    ! moves cursor to the left edge, and clears selection state.
+    if (input_state%selection_active) call delete_selection(input_state)
 
     ! Allocate temp buffer on heap
     allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
@@ -4280,6 +4691,14 @@ contains
     integer :: i
     integer :: bytes_to_delete, delete_count
 
+    ! Shift-phase (Sprint 3): Backspace on an active selection deletes the
+    ! whole range — no further character deletion. The key is "consumed".
+    if (input_state%selection_active) then
+      call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
+
     ! Defensive checks for buffer corruption
     if (input_state%cursor_pos <= 0) return
     if (input_state%length <= 0) return
@@ -4348,6 +4767,14 @@ contains
   subroutine handle_forward_delete_char(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, bytes_to_delete, delete_count
+
+    ! Shift-phase (Sprint 3): Delete on an active selection removes the
+    ! whole range and consumes the key.
+    if (input_state%selection_active) then
+      call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
 
     ! Nothing to delete if cursor is at end or buffer is empty
     if (input_state%cursor_pos >= input_state%length) return
@@ -5670,6 +6097,20 @@ contains
         ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C) or simple (ESC[3~)
         if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
         call handle_extended_escape_sequence(input_state, done, ch2)
+      case('H')  ! Home key (VT100/ANSI encoding; tilde variant ESC[1~ in extended handler)
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
+          call handle_home(input_state)
+        end if
+      case('F')  ! End key (VT100/ANSI encoding; tilde variant ESC[4~ in extended handler)
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
+          call handle_end(input_state)
+        end if
       case default
         ! Unknown escape sequence - ignore it
         continue
@@ -5692,12 +6133,24 @@ contains
       case('b')
         ! Alt+b - Move backward one word
         call move_to_previous_word(input_state)
+      case('B')
+        ! Alt+Shift+b - Extend selection one word back (shift phase, Sprint 1)
+        ! ESC-uppercase is xterm's encoding for Alt+Shift+letter. Routes through
+        ! the shift-extending path so move_to_previous_word grows the selection.
+        module_extending_selection = .true.
+        call move_to_previous_word(input_state)
+        module_extending_selection = .false.
       case('d')
         ! Alt+d - Delete forward one word (emacs standard)
         call handle_kill_word_forward(input_state)
       case('f')
         ! Alt+f - Move forward one word
         call move_to_next_word(input_state)
+      case('F')
+        ! Alt+Shift+f - Extend selection one word forward (shift phase, Sprint 1)
+        module_extending_selection = .true.
+        call move_to_next_word(input_state)
+        module_extending_selection = .false.
       case('j')
         ! Alt+j - Jump to directory with fzf
         call launch_fzf_directory_browser(input_state)
@@ -5714,8 +6167,18 @@ contains
         ! Alt+c - Capitalize word (uppercase first char, lowercase rest)
         call handle_capitalize_word(input_state)
       case('w')
-        ! Alt+w - Accept one word from autosuggestion
-        if (input_state%cursor_pos == input_state%length .and. &
+        ! Alt+w — dual-mode:
+        !   1. If a selection is active, copy it to the kill buffer and
+        !      collapse selection (emacs kill-ring-save). Buffer unchanged;
+        !      Ctrl+Y yanks it back wherever the user moves next.
+        !   2. Else if the cursor is at end-of-buffer with a live autosuggestion,
+        !      accept one word from the suggestion (existing behavior).
+        ! (Sprint 5 adds the system-clipboard mirror.)
+        if (input_state%selection_active) then
+          call copy_selection_to_kill_buffer(input_state)
+          call collapse_selection(input_state)
+          input_state%dirty = .true.  ! force redraw without reverse video
+        else if (input_state%cursor_pos == input_state%length .and. &
             input_state%suggestion_length > 0) then
           call accept_autosuggestion_word(input_state)
         end if
@@ -5906,6 +6369,50 @@ contains
               input_state%suggestion_length > 0) then
             call accept_autosuggestion_word(input_state)
           end if
+        ! ============================================================
+        ! Shift-phase selection extension (modifiers 2 and 6)
+        ! Sprint 1: state only; Sprint 2 adds the visible highlight.
+        ! ============================================================
+        ! Shift+Left — extend selection one char back
+        else if (modifier == '2' .and. terminator == 'D') then
+          module_extending_selection = .true.
+          call handle_cursor_left(input_state)
+          module_extending_selection = .false.
+        ! Shift+Right — extend selection one char forward
+        else if (modifier == '2' .and. terminator == 'C') then
+          module_extending_selection = .true.
+          call handle_cursor_right(input_state)
+          module_extending_selection = .false.
+        ! Shift+Up — treat as Shift+Home on single-line prompt (#25)
+        else if (modifier == '2' .and. terminator == 'A') then
+          module_extending_selection = .true.
+          call handle_home(input_state)
+          module_extending_selection = .false.
+        ! Shift+Down — treat as Shift+End on single-line prompt (#25)
+        else if (modifier == '2' .and. terminator == 'B') then
+          module_extending_selection = .true.
+          call handle_end(input_state)
+          module_extending_selection = .false.
+        ! Shift+Home — extend selection to start of line
+        else if (modifier == '2' .and. terminator == 'H') then
+          module_extending_selection = .true.
+          call handle_home(input_state)
+          module_extending_selection = .false.
+        ! Shift+End — extend selection to end of line
+        else if (modifier == '2' .and. terminator == 'F') then
+          module_extending_selection = .true.
+          call handle_end(input_state)
+          module_extending_selection = .false.
+        ! Ctrl+Shift+Left — extend selection by one word back
+        else if (modifier == '6' .and. terminator == 'D') then
+          module_extending_selection = .true.
+          call move_to_previous_word(input_state)
+          module_extending_selection = .false.
+        ! Ctrl+Shift+Right — extend selection by one word forward
+        else if (modifier == '6' .and. terminator == 'C') then
+          module_extending_selection = .true.
+          call move_to_next_word(input_state)
+          module_extending_selection = .false.
         ! Check for Alt+Left/Right for word movement (modifier=3)
         else if (modifier == '3' .and. terminator == 'D') then
           ! Alt+Left - Move cursor backward one word (standard behavior)
@@ -5963,8 +6470,22 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer :: old_row, old_col, new_row, new_col, term_cols
     integer :: bytes_to_move
+    integer :: old_cursor_pos
     logical :: debug_utf8
     integer :: debug_stat
+
+    ! Shift-phase: plain Left with an active selection snaps cursor to the
+    ! LEFT edge and clears selection, without further motion (#25, #26).
+    ! Char-motion uses the snap-to-edge convention (matches VS Code/TextEdit).
+    if (input_state%selection_active .and. .not. module_extending_selection) then
+      input_state%cursor_pos = min(input_state%selection_anchor, input_state%cursor_pos)
+      call collapse_selection(input_state)
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Capture pre-motion cursor so shift-extending can anchor the selection.
+    old_cursor_pos = input_state%cursor_pos
 
     ! Check if UTF-8 debug mode is enabled
     call get_environment_variable('FORTSH_DEBUG_UTF8', status=debug_stat)
@@ -6010,12 +6531,32 @@ contains
       module_cursor_screen_row = new_row
       module_cursor_screen_col = new_col
     end if
+
+    ! Shift-phase: if this call is extending a selection, update it now.
+    if (module_extending_selection) then
+      call update_selection_on_shift_motion(input_state, old_cursor_pos)
+    end if
   end subroutine
-  
+
   subroutine handle_cursor_right(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: old_row, old_col, new_row, new_col, term_cols
     integer :: bytes_to_move
+    integer :: old_cursor_pos
+
+    ! Shift-phase: plain Right with an active selection snaps cursor to the
+    ! RIGHT edge and clears selection, without further motion (#25, #26).
+    if (input_state%selection_active .and. .not. module_extending_selection) then
+      input_state%cursor_pos = max(input_state%selection_anchor, input_state%cursor_pos)
+      if (input_state%cursor_pos > input_state%length) then
+        input_state%cursor_pos = input_state%length
+      end if
+      call collapse_selection(input_state)
+      input_state%dirty = .true.
+      return
+    end if
+
+    old_cursor_pos = input_state%cursor_pos
 
     if (input_state%cursor_pos < input_state%length) then
       ! Get terminal size
@@ -6047,16 +6588,27 @@ contains
       ! Update module cursor tracking
       module_cursor_screen_row = new_row
       module_cursor_screen_col = new_col
-    else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0) then
-      ! At end of line with suggestion - accept it
+    else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0 &
+             .and. .not. module_extending_selection) then
+      ! At end of line with suggestion - accept it (but not during shift-extension —
+      ! Shift+Right at the end of the line should not eat an autosuggestion).
       call accept_autosuggestion(input_state)
     end if
+
+    ! Shift-phase: if this call is extending a selection, update it now.
+    if (module_extending_selection) then
+      call update_selection_on_shift_motion(input_state, old_cursor_pos)
+    end if
   end subroutine
-  
+
   subroutine handle_history_up(input_state)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
+
+    ! History navigation replaces the buffer wholesale — selection byte
+    ! offsets from the old buffer would point into stale data (#27).
+    if (input_state%selection_active) call collapse_selection(input_state)
 
     ! If there's text on the line and we're not yet in any history mode,
     ! enter prefix search mode (fish-style)
@@ -6103,6 +6655,9 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: history_line
     logical :: found
+
+    ! Buffer replacement — clear any stale selection (#27).
+    if (input_state%selection_active) call collapse_selection(input_state)
 
     ! Prefix search: find next match or return to present
     if (input_state%in_prefix_search) then
@@ -6733,6 +7288,17 @@ contains
   ! Advanced line editing functions for Phase 5
   subroutine handle_home(input_state)
     type(input_state_t), intent(inout) :: input_state
+    integer :: old_cursor_pos
+
+    ! Plain motion with active selection: clear selection, then proceed with
+    ! normal motion. Home/End don't snap — they always go to 0/length — so a
+    ! simple clear is correct (#25, #26).
+    if (input_state%selection_active .and. .not. module_extending_selection) then
+      call collapse_selection(input_state)
+      input_state%dirty = .true.
+    end if
+
+    old_cursor_pos = input_state%cursor_pos
 
     ! Move cursor to beginning of line
     if (input_state%cursor_pos > 0) then
@@ -6740,16 +7306,32 @@ contains
       ! Mark dirty to trigger full redraw with correct cursor position
       input_state%dirty = .true.
     end if
+
+    if (module_extending_selection) then
+      call update_selection_on_shift_motion(input_state, old_cursor_pos)
+    end if
   end subroutine
-  
+
   subroutine handle_end(input_state)
     type(input_state_t), intent(inout) :: input_state
+    integer :: old_cursor_pos
+
+    if (input_state%selection_active .and. .not. module_extending_selection) then
+      call collapse_selection(input_state)
+      input_state%dirty = .true.
+    end if
+
+    old_cursor_pos = input_state%cursor_pos
 
     ! Move cursor to end of line
     if (input_state%cursor_pos < input_state%length) then
       input_state%cursor_pos = input_state%length
       ! Mark dirty to trigger full redraw with correct cursor position
       input_state%dirty = .true.
+    end if
+
+    if (module_extending_selection) then
+      call update_selection_on_shift_motion(input_state, old_cursor_pos)
     end if
   end subroutine
   
@@ -6829,6 +7411,16 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer :: word_start, i
     character(len=MAX_LINE_LEN) :: temp_buf
+
+    ! Shift-phase (Sprint 3): Ctrl+W with an active selection becomes a
+    ! cut — copy the selected range to the kill buffer, then remove it.
+    ! No fall-through to kill-word. Ctrl+Y (handle_yank) pastes it back.
+    if (input_state%selection_active) then
+      call copy_selection_to_kill_buffer(input_state)
+      call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
 
     if (input_state%cursor_pos == 0) then
       input_state%kill_length = 0
@@ -6914,7 +7506,13 @@ contains
   subroutine handle_yank(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i, insert_len
-    
+
+    ! Shift-phase (Sprint 3): yanking into an active selection first
+    ! deletes the selection, then pastes the kill buffer at the cursor.
+    ! This gives the natural "paste over" behavior. Selection is collapsed
+    ! by delete_selection before the existing yank logic runs.
+    if (input_state%selection_active) call delete_selection(input_state)
+
     if (input_state%kill_length == 0) return
     
     insert_len = min(input_state%kill_length, MAX_LINE_LEN - input_state%length)
@@ -6945,7 +7543,49 @@ contains
     input_state%cursor_pos = input_state%cursor_pos + insert_len
     input_state%dirty = .true.
   end subroutine
-  
+
+  ! Ctrl+V paste handler (Sprint 5). Reads from the system clipboard;
+  ! if the clipboard is empty or no tool is available, falls back to
+  ! yanking from the in-session kill_buffer. If a selection is active
+  ! it is deleted first (paste-over behavior, same as Ctrl+Y).
+  subroutine handle_paste(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: paste_buf
+    integer :: paste_len, insert_len, i, j
+
+    ! Delete active selection first (paste-over).
+    if (input_state%selection_active) call delete_selection(input_state)
+
+    ! Try the system clipboard.
+    paste_len = 0
+    call clipboard_paste(paste_buf, MAX_LINE_LEN, paste_len)
+
+    if (paste_len > 0) then
+      ! Truncate to available space.
+      insert_len = min(paste_len, MAX_LINE_LEN - input_state%length)
+      if (insert_len <= 0) return
+
+      ! Shift existing text right.
+      do i = input_state%length, input_state%cursor_pos + 1, -1
+        if (i + insert_len <= MAX_LINE_LEN) then
+          call state_buffer_set_char(input_state, i + insert_len, state_buffer_get_char(input_state, i))
+        end if
+      end do
+
+      ! Insert clipboard text at cursor.
+      do j = 1, insert_len
+        call state_buffer_set_char(input_state, input_state%cursor_pos + j, paste_buf(j:j))
+      end do
+
+      input_state%length = input_state%length + insert_len
+      input_state%cursor_pos = input_state%cursor_pos + insert_len
+      input_state%dirty = .true.
+    else
+      ! Clipboard empty or unavailable — fall back to kill buffer (same as C-y).
+      call handle_yank(input_state)
+    end if
+  end subroutine handle_paste
+
   subroutine handle_clear_screen(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
@@ -7252,6 +7892,9 @@ contains
     logical, intent(inout) :: done
     character(len=5) :: cmd
 
+    ! Buffer replacement — clear any stale selection (#27).
+    if (input_state%selection_active) call collapse_selection(input_state)
+
     cmd = 'cd ..'
 
     ! Clear current buffer and insert "cd .."
@@ -7279,6 +7922,8 @@ contains
     logical, intent(inout) :: done
     character(len=5) :: cmd
 
+    if (input_state%selection_active) call collapse_selection(input_state)
+
     cmd = 'prevd'
 
     ! Clear current buffer and insert "prevd"
@@ -7305,6 +7950,8 @@ contains
     type(input_state_t), intent(inout) :: input_state
     logical, intent(inout) :: done
     character(len=5) :: cmd
+
+    if (input_state%selection_active) call collapse_selection(input_state)
 
     cmd = 'nextd'
 
@@ -8242,6 +8889,9 @@ contains
 
     if (input_state%suggestion_length == 0) return
 
+    ! Buffer is about to be extended — any lingering selection is stale (#27).
+    if (input_state%selection_active) call collapse_selection(input_state)
+
     ! Safety check: ensure we won't overflow
     new_length = input_state%length + input_state%suggestion_length
     if (new_length > MAX_LINE_LEN) then
@@ -8268,6 +8918,9 @@ contains
     integer :: i, word_end
 
     if (input_state%suggestion_length == 0) return
+
+    ! Buffer is about to be extended — any lingering selection is stale (#27).
+    if (input_state%selection_active) call collapse_selection(input_state)
 
     ! Find the end of the first word in the suggestion
     word_end = 0
