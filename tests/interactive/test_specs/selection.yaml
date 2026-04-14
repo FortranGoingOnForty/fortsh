@@ -487,3 +487,56 @@ tests:
       - send_key: "Enter"
     expect_output: "abc"
     match_type: "contains"
+
+  # =============================================================
+  # SPRINT 5 — CLIPBOARD BRIDGE + CTRL+X / CTRL+V
+  # These tests run outside test mode so clipboard tools are
+  # accessible (test mode doesn't affect clipboard, but we need
+  # FORTSH_TEST_MODE=0 for full redraw + echo output assertions).
+  # =============================================================
+
+  - name: "Sprint 5: Ctrl+X on selection cuts (dual-mode)"
+    # Select "bbb", Ctrl+X cuts it. Buffer becomes "aaa  ccc".
+    # (The trailing space after "aaa" was between "aaa" and "bbb".)
+    # Then type "Z" where cursor is → "aaa Z ccc".
+    steps:
+      - send: "aaa bbb ccc"
+      - send_key: "C-S-Left"
+      - send_key: "C-S-Left"
+      - send_key: "C-x"
+      - send: "Z"
+      - send_key: "C-a"
+      - send: "echo "
+      - send_key: "Enter"
+    # C-S-Left from 11 → word back to 8 (start of "ccc"), again to 4 (start of "bbb").
+    # Selection = [4..11) = "bbb ccc". After Ctrl+X delete: buffer "aaa ", cursor=4.
+    # Insert Z → "aaa Z", cursor=5. Echo → "aaa Z".
+    expect_output: "aaa Z"
+    match_type: "contains"
+
+  - name: "Sprint 5: Ctrl+X with no selection enters process kill mode"
+    # Regression guard: Ctrl+X without selection must NOT cut anything.
+    # It enters process-kill-mode (the existing behavior). Pressing
+    # Escape exits process-kill mode. Then normal editing resumes.
+    steps:
+      - send: "echo intact"
+      - send_key: "C-x"
+      - send_key: "Escape"
+      - send_key: "Enter"
+    expect_output: "intact"
+    match_type: "contains"
+
+  - name: "Sprint 5: Ctrl+V pastes from kill buffer when no clipboard"
+    # Populate kill buffer via Ctrl+U, then Ctrl+V to paste. Since the
+    # PTY test harness runs in test mode with a clean env, Ctrl+V reads
+    # the system clipboard (which may contain stale data from earlier
+    # tests). Instead we verify the kill-buffer fallback: Ctrl+U kills
+    # "hello", Ctrl+V pastes it back.
+    steps:
+      - send: "hello"
+      - send_key: "C-u"
+      - send: "echo "
+      - send_key: "C-v"
+      - send_key: "Enter"
+    expect_output: "hello"
+    match_type: "contains"
