@@ -56,8 +56,8 @@ CTRL_S = "\x13"  # Forward search / Suspend output
 CTRL_T = "\x14"  # Transpose characters
 CTRL_U = "\x15"  # Kill to beginning of line
 CTRL_V = "\x16"  # Paste from clipboard / kill buffer
-CTRL_W = "\x17"  # Kill word backward
-CTRL_X = "\x18"  # Prefix
+CTRL_W = "\x17"  # Kill word backward / cut selection
+CTRL_X = "\x18"  # Cut selection / process kill mode
 CTRL_Y = "\x19"  # Yank
 CTRL_Z = "\x1a"  # Suspend (SIGTSTP)
 
@@ -156,6 +156,7 @@ KEYS = {
     "C-u": CTRL_U,
     "C-v": CTRL_V,
     "C-w": CTRL_W,
+    "C-x": CTRL_X,
     "C-y": CTRL_Y,
     "C-z": CTRL_Z,
 

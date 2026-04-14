@@ -48,7 +48,7 @@ module readline
   integer, parameter :: KEY_CTRL_C = 3
   integer, parameter :: KEY_CTRL_D = 4
   integer, parameter :: KEY_CTRL_V = 22   ! Paste from system clipboard / kill buffer
-  integer, parameter :: KEY_CTRL_X = 24   ! Process kill mode
+  integer, parameter :: KEY_CTRL_X = 24   ! Cut selection / Process kill mode
   integer, parameter :: KEY_CTRL_A = 1    ! Home (beginning of line)
   integer, parameter :: KEY_CTRL_E = 5    ! End (end of line)
   integer, parameter :: KEY_CTRL_K = 11   ! Kill to end of line
@@ -1576,8 +1576,15 @@ contains
           done = .true.
 
         case(KEY_CTRL_X)
-          ! Ctrl+X - Enter process kill mode (no-op in search mode)
-          if (.not. module_input_state%in_search .and. &
+          ! Ctrl+X — dual-mode (Sprint 5):
+          !   1. If a selection is active, CUT (same as Ctrl+W on selection:
+          !      copy to kill buffer + system clipboard, then delete range).
+          !   2. Otherwise, enter process kill mode (existing behavior).
+          if (module_input_state%selection_active) then
+            call copy_selection_to_kill_buffer(module_input_state)
+            call delete_selection(module_input_state)
+            call update_autosuggestion(module_input_state)
+          else if (.not. module_input_state%in_search .and. &
               .not. module_input_state%in_process_kill_mode) then
             call enter_process_kill_mode(module_input_state)
           end if
