@@ -47,6 +47,7 @@ module readline
   integer, parameter :: KEY_TAB = 9
   integer, parameter :: KEY_CTRL_C = 3
   integer, parameter :: KEY_CTRL_D = 4
+  integer, parameter :: KEY_CTRL_V = 22   ! Paste from system clipboard / kill buffer
   integer, parameter :: KEY_CTRL_X = 24   ! Process kill mode
   integer, parameter :: KEY_CTRL_A = 1    ! Home (beginning of line)
   integer, parameter :: KEY_CTRL_E = 5    ! End (end of line)
@@ -1673,6 +1674,13 @@ contains
             call handle_kill_word(module_input_state)
           end if
           
+        case(KEY_CTRL_V)
+          ! Ctrl+V — paste (Sprint 5). Reads from the system clipboard
+          ! first; falls back to the in-session kill_buffer if no
+          ! clipboard tool is available or the clipboard is empty.
+          ! If a selection is active, it's deleted first (paste-over).
+          if (.not. module_input_state%in_search) call handle_paste(module_input_state)
+
         case(KEY_CTRL_Y)
           ! Yank - no-op in search mode
           if (.not. module_input_state%in_search) call handle_yank(module_input_state)
@@ -7514,7 +7522,49 @@ contains
     input_state%cursor_pos = input_state%cursor_pos + insert_len
     input_state%dirty = .true.
   end subroutine
-  
+
+  ! Ctrl+V paste handler (Sprint 5). Reads from the system clipboard;
+  ! if the clipboard is empty or no tool is available, falls back to
+  ! yanking from the in-session kill_buffer. If a selection is active
+  ! it is deleted first (paste-over behavior, same as Ctrl+Y).
+  subroutine handle_paste(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: paste_buf
+    integer :: paste_len, insert_len, i, j
+
+    ! Delete active selection first (paste-over).
+    if (input_state%selection_active) call delete_selection(input_state)
+
+    ! Try the system clipboard.
+    paste_len = 0
+    call clipboard_paste(paste_buf, MAX_LINE_LEN, paste_len)
+
+    if (paste_len > 0) then
+      ! Truncate to available space.
+      insert_len = min(paste_len, MAX_LINE_LEN - input_state%length)
+      if (insert_len <= 0) return
+
+      ! Shift existing text right.
+      do i = input_state%length, input_state%cursor_pos + 1, -1
+        if (i + insert_len <= MAX_LINE_LEN) then
+          call state_buffer_set_char(input_state, i + insert_len, state_buffer_get_char(input_state, i))
+        end if
+      end do
+
+      ! Insert clipboard text at cursor.
+      do j = 1, insert_len
+        call state_buffer_set_char(input_state, input_state%cursor_pos + j, paste_buf(j:j))
+      end do
+
+      input_state%length = input_state%length + insert_len
+      input_state%cursor_pos = input_state%cursor_pos + insert_len
+      input_state%dirty = .true.
+    else
+      ! Clipboard empty or unavailable — fall back to kill buffer (same as C-y).
+      call handle_yank(input_state)
+    end if
+  end subroutine handle_paste
+
   subroutine handle_clear_screen(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt

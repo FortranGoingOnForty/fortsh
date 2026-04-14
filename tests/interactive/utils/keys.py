@@ -55,7 +55,7 @@ CTRL_R = "\x12"  # Reverse search
 CTRL_S = "\x13"  # Forward search / Suspend output
 CTRL_T = "\x14"  # Transpose characters
 CTRL_U = "\x15"  # Kill to beginning of line
-CTRL_V = "\x16"  # Quoted insert
+CTRL_V = "\x16"  # Paste from clipboard / kill buffer
 CTRL_W = "\x17"  # Kill word backward
 CTRL_X = "\x18"  # Prefix
 CTRL_Y = "\x19"  # Yank
@@ -154,6 +154,7 @@ KEYS = {
     "C-s": CTRL_S,
     "C-t": CTRL_T,
     "C-u": CTRL_U,
+    "C-v": CTRL_V,
     "C-w": CTRL_W,
     "C-y": CTRL_Y,
     "C-z": CTRL_Z,
