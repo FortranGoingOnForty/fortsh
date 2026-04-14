@@ -278,6 +278,16 @@ module readline
   logical, save :: debug_selection = .false.
   logical, save :: debug_selection_initialized = .false.
 
+  ! Clipboard bridge state (shift phase, Sprint 5).
+  ! Probed once at init; the detected tool is cached. Pattern #19.
+  integer, parameter :: CLIP_NONE   = 0
+  integer, parameter :: CLIP_PBCOPY = 1  ! macOS
+  integer, parameter :: CLIP_WLCOPY = 2  ! Wayland
+  integer, parameter :: CLIP_XCLIP  = 3  ! X11
+  integer, parameter :: CLIP_XSEL   = 4  ! X11 fallback
+  integer, save :: clipboard_tool = CLIP_NONE
+  logical, save :: clipboard_initialized = .false.
+
 contains
 
   !============================================================================
@@ -770,6 +780,135 @@ contains
   ! END TEXT SELECTION HELPERS
   !============================================================================
 
+  !============================================================================
+  ! CLIPBOARD BRIDGE (shift phase, Sprint 5)
+  !============================================================================
+  ! Provides system-clipboard copy and paste via external tools.
+  ! Probe order: pbcopy (macOS), wl-copy (Wayland), xclip (X11), xsel (X11).
+  ! If no tool is found, operations no-op gracefully — the in-session
+  ! kill_buffer remains the source of truth. Pattern #19, #22.
+  !============================================================================
+
+  ! Detect the clipboard tool at startup (idempotent).
+  subroutine clipboard_detect()
+    character(len=:), allocatable :: result
+
+    if (clipboard_initialized) return
+    clipboard_initialized = .true.
+
+    ! Probe in preference order. execute_and_capture runs `which <tool>`
+    ! and returns the path if found, or an empty string if not.
+    result = execute_and_capture('which pbcopy 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_PBCOPY
+      return
+    end if
+
+    result = execute_and_capture('which wl-copy 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_WLCOPY
+      return
+    end if
+
+    result = execute_and_capture('which xclip 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_XCLIP
+      return
+    end if
+
+    result = execute_and_capture('which xsel 2>/dev/null')
+    if (len_trim(result) > 0) then
+      clipboard_tool = CLIP_XSEL
+      return
+    end if
+
+    ! No tool found — clipboard_tool stays CLIP_NONE.
+  end subroutine clipboard_detect
+
+  ! Copy text to the system clipboard. No-op if no tool was detected.
+  subroutine clipboard_copy(text, text_len)
+    use iso_c_binding, only: c_ptr, c_null_char, c_loc, c_int, c_associated
+    character(len=*), intent(in) :: text
+    integer, intent(in) :: text_len
+    type(c_ptr) :: pipe_ptr
+    integer(c_int) :: rc
+    character(len=256), target :: c_command
+    character(len=4), target :: c_mode
+    ! Buffer for writing — must be null-terminated for c_fputs.
+    ! Use MAX_LINE_LEN+1 to accommodate the NUL terminator.
+    character(len=MAX_LINE_LEN+1), target :: c_text
+
+    if (.not. clipboard_initialized) call clipboard_detect()
+    if (clipboard_tool == CLIP_NONE) return
+    if (text_len <= 0) return
+
+    ! Build the popen command for the detected tool.
+    select case (clipboard_tool)
+    case (CLIP_PBCOPY)
+      c_command = 'pbcopy' // c_null_char
+    case (CLIP_WLCOPY)
+      c_command = 'wl-copy' // c_null_char
+    case (CLIP_XCLIP)
+      c_command = 'xclip -selection clipboard' // c_null_char
+    case (CLIP_XSEL)
+      c_command = 'xsel --clipboard --input' // c_null_char
+    case default
+      return
+    end select
+
+    c_mode = 'w' // c_null_char
+
+    pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
+    if (.not. c_associated(pipe_ptr)) return
+
+    ! Write the text, null-terminated, to the pipe.
+    c_text = text(1:text_len) // c_null_char
+    rc = c_fputs(c_loc(c_text), pipe_ptr)
+
+    rc = c_pclose(pipe_ptr)
+  end subroutine clipboard_copy
+
+  ! Paste text from the system clipboard into a buffer.
+  ! Returns the number of bytes read (0 if no tool or empty clipboard).
+  subroutine clipboard_paste(buffer, buffer_len, bytes_read)
+    character(len=*), intent(out) :: buffer
+    integer, intent(in) :: buffer_len
+    integer, intent(out) :: bytes_read
+    character(len=:), allocatable :: result
+    character(len=256) :: paste_cmd
+
+    bytes_read = 0
+
+    if (.not. clipboard_initialized) call clipboard_detect()
+    if (clipboard_tool == CLIP_NONE) return
+
+    ! Build the paste command.
+    select case (clipboard_tool)
+    case (CLIP_PBCOPY)
+      paste_cmd = 'pbpaste -Prefer txt 2>/dev/null'
+    case (CLIP_WLCOPY)
+      paste_cmd = 'wl-paste --no-newline 2>/dev/null'
+    case (CLIP_XCLIP)
+      paste_cmd = 'xclip -selection clipboard -o 2>/dev/null'
+    case (CLIP_XSEL)
+      paste_cmd = 'xsel --clipboard --output 2>/dev/null'
+    case default
+      return
+    end select
+
+    result = execute_and_capture(trim(paste_cmd))
+    if (.not. allocated(result)) return
+    if (len_trim(result) == 0) return
+
+    bytes_read = min(len_trim(result), buffer_len)
+    buffer = ''
+    buffer(1:bytes_read) = result(1:bytes_read)
+  end subroutine clipboard_paste
+
+  !============================================================================
+  ! END CLIPBOARD BRIDGE
+  !============================================================================
+
   ! Initialize input_state_t with allocated strings
   subroutine init_input_state(state)
     type(input_state_t), intent(inout) :: state
@@ -1195,6 +1334,8 @@ contains
       call init_input_state(module_input_state)
       ! Initialize syntax highlighting
       call init_syntax_highlighting()
+      ! Probe for system clipboard tool (Sprint 5 — pattern #19: once at init)
+      call clipboard_detect()
       module_input_state_initialized = .true.
     else
       ! On subsequent calls, just reset the buffer and cursor
