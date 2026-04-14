@@ -450,7 +450,16 @@ module system_interface
       type(c_ptr), value :: stream
       type(c_ptr) :: c_fgets
     end function
-    
+
+    ! Write a null-terminated string to a stream (shift phase Sprint 5:
+    ! used to pipe text into clipboard tools like pbcopy via popen("w")).
+    function c_fputs(s, stream) bind(C, name="fputs")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: s
+      type(c_ptr), value :: stream
+      integer(c_int) :: c_fputs
+    end function
+
     subroutine c_exit(status) bind(C, name="exit")
       import :: c_int
       integer(c_int), value :: status
