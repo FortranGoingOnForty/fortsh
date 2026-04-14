@@ -6097,6 +6097,20 @@ contains
         ! Extended escape sequence (e.g., Ctrl+Arrow = ESC[1;5C) or simple (ESC[3~)
         if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
         call handle_extended_escape_sequence(input_state, done, ch2)
+      case('H')  ! Home key (VT100/ANSI encoding; tilde variant ESC[1~ in extended handler)
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
+          call handle_home(input_state)
+        end if
+      case('F')  ! End key (VT100/ANSI encoding; tilde variant ESC[4~ in extended handler)
+        if (input_state%in_search) then
+          call accept_search_for_editing(input_state)
+        else
+          if (input_state%in_prefix_search) call cancel_prefix_search(input_state)
+          call handle_end(input_state)
+        end if
       case default
         ! Unknown escape sequence - ignore it
         continue
