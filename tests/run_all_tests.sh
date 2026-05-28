@@ -416,10 +416,10 @@ if [ "$RUN_INTERACTIVE" -eq 1 ]; then
             interactive_output=$((cd "$INTERACTIVE_DIR" && python run_tests.py) 2>&1)
             interactive_exit=$?
 
-            # Parse results from pytest output
-            passed=$(echo "$interactive_output" | grep -oP '\d+(?= passed)' | tail -1)
-            failed=$(echo "$interactive_output" | grep -oP '\d+(?= failed)' | tail -1)
-            skipped=$(echo "$interactive_output" | grep -oP '\d+(?= skipped)' | tail -1)
+            # Parse results from pytest output (POSIX-compatible, no grep -P)
+            passed=$(echo "$interactive_output" | grep -o '[0-9]* passed' | tail -1 | sed 's/ passed//')
+            failed=$(echo "$interactive_output" | grep -o '[0-9]* failed' | tail -1 | sed 's/ failed//')
+            skipped=$(echo "$interactive_output" | grep -o '[0-9]* skipped' | tail -1 | sed 's/ skipped//')
 
             passed=${passed:-0}
             failed=${failed:-0}

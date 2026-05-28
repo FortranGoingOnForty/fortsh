@@ -78,21 +78,22 @@ class YAMLTestRunner:
         else:
             self.pty_timeout = 5.0
             self.delay_scale = 1.0
-        # macOS: fewer tests per session to reduce state accumulation issues
-        # with flang-new I/O buffering and readline mode interactions
+        # BSD (macOS/FreeBSD): fewer tests per session to reduce state
+        # accumulation issues with I/O buffering and readline mode interactions
+        is_bsd = system in ('darwin', 'freebsd')
         if tests_per_session != 10:
             # Explicit override from caller
             self.tests_per_session = tests_per_session
-        elif system == 'darwin':
-            # Fresh session per test on macOS: readline cursor tracking
-            # gets out of sync across reused sessions with flang-new
+        elif is_bsd:
+            # Fresh session per test on BSD: readline cursor tracking
+            # gets out of sync across reused sessions
             self.tests_per_session = 1
         else:
             self.tests_per_session = tests_per_session
         self._current_session: Optional[FortshPTY] = None
         self._test_count = 0
         self._step_sync_id = 0
-        self._use_marker_sync = (system == 'darwin')
+        self._use_marker_sync = is_bsd
 
     def _get_session(self, env: dict = None, rc_file: str = "/dev/null", fresh: bool = False) -> FortshPTY:
         """
