@@ -79,11 +79,11 @@ contains
 
     ! Ignore interactive signals for shell itself
     old_handler = c_signal(SIGINT, SIG_IGN)
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
     ! On Linux/other platforms, ignore SIGTSTP like other shells
     old_handler = c_signal(SIGTSTP, SIG_IGN)
 #endif
-    ! On macOS, setting SIGTSTP to SIG_IGN breaks waitpid by causing
+    ! On macOS/FreeBSD, setting SIGTSTP to SIG_IGN breaks waitpid by causing
     ! children to be auto-reaped, so we leave it at default
     old_handler = c_signal(SIGTTIN, SIG_IGN)
     old_handler = c_signal(SIGTTOU, SIG_IGN)

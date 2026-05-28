@@ -1443,13 +1443,13 @@ contains
             case('INT', 'int', 'SIGINT')
               signal_num = 2
             case('STOP', 'stop', 'SIGSTOP')
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
               signal_num = 18
 #else
               signal_num = 20
 #endif
             case('CONT', 'cont', 'SIGCONT')
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
               signal_num = 19
 #else
               signal_num = 18
@@ -1564,26 +1564,26 @@ contains
           case('STKFLT', 'stkflt', 'SIGSTKFLT')
             signal_num = 16
           case('CHLD', 'chld', 'SIGCHLD')
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
             signal_num = 20
 #else
             signal_num = 17
 #endif
           case('CONT', 'cont', 'SIGCONT')
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
             signal_num = 19
 #else
             signal_num = 18
 #endif
           case('STOP', 'stop', 'SIGSTOP')
-#ifdef __APPLE__
-            signal_num = 18  ! SIGTSTP on macOS
+#if defined(__APPLE__) || defined(__FreeBSD__)
+            signal_num = 18  ! SIGTSTP on macOS/FreeBSD
 #else
             signal_num = 20  ! SIGTSTP on Linux
 #endif
           case('TSTP', 'tstp', 'SIGTSTP')
-#ifdef __APPLE__
-            signal_num = 18  ! SIGTSTP on macOS
+#if defined(__APPLE__) || defined(__FreeBSD__)
+            signal_num = 18  ! SIGTSTP on macOS/FreeBSD
 #else
             signal_num = 20  ! SIGTSTP on Linux
 #endif
@@ -1647,7 +1647,7 @@ contains
         shell%last_exit_status = 1
       else
         ! Update job state when sending SIGCONT to a job
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
         if (signal_num == 19 .and. cmd%tokens(i)(1:1) == '%') then
 #else
         if (signal_num == 18 .and. cmd%tokens(i)(1:1) == '%') then

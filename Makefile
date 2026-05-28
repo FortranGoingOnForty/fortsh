@@ -18,6 +18,11 @@ ifeq ($(UNAME_S),Darwin)
         PLATFORM_FLAGS = -D__APPLE__ -cpp -frecursive
         $(info Using gfortran on macOS Intel)
     endif
+else ifeq ($(UNAME_S),FreeBSD)
+    # FreeBSD: Use gfortran, must define __FreeBSD__ for cpp
+    FC = gfortran
+    PLATFORM_FLAGS = -cpp -D__FreeBSD__ -DUSE_C_STAT
+    $(info Using gfortran on FreeBSD — C stat helpers enabled)
 else
     # Linux: Use gfortran
     FC = gfortran

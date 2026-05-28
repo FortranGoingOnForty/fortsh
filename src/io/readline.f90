@@ -5725,8 +5725,8 @@ contains
     close(unit)
 
     ! Execute ps and capture output - filter to current user
-#ifdef __APPLE__
-    ! macOS uses BSD ps which doesn't support --no-headers
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    ! BSD ps doesn't support --no-headers; use = suffix for headerless output
     if (len_trim(username) > 0) then
       call execute_command_line('ps -u ' // trim(username) // &
                                ' -o pid= -o comm= > /tmp/fortsh_procs.tmp 2>/dev/null', &

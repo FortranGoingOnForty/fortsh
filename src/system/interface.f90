@@ -8,8 +8,8 @@ module system_interface
   implicit none
 
   ! Signal numbers (platform-specific)
-#ifdef __APPLE__
-  ! macOS/Darwin signal numbers
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  ! macOS/FreeBSD/BSD signal numbers
   integer(c_int), parameter :: SIGINT = 2
   integer(c_int), parameter :: SIGPIPE = 13
   integer(c_int), parameter :: SIGTSTP = 18
@@ -33,10 +33,10 @@ module system_interface
   integer(c_int), parameter :: WUNTRACED = 2
 
   ! Terminal control structures and constants
-#ifdef __APPLE__
-  ! macOS has NCCS=20 and uses 8-byte tcflag_t
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  ! macOS/FreeBSD: NCCS=20
   integer(c_int), parameter :: NCCS = 20
-  ! ioctl request for terminal size (macOS)
+  ! ioctl request for terminal size (BSD)
   integer(c_long), parameter :: TIOCGWINSZ = int(z'40087468', c_long)
 #else
   ! Linux has NCCS=32 and uses 4-byte tcflag_t
@@ -66,6 +66,16 @@ module system_interface
     integer(c_long) :: c_ispeed   ! input speed (8 bytes)
     integer(c_long) :: c_ospeed   ! output speed (8 bytes)
     ! Total: 72 bytes
+#elif defined(__FreeBSD__)
+    ! FreeBSD: tcflag_t is unsigned int (4 bytes), NCCS=20, no c_line field
+    integer(c_int) :: c_iflag       ! input flags (4 bytes)
+    integer(c_int) :: c_oflag       ! output flags (4 bytes)
+    integer(c_int) :: c_cflag       ! control flags (4 bytes)
+    integer(c_int) :: c_lflag       ! local flags (4 bytes)
+    character(c_char) :: c_cc(20)   ! control characters (20 bytes)
+    integer(c_int) :: c_ispeed      ! input speed (4 bytes)
+    integer(c_int) :: c_ospeed      ! output speed (4 bytes)
+    ! Total: 44 bytes (matches actual FreeBSD struct termios)
 #else
     ! Linux: tcflag_t is unsigned int (4 bytes)
     integer(c_int) :: c_iflag       ! input flags (4 bytes)
@@ -91,8 +101,29 @@ module system_interface
   integer(c_long), parameter :: ECHONL = int(z'00000010', c_long)  ! echo NL even if ECHO is off
   integer(c_long), parameter :: IEXTEN = int(z'00000400', c_long)  ! extended input processing
   integer(c_long), parameter :: ISIG   = int(z'00000080', c_long)  ! enable signals
+#elif defined(__FreeBSD__)
+  ! FreeBSD values from sys/_termios.h - BSD values, c_int to match tcflag_t
+  integer(c_int), parameter :: ICANON = int(z'00000100', c_int)  ! canonical input
+  integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
+  integer(c_int), parameter :: ECHOE  = int(z'00000002', c_int)  ! echo erase character
+  integer(c_int), parameter :: ECHOK  = int(z'00000004', c_int)  ! echo kill character
+  integer(c_int), parameter :: ECHONL = int(z'00000010', c_int)  ! echo NL even if ECHO is off
+  integer(c_int), parameter :: IEXTEN = int(z'00000400', c_int)  ! extended input processing
+  integer(c_int), parameter :: ISIG   = int(z'00000080', c_int)  ! enable signals
+#else
+  ! Linux values from bits/termios.h - use c_int to match tcflag_t
+  integer(c_int), parameter :: ICANON = int(z'00000002', c_int)  ! canonical input
+  integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
+  integer(c_int), parameter :: ECHOE  = int(z'00000010', c_int)  ! echo erase character
+  integer(c_int), parameter :: ECHOK  = int(z'00000020', c_int)  ! echo kill character
+  integer(c_int), parameter :: ECHONL = int(z'00000040', c_int)  ! echo NL even if ECHO is off
+  integer(c_int), parameter :: IEXTEN = int(z'00008000', c_int)  ! extended input processing
+  integer(c_int), parameter :: ISIG   = int(z'00000001', c_int)  ! enable signals
+#endif
 
-  ! Control character indices (macOS)
+  ! Control character indices (platform-specific)
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  ! macOS/FreeBSD control character indices
   integer(c_int), parameter :: VEOF   = 0   ! EOF character (Ctrl-D)
   integer(c_int), parameter :: VEOL   = 1   ! EOL character
   integer(c_int), parameter :: VEOL2  = 2   ! EOL2 character
@@ -111,16 +142,7 @@ module system_interface
   integer(c_int), parameter :: VMIN  = 16  ! minimum chars for noncanonical read
   integer(c_int), parameter :: VTIME = 17  ! timeout for noncanonical read
 #else
-  ! Linux values from bits/termios.h - use c_int to match tcflag_t
-  integer(c_int), parameter :: ICANON = int(z'00000002', c_int)  ! canonical input
-  integer(c_int), parameter :: ECHO   = int(z'00000008', c_int)  ! enable echo
-  integer(c_int), parameter :: ECHOE  = int(z'00000010', c_int)  ! echo erase character
-  integer(c_int), parameter :: ECHOK  = int(z'00000020', c_int)  ! echo kill character
-  integer(c_int), parameter :: ECHONL = int(z'00000040', c_int)  ! echo NL even if ECHO is off
-  integer(c_int), parameter :: IEXTEN = int(z'00008000', c_int)  ! extended input processing
-  integer(c_int), parameter :: ISIG   = int(z'00000001', c_int)  ! enable signals
-
-  ! Control character indices (Linux)
+  ! Linux control character indices
   integer(c_int), parameter :: VMIN  = 6   ! minimum chars for noncanonical read
   integer(c_int), parameter :: VTIME = 5   ! timeout for noncanonical read
 #endif
@@ -168,6 +190,35 @@ module system_interface
     integer(c_int)   :: st_gen       ! File generation number (4 bytes)
     integer(c_int)   :: st_lspare    ! Reserved (4 bytes)
     integer(c_long)  :: st_qspare(2) ! Reserved (16 bytes)
+#elif defined(__FreeBSD__)
+    ! FreeBSD stat structure layout (FreeBSD 12+)
+    ! Use C stat helpers (USE_C_STAT) for actual operations; this struct
+    ! exists only to satisfy compilation of the type definition.
+    integer(c_long)  :: st_dev       ! Device (8 bytes) - offset 0
+    integer(c_long)  :: st_ino       ! Inode (8 bytes) - offset 8
+    integer(c_long)  :: st_nlink     ! Number of hard links (8 bytes) - offset 16
+    integer(c_short) :: st_mode      ! File type and mode (2 bytes) - offset 24
+    integer(c_short) :: st_bsdflags  ! BSD flags (2 bytes) - offset 26
+    integer(c_int)   :: st_uid       ! User ID (4 bytes) - offset 28
+    integer(c_int)   :: st_gid       ! Group ID (4 bytes) - offset 32
+    integer(c_int)   :: st_padding1  ! Padding (4 bytes) - offset 36
+    integer(c_long)  :: st_rdev      ! Device type (8 bytes) - offset 40
+    ! Timespec structures (16 bytes each)
+    integer(c_long)  :: st_atime     ! Access time seconds - offset 48
+    integer(c_long)  :: st_atime_nsec ! Access time nanoseconds - offset 56
+    integer(c_long)  :: st_mtime     ! Modification time seconds - offset 64
+    integer(c_long)  :: st_mtime_nsec ! Modification time nanoseconds - offset 72
+    integer(c_long)  :: st_ctime     ! Status change time seconds - offset 80
+    integer(c_long)  :: st_ctime_nsec ! Status change time nanoseconds - offset 88
+    integer(c_long)  :: st_birthtimespec_sec  ! Birth time seconds - offset 96
+    integer(c_long)  :: st_birthtimespec_nsec ! Birth time nanoseconds - offset 104
+    integer(c_long)  :: st_size      ! Total size in bytes (8 bytes) - offset 112
+    integer(c_long)  :: st_blocks    ! Number of 512-byte blocks (8 bytes) - offset 120
+    integer(c_int)   :: st_blksize   ! Optimal block size (4 bytes) - offset 128
+    integer(c_int)   :: st_flags     ! User defined flags (4 bytes) - offset 132
+    integer(c_long)  :: st_gen       ! File generation number (8 bytes) - offset 136
+    integer(c_long)  :: st_spare(10) ! Reserved - offset 144
+    ! Total: 224 bytes
 #elif defined(__aarch64__)
     ! Linux aarch64 stat structure layout (glibc generic 64-bit)
     ! Field order and sizes differ from x86_64: mode/nlink swapped, nlink is 4B not 8B
@@ -259,12 +310,12 @@ module system_interface
   integer(c_int), parameter :: RLIMIT_STACK = 3      ! Maximum stack size
   integer(c_int), parameter :: RLIMIT_CORE = 4       ! Maximum core file size
   integer(c_int), parameter :: RLIMIT_RSS = 5        ! Maximum resident set size
-#ifdef __APPLE__
-  ! macOS uses different constant values than Linux for these
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  ! BSD uses different constant values than Linux for these
   integer(c_int), parameter :: RLIMIT_MEMLOCK = 6
   integer(c_int), parameter :: RLIMIT_NPROC = 7
   integer(c_int), parameter :: RLIMIT_NOFILE = 8
-  integer(c_int), parameter :: RLIMIT_AS = 5         ! Same as RSS on macOS
+  integer(c_int), parameter :: RLIMIT_AS = 5         ! Same as RSS on BSD
 #else
   integer(c_int), parameter :: RLIMIT_NPROC = 6
   integer(c_int), parameter :: RLIMIT_NOFILE = 7
@@ -276,8 +327,8 @@ module system_interface
   integer(c_int), parameter :: RLIMIT_MSGQUEUE = 12  ! Maximum bytes in POSIX message queues
 
   ! Infinite limit value
-#ifdef __APPLE__
-  integer(c_long), parameter :: RLIM_INFINITY = 9223372036854775807_c_long  ! 0x7FFFFFFFFFFFFFFF on macOS
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  integer(c_long), parameter :: RLIM_INFINITY = 9223372036854775807_c_long  ! 0x7FFFFFFFFFFFFFFF on BSD
 #else
   integer(c_long), parameter :: RLIM_INFINITY = -1  ! (unsigned long)-1 on Linux
 #endif
@@ -1018,6 +1069,11 @@ contains
     raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000600', c_long)))  ! IXON | IXOFF
     raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000800', c_long)))  ! IXANY
     raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000002', c_long)))  ! BRKINT
+#elif defined(__FreeBSD__)
+    ! FreeBSD: BSD flag values, c_int type (IXON=0x200, IXOFF=0x400)
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000600', c_int)))  ! IXON | IXOFF
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000800', c_int)))  ! IXANY
+    raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000002', c_int)))  ! BRKINT
 #else
     ! Linux: Disable flow control
     raw_termios%c_iflag = iand(raw_termios%c_iflag, not(int(z'00000400', c_int)))  ! IXON
@@ -1034,6 +1090,9 @@ contains
 #ifdef __APPLE__
     ! macOS ECHOCTL flag (0x40)
     raw_termios%c_lflag = iand(raw_termios%c_lflag, not(int(z'00000040', c_long)))
+#elif defined(__FreeBSD__)
+    ! FreeBSD ECHOCTL flag (0x40, same as macOS)
+    raw_termios%c_lflag = iand(raw_termios%c_lflag, not(int(z'00000040', c_int)))
 #else
     ! Linux ECHOCTL flag (typically 0x200)
     raw_termios%c_lflag = iand(raw_termios%c_lflag, not(int(z'00000200', c_int)))
@@ -1043,7 +1102,7 @@ contains
     raw_termios%c_cc(VMIN + 1) = char(1)  ! Read at least 1 character
     raw_termios%c_cc(VTIME + 1) = char(0) ! No timeout
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
     ! Disable special character mappings that might intercept control chars
     ! With ISIG and ICANON disabled, most of these shouldn't matter, but
     ! explicitly clearing them ensures no control chars are intercepted
@@ -1595,7 +1654,10 @@ contains
     dev2 = fortsh_stat_dev(c_loc(c_path2))
     ino1 = fortsh_stat_ino(c_loc(c_path1))
     ino2 = fortsh_stat_ino(c_loc(c_path2))
-    is_same = (dev1 >= 0 .and. dev2 >= 0 .and. dev1 == dev2 .and. ino1 == ino2)
+    ! Check for stat failure (-1) rather than >= 0, because dev_t can be
+    ! unsigned and overflow to negative when cast to signed long long (FreeBSD)
+    is_same = (dev1 /= -1_c_long_long .and. dev2 /= -1_c_long_long .and. &
+               dev1 == dev2 .and. ino1 == ino2)
 #else
     integer :: ret1, ret2
     type(stat_t) :: stat1, stat2

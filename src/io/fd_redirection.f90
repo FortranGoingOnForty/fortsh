@@ -63,10 +63,10 @@ module fd_redirection
   integer, parameter :: FD_O_WRONLY = int(Z'00000001')
   integer, parameter :: FD_O_RDWR = int(Z'00000002')
   ! Platform-specific O_* flags
-#ifdef __APPLE__
-  integer, parameter :: FD_O_CREAT = 512   ! 0x200 on macOS
-  integer, parameter :: FD_O_TRUNC = 1024  ! 0x400 on macOS
-  integer, parameter :: FD_O_APPEND = 8    ! 0x8 on macOS
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  integer, parameter :: FD_O_CREAT = 512   ! 0x200 on BSD
+  integer, parameter :: FD_O_TRUNC = 1024  ! 0x400 on BSD
+  integer, parameter :: FD_O_APPEND = 8    ! 0x8 on BSD
 #else
   ! Linux values
   integer, parameter :: FD_O_CREAT = 64    ! 0x40 on Linux

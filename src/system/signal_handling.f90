@@ -24,9 +24,9 @@ module signal_handling
   integer(c_int), parameter :: SIGPIPE   = 13
   integer(c_int), parameter :: SIGALRM   = 14
   integer(c_int), parameter :: SIGTERM   = 15
-#ifdef __APPLE__
-  ! macOS/Darwin signal numbers (16+ differ from Linux)
-  integer(c_int), parameter :: SIGSTKFLT = 16  ! Not used on macOS
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  ! macOS/FreeBSD/BSD signal numbers (16+ differ from Linux)
+  integer(c_int), parameter :: SIGSTKFLT = 16  ! Not used on BSD
   integer(c_int), parameter :: SIGCHLD   = 20
   integer(c_int), parameter :: SIGCONT   = 19
   integer(c_int), parameter :: SIGSTOP   = 17

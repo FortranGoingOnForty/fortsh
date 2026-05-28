@@ -17,16 +17,16 @@ module advanced_test
 
   ! POSIX regex types for =~ operator
   type, bind(C) :: regex_t
-#ifdef __APPLE__
-    integer(c_int8_t) :: re_dummy(32)   ! macOS: regex_t is 32 bytes
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    integer(c_int8_t) :: re_dummy(32)   ! macOS/FreeBSD: regex_t is 32 bytes
 #else
     integer(c_int8_t) :: re_dummy(256)  ! Linux: regex_t is ~128-256 bytes
 #endif
   end type regex_t
 
   type, bind(C) :: regmatch_t
-#ifdef __APPLE__
-    integer(c_long) :: rm_so  ! regoff_t is long (8 bytes) on macOS
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    integer(c_long) :: rm_so  ! regoff_t is long (8 bytes) on macOS/FreeBSD
     integer(c_long) :: rm_eo
 #else
     integer(c_int) :: rm_so   ! regoff_t is int (4 bytes) on Linux
