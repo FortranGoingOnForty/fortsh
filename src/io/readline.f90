@@ -258,6 +258,14 @@ module readline
   character(len=4096), save :: module_highlighted_buffer
   integer, save :: module_highlighted_len
 
+  ! Redraw output buffer — accumulates the entire redraw frame so it can be
+  ! written to the terminal in a single write() call.  This prevents the
+  ! ESC[J clear from being rendered as a blank frame before the new content
+  ! arrives, eliminating visible flashing (especially on FreeBSD).
+  integer, parameter :: REDRAW_BUF_SIZE = 16384
+  character(len=REDRAW_BUF_SIZE), save :: rdraw_buf
+  integer, save :: rdraw_pos = 0
+
   ! Track actual cursor screen position (row, col) to fix redraw issues
   ! Used to know where cursor is on screen vs where buffer says it should be
   integer, save :: module_cursor_screen_row = 0
@@ -290,6 +298,46 @@ module readline
   logical, save :: clipboard_initialized = .false.
 
 contains
+
+  !============================================================================
+  ! REDRAW BUFFER HELPERS — accumulate output, flush in one write()
+  !============================================================================
+
+  subroutine rdraw_clear()
+    rdraw_pos = 0
+  end subroutine
+
+  subroutine rdraw_append(s)
+    character(len=*), intent(in) :: s
+    integer :: slen
+    slen = len(s)
+    if (rdraw_pos + slen > REDRAW_BUF_SIZE) then
+      ! Buffer full — flush what we have, then continue
+      call rdraw_flush()
+    end if
+    if (slen > REDRAW_BUF_SIZE) then
+      ! Oversized single string — write directly
+      write(output_unit, '(a)', advance='no') s
+      return
+    end if
+    rdraw_buf(rdraw_pos+1:rdraw_pos+slen) = s
+    rdraw_pos = rdraw_pos + slen
+  end subroutine
+
+  subroutine rdraw_append_char(ch)
+    character, intent(in) :: ch
+    if (rdraw_pos + 1 > REDRAW_BUF_SIZE) call rdraw_flush()
+    rdraw_pos = rdraw_pos + 1
+    rdraw_buf(rdraw_pos:rdraw_pos) = ch
+  end subroutine
+
+  subroutine rdraw_flush()
+    if (rdraw_pos > 0) then
+      write(output_unit, '(a)', advance='no') rdraw_buf(1:rdraw_pos)
+      rdraw_pos = 0
+    end if
+    flush(output_unit)
+  end subroutine
 
   !============================================================================
   ! TEST MODE INITIALIZATION
@@ -1805,159 +1853,122 @@ contains
             current_row = cursor_visual_pos / term_cols
             current_col = mod(cursor_visual_pos, term_cols)
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
+            ! === Buffered redraw: accumulate entire frame, write once ===
+            ! This prevents ESC[J clear from rendering as a blank frame before
+            ! the new content arrives, eliminating visible flashing.
+            call rdraw_clear()
+
             ! Move cursor to start of prompt UNLESS we just exited menu mode
             if (.not. module_input_state%skip_cursor_up_on_redraw) then
-              ! Move to start of first line of this command
-              ! For multiline prompts, we need to move up by both the buffer rows AND the prompt lines
               if (current_row + prompt_line_count > 0) then
-                ! Move up to first line of prompt
                 do i_redraw = 1, current_row + prompt_line_count
-                  write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+                  call rdraw_append(char(27) // '[A')
                 end do
               end if
-              ! Move to column 0 of that line
-              write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+              call rdraw_append_char(char(13))
             else
-              ! Just move to start of current line
-              write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+              call rdraw_append_char(char(13))
             end if
 
             ! Clear the skip flag after using it
             module_input_state%skip_cursor_up_on_redraw = .false.
 
-            ! Clear from cursor to end of screen
-            write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down
+            ! Hide cursor during redraw
+            call rdraw_append(ESC_HIDE_CURSOR)
 
-            ! Redraw prompt and buffer (replace bare LF with CR+LF for raw mode)
+            ! Clear from cursor to end of screen
+            call rdraw_append(char(27) // '[J')
+
+            ! Redraw prompt (replace bare LF with CR+LF for raw mode)
             block
               integer :: pr_j
               do pr_j = 1, len_trim(prompt)
                 if (prompt(pr_j:pr_j) == char(10)) then
-                  write(output_unit, '(a)', advance='no') char(13) // char(10)
+                  call rdraw_append(char(13) // char(10))
                 else
-                  write(output_unit, '(a)', advance='no') prompt(pr_j:pr_j)
+                  call rdraw_append_char(prompt(pr_j:pr_j))
                 end if
               end do
             end block
-            write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+            call rdraw_append_char(' ')
             if (module_input_state%length > 0) then
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
 
-              ! Shift-phase selection rendering (Sprint 2): when a selection is
-              ! active, render in three segments — plain prefix, reverse-video
-              ! selection (ESC[7m...ESC[27m), plain suffix. Syntax highlighting
-              ! is skipped for the whole line while a selection is live to avoid
-              ! mis-coloring partial token substrings. Reverse video (#13) is
-              ! preferred over background colors: proven on Terminal.app,
-              ! iTerm2, Ghostty, and the mainstream Linux terminals, and already
-              ! used for prefix search rendering below.
+              ! Selection rendering: three segments — plain, reverse-video, plain
               if (module_input_state%selection_active) then
-                ! Compute and clamp the byte range.
                 sel_start = min(module_input_state%selection_anchor, module_input_state%cursor_pos)
                 sel_end   = max(module_input_state%selection_anchor, module_input_state%cursor_pos)
                 if (sel_start < 0) sel_start = 0
                 if (sel_end > module_input_state%length) sel_end = module_input_state%length
-                ! Segment 1: plain text from start up to selection start.
                 if (sel_start > 0) then
-                  write(output_unit, '(a)', advance='no') temp_buf(1:sel_start)
+                  call rdraw_append(temp_buf(1:sel_start))
                 end if
-                ! Segment 2: selected bytes in reverse video.
                 if (sel_end > sel_start) then
-                  write(output_unit, '(a)', advance='no') char(27) // '[7m'
-                  write(output_unit, '(a)', advance='no') temp_buf(sel_start+1:sel_end)
-                  write(output_unit, '(a)', advance='no') char(27) // '[27m'
+                  call rdraw_append(char(27) // '[7m')
+                  call rdraw_append(temp_buf(sel_start+1:sel_end))
+                  call rdraw_append(char(27) // '[27m')
                 end if
-                ! Segment 3: plain text from selection end to buffer end.
                 if (sel_end < module_input_state%length) then
-                  write(output_unit, '(a)', advance='no') temp_buf(sel_end+1:module_input_state%length)
+                  call rdraw_append(temp_buf(sel_end+1:module_input_state%length))
                 end if
 
-              ! In prefix search mode, render prefix in reverse video + rest plain
+              ! Prefix search mode: prefix in reverse video + rest plain
               else if (module_input_state%in_prefix_search .and. &
                   (module_input_state%prefix_search_idx /= 0 .or. module_input_state%prefix_search_flash)) then
-                ! Prefix in reverse video
-                write(output_unit, '(a)', advance='no') char(27) // '[7m'
+                call rdraw_append(char(27) // '[7m')
                 do i_redraw = 1, module_input_state%prefix_search_len
-                  write(output_unit, '(a)', advance='no') temp_buf(i_redraw:i_redraw)
+                  call rdraw_append_char(temp_buf(i_redraw:i_redraw))
                 end do
-                write(output_unit, '(a)', advance='no') char(27) // '[0m'
-                ! Clear flash flag after rendering (transient — one frame only)
+                call rdraw_append(char(27) // '[0m')
                 if (module_input_state%prefix_search_flash) then
                   module_input_state%prefix_search_flash = .false.
                 end if
-                ! Remainder in plain text
                 if (module_input_state%length > module_input_state%prefix_search_len) then
-                  write(output_unit, '(a)', advance='no') &
-                    temp_buf(module_input_state%prefix_search_len+1:module_input_state%length)
+                  call rdraw_append(temp_buf(module_input_state%prefix_search_len+1:module_input_state%length))
                 end if
               else
                 call highlight_command_line(temp_buf(:module_input_state%length), &
                                             module_highlighted_buffer, module_highlighted_len, &
                                             module_input_state%length)
                 if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
-                  write(output_unit, '(a)', advance='no') module_highlighted_buffer(:module_highlighted_len)
+                  call rdraw_append(module_highlighted_buffer(:module_highlighted_len))
                 else
-                  ! Fallback to plain text (temp_buf already extracted above)
-                  write(output_unit, '(a)', advance='no') temp_buf(:module_input_state%length)
+                  call rdraw_append(temp_buf(:module_input_state%length))
                 end if
               end if
 
               ! Display autosuggestion if present (only when cursor is at end)
               if (module_input_state%suggestion_length > 0 .and. &
                   module_input_state%cursor_pos == module_input_state%length) then
-                ! Calculate column position after command (add 1 for space after prompt)
                 cursor_visual_pos = prompt_visual_len + 1 + module_input_state%length
 
-                ! Safety check for term_cols
                 if (term_cols > 0 .and. term_cols <= 500) then
                   current_col = mod(cursor_visual_pos, term_cols)
                   current_row = cursor_visual_pos / term_cols
-
-                  ! Additional safety: ensure current_col is reasonable
                   if (current_col < 0) current_col = 0
                   if (current_col >= term_cols) current_col = term_cols - 1
 
-                  ! Calculate available space on current line
                   available_space = term_cols - current_col
                   if (available_space < 0) available_space = 0
                   if (available_space > term_cols) available_space = 0
 
-                  ! CRITICAL: Prevent cursor jumping by ensuring suggestion never causes line wrap
-                  ! The bug: if (prompt + input + suggestion) wraps to next line, then cursor-left
-                  ! commands move cursor on the WRONG line, causing visible cursor jumping.
-                  !
-                  ! Solution:
-                  ! 1. NEVER show suggestions if input has already wrapped (current_row > 0)
-                  ! 2. Limit suggestion to fit on current line with safety margin
-                  ! 3. Leave 2 char margin for ANSI codes
-                  ! 4. Show if we have at least 3 chars of space (enough for 1 char + ANSI codes)
                   if (current_row == 0 .and. available_space >= 3) then
-                    ! Limit suggestion to available space minus safety margin
                     suggestion_display_len = min(module_input_state%suggestion_length, available_space - 2)
-
                     if (suggestion_display_len < 0) suggestion_display_len = 0
                     if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
                     if (suggestion_display_len > module_input_state%suggestion_length) suggestion_display_len = 0
 
-                    ! Show suggestion if we have at least 1 character
                     if (suggestion_display_len >= 1) then
-                      ! Use bright black (gray) color for suggestions - ANSI code 90
-                      write(output_unit, '(a)', advance='no') char(27) // '[90m'
-
-                      ! Write character by character to avoid substring temporaries (flang-new crash)
+                      call rdraw_append(char(27) // '[90m')
                       do i_redraw = 1, suggestion_display_len
                         if (i_redraw <= MAX_LINE_LEN) then
-                          write(output_unit, '(a)', advance='no') module_input_state%suggestion(i_redraw:i_redraw)
+                          call rdraw_append_char(module_input_state%suggestion(i_redraw:i_redraw))
                         end if
                       end do
-
-                      write(output_unit, '(a)', advance='no') char(27) // '[0m'   ! Reset color
-
-                      ! Move cursor back using simple cursor-left commands
-                      ! This is safe because we've guaranteed no wrapping above
+                      call rdraw_append(char(27) // '[0m')
                       do i_redraw = 1, suggestion_display_len
-                        write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+                        call rdraw_append(char(27) // '[D')
                       end do
                     end if
                   end if
@@ -1967,25 +1978,18 @@ contains
 
             ! Position cursor correctly (if not at end of input)
             if (module_input_state%cursor_pos < module_input_state%length) then
-              ! Cursor not at end - calculate visual width difference
-              ! IMPORTANT: Must use visual width, not byte count, for UTF-8 support
-
-              ! Current cursor position (at end of drawn input)
               call cursor_get_row_col(prompt, module_input_state%length, term_cols, current_row, current_col)
-
-              ! Desired cursor position
               call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, cursor_visual_pos, i_redraw)
-
-              ! Move cursor left by VISUAL column difference
-              ! (Not byte difference - emoji is 4 bytes but 2 visual columns!)
               if (current_col > i_redraw) then
                 do current_line = 1, current_col - i_redraw
-                  write(output_unit, '(a)', advance='no') char(27) // '[D'  ! Cursor left
+                  call rdraw_append(char(27) // '[D')
                 end do
               end if
             end if
 
-            flush(output_unit)
+            ! Show cursor, then flush entire buffer in one write
+            call rdraw_append(ESC_SHOW_CURSOR)
+            call rdraw_flush()
 
             ! Debug: show state before recalculating cursor position
             if (debug_utf8) then
@@ -4521,26 +4525,30 @@ contains
       call state_buffer_set_char(input_state, input_state%length, ch)
       input_state%cursor_pos = input_state%length
 
-      ! Output character directly to screen (avoid full redraw)
-      write(output_unit, '(a)', advance='no') ch
-      flush(output_unit)
-
       ! Update screen cursor position tracking
       call get_terminal_size_from_env(term_cols)
       module_cursor_screen_col = module_cursor_screen_col + 1
 
       ! Handle line wrapping - if we just filled the last column, wrap to next line
       if (module_cursor_screen_col >= term_cols) then
-        ! Explicitly move cursor to next line (terminal won't auto-wrap cursor until next char)
+        ! Line wrap: write char + CR+LF directly since no dirty redraw follows
+        write(output_unit, '(a)', advance='no') ch
         write(output_unit, '(a)', advance='no') char(13) // char(10)  ! CR+LF
         flush(output_unit)
         module_cursor_screen_col = 0
         module_cursor_screen_row = module_cursor_screen_row + 1
         ! Don't trigger redraw - character already on screen, cursor already positioned correctly
         ! Redraw would move cursor back up to row 0, causing snap-back
+      else if (test_mode_enabled) then
+        ! Test mode skips the dirty redraw entirely, so we must echo the
+        ! character directly here — it's the only output path.
+        write(output_unit, '(a)', advance='no') ch
+        flush(output_unit)
       else
-        ! Only trigger syntax highlighting when NOT wrapping
-        ! This gives immediate feedback (e.g., "exit" turning green)
+        ! Normal mode: skip direct character output — the dirty redraw will
+        ! draw it with syntax highlighting. Writing + flushing the plain char
+        ! here then clearing + redrawing causes visible flashing (clear is
+        ! rendered as a blank frame before the redraw content arrives).
         input_state%dirty = .true.
       end if
     else
@@ -7597,7 +7605,8 @@ contains
     highlighted = ' '
     highlighted_len = 0
 
-    ! Clear screen and move cursor to home position (0,0)
+    ! Hide cursor, clear screen, and move cursor to home position (0,0)
+    write(output_unit, '(a)', advance='no') ESC_HIDE_CURSOR
     write(output_unit, '(a)', advance='no') char(27) // '[2J' // char(27) // '[H'
 
     ! Since we're now at home position, just redraw everything from scratch
@@ -7657,6 +7666,7 @@ contains
       end if
     end if
 
+    write(output_unit, '(a)', advance='no') ESC_SHOW_CURSOR
     flush(output_unit)
     input_state%dirty = .false.
 
@@ -8412,6 +8422,9 @@ contains
     character(len=16) :: direction_label
     character(len=8) :: col_str
 
+    ! Hide cursor during search redraw to prevent flashing
+    write(output_unit, '(a)', advance='no') ESC_HIDE_CURSOR
+
     ! 1. If status line already shown, cursor is on status line — move up first
     if (module_search_status_shown) then
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! cursor up to prompt line
@@ -8457,6 +8470,7 @@ contains
     ! Cursor naturally sits at end of query text on the status line
     module_search_status_shown = .true.
 
+    write(output_unit, '(a)', advance='no') ESC_SHOW_CURSOR
     flush(output_unit)
   end subroutine
 
