@@ -54,7 +54,7 @@ module readline
   integer, parameter :: KEY_CTRL_K = 11   ! Kill to end of line
   integer, parameter :: KEY_CTRL_L = 12   ! Clear screen
   integer, parameter :: KEY_CTRL_W = 23   ! Kill previous word
-  integer, parameter :: KEY_CTRL_U = 21   ! Kill entire line
+  integer, parameter :: KEY_CTRL_U = 21   ! Kill to beginning of line (unix-line-discard)
   integer, parameter :: KEY_CTRL_Y = 25   ! Yank (paste) killed text
   integer, parameter :: KEY_CTRL_F = 6    ! FZF file browser
   integer, parameter :: KEY_CTRL_B = 2    ! Backward character (same as left arrow)
@@ -1710,7 +1710,7 @@ contains
             ! Clear search query and restore original buffer
             call search_clear_query(module_input_state, prompt)
           else
-            ! Kill entire line (exit menu mode first if active)
+            ! Kill to beginning of line (exit menu mode first if active)
             if (module_input_state%in_menu_select) then
               call exit_menu_select_mode(module_input_state)
             end if
@@ -2912,14 +2912,15 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: motion
     integer :: start_pos, end_pos, delete_len, i, repeat_count
+    character(len=MAX_LINE_LEN) :: temp_yank
 
     repeat_count = max(1, input_state%vi_command_count)
 
     select case (motion)
     case ('d')
-      ! dd - delete entire line
-      call state_buffer_get(input_state, input_state%vi_yank_buffer)
-      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+      ! dd - delete entire line (yank into vi buffer first)
+      call state_buffer_get(input_state, temp_yank)
+      input_state%vi_yank_buffer = temp_yank(:input_state%length)
       input_state%vi_yank_length = input_state%length
       call state_buffer_clear(input_state)
       input_state%length = 0
@@ -3060,11 +3061,12 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: motion
     integer :: start_pos, end_pos, saved_cursor
+    character(len=MAX_LINE_LEN) :: temp_yank
 
     if (motion == 'c') then
-      ! cc - change entire line
-      call state_buffer_get(input_state, input_state%vi_yank_buffer)
-      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+      ! cc - change entire line (yank into vi buffer first)
+      call state_buffer_get(input_state, temp_yank)
+      input_state%vi_yank_buffer = temp_yank(:input_state%length)
       input_state%vi_yank_length = input_state%length
       call state_buffer_clear(input_state)
       input_state%length = 0
@@ -7370,47 +7372,39 @@ contains
     use iso_fortran_env, only: output_unit
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: temp_buf
-    integer :: current_row, current_col, i
+    integer :: remaining_len
 
-    ! Save entire line in kill buffer
-    if (input_state%length > 0) then
-      ! Copy buffer to kill buffer via temp
+    ! unix-line-discard: kill from beginning of line to cursor position.
+    ! Text after the cursor is preserved (mirrors Ctrl+K which kills to end).
+    if (input_state%cursor_pos > 0) then
       call state_buffer_get(input_state, temp_buf)
-      call state_kill_buffer_set(input_state, temp_buf(:input_state%length))
-      input_state%kill_length = input_state%length
 
-      ! IMPORTANT: Move cursor to start of prompt BEFORE clearing buffer
-      ! Otherwise redraw won't know where we are
-      ! Use actual screen cursor position, not calculated from buffer
-      current_row = module_cursor_screen_row
-      current_col = module_cursor_screen_col
+      ! Save killed text (before cursor) in kill buffer
+      call state_kill_buffer_set(input_state, temp_buf(:input_state%cursor_pos))
+      input_state%kill_length = input_state%cursor_pos
 
-      ! Move up to first line if needed
-      if (current_row > 0) then
-        do i = 1, current_row
-          write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
-        end do
+      ! Shift remaining text (after cursor) to beginning of buffer
+      remaining_len = input_state%length - input_state%cursor_pos
+      if (remaining_len > 0) then
+        temp_buf(1:remaining_len) = temp_buf(input_state%cursor_pos+1:input_state%length)
+        call state_buffer_set(input_state, temp_buf)
+      else
+        call state_buffer_clear(input_state)
       end if
 
-      ! Move to column 0
-      write(output_unit, '(a)', advance='no') char(13)  ! CR
-      flush(output_unit)
-
-      ! Update cursor tracking - we're now at start of first line
-      module_cursor_screen_row = 0
-      module_cursor_screen_col = 0
-
-      ! Now clear the line
-      call state_buffer_clear(input_state)
-      input_state%length = 0
+      input_state%length = remaining_len
       input_state%cursor_pos = 0
 
       ! Clear any autosuggestion
       input_state%suggestion = ''
       input_state%suggestion_length = 0
 
+      ! Update autosuggestion for remaining text
+      call update_autosuggestion(input_state)
+
       input_state%dirty = .true.
     else
+      ! Cursor at beginning — nothing to kill
       input_state%kill_length = 0
     end if
   end subroutine
