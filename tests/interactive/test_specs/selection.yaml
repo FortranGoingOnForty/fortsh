@@ -534,6 +534,7 @@ tests:
     # "hello", Ctrl+V pastes it back.
     steps:
       - send: "hello"
+      - wait: 0.3
       - send_key: "C-u"
       - send: "echo "
       - send_key: "C-v"
