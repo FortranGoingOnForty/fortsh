@@ -531,15 +531,18 @@ tests:
     # PTY test harness runs in test mode with a clean env, Ctrl+V reads
     # the system clipboard (which may contain stale data from earlier
     # tests). Instead we verify the kill-buffer fallback: Ctrl+U kills
-    # "hello", Ctrl+V pastes it back.
+    # "world", Ctrl+V pastes it back. Uses send_line to seed the buffer
+    # reliably across platforms (avoids first-char drop on macOS ARM64).
     steps:
-      - send: "hello"
+      - send_line: "true"
+      - send: "world"
       - wait: 0.3
       - send_key: "C-u"
+      - wait: 0.1
       - send: "echo "
       - send_key: "C-v"
       - send_key: "Enter"
-    expect_output: "hello"
+    expect_output: "world"
     match_type: "contains"
 
   # =============================================================
