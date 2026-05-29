@@ -285,11 +285,16 @@ tests:
     match_type: "contains"
 
   - name: "clear command clears screen"
+    # Single compound command: `clear` forks an external process that
+    # emits screen-wipe escape sequences (ESC[2J/ESC[3J). Running clear
+    # and the follow-up echo as one command line removes any inter-step
+    # timing race — on a slow runner, separate send_line steps could
+    # interleave clear's output with capture and drop the match (flaky on
+    # emulated ARM64 CI). The marker proves the shell kept running and
+    # produced output after the clear.
     steps:
-      - send_line: "echo before"
-      - send_line: "clear"
-      - send_line: "echo after"
-    expect_output: "after"
+      - send_line: "clear; echo cleared_ok"
+    expect_output: "cleared_ok"
     match_type: "contains"
 
   # =============================================================
