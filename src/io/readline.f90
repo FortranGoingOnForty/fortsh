@@ -8870,6 +8870,11 @@ contains
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     integer :: num_completions, last_space_pos, i, input_len, last_word_len
     type(suggestion_result_t) :: path_result
+    ! Memoize: skip dir scan if the last word hasn't changed
+    character(len=MAX_LINE_LEN), save :: prev_last_word = ''
+    integer, save :: prev_last_word_len = 0
+    character(len=MAX_LINE_LEN), save :: prev_completions(MAX_LOCAL_COMPLETIONS)
+    integer, save :: prev_num_completions = 0
 
     ! Clear any existing suggestion
     input_state%suggestion = ''
@@ -8896,8 +8901,18 @@ contains
     last_word_len = len_trim(last_word)
     if (last_word_len == 0) return
 
-    ! Get filesystem completions for the last word
-    call complete_files_enhanced(last_word(1:last_word_len), completions, num_completions)
+    ! Reuse cached completions if the last word is unchanged
+    if (last_word_len == prev_last_word_len .and. &
+        last_word(1:last_word_len) == prev_last_word(1:prev_last_word_len)) then
+      num_completions = prev_num_completions
+      completions = prev_completions
+    else
+      call complete_files_enhanced(last_word(1:last_word_len), completions, num_completions)
+      prev_last_word = last_word
+      prev_last_word_len = last_word_len
+      prev_completions = completions
+      prev_num_completions = num_completions
+    end if
 
     ! Delegate suggestion selection to the suggestions module
     path_result = compute_path_suggestion(last_word, last_word_len, completions, num_completions)
