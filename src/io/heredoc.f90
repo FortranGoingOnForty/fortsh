@@ -398,21 +398,25 @@ contains
   end subroutine
 
   subroutine create_temp_file(filename, unit)
+    use system_interface, only: make_temp_file
     character(len=*), intent(out) :: filename
     integer, intent(out) :: unit
-    
-    character(len=32) :: pid_str
-    integer :: pid
-    
-    ! Create a unique temporary filename
-    pid = 1234  ! In real implementation, would get actual PID
-    write(pid_str, '(I0)') pid
-    filename = '/tmp/fortsh_heredoc_' // trim(pid_str) // '.tmp'
-    
-    open(newunit=unit, file=trim(filename), status='replace', action='write', iostat=unit)
-    if (unit /= 0) then
+    logical :: ok
+    integer :: ios
+
+    ! Securely create a unique temp file (mkstemp: random name, 0600, O_EXCL).
+    ! The old fixed /tmp/fortsh_heredoc_1234.tmp was a symlink/TOCTOU hazard,
+    ! and `iostat=unit` clobbered the newunit handle.
+    ok = make_temp_file('fortsh_heredoc_', filename)
+    if (.not. ok) then
       unit = -1
+      return
     end if
+
+    ! mkstemp already created the file (owned by us); open by its
+    ! unpredictable name to write the heredoc body.
+    open(newunit=unit, file=trim(filename), status='old', action='write', iostat=ios)
+    if (ios /= 0) unit = -1
   end subroutine
 
   subroutine create_temp_heredoc_file(content, filename)
