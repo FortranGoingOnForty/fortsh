@@ -26,7 +26,6 @@ module ast_executor
   public :: execute_ast_node
   public :: unset_ast_function
   public :: is_ast_function
-  public :: execute_external_command  ! Currently unused but may be needed later
   public :: register_trap_evaluator
 
   ! C bindings for process control
@@ -2991,35 +2990,6 @@ contains
     exit_code = ishft(status, -8)
     exit_code = iand(exit_code, 255)
   end function extract_exit_status
-
-  subroutine execute_external_command(words, num_words, exit_status)
-    character(len=*), intent(in) :: words(:)
-    integer, intent(in) :: num_words
-    integer, intent(out) :: exit_status
-    character(len=MAX_PATH_LEN) :: cmd_path
-    integer :: ret
-
-    interface
-      function c_system(cmd) bind(c, name='system')
-        import :: c_char, c_int
-        character(kind=c_char), dimension(*) :: cmd
-        integer(c_int) :: c_system
-      end function
-    end interface
-
-    exit_status = 0
-
-    if (num_words == 0) return
-
-    cmd_path = trim(words(1))
-
-    ! Try to execute command
-    ! For now, just use system() as a placeholder
-    ! TODO: Implement proper execvp with argv array
-    ret = c_system(trim(cmd_path) // c_null_char)
-    exit_status = extract_exit_status(ret)
-
-  end subroutine execute_external_command
 
   ! Execute a pending trap command (set by signal_handling module)
   subroutine execute_pending_trap(shell)

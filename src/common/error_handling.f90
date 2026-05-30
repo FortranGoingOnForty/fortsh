@@ -142,28 +142,6 @@ contains
     call log_error(ERR_WARN, 0, 0, message, location)
   end subroutine
 
-  ! Validate system resource availability
-  function check_system_resources() result(is_ok)
-    logical :: is_ok
-    integer :: available_memory, available_fds
-    
-    is_ok = .true.
-    
-    ! Basic resource checks (simplified)
-    available_memory = 1000000  ! Placeholder
-    available_fds = 100         ! Placeholder
-    
-    if (available_memory < 1000) then
-      call system_error(301, 'Low memory warning', 'check_system_resources')
-      is_ok = .false.
-    end if
-    
-    if (available_fds < 10) then
-      call system_error(302, 'Low file descriptor count', 'check_system_resources')
-      is_ok = .false.
-    end if
-  end function
-
   ! Validate command before execution
   function validate_command(command) result(is_valid)
     character(len=*), intent(in) :: command
