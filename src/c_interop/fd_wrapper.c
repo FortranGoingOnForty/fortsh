@@ -4,6 +4,14 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <pwd.h>
+
+// Look up a user's home directory via getpwnam (for ~user expansion).
+// Returns the pw_dir string, or NULL if the user does not exist.
+const char *fortsh_user_home(const char *name) {
+    struct passwd *pw = getpwnam(name);
+    return pw ? pw->pw_dir : (const char *)0;
+}
 
 // macOS kernel bug workaround: set S_CTTYREF on the controlling terminal.
 // On macOS, PTY slave output is discarded when the child process exits unless

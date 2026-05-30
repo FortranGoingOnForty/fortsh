@@ -2334,26 +2334,38 @@ contains
         end if
       end if
     else
-      ! ~username expansion
+      ! ~username expansion — resolve the real home via getpwnam.
       start_pos = pos
       do while (pos <= len_trim(token) .and. token(pos:pos) /= '/' .and. token(pos:pos) /= ' ')
         pos = pos + 1
       end do
-      
+
       if (pos > start_pos) then
         username = token(start_pos:pos-1)
       else
         username = ''
       end if
-      
-      ! Simple implementation: assume user home is in /home/username
-      ! In a full implementation, you'd use getpwnam() system call
-      home_path = '/home/' // trim(username)
-      result(result_pos:result_pos+len_trim(home_path)-1) = trim(home_path)
-      result_pos = result_pos + len_trim(home_path)
-      
-      ! Don't increment pos here as it's already at the next character
-      pos = pos - 1  ! Adjust because main loop will increment
+
+      block
+        character(len=:), allocatable :: user_home
+        user_home = get_user_home(trim(username))
+        if (len(user_home) > 0) then
+          result(result_pos:result_pos+len(user_home)-1) = user_home
+          result_pos = result_pos + len(user_home)
+        else
+          ! Unknown user: leave "~username" literal (matches bash).
+          result(result_pos:result_pos) = '~'
+          result_pos = result_pos + 1
+          if (len_trim(username) > 0) then
+            result(result_pos:result_pos+len_trim(username)-1) = trim(username)
+            result_pos = result_pos + len_trim(username)
+          end if
+        end if
+      end block
+
+      ! pos already points at the terminator ('/'/space) or just past the end,
+      ! exactly like the bare-~ branch above — do NOT step back (that re-copied
+      ! the username's last char, e.g. ~root -> /home/roott).
     end if
   end subroutine
 

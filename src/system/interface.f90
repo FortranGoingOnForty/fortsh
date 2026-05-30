@@ -390,6 +390,12 @@ module system_interface
       integer(c_size_t) :: c_strlen
     end function
 
+    function c_user_home(name) bind(C, name="fortsh_user_home")
+      import :: c_ptr, c_char
+      character(kind=c_char), intent(in) :: name(*)
+      type(c_ptr) :: c_user_home
+    end function
+
     function c_unsetenv(name) bind(C, name="unsetenv")
       import :: c_ptr, c_int
       type(c_ptr), value :: name
@@ -811,6 +817,39 @@ contains
       end if
     else
       allocate(character(len=0) :: value)
+    end if
+  end function
+
+  ! Home directory for a named user via getpwnam (for ~user expansion).
+  ! Returns '' if the user does not exist (caller leaves ~user literal).
+  function get_user_home(username) result(home)
+    character(len=*), intent(in) :: username
+    character(len=:), allocatable :: home
+    type(c_ptr) :: p
+    character(kind=c_char), pointer :: cs(:)
+    character(kind=c_char), dimension(:), allocatable, target :: cname
+    integer :: i, n
+
+    home = ''
+    n = len_trim(username)
+    if (n == 0) return
+    allocate(cname(n + 1))
+    do i = 1, n
+      cname(i) = username(i:i)
+    end do
+    cname(n + 1) = c_null_char
+
+    p = c_user_home(cname)
+    if (c_associated(p)) then
+      n = int(c_strlen(p))
+      if (allocated(home)) deallocate(home)
+      allocate(character(len=n) :: home)
+      if (n > 0) then
+        call c_f_pointer(p, cs, [n])
+        do i = 1, n
+          home(i:i) = cs(i)
+        end do
+      end if
     end if
   end function
 
