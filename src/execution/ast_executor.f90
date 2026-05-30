@@ -1536,12 +1536,11 @@ contains
                   shell%last_bg_pid = pid
                   ! Track job inline (duplicated code to avoid goto)
                   if (.not. shell%in_background) then
-                    job_command = trim(shell%current_command)
-                    if (len_trim(job_command) == 0 .and. associated(node%list%left%list%right)) then
+                    job_command = ''
+                    if (associated(node%list%left%list%right)) then
                       if (node%list%left%list%right%node_type == CMD_SIMPLE) then
                         if (associated(node%list%left%list%right%simple_cmd)) then
                           if (node%list%left%list%right%simple_cmd%num_words > 0) then
-                            job_command = ''
                             do i = 1, node%list%left%list%right%simple_cmd%num_words
                               if (i > 1) then
                                 job_command = trim(job_command) // ' ' // trim(node%list%left%list%right%simple_cmd%words(i))
@@ -1553,6 +1552,7 @@ contains
                         end if
                       end if
                     end if
+                    if (len_trim(job_command) == 0) job_command = trim(shell%current_command)
                     status = add_job(shell, pid, trim(job_command), .false.)
                     if (shell%is_interactive) then
                       write(output_unit, '(a,i0,a,i0)') '[', status, '] ', pid
@@ -1608,8 +1608,39 @@ contains
         shell%last_bg_pid = pid
         ! Only track jobs if we're not already in a background job child
         if (.not. shell%in_background) then
-          ! Use the current command text for job display
-          job_command = trim(shell%current_command)
+          ! Extract command text from the AST node, not the whole input line.
+          ! For nested background lists (a & b &), node%list%left is itself
+          ! a LIST(&) — drill into its left child to get the actual command.
+          job_command = ''
+          block
+            type(command_node_t), pointer :: cmd_node
+            cmd_node => null()
+            if (associated(node%list%left)) then
+              if (node%list%left%node_type == CMD_SIMPLE) then
+                cmd_node => node%list%left
+              else if (node%list%left%node_type == CMD_LIST .and. &
+                       associated(node%list%left%list)) then
+                if (node%list%left%list%separator == LIST_SEP_BACKGROUND .and. &
+                    associated(node%list%left%list%left)) then
+                  if (node%list%left%list%left%node_type == CMD_SIMPLE) then
+                    cmd_node => node%list%left%list%left
+                  end if
+                end if
+              end if
+            end if
+            if (associated(cmd_node)) then
+              if (associated(cmd_node%simple_cmd)) then
+                do i = 1, cmd_node%simple_cmd%num_words
+                  if (i > 1) then
+                    job_command = trim(job_command) // ' ' // trim(cmd_node%simple_cmd%words(i))
+                  else
+                    job_command = trim(cmd_node%simple_cmd%words(i))
+                  end if
+                end do
+              end if
+            end if
+          end block
+          if (len_trim(job_command) == 0) job_command = trim(shell%current_command)
           if (len_trim(job_command) == 0) job_command = '<background job>'
 
           status = add_job(shell, pid, trim(job_command), .false.)
