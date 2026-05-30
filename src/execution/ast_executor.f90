@@ -96,9 +96,24 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
+    ! Shared recursion-depth counter (save => static, persists across the
+    ! recursive calls). Bounds executor nesting so a deeply nested AST can't
+    ! overflow the C stack and crash; the parser caps nesting too, but the
+    ! executor frames are larger so it needs its own (lower) guard.
+    integer, save :: exec_depth = 0
+    integer, parameter :: MAX_EXEC_DEPTH = 100
 
     if (.not. associated(node)) then
       exit_status = 0
+      return
+    end if
+
+    exec_depth = exec_depth + 1
+    if (exec_depth > MAX_EXEC_DEPTH) then
+      call write_stderr('fortsh: maximum nesting depth exceeded')
+      exit_status = 2
+      shell%last_exit_status = 2
+      exec_depth = exec_depth - 1
       return
     end if
 
@@ -148,6 +163,7 @@ contains
     end select
 
     shell%last_exit_status = exit_status
+    exec_depth = exec_depth - 1
   end function execute_ast_node
 
   ! =====================================

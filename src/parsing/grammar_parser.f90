@@ -27,7 +27,13 @@ module grammar_parser
     logical :: has_error = .false.
     character(len=:), allocatable :: error_msg
     character(len=:), allocatable :: raw_input  ! For heredoc extraction
+    integer :: depth = 0  ! compound-command nesting depth (recursion guard)
   end type parser_state_t
+
+  ! Cap on nested compound-command depth ({ }, ( ), if/while/for, ...).
+  ! Without this, deeply nested input recurses until the C stack overflows
+  ! and the process dumps core; past the cap we emit a syntax error instead.
+  integer, parameter :: MAX_PARSE_DEPTH = 200
 
 contains
 
@@ -274,6 +280,19 @@ contains
     type(command_node_t), pointer :: node
     type(token_t) :: tok, next_tok
     logical :: is_compound
+
+    ! Bound recursion so deeply nested compound commands can't overflow the
+    ! stack (they used to dump core). Depth is decremented at the single exit.
+    state%depth = state%depth + 1
+    if (state%depth > MAX_PARSE_DEPTH) then
+      state%has_error = .true.
+      if (.not. allocated(state%error_msg)) &
+        state%error_msg = 'maximum nesting depth exceeded'
+      node => null()
+      state%depth = state%depth - 1
+      return
+    end if
+
     tok = current_token(state)
     is_compound = .false.
     if (tok%token_type == TOKEN_KEYWORD) then
@@ -327,6 +346,8 @@ contains
     if (is_compound .and. associated(node)) then
       call parse_trailing_redirections(state, node)
     end if
+
+    state%depth = state%depth - 1
   end function
 
   function parse_simple_cmd(state) result(node)
