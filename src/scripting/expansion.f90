@@ -433,10 +433,11 @@ contains
       end select
     end if
 
-    ! Check for case conversion first (^, ^^, ,, ,,)
-    ! Find the position of ^ or , to determine if it's case conversion
+    ! Check for case conversion first (^, ^^, ,, ,,) — but only if this
+    ! isn't a pattern substitution (contains /). Otherwise ${x/pat/,}
+    ! gets misidentified as case conversion because the last char is ','.
     i = len_trim(var_name)
-    if (i > 1) then
+    if (i > 1 .and. index(var_name(1:i), '/') == 0) then
       if (var_name(i:i) == '^') then
         ! Check for ^^ (uppercase all) or ^ (uppercase first)
         if (i > 1 .and. var_name(i-1:i-1) == '^') then
@@ -1275,12 +1276,12 @@ contains
 
     i2 = 1
     do while (i2 <= in_len)
-      ! Try glob pattern match at position i2 — find shortest match
+      ! Try glob pattern match at position i2 — find longest match (bash semantics)
       matched = .false.
-      do j2 = 1, in_len - i2 + 1
+      do j2 = in_len - i2 + 1, 1, -1
         if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
           matched = .true.
-          exit  ! j2 = matched length
+          exit
         end if
       end do
       if (matched) then
@@ -1338,7 +1339,7 @@ contains
     i2 = 1
     do while (i2 <= in_len)
       matched = .false.
-      do j2 = 1, in_len - i2 + 1
+      do j2 = in_len - i2 + 1, 1, -1
         if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
           matched = .true.
           exit
