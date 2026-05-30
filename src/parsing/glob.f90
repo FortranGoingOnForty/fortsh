@@ -208,182 +208,92 @@ contains
     character(len=MAX_TOKEN_LEN), intent(out) :: matches(:)
     integer, intent(out) :: match_count
 
-    ! Simple implementation - in a full shell this would use opendir/readdir
     ! Use allocatable to avoid stack overflow on macOS
-    character(len=MAX_FILENAME_LEN), allocatable :: test_files(:)
+    character(len=MAX_FILENAME_LEN), allocatable :: dir_entries(:)
     integer :: num_test_files, i
 
     match_count = 0
-    allocate(test_files(10000))  ! Increased to handle directories with many files
+    allocate(dir_entries(10000))  ! handle directories with many files
 
-    ! For now, simulate some common files for testing
-    ! In a real implementation, this would read the actual directory
-    call get_simulated_directory_contents(dir_path, test_files, num_test_files)
+    ! Read the actual directory natively (opendir/readdir, no `ls` subprocess)
+    call list_directory_entries(dir_path, dir_entries, num_test_files)
     
     do i = 1, num_test_files
-      if (pattern_matches(file_pattern, test_files(i))) then
+      if (pattern_matches(file_pattern, dir_entries(i))) then
         if (match_count < size(matches)) then
           match_count = match_count + 1
           if (include_dir_path) then
             if (trim(dir_path) == '.') then
-              matches(match_count) = trim(test_files(i))
+              matches(match_count) = trim(dir_entries(i))
             else
-              matches(match_count) = trim(dir_path) // '/' // trim(test_files(i))
+              matches(match_count) = trim(dir_path) // '/' // trim(dir_entries(i))
             end if
           else
-            matches(match_count) = trim(test_files(i))
+            matches(match_count) = trim(dir_entries(i))
           end if
         end if
       end if
     end do
 
-    if (allocated(test_files)) deallocate(test_files)
+    ! POSIX: pathname expansion results are sorted. readdir returns entries in
+    ! directory order, so sort here (the old `ls`-based path got this for free).
+    call sort_strings(matches, match_count)
+
+    if (allocated(dir_entries)) deallocate(dir_entries)
   end subroutine
 
-  ! Get actual directory contents (simplified implementation)
-  subroutine get_simulated_directory_contents(dir_path, files, count)
+  ! In-place ascending sort of the first n elements (insertion sort — match sets
+  ! are typically small, and glob runs at command time, not per keystroke).
+  subroutine sort_strings(arr, n)
+    character(len=*), intent(inout) :: arr(:)
+    integer, intent(in) :: n
+    integer :: i, j
+    character(len=len(arr)) :: key
+    do i = 2, n
+      key = arr(i)
+      j = i - 1
+      do while (j >= 1)
+        if (arr(j) <= key) exit
+        arr(j+1) = arr(j)
+        j = j - 1
+      end do
+      arr(j+1) = key
+    end do
+  end subroutine
+
+  ! Get actual directory contents via native opendir/readdir (no `ls` subprocess).
+  ! Returns every entry except "." and ".." (matching the old `ls -A1`); the
+  ! caller's pattern_matches decides what actually matches (and enforces the
+  ! POSIX rule that * / ? don't match leading-dot files).
+  subroutine list_directory_entries(dir_path, files, count)
     character(len=*), intent(in) :: dir_path
     character(len=MAX_FILENAME_LEN), intent(out) :: files(:)
     integer, intent(out) :: count
-    
-    ! For now, keep simulation but add note
-    ! In a production shell, this would use opendir/readdir system calls
-    ! or execute 'ls' and parse output
-    
-    ! Try to read actual directory via ls command
-    call read_directory_with_ls(dir_path, files, count)
 
-    ! No fallback simulation - if ls returns nothing, return nothing
-  end subroutine
-
-  ! Read directory contents using ls command
-  subroutine read_directory_with_ls(dir_path, files, count)
-    character(len=*), intent(in) :: dir_path
-    character(len=MAX_FILENAME_LEN), intent(out) :: files(:)
-    integer, intent(out) :: count
-
-    ! Increased buffer size to handle directories with many files (like /tmp)
-    integer, parameter :: BUFFER_SIZE = 524288  ! 512KB buffer for large directories
-
-    character(len=512) :: command
-    integer(c_pid_t) :: pid
-    integer(c_int), target :: status, pipefd(2)
-    integer :: ret, i, line_start, total_bytes
-    character(len=BUFFER_SIZE), allocatable :: buffer
-    integer(c_size_t) :: bytes_read
-    character(kind=c_char), target :: c_buffer(8192)  ! Read in 8KB chunks
+    character(len=MAX_FILENAME_LEN), allocatable :: raw(:)
+    logical, allocatable :: is_dir_flags(:)
+    integer :: nraw, i, cap
 
     count = 0
-    allocate(character(len=BUFFER_SIZE) :: buffer)
+    cap = size(files)
+    if (cap <= 0) return
 
-    ! Construct ls command (-A excludes . and .., -1 means one per line)
-    if (trim(dir_path) == '.' .or. trim(dir_path) == '') then
-      command = 'ls -A1 2>/dev/null'
+    ! +2 headroom so dropping "." and ".." never costs a real entry
+    allocate(raw(cap + 2), is_dir_flags(cap + 2))
+    if (trim(dir_path) == '') then
+      call list_directory('.', raw, is_dir_flags, nraw)
     else
-      command = 'ls -A1 ' // trim(dir_path) // ' 2>/dev/null'
+      call list_directory(trim(dir_path), raw, is_dir_flags, nraw)
     end if
 
-    ! Create pipe for reading output
-    ret = c_pipe(c_loc(pipefd))
-    if (ret /= 0) return
-
-    ! Fork to execute ls
-    pid = c_fork()
-
-    if (pid == 0) then
-      ! Child: redirect stdout to pipe and execute ls
-      ret = c_close(pipefd(1))  ! Close read end
-      ret = c_dup2(pipefd(2), STDOUT_FD)
-      ret = c_close(pipefd(2))  ! Close original write end
-
-      ! Execute ls via shell
-      call execute_ls_command(trim(command))
-      call c_exit(127)
-    else if (pid > 0) then
-      ! Parent: read from pipe
-      ret = c_close(pipefd(2))  ! Close write end
-
-      ! Read output from pipe in chunks until EOF
-      buffer = ''
-      total_bytes = 0
-      do
-        bytes_read = c_read(pipefd(1), c_loc(c_buffer), int(8192, c_size_t))
-        if (bytes_read <= 0) exit  ! EOF or error
-
-        ! Append to buffer
-        do i = 1, min(int(bytes_read), 8192)
-          if (c_buffer(i) == c_null_char) exit
-          if (total_bytes < BUFFER_SIZE) then
-            total_bytes = total_bytes + 1
-            buffer(total_bytes:total_bytes) = c_buffer(i)
-          end if
-        end do
-
-        ! Stop if buffer is full
-        if (total_bytes >= BUFFER_SIZE) exit
-      end do
-
-      ! Parse lines from buffer
-      line_start = 1
-      do i = 1, total_bytes
-        if (buffer(i:i) == char(10)) then  ! Newline
-          if (i > line_start .and. count < size(files)) then
-            count = count + 1
-            files(count) = buffer(line_start:i-1)
-          end if
-          line_start = i + 1
-        end if
-      end do
-
-      ! Handle last line if no trailing newline
-      if (line_start <= total_bytes .and. count < size(files)) then
-        count = count + 1
-        files(count) = buffer(line_start:total_bytes)
-      end if
-
-      ret = c_close(pipefd(1))
-      ret = c_waitpid(pid, c_loc(status), 0)
-    end if
-  end subroutine
-
-  ! Execute ls command via shell
-  subroutine execute_ls_command(command)
-    character(len=*), intent(in) :: command
-    character(kind=c_char), target :: shell_path(10)
-    character(kind=c_char), target :: c_flag(3)
-    character(kind=c_char), target :: c_command(512)
-    type(c_ptr), target :: argv(4)
-    integer :: i, ret
-
-    ! Prepare /bin/sh
-    shell_path(1) = '/'
-    shell_path(2) = 'b'
-    shell_path(3) = 'i'
-    shell_path(4) = 'n'
-    shell_path(5) = '/'
-    shell_path(6) = 's'
-    shell_path(7) = 'h'
-    shell_path(8) = c_null_char
-
-    ! Prepare -c flag
-    c_flag(1) = '-'
-    c_flag(2) = 'c'
-    c_flag(3) = c_null_char
-
-    ! Prepare command string
-    do i = 1, min(len_trim(command), 500)
-      c_command(i) = command(i:i)
+    do i = 1, nraw
+      if (trim(raw(i)) == '.' .or. trim(raw(i)) == '..') cycle
+      if (count >= cap) exit
+      count = count + 1
+      files(count) = raw(i)
     end do
-    c_command(min(len_trim(command), 500) + 1) = c_null_char
 
-    ! Setup argv: ["/bin/sh", "-c", command, NULL]
-    argv(1) = c_loc(shell_path)    ! /bin/sh
-    argv(2) = c_loc(c_flag)        ! -c
-    argv(3) = c_loc(c_command)     ! command
-    argv(4) = c_null_ptr
-
-    ! Execute
-    ret = c_execvp(argv(1), c_loc(argv))
+    deallocate(raw, is_dir_flags)
   end subroutine
 
   ! Check if a filename matches a glob pattern
