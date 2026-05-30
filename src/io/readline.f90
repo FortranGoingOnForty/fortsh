@@ -1498,49 +1498,60 @@ contains
     if (raw_enabled) then
       ! Enhanced input processing
       do while (.not. done)
+        ! Handle terminal resize BEFORE reading input. read_utf8_char
+        ! returns every 100ms on poll timeout, so this fires promptly.
+        if (g_terminal_resized) then
+          g_terminal_resized = .false.
+          rprompt_displayed = .false.
+
+          block
+            integer :: old_cols, reflow_rows, up_i
+            old_cols = term_cols
+
+            success = get_terminal_size(term_rows, term_cols)
+            if (.not. success) then
+              term_cols = 80; term_rows = 24
+            end if
+
+            reflow_rows = (old_cols + term_cols - 1) / term_cols &
+                          + prompt_line_count
+            do up_i = 1, reflow_rows
+              write(output_unit, '(a)', advance='no') char(27) // '[A'
+            end do
+            write(output_unit, '(a)', advance='no') char(13)
+            write(output_unit, '(a)', advance='no') char(27) // '[J'
+            flush(output_unit)
+          end block
+
+          prompt_visual_len = visual_length(prompt)
+          if (prompt_visual_len < 0) prompt_visual_len = 0
+          prompt_line_count = 0
+          block
+            integer :: pr_i2
+            do pr_i2 = 1, len_trim(prompt)
+              if (prompt(pr_i2:pr_i2) == char(10)) prompt_line_count = prompt_line_count + 1
+            end do
+          end block
+
+          module_cursor_screen_row = 0
+          module_cursor_screen_col = 0
+          module_input_state%skip_cursor_up_on_redraw = .true.
+          module_input_state%dirty = .true.
+          cycle  ! repaint via the dirty-redraw block below
+        end if
+
         ! Read a complete UTF-8 character (1-4 bytes)
         success = read_utf8_char(utf8_char, utf8_num_bytes)
         if (.not. success) then
           iostat = -1
           exit
         end if
-
-        ! Handle terminal resize (SIGWINCH) mid-readline. The terminal has
-        ! reflowed existing content, so the cursor position is unknown. Move
-        ! to column 1 of the current line, clear to end of screen, and force
-        ! a full repaint. This avoids ghost lines from the old geometry.
-        if (g_terminal_resized) then
-          g_terminal_resized = .false.
-          rprompt_displayed = .false.
-          ! Move cursor to column 1 and clear everything below
-          write(output_unit, '(a)', advance='no') char(13)  ! CR
-          write(output_unit, '(a)', advance='no') char(27) // '[J'  ! clear to end of screen
-          ! Reprint prompt
-          block
-            integer :: pr_i2
-            do pr_i2 = 1, len_trim(prompt)
-              if (prompt(pr_i2:pr_i2) == char(10)) then
-                write(output_unit, '(a)', advance='no') char(13) // char(10)
-              else
-                write(output_unit, '(a)', advance='no') prompt(pr_i2:pr_i2)
-              end if
-            end do
-          end block
-          write(output_unit, '(a)', advance='no') ' '
-          ! Reprint buffer content
-          if (module_input_state%length > 0) then
-            call state_buffer_get(module_input_state, temp_buf)
-            write(output_unit, '(a)', advance='no') temp_buf(1:module_input_state%length)
+        ! Poll timeout (no input within 100ms) — cycle back to check
+        ! for signals, but let dirty redraws (e.g. post-resize) through.
+        if (utf8_num_bytes == 0) then
+          if (module_input_state%dirty) then
+            goto 500  ! jump to redraw block
           end if
-          flush(output_unit)
-          ! Reset cursor tracking to match new geometry
-          success = get_terminal_size(term_rows, term_cols)
-          if (.not. success) term_cols = 80
-          prompt_visual_len = visual_length(prompt)
-          if (prompt_visual_len < 0) prompt_visual_len = 0
-          call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, &
-                                  module_cursor_screen_row, module_cursor_screen_col)
-          module_input_state%dirty = .false.
           cycle
         end if
 
@@ -1854,6 +1865,7 @@ contains
         end if
 
         ! Redraw line if needed
+500     continue
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         ! Skip redraw when in menu selection mode - menu handles its own display
         ! In test mode, skip full redraw to avoid polluting PTY output
@@ -1890,17 +1902,28 @@ contains
               prompt_visual_len = 0
             end if
 
-            ! Calculate current cursor position (add 1 for space after prompt)
-            cursor_visual_pos = prompt_visual_len + 1 + module_input_state%cursor_pos
-
-            ! When RPROMPT was on the initial line, the entire terminal width
-            ! was filled (prompt + padding + rprompt). The first redraw must
-            ! account for this extra line of content that will be cleared.
-            if (rprompt_displayed) then
-              current_row = 1 + cursor_visual_pos / term_cols
-            else
-              current_row = cursor_visual_pos / term_cols
-            end if
+            ! Cursor-up count: how many terminal rows from the cursor
+            ! position back to the start of the prompt. For multi-line
+            ! prompts, count only the last line's visual width for cursor
+            ! math (earlier lines contribute prompt_line_count rows).
+            ! The redraw strips ESC[nG RPROMPT content, so the visible
+            ! prompt is just the base text — use last-line width only.
+            block
+              integer :: last_nl_pos, last_line_vis
+              last_nl_pos = 0
+              do i_redraw = 1, len_trim(prompt)
+                if (prompt(i_redraw:i_redraw) == char(10)) last_nl_pos = i_redraw
+              end do
+              if (last_nl_pos > 0 .and. last_nl_pos < len_trim(prompt)) then
+                last_line_vis = visual_length(prompt(last_nl_pos+1:len_trim(prompt)))
+              else
+                last_line_vis = prompt_visual_len
+              end if
+              if (last_line_vis < 0) last_line_vis = 0
+              cursor_visual_pos = last_line_vis + 1 + module_input_state%cursor_pos
+              current_row = prompt_line_count + cursor_visual_pos / term_cols
+              if (rprompt_displayed) current_row = current_row + 1
+            end block
             current_col = mod(cursor_visual_pos, term_cols)
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! === Buffered redraw: accumulate entire frame, write once ===
@@ -1909,9 +1932,11 @@ contains
             call rdraw_clear()
 
             ! Move cursor to start of prompt UNLESS we just exited menu mode
+            ! current_row already includes rows from prompt line wrapping
+            ! and explicit newlines — don't add prompt_line_count again.
             if (.not. module_input_state%skip_cursor_up_on_redraw) then
-              if (current_row + prompt_line_count > 0) then
-                do i_redraw = 1, current_row + prompt_line_count
+              if (current_row > 0) then
+                do i_redraw = 1, current_row
                   call rdraw_append(char(27) // '[A')
                 end do
               end if
@@ -1929,14 +1954,50 @@ contains
             ! Clear from cursor to end of screen
             call rdraw_append(char(27) // '[J')
 
-            ! Redraw prompt (replace bare LF with CR+LF for raw mode)
+            ! Redraw prompt (replace bare LF with CR+LF for raw mode).
+            ! Strip ESC[nG (cursor-column) escapes — these are embedded
+            ! RPROMPT positioning from fortsh.f90 that becomes stale
+            ! after a terminal resize and causes line duplication.
             block
-              integer :: pr_j
-              do pr_j = 1, len_trim(prompt)
-                if (prompt(pr_j:pr_j) == char(10)) then
+              integer :: pr_j, pr_plen
+              logical :: in_cg_esc
+              pr_plen = len_trim(prompt)
+              in_cg_esc = .false.
+              pr_j = 1
+              do while (pr_j <= pr_plen)
+                if (prompt(pr_j:pr_j) == char(27) .and. pr_j + 1 <= pr_plen &
+                    .and. prompt(pr_j+1:pr_j+1) == '[') then
+                  ! Check if this is ESC[<digits>G (cursor column)
+                  block
+                    integer :: esc_end
+                    esc_end = pr_j + 2
+                    do while (esc_end <= pr_plen .and. &
+                              prompt(esc_end:esc_end) >= '0' .and. &
+                              prompt(esc_end:esc_end) <= '9')
+                      esc_end = esc_end + 1
+                    end do
+                    if (esc_end <= pr_plen .and. prompt(esc_end:esc_end) == 'G') then
+                      ! Skip this ESC[nG sequence and any RPROMPT text
+                      ! up to the next newline (the RPROMPT content that
+                      ! follows the cursor-position escape)
+                      esc_end = esc_end + 1
+                      do while (esc_end <= pr_plen .and. prompt(esc_end:esc_end) /= char(10))
+                        esc_end = esc_end + 1
+                      end do
+                      pr_j = esc_end
+                      cycle
+                    else
+                      ! Other ESC[ sequence — emit normally
+                      call rdraw_append_char(prompt(pr_j:pr_j))
+                      pr_j = pr_j + 1
+                    end if
+                  end block
+                else if (prompt(pr_j:pr_j) == char(10)) then
                   call rdraw_append(char(13) // char(10))
+                  pr_j = pr_j + 1
                 else
                   call rdraw_append_char(prompt(pr_j:pr_j))
+                  pr_j = pr_j + 1
                 end if
               end do
             end block

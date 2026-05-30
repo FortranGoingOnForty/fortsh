@@ -46,6 +46,20 @@ void fortsh_set_cttyref(void) {
 #endif
 }
 
+// Install SIGWINCH with SA_RESTART cleared so read() returns EINTR
+// on terminal resize, allowing the readline loop to handle it immediately.
+#include <signal.h>
+static void (*g_winch_handler)(void) = NULL;
+static void winch_trampoline(int sig) { (void)sig; if (g_winch_handler) g_winch_handler(); }
+void fortsh_install_winch_norestart(void (*handler)(void)) {
+    g_winch_handler = handler;
+    struct sigaction sa;
+    sa.sa_handler = winch_trampoline;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;  // no SA_RESTART
+    sigaction(SIGWINCH, &sa, NULL);
+}
+
 // Wrapper for open() that takes mode as a separate parameter
 // This works around a bug in Fortran's C binding where mode_t is not passed correctly
 int fortsh_open(const char *pathname, int flags, int mode) {

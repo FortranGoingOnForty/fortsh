@@ -582,6 +582,11 @@ module system_interface
       integer(c_size_t) :: c_read
     end function
 
+    function c_get_errno() bind(C, name="fortsh_get_errno")
+      import :: c_int
+      integer(c_int) :: c_get_errno
+    end function
+
     ! poll(2): nfds_t is unsigned long (Linux) / unsigned int (BSD/macOS);
     ! passing a small positive c_int for nfds is ABI-safe by integer promotion.
     function c_poll(fds, nfds, timeout) bind(C, name="poll")
@@ -1455,12 +1460,21 @@ contains
     character(c_char), target :: bytes(4)
     integer(c_size_t) :: bytes_read
     integer :: lead_byte_val, i, expected_bytes
+    integer(c_int) :: err_val
 
     ! Initialize output
     utf8_char = ''
     num_bytes = 0
 
-    ! Read first byte
+    ! Poll with short timeout in a loop instead of blocking in read().
+    ! When no input arrives within 100ms, return success with 0 bytes
+    ! so the caller can check for signals (e.g. SIGWINCH). This lets
+    ! readline handle terminal resize immediately, not on next keypress.
+    do while (.not. input_ready_within(100))
+      num_bytes = 0
+      success = .true.
+      return
+    end do
     bytes_read = c_read(STDIN_FD, c_loc(bytes(1)), 1_c_size_t)
     if (bytes_read /= 1) then
       success = .false.
