@@ -4216,6 +4216,42 @@ contains
     end if
   end function
 
+  ! Backslash-escape shell metacharacters in a filename for unquoted insertion.
+  ! Matches bash's completion escaping: spaces, quotes, parens, etc.
+  function escape_for_completion(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable :: output
+    integer :: i, ilen, opos
+    character(len=1) :: ch
+    character(len=MAX_LINE_LEN) :: buf
+
+    ilen = len_trim(input)
+    opos = 1
+    do i = 1, ilen
+      ch = input(i:i)
+      select case(ch)
+      case(' ', "'", '"', '\', '(', ')', '&', '|', ';', '<', '>', &
+           '*', '?', '[', ']', '{', '}', '$', '!', '#', '~', '`')
+        if (opos + 1 <= MAX_LINE_LEN) then
+          buf(opos:opos) = '\'
+          opos = opos + 1
+          buf(opos:opos) = ch
+          opos = opos + 1
+        end if
+      case default
+        if (opos <= MAX_LINE_LEN) then
+          buf(opos:opos) = ch
+          opos = opos + 1
+        end if
+      end select
+    end do
+    if (opos > 1) then
+      output = buf(1:opos-1)
+    else
+      output = ''
+    end if
+  end function escape_for_completion
+
   ! Enhanced tab completion that handles partial completion
   subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed, input_len)
     character(len=*), intent(in) :: partial_input
@@ -4298,10 +4334,16 @@ contains
           else
             completed_line = quote_char // trim(completions(1)) // quote_char
           end if
-        else if (last_space_pos > 0) then
-          completed_line = prefix_part(:last_space_pos) // trim(completions(1))
         else
-          completed_line = trim(completions(1))
+          block
+            character(len=:), allocatable :: escaped
+            escaped = escape_for_completion(trim(completions(1)))
+            if (last_space_pos > 0) then
+              completed_line = prefix_part(:last_space_pos) // escaped
+            else
+              completed_line = escaped
+            end if
+          end block
         end if
       end block
       completed = .true.
@@ -4315,14 +4357,16 @@ contains
 
         do j = 1, num_completions
           if (j > 1) then
-            ! Add space separator
             expanded_matches(pos:pos) = ' '
             pos = pos + 1
           end if
 
-          ! Add this match
-          expanded_matches(pos:pos+len_trim(completions(j))-1) = trim(completions(j))
-          pos = pos + len_trim(completions(j))
+          block
+            character(len=:), allocatable :: esc_match
+            esc_match = escape_for_completion(trim(completions(j)))
+            expanded_matches(pos:pos+len(esc_match)-1) = esc_match
+            pos = pos + len(esc_match)
+          end block
         end do
 
         ! Replace glob pattern with expanded matches
