@@ -1235,12 +1235,11 @@ contains
   function get_array_all_elements(shell, name) result(result_str)
     type(shell_state_t), intent(in) :: shell
     character(len=*), intent(in) :: name
-    character(len=4096) :: result_str
-    integer :: i, j, pos
+    character(len=:), allocatable :: result_str
+    integer :: i, j
     logical :: first
 
     result_str = ''
-    pos = 1
     first = .true.
 
     do i = 1, shell%num_variables
@@ -1248,14 +1247,11 @@ contains
         do j = 1, shell%variables(i)%array_size
           if (.not. allocated(shell%variables(i)%array_values(j)%str)) cycle
           if (len_trim(shell%variables(i)%array_values(j)%str) == 0) cycle
-          if (.not. first) then
-            result_str(pos:pos) = ' '
-            pos = pos + 1
-          end if
+          ! Grow an allocatable accumulator — never a fixed buffer (a large
+          ! array used to overflow a 4096-byte result_str and SIGSEGV).
+          if (.not. first) result_str = result_str // ' '
           first = .false.
-          result_str(pos:pos+len_trim(shell%variables(i)%array_values(j)%str)-1) = &
-            trim(shell%variables(i)%array_values(j)%str)
-          pos = pos + len_trim(shell%variables(i)%array_values(j)%str)
+          result_str = result_str // trim(shell%variables(i)%array_values(j)%str)
         end do
         return
       end if

@@ -171,23 +171,19 @@ contains
           if (is_keys_expansion .and. is_all_expansion) then
             ! ${!array[@]} - return all keys
             block
-              character(len=4096) :: kbuf
-              integer :: kpos, klen
-              kbuf = ''; kpos = 1
+              character(len=:), allocatable :: kbuf
+              integer :: klen
+              kbuf = ''
               allocate(keys(500))
               call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
               do j = 1, min(num_keys, 500)
                 klen = len_trim(keys(j))
                 if (klen == 0) cycle
-                if (kpos > 1) then; kbuf(kpos:kpos) = ' '; kpos = kpos + 1; end if
-                kbuf(kpos:kpos+klen-1) = keys(j)(1:klen)
-                kpos = kpos + klen
+                ! allocatable accumulator — never a fixed buffer (overflow guard)
+                if (len(kbuf) > 0) kbuf = kbuf // ' '
+                kbuf = kbuf // keys(j)(1:klen)
               end do
-              if (kpos > 1) then
-                result_value = kbuf(1:kpos-1)
-              else
-                result_value = ''
-              end if
+              result_value = kbuf
             end block
             deallocate(keys)
             return
@@ -202,22 +198,19 @@ contains
           else if (is_all_expansion) then
             ! ${array[@]} - return all values
             block
-              character(len=4096) :: vbuf
-              integer :: vpos, vlen
-              vbuf = ''; vpos = 1
+              character(len=:), allocatable :: vbuf
+              integer :: vlen
+              vbuf = ''
               allocate(keys(500))
               call get_assoc_array_keys(shell, trim(array_name), keys, num_keys)
               do j = 1, min(num_keys, 500)
                 var_value = get_assoc_array_value(shell, trim(array_name), trim(keys(j)))
                 vlen = len_trim(var_value)
-                if (vpos > 1) then; vbuf(vpos:vpos) = ' '; vpos = vpos + 1; end if
-                if (vlen > 0) then; vbuf(vpos:vpos+vlen-1) = var_value(1:vlen); vpos = vpos + vlen; end if
+                ! allocatable accumulator — never a fixed buffer (overflow guard)
+                if (len(vbuf) > 0) vbuf = vbuf // ' '
+                if (vlen > 0) vbuf = vbuf // var_value(1:vlen)
               end do
-              if (vpos > 1) then
-                result_value = vbuf(1:vpos-1)
-              else
-                result_value = ''
-              end if
+              result_value = vbuf
             end block
             deallocate(keys)
             return
@@ -239,32 +232,28 @@ contains
             if (is_keys_expansion) then
               ! ${!arr[@]} — list indices of set elements (sparse-aware)
               block
-                integer :: ki, arr_sz, kpos
-                character(len=4096) :: kbuf
+                integer :: ki, arr_sz
+                character(len=:), allocatable :: kbuf
                 character(len=:), allocatable :: elem
-                kbuf = ''; kpos = 1
+                kbuf = ''
                 arr_sz = get_array_size(shell, trim(array_name))
                 do ki = 1, arr_sz
                   elem = get_array_element(shell, trim(array_name), ki)
                   if (len_trim(elem) > 0) then
-                    if (kpos > 1) then; kbuf(kpos:kpos) = ' '; kpos = kpos + 1; end if
+                    ! allocatable accumulator — never a fixed buffer (overflow guard)
+                    if (len(kbuf) > 0) kbuf = kbuf // ' '
                     write(num_buf, '(I0)') ki - 1  ! 0-based index
-                    kbuf(kpos:kpos+len_trim(num_buf)-1) = trim(num_buf)
-                    kpos = kpos + len_trim(num_buf)
+                    kbuf = kbuf // trim(num_buf)
                   end if
                 end do
-                if (kpos > 1) then
-                  result_value = kbuf(1:kpos-1)
-                else
-                  result_value = ''
-                end if
+                result_value = kbuf
               end block
               return
             else if (is_length_expansion) then
               ! ${#arr[@]} — count of elements
               block
                 integer :: ki, arr_count
-                character(len=4096) :: all_str
+                character(len=:), allocatable :: all_str
                 all_str = trim(get_array_all_elements(shell, trim(array_name)))
                 arr_count = 0
                 if (len_trim(all_str) > 0) then
@@ -280,7 +269,7 @@ contains
             else
               ! ${arr[@]} — all values, with optional slicing
               block
-                character(len=4096) :: all_str
+                character(len=:), allocatable :: all_str
                 character(len=256) :: slice_spec
                 integer :: colon_after, sc_pos2, ios1, ios2
                 integer :: s_offset, s_length, w_count, w_start, w_idx, w_out
