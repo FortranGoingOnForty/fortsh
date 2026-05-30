@@ -384,6 +384,26 @@ module system_interface
       integer(c_int) :: c_setenv
     end function
 
+    function c_strlen(s) bind(C, name="strlen")
+      import :: c_ptr, c_size_t
+      type(c_ptr), value :: s
+      integer(c_size_t) :: c_strlen
+    end function
+
+    function c_user_home(name) bind(C, name="fortsh_user_home")
+      import :: c_ptr, c_char
+      character(kind=c_char), intent(in) :: name(*)
+      type(c_ptr) :: c_user_home
+    end function
+
+    ! Native terminal size via ioctl done in C (src/c_interop/terminal_size.c),
+    ! which avoids the flang-new crash on the Fortran c_loc(winsize) path.
+    function c_get_term_size(rows, cols) bind(C, name="get_term_size_c")
+      import :: c_int
+      integer(c_int), intent(out) :: rows, cols
+      integer(c_int) :: c_get_term_size
+    end function
+
     function c_unsetenv(name) bind(C, name="unsetenv")
       import :: c_ptr, c_int
       type(c_ptr), value :: name
@@ -786,37 +806,153 @@ contains
     character(len=:), allocatable :: value
     type(c_ptr) :: c_value_ptr
     character(kind=c_char), pointer :: c_value(:)
-    integer :: i
+    integer :: i, vlen
     character(len=256), target :: c_var_name
-    
+
     c_var_name = trim(var_name)//c_null_char
     c_value_ptr = c_getenv(c_loc(c_var_name))
-    
+
     if (c_associated(c_value_ptr)) then
-      call c_f_pointer(c_value_ptr, c_value, [MAX_ENV_LEN])
-      
-      do i = 1, MAX_ENV_LEN
-        if (c_value(i) == c_null_char) exit
-      end do
-      
-      allocate(character(len=i-1) :: value)
-      do i = 1, len(value)
-        value(i:i) = c_value(i)
-      end do
+      ! Map the exact C-string length (strlen) — a fixed MAX_ENV_LEN window
+      ! both capped long values and over-claimed the pointer extent.
+      vlen = int(c_strlen(c_value_ptr))
+      allocate(character(len=vlen) :: value)
+      if (vlen > 0) then
+        call c_f_pointer(c_value_ptr, c_value, [vlen])
+        do i = 1, vlen
+          value(i:i) = c_value(i)
+        end do
+      end if
     else
       allocate(character(len=0) :: value)
+    end if
+  end function
+
+  ! True if `name` is an executable found on $PATH (native access(X_OK) scan;
+  ! no `which` subprocess). Bare names only — a name with '/' is checked as-is.
+  function command_in_path(name) result(found)
+    character(len=*), intent(in) :: name
+    logical :: found
+    character(len=:), allocatable :: path_var, cand
+    character(kind=c_char), dimension(:), allocatable, target :: cpath
+    integer :: spos, cpos, epos, i, clen
+
+    found = .false.
+    if (len_trim(name) == 0) return
+
+    if (index(trim(name), '/') > 0) then
+      cand = trim(name)
+    else
+      path_var = get_environment_var('PATH')
+      if (len(path_var) == 0) path_var = '/usr/bin:/bin'
+      cand = ''
+    end if
+
+    spos = 1
+    do
+      if (index(trim(name), '/') > 0) then
+        ! absolute/relative path: single candidate
+        if (len(cand) == 0) exit
+      else
+        if (spos > len(path_var)) exit
+        cpos = index(path_var(spos:), ':')
+        if (cpos == 0) then
+          epos = len(path_var)
+        else
+          epos = spos + cpos - 2
+        end if
+        if (epos >= spos) then
+          cand = path_var(spos:epos)
+        else
+          cand = '.'
+        end if
+        if (len_trim(cand) == 0) cand = '.'
+        cand = trim(cand) // '/' // trim(name)
+      end if
+
+      clen = len(cand)
+      if (allocated(cpath)) deallocate(cpath)
+      allocate(cpath(clen + 1))
+      do i = 1, clen
+        cpath(i) = cand(i:i)
+      end do
+      cpath(clen + 1) = c_null_char
+      if (c_access(c_loc(cpath), X_OK) == 0) then
+        found = .true.
+        return
+      end if
+
+      if (index(trim(name), '/') > 0) exit
+      if (cpos == 0) exit
+      spos = spos + cpos
+    end do
+  end function command_in_path
+
+  ! Terminal size via the C ioctl helper (no `tput` subprocess; safe on flang).
+  function get_term_size_native(rows, cols) result(ok)
+    integer, intent(out) :: rows, cols
+    logical :: ok
+    integer(c_int) :: r, c, ret
+    r = 24; c = 80
+    ret = c_get_term_size(r, c)
+    rows = int(r)
+    cols = int(c)
+    ok = (ret == 0)
+  end function
+
+  ! Home directory for a named user via getpwnam (for ~user expansion).
+  ! Returns '' if the user does not exist (caller leaves ~user literal).
+  function get_user_home(username) result(home)
+    character(len=*), intent(in) :: username
+    character(len=:), allocatable :: home
+    type(c_ptr) :: p
+    character(kind=c_char), pointer :: cs(:)
+    character(kind=c_char), dimension(:), allocatable, target :: cname
+    integer :: i, n
+
+    home = ''
+    n = len_trim(username)
+    if (n == 0) return
+    allocate(cname(n + 1))
+    do i = 1, n
+      cname(i) = username(i:i)
+    end do
+    cname(n + 1) = c_null_char
+
+    p = c_user_home(cname)
+    if (c_associated(p)) then
+      n = int(c_strlen(p))
+      if (allocated(home)) deallocate(home)
+      allocate(character(len=n) :: home)
+      if (n > 0) then
+        call c_f_pointer(p, cs, [n])
+        do i = 1, n
+          home(i:i) = cs(i)
+        end do
+      end if
     end if
   end function
 
   function set_environment_var(var_name, var_value) result(success)
     character(len=*), intent(in) :: var_name, var_value
     logical :: success
-    integer :: ret
-    character(len=MAX_TOKEN_LEN), target :: c_var_name
-    character(len=MAX_PATH_LEN), target :: c_var_value
+    integer :: ret, i, nlen, vlen
+    ! Allocatable c_char targets sized to the actual strings — fixed buffers
+    ! truncated long exported values (e.g. a big PATH) at 4096 bytes.
+    character(kind=c_char), dimension(:), allocatable, target :: c_var_name, c_var_value
 
-    c_var_name = trim(var_name)//c_null_char
-    c_var_value = trim(var_value)//c_null_char
+    nlen = len_trim(var_name)
+    vlen = len_trim(var_value)
+    allocate(c_var_name(nlen + 1), c_var_value(vlen + 1))
+    do i = 1, nlen
+      c_var_name(i) = var_name(i:i)
+    end do
+    c_var_name(nlen + 1) = c_null_char
+    do i = 1, vlen
+      c_var_value(i) = var_value(i:i)
+    end do
+    c_var_value(vlen + 1) = c_null_char
+
     ret = c_setenv(c_loc(c_var_name), c_loc(c_var_value), 1_c_int)
     success = (ret == 0)
   end function
@@ -952,65 +1088,56 @@ contains
     character(len=:), allocatable :: output
 
     type(c_ptr) :: pipe_ptr
-    character(kind=c_char), target :: buffer(4096)  ! Larger buffer per read
-    character(len=65536) :: temp_output  ! 64KB buffer
+    character(kind=c_char), target :: buffer(4096)  ! one fgets chunk
+    character(len=4096) :: chunk                     ! collapsed chunk (<= one read)
     type(c_ptr) :: ret_ptr
-    integer :: i, pos, bytes_read
-    character(len=256), target :: c_command
+    integer :: i, clen, cmdlen
+    ! Allocatable command/output — fixed buffers truncated the command at 256B
+    ! and the output at 64KB.
+    character(kind=c_char), dimension(:), allocatable, target :: c_command
     character(len=4), target :: c_mode
 
-    ! Convert strings to proper format
-    c_command = trim(command)//c_null_char
+    output = ''
+
+    cmdlen = len_trim(command)
+    allocate(c_command(cmdlen + 1))
+    do i = 1, cmdlen
+      c_command(i) = command(i:i)
+    end do
+    c_command(cmdlen + 1) = c_null_char
     c_mode = 'r'//c_null_char
 
-    ! Open pipe to command
     pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
+    if (.not. c_associated(pipe_ptr)) return
 
-    if (.not. c_associated(pipe_ptr)) then
-      allocate(character(len=0) :: output)
-      return
-    end if
-
-    temp_output = ''
-    pos = 1
-
-    ! Read output with larger buffer
+    ! Read the whole output, collapsing runs of newlines to single spaces,
+    ! growing an allocatable accumulator (append per chunk, not per char).
     do
-      ! Initialize buffer for this read
       buffer = c_null_char
-
       ret_ptr = c_fgets(c_loc(buffer), int(4096, c_int), pipe_ptr)
       if (.not. c_associated(ret_ptr)) exit
 
-      ! Convert to Fortran string
-      bytes_read = 0
+      clen = 0
       do i = 1, 4096
         if (buffer(i) == c_null_char) exit
-        bytes_read = bytes_read + 1
-        if (pos > len(temp_output)) exit  ! Buffer full
-
-        if (buffer(i) /= char(10)) then  ! Skip newlines
-          temp_output(pos:pos) = buffer(i)
-          pos = pos + 1
-        else if (pos > 1 .and. temp_output(pos-1:pos-1) /= ' ') then
-          temp_output(pos:pos) = ' '
-          pos = pos + 1
+        if (buffer(i) /= char(10)) then
+          clen = clen + 1
+          chunk(clen:clen) = buffer(i)
+        else
+          ! newline -> single space, unless the previous kept char is a space
+          if (clen > 0) then
+            if (chunk(clen:clen) /= ' ') then
+              clen = clen + 1; chunk(clen:clen) = ' '
+            end if
+          else if (len(output) > 0) then
+            if (output(len(output):len(output)) /= ' ') output = output // ' '
+          end if
         end if
       end do
-
-      ! Debug: Check if we should continue reading
-      ! Exit if we read less than expected OR hit buffer limit
-      if (pos > len(temp_output)) exit
-      if (bytes_read == 0) exit
+      if (clen > 0) output = output // chunk(1:clen)
     end do
 
-    ! Close pipe
     i = c_pclose(pipe_ptr)
-
-    ! Return output (deallocate first if already allocated, which shouldn't happen but prevents crash)
-    if (allocated(output)) deallocate(output)
-    allocate(character(len=pos-1) :: output)
-    output = temp_output(:pos-1)
   end function
 
   ! Like execute_and_capture but converts newlines to tabs instead of spaces.
@@ -1021,56 +1148,53 @@ contains
 
     type(c_ptr) :: pipe_ptr
     character(kind=c_char), target :: buffer(4096)
-    character(len=65536) :: temp_output
+    character(len=4096) :: chunk
     type(c_ptr) :: ret_ptr
-    integer :: i, pos, bytes_read
-    character(len=256), target :: c_command
+    integer :: i, clen, cmdlen
+    ! Allocatable command/output — fixed buffers capped command at 256B / output at 64KB
+    character(kind=c_char), dimension(:), allocatable, target :: c_command
     character(len=4), target :: c_mode
 
-    c_command = trim(command)//c_null_char
+    output = ''
+
+    cmdlen = len_trim(command)
+    allocate(c_command(cmdlen + 1))
+    do i = 1, cmdlen
+      c_command(i) = command(i:i)
+    end do
+    c_command(cmdlen + 1) = c_null_char
     c_mode = 'r'//c_null_char
 
     pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
-    if (.not. c_associated(pipe_ptr)) then
-      allocate(character(len=0) :: output)
-      return
-    end if
+    if (.not. c_associated(pipe_ptr)) return
 
-    temp_output = ''
-    pos = 1
-
+    ! Collapse runs of newlines to single tabs (preserves spaces in filenames),
+    ! growing an allocatable accumulator.
     do
       buffer = c_null_char
       ret_ptr = c_fgets(c_loc(buffer), int(4096, c_int), pipe_ptr)
       if (.not. c_associated(ret_ptr)) exit
 
-      bytes_read = 0
+      clen = 0
       do i = 1, 4096
         if (buffer(i) == c_null_char) exit
-        bytes_read = bytes_read + 1
-        if (pos > len(temp_output)) exit
-
         if (buffer(i) == char(10)) then
-          ! Convert newline to tab (preserves spaces in filenames)
-          if (pos > 1 .and. temp_output(pos-1:pos-1) /= char(9)) then
-            temp_output(pos:pos) = char(9)
-            pos = pos + 1
+          if (clen > 0) then
+            if (chunk(clen:clen) /= char(9)) then
+              clen = clen + 1; chunk(clen:clen) = char(9)
+            end if
+          else if (len(output) > 0) then
+            if (output(len(output):len(output)) /= char(9)) output = output // char(9)
           end if
         else
-          temp_output(pos:pos) = buffer(i)
-          pos = pos + 1
+          clen = clen + 1
+          chunk(clen:clen) = buffer(i)
         end if
       end do
-
-      if (pos > len(temp_output)) exit
-      if (bytes_read == 0) exit
+      if (clen > 0) output = output // chunk(1:clen)
     end do
 
     i = c_pclose(pipe_ptr)
-
-    if (allocated(output)) deallocate(output)
-    allocate(character(len=pos-1) :: output)
-    output = temp_output(:pos-1)
   end function
 
   ! Terminal control functions

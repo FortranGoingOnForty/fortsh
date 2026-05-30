@@ -110,6 +110,15 @@ contains
       call advance(state)
       tok = current_token(state)
     end do
+    ! Anything left at the top level (e.g. a stray ')' or 'done') is a syntax
+    ! error — without this, the leading fragment ran and the rest was silently
+    ! dropped while the shell reported success (bash returns 2 here).
+    if (tok%token_type /= TOKEN_EOF .and. .not. state%has_error) then
+      call write_stderr('sh: -c: line 1: syntax error near unexpected token `' &
+                        // trim(tok%value) // "'")
+      state%has_error = .true.
+      state%error_msg = 'syntax error near unexpected token ' // trim(tok%value)
+    end if
   end function
 
   recursive function parse_list(state) result(node)
@@ -238,19 +247,32 @@ contains
     if (.not. associated(node)) return
     tok = current_token(state)
     if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|') then
-      allocate(commands(10))
+      allocate(commands(16))
       num_commands = 1
       commands(1) = node
       do while (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|')
         call advance(state)
         call skip_newlines(state)
-        if (num_commands >= 10) exit
         temp_node => parse_command_node(state)
         if (.not. associated(temp_node)) then
           ! Incomplete pipeline - set error, print message, and exit
           call write_stderr('sh: -c: line 1: syntax error: unexpected end of file')
           state%has_error = .true.
           exit
+        end if
+        ! Grow the stage array instead of capping at a fixed count — long
+        ! pipelines (15-20 stages) used to stop here, leaving `| cmd` leftover.
+        if (num_commands >= size(commands)) then
+          block
+            type(command_node_t), pointer :: tmp(:)
+            integer :: gk
+            allocate(tmp(size(commands) * 2))
+            do gk = 1, num_commands
+              tmp(gk) = commands(gk)
+            end do
+            deallocate(commands)
+            commands => tmp
+          end block
         end if
         num_commands = num_commands + 1
         commands(num_commands) = temp_node
@@ -300,6 +322,9 @@ contains
       case('{')
         node => parse_brace_group(state)
         is_compound = .true.
+      case('function')
+        ! ksh/bash `function name { ... }` (and `function name() { ... }`)
+        node => parse_function_stmt(state)
       case('coproc')
         node => parse_coproc_stmt(state)
         is_compound = .true.
@@ -326,6 +351,44 @@ contains
     ! (simple commands already handle redirections internally)
     if (is_compound .and. associated(node)) then
       call parse_trailing_redirections(state, node)
+    end if
+  end function
+
+  ! Parse the `function` keyword form: `function NAME [()] { ... }`
+  recursive function parse_function_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, func_body
+    type(token_t) :: tok
+    character(len=MAX_TOKEN_LEN) :: func_name
+
+    node => null()
+    call advance(state)  ! consume 'function'
+
+    tok = current_token(state)
+    if (tok%token_type /= TOKEN_WORD) then
+      state%has_error = .true.
+      state%error_msg = 'expected name after "function"'
+      return
+    end if
+    func_name = tok%value
+    call advance(state)
+
+    ! Optional empty parentheses
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+      call advance(state)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ')') call advance(state)
+    end if
+
+    call skip_newlines(state)
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == '{') then
+      func_body => parse_brace_group(state)
+      node => create_function_def(trim(func_name), func_body)
+    else
+      state%has_error = .true.
+      state%error_msg = 'expected "{" in function definition'
     end if
   end function
 
@@ -531,21 +594,21 @@ contains
         end if
         num_redirects = num_redirects + 1
 
-          ! Check if previous word was a file descriptor number (e.g., "2" before ">", "3" before "<&")
-          ! FD must be a single digit (0-9) to avoid false positives like "/tmp"
+          ! Check if previous word was a file descriptor number (e.g., "2" before ">", "10" before "<&")
           if (num_words > 0 .and. (trim(tok%value) == '>' .or. trim(tok%value) == '>&' .or. &
                                     trim(tok%value) == '<' .or. trim(tok%value) == '<&' .or. &
                                     trim(tok%value) == '>>' .or. trim(tok%value) == '<>')) then
-            ! Only treat as FD if it's exactly one digit character
-            if (len_trim(words(num_words)) == 1 .and. &
-                index('0123456789', trim(words(num_words))) > 0) then
+            ! Treat as an fd only if the word is all digits (1-3 of them), so
+            ! multi-digit fds like `exec 10>f` work; non-numeric words (/tmp) don't.
+            if (len_trim(words(num_words)) >= 1 .and. len_trim(words(num_words)) <= 3 .and. &
+                verify(trim(words(num_words)), '0123456789') == 0) then
               read(words(num_words), *, iostat=io_stat) fd_num
             else
-              ! Not a single digit, treat as regular word
+              ! Not numeric, treat as regular word
               io_stat = -1  ! Force failure
               fd_num = -1
             end if
-            if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
+            if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 255) then
               ! Previous word was a single digit - this is fd redirection
               select case(trim(tok%value))
               case('>&')

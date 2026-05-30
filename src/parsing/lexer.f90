@@ -815,20 +815,16 @@ contains
           end if
           pos = pos + 1  ! Skip the opening quote
         else if (ch == '#') then
-          ! # is normally comment, but in $# it's part of variable
-          ! Keep it if current token is just $
-          if (token_len == 1 .and. current_token(1:1) == '$') then
+          ! Inside a word, '#' is a literal character — bash only begins a
+          ! comment when '#' starts a word (after whitespace/operator/newline),
+          ! which is handled in the NORMAL state. So `echo a#b` -> a#b, and
+          ! `$#` stays the parameter. `echo a #b` still comments (the space
+          ! ends the word first, then '#' is seen in the NORMAL state).
+          if (token_len < MAX_TOKEN_LEN) then
             token_len = token_len + 1
             current_token(token_len:token_len) = ch
-            pos = pos + 1
-          else
-            ! End word, let # start a comment
-            call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                    token_start, pos-1, token_has_quoted_part, in_escape)
-            state = LEX_NORMAL
-            in_escape = .false.
-            token_has_quoted_part = .false.
           end if
+          pos = pos + 1
         else if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
           ! $( for command/arithmetic substitution - keep in word
           if (token_len < MAX_TOKEN_LEN - 1) then

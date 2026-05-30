@@ -2447,37 +2447,6 @@ contains
     is_valid = .true.
   end function
 
-  subroutine builtin_timeout(cmd, shell)
-    type(command_t), intent(in) :: cmd
-    type(shell_state_t), intent(inout) :: shell
-    
-    integer :: timeout_seconds, i
-    character(len=:), allocatable :: command
-
-    if (cmd%num_tokens < 3) then
-      write(error_unit, '(a)') 'timeout: usage: timeout DURATION COMMAND...'
-      shell%last_exit_status = 1
-      return
-    end if
-
-    read(cmd%tokens(2), *, iostat=i) timeout_seconds
-    if (i /= 0 .or. timeout_seconds <= 0) then
-      write(error_unit, '(a)') 'timeout: invalid duration'
-      shell%last_exit_status = 1
-      return
-    end if
-
-    ! Reconstruct command from remaining tokens
-    command = ''
-    do i = 3, cmd%num_tokens
-      if (i > 3) command = trim(command) // ' '
-      command = trim(command) // trim(cmd%tokens(i))
-    end do
-    
-    ! Execute command with timeout - placeholder
-    shell%last_exit_status = 0
-  end subroutine
-
   ! =============================================================================
   ! POSIX Required Built-ins (Phase 10: Critical POSIX Compliance)
   ! =============================================================================
@@ -4305,6 +4274,7 @@ contains
   end subroutine
 
   subroutine builtin_fc(cmd, shell)
+    use trap_dispatch, only: eval_trap_string  ! run a string through the current shell
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical :: list_mode, no_line_numbers, reverse_order, subst_mode
@@ -4312,7 +4282,7 @@ contains
     character(len=:), allocatable :: line, tmpfile, edit_cmd
     character(len=40) :: fmt_buf
     integer :: first, last, i, arg_idx, iostat, tmp_unit
-    integer :: eq_pos, history_count
+    integer :: eq_pos, history_count, fc_ec
     logical :: found
 
     ! Pre-allocate line for intent(out) calls and Fortran read
@@ -4486,8 +4456,10 @@ contains
       ! Print the command being executed
       write(output_unit, '(a)') trim(line)
 
-      ! Execute using c_system
-      shell%last_exit_status = c_system(trim(line) // c_null_char)
+      ! Run it in the CURRENT shell (functions/aliases/locals visible), not
+      ! /bin/sh; eval_trap_string returns the real exit code, not a wait-status.
+      call eval_trap_string(trim(line), shell, fc_ec)
+      shell%last_exit_status = fc_ec
 
       return
     end if
@@ -4571,8 +4543,9 @@ contains
 
       if (len_trim(line) == 0 .or. line(1:1) == '#') cycle
 
-      ! Execute the line using c_system
-      shell%last_exit_status = c_system(trim(line) // c_null_char)
+      ! Run the edited line in the current shell (not /bin/sh)
+      call eval_trap_string(trim(line), shell, fc_ec)
+      shell%last_exit_status = fc_ec
     end do
 
     close(tmp_unit)
@@ -5107,54 +5080,6 @@ contains
     shell%last_exit_status = 0
   end subroutine builtin_dirh
 
-  ! Execute EXIT trap inline (to avoid circular dependency with executor module)
-  subroutine execute_exit_trap_inline(shell)
-    type(shell_state_t), intent(inout) :: shell
-    character(len=:), allocatable :: trap_cmd
-    integer :: saved_status
-    type(pipeline_t) :: trap_pipeline
-    integer :: i
-
-    ! Save trap command and clear
-    trap_cmd = shell%pending_trap_command
-    shell%pending_trap_command = ''
-    shell%pending_trap_signal = 0
-
-    ! Save exit status (traps don't affect $?)
-    saved_status = shell%last_exit_status
-
-    ! Set flag to prevent recursive traps
-    shell%executing_trap = .true.
-
-    ! Parse trap command
-    call parse_pipeline(trim(trap_cmd), trap_pipeline)
-
-    ! Execute it in current shell context (inline execution using c_system)
-    ! We use c_system instead of execute_pipeline to avoid circular dependency
-    if (len_trim(trap_cmd) > 0) then
-      i = c_system(trim(trap_cmd) // c_null_char)
-    end if
-
-    ! Clean up pipeline allocations
-    if (allocated(trap_pipeline%commands)) then
-      do i = 1, trap_pipeline%num_commands
-        if (allocated(trap_pipeline%commands(i)%tokens)) deallocate(trap_pipeline%commands(i)%tokens)
-        if (allocated(trap_pipeline%commands(i)%input_file)) deallocate(trap_pipeline%commands(i)%input_file)
-        if (allocated(trap_pipeline%commands(i)%output_file)) deallocate(trap_pipeline%commands(i)%output_file)
-        if (allocated(trap_pipeline%commands(i)%error_file)) deallocate(trap_pipeline%commands(i)%error_file)
-        if (allocated(trap_pipeline%commands(i)%heredoc_delimiter)) deallocate(trap_pipeline%commands(i)%heredoc_delimiter)
-        if (allocated(trap_pipeline%commands(i)%heredoc_content)) deallocate(trap_pipeline%commands(i)%heredoc_content)
-        if (allocated(trap_pipeline%commands(i)%here_string)) deallocate(trap_pipeline%commands(i)%here_string)
-      end do
-      deallocate(trap_pipeline%commands)
-    end if
-
-    ! Clear flag
-    shell%executing_trap = .false.
-
-    ! Restore exit status (traps don't affect $?)
-    shell%last_exit_status = saved_status
-  end subroutine execute_exit_trap_inline
 
 
 end module builtins

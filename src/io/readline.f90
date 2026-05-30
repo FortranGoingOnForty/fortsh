@@ -853,37 +853,20 @@ contains
 
   ! Detect the clipboard tool at startup (idempotent).
   subroutine clipboard_detect()
-    character(len=:), allocatable :: result
-
     if (clipboard_initialized) return
     clipboard_initialized = .true.
 
-    ! Probe in preference order. execute_and_capture runs `which <tool>`
-    ! and returns the path if found, or an empty string if not.
-    result = execute_and_capture('which pbcopy 2>/dev/null')
-    if (len_trim(result) > 0) then
+    ! Probe in preference order via a native $PATH scan (access(X_OK)),
+    ! not a `which` subprocess.
+    if (command_in_path('pbcopy')) then
       clipboard_tool = CLIP_PBCOPY
-      return
-    end if
-
-    result = execute_and_capture('which wl-copy 2>/dev/null')
-    if (len_trim(result) > 0) then
+    else if (command_in_path('wl-copy')) then
       clipboard_tool = CLIP_WLCOPY
-      return
-    end if
-
-    result = execute_and_capture('which xclip 2>/dev/null')
-    if (len_trim(result) > 0) then
+    else if (command_in_path('xclip')) then
       clipboard_tool = CLIP_XCLIP
-      return
-    end if
-
-    result = execute_and_capture('which xsel 2>/dev/null')
-    if (len_trim(result) > 0) then
+    else if (command_in_path('xsel')) then
       clipboard_tool = CLIP_XSEL
-      return
     end if
-
     ! No tool found — clipboard_tool stays CLIP_NONE.
   end subroutine clipboard_detect
 
@@ -1325,34 +1308,20 @@ contains
   ! Safe terminal size detection for macOS (avoids get_terminal_size crash on flang-new)
   subroutine safe_get_terminal_size(rows, cols)
     integer, intent(out) :: rows, cols
-    character(len=:), allocatable :: cols_str, rows_str
-    integer :: cols_val, rows_val, ios
+    integer :: r, c
+    logical :: ok
 
     ! Default fallback values
     cols = 80
     rows = 24
 
-    ! Try to get columns using tput
-    cols_str = execute_and_capture('tput cols 2>/dev/null')
-    if (allocated(cols_str) .and. len_trim(cols_str) > 0) then
-      read(cols_str, *, iostat=ios) cols_val
-      if (ios == 0 .and. cols_val > 0 .and. cols_val < 500) then
-        cols = cols_val
-      end if
+    ! Native ioctl via the C helper — no `tput` subprocess, and safe on
+    ! flang-new (the ioctl runs in C, not the crashing Fortran c_loc path).
+    ok = get_term_size_native(r, c)
+    if (ok) then
+      if (c > 0 .and. c < 500) cols = c
+      if (r > 0 .and. r < 500) rows = r
     end if
-
-    ! Try to get rows using tput
-    rows_str = execute_and_capture('tput lines 2>/dev/null')
-    if (allocated(rows_str) .and. len_trim(rows_str) > 0) then
-      read(rows_str, *, iostat=ios) rows_val
-      if (ios == 0 .and. rows_val > 0 .and. rows_val < 500) then
-        rows = rows_val
-      end if
-    end if
-
-    ! Clean up
-    if (allocated(cols_str)) deallocate(cols_str)
-    if (allocated(rows_str)) deallocate(rows_str)
   end subroutine safe_get_terminal_size
 #endif
 
@@ -1859,8 +1828,8 @@ contains
 
           ! Get terminal size for multiline handling
 #ifdef __APPLE__
-            ! WORKAROUND: get_terminal_size crashes on flang-new
-            ! Use tput command as a safe alternative
+            ! WORKAROUND: the Fortran get_terminal_size (c_loc on winsize)
+            ! crashes on flang-new; use the native C ioctl helper instead.
             call safe_get_terminal_size(term_rows, term_cols)
 #else
             ! Linux: Use actual terminal size
@@ -3740,33 +3709,29 @@ contains
     integer, intent(out) :: num_completions
 
     character(len=256) :: var_prefix
-    character(len=4096) :: env_output
-    character(len=:), allocatable :: env_alloc
-    character(len=MAX_LINE_LEN), allocatable :: entries(:)
-    integer :: num_entries, i, score
+    integer :: i, score, eqpos
+    character(len=:), allocatable :: entry
 
     num_completions = 0
     ! Strip the $ from the prefix
     var_prefix = prefix_with_dollar(2:)
 
-    ! Get variable names from environment (exported + inherited)
-    env_alloc = execute_and_capture('env 2>/dev/null | cut -d= -f1 | tr ' // "'" // char(92) // 'n' // "' ' '")
-    env_output = env_alloc(:min(len(env_output), len(env_alloc)))
-    if (allocated(env_alloc)) deallocate(env_alloc)
-
-    ! Parse into entries
-    call parse_ls_output(env_output, entries, num_entries)
-
-    ! Match against prefix
-    do i = 1, num_entries
-      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
-      if (len_trim(entries(i)) == 0) cycle
-
-      score = fuzzy_match_score(trim(var_prefix), trim(entries(i)))
+    ! Iterate the environment natively (no `env | cut | tr` subprocess); each
+    ! entry is "NAME=value", so match on the NAME before '='.
+    i = 0
+    do
+      entry = get_environ_entry(i)
+      if (len(entry) == 0) exit  ! end of environ
+      i = i + 1
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) cycle
+      eqpos = index(entry, '=')
+      if (eqpos <= 1) cycle
+      score = fuzzy_match_score(trim(var_prefix), entry(1:eqpos-1))
       if (score >= 0) then
         num_completions = num_completions + 1
-        completions(num_completions) = '$' // trim(entries(i))
+        completions(num_completions) = '$' // entry(1:eqpos-1)
       end if
+      if (i > 100000) exit  ! safety bound
     end do
   end subroutine
 

@@ -7,6 +7,10 @@ module printf_builtin
   use iso_fortran_env, only: output_unit, error_unit
   implicit none
 
+  ! Upper bound on printf field width/precision. A larger value (literal or via
+  ! '*') would drive an unbounded buffer allocation and abort the shell.
+  integer, parameter :: MAX_PRINTF_FIELD = 1000000
+
   ! Format specifier components
   type :: format_info_t
     logical :: left_align = .false.     ! '-' flag
@@ -165,6 +169,8 @@ contains
               read(args(arg_index), *, err=10, end=10) fmt_info%width
 10            arg_index = arg_index + 1
             end if
+            if (fmt_info%width > MAX_PRINTF_FIELD) fmt_info%width = MAX_PRINTF_FIELD
+            if (fmt_info%width < -MAX_PRINTF_FIELD) fmt_info%width = -MAX_PRINTF_FIELD
           end if
 
           ! Handle dynamic precision from argument
@@ -173,6 +179,8 @@ contains
               read(args(arg_index), *, err=20, end=20) fmt_info%precision
 20            arg_index = arg_index + 1
             end if
+            if (fmt_info%precision > MAX_PRINTF_FIELD) fmt_info%precision = MAX_PRINTF_FIELD
+            if (fmt_info%precision < 0) fmt_info%precision = 0
           end if
 
           ! Get argument value and its length
@@ -222,6 +230,8 @@ contains
     integer :: format_len, width_start
     character :: c
     logical :: parsing_flags, parsing_width, parsing_precision
+    integer(kind=8) :: fld8  ! read width/precision wide first, then clamp
+    integer :: rd_ios
 
     ! Initialize
     fmt_info%left_align = .false.
@@ -288,7 +298,13 @@ contains
           if (c < '0' .or. c > '9') exit
           pos = pos + 1
         end do
-        read(format_str(width_start:pos-1), '(I10)') fmt_info%width
+        ! Read wide (a huge literal like %9999999999d overflows a 32-bit read
+        ! and aborts the shell), then clamp — a large width would otherwise
+        ! drive an unbounded buffer allocation.
+        read(format_str(width_start:pos-1), *, iostat=rd_ios) fld8
+        if (rd_ios /= 0) fld8 = MAX_PRINTF_FIELD
+        fld8 = max(-int(MAX_PRINTF_FIELD, 8), min(int(MAX_PRINTF_FIELD, 8), fld8))
+        fmt_info%width = int(fld8)
         c = format_str(pos:pos)
       end if
 
@@ -308,7 +324,10 @@ contains
             if (c < '0' .or. c > '9') exit
             pos = pos + 1
           end do
-          read(format_str(width_start:pos-1), '(I10)') fmt_info%precision
+          read(format_str(width_start:pos-1), *, iostat=rd_ios) fld8
+          if (rd_ios /= 0) fld8 = MAX_PRINTF_FIELD
+          fld8 = max(0_8, min(int(MAX_PRINTF_FIELD, 8), fld8))
+          fmt_info%precision = int(fld8)
         else
           fmt_info%precision = 0
         end if

@@ -508,27 +508,22 @@ contains
   function files_same_device_inode(file1, file2) result(same)
     character(len=*), intent(in) :: file1, file2
     logical :: same
-    
-    ! Simplified: compare paths
-    same = (trim(file1) == trim(file2))
+    ! -ef: same device + inode (native stat, not a path string compare)
+    same = file_same_as(file1, file2)
   end function
 
   function file_newer_than(file1, file2) result(newer)
     character(len=*), intent(in) :: file1, file2
     logical :: newer
-
-    ! Placeholder implementation
-    newer = .false.
-    if (.false.) print *, file1, file2  ! Silence unused warnings
+    ! -nt: file1 mtime > file2 mtime (native stat)
+    newer = file_is_newer(file1, file2)
   end function
 
   function file_older_than(file1, file2) result(older)
     character(len=*), intent(in) :: file1, file2
     logical :: older
-
-    ! Placeholder implementation
-    older = .false.
-    if (.false.) print *, file1, file2  ! Silence unused warnings
+    ! -ot: file1 mtime < file2 mtime (native stat)
+    older = file_is_older(file1, file2)
   end function
 
   function file_size(filename) result(size)
@@ -551,80 +546,51 @@ contains
     end if
   end function
 
-  ! File type checking (simplified implementations)
+  ! File type checks — delegate to the native stat-based helpers in
+  ! system_interface (these used to be hardcoded always-false placeholders).
   function is_symbolic_link(filename) result(is_link)
     character(len=*), intent(in) :: filename
     logical :: is_link
-
-    is_link = .false.  ! Placeholder
-    if (.false.) print *, filename  ! Silence unused warning
+    is_link = file_is_symlink(filename)
   end function
 
   function is_block_device(filename) result(is_block)
     character(len=*), intent(in) :: filename
     logical :: is_block
-
-    is_block = .false.  ! Placeholder
-    if (.false.) print *, filename  ! Silence unused warning
+    is_block = file_is_block_device(filename)
   end function
 
   function is_char_device(filename) result(is_char)
     character(len=*), intent(in) :: filename
     logical :: is_char
-
-    is_char = .false.  ! Placeholder
-    if (.false.) print *, filename  ! Silence unused warning
+    is_char = file_is_char_device(filename)
   end function
 
   function is_named_pipe(filename) result(is_pipe)
     character(len=*), intent(in) :: filename
     logical :: is_pipe
-
-    is_pipe = .false.  ! Placeholder
-    if (.false.) print *, filename  ! Silence unused warning
+    is_pipe = file_is_fifo(filename)
   end function
 
   function is_socket(filename) result(is_sock)
     character(len=*), intent(in) :: filename
     logical :: is_sock
-
-    is_sock = .false.  ! Placeholder
-    if (.false.) print *, filename  ! Silence unused warning
+    is_sock = file_is_socket(filename)
   end function
 
   subroutine get_file_info(filename, exists, is_file, is_dir, is_executable, is_readable, is_writable)
     character(len=*), intent(in) :: filename
     logical, intent(out) :: exists, is_file, is_dir, is_executable, is_readable, is_writable
-    
-    character(len=:), allocatable :: test_cmd
-    integer :: status
-    
-    ! Use system test command for file properties
+
+    ! Native stat/access — previously this forked five `test` subprocesses
+    ! per file check.
     inquire(file=trim(filename), exist=exists)
-    
     if (exists) then
-      ! Test if it's a regular file
-      test_cmd = 'test -f ' // trim(filename)
-      call execute_command_line(test_cmd, exitstat=status)
-      is_file = (status == 0)
-      
-      ! Test if it's a directory
-      test_cmd = 'test -d ' // trim(filename)
-      call execute_command_line(test_cmd, exitstat=status)
-      is_dir = (status == 0)
-      
-      ! Test permissions
-      test_cmd = 'test -r ' // trim(filename)
-      call execute_command_line(test_cmd, exitstat=status)
-      is_readable = (status == 0)
-      
-      test_cmd = 'test -w ' // trim(filename)
-      call execute_command_line(test_cmd, exitstat=status)
-      is_writable = (status == 0)
-      
-      test_cmd = 'test -x ' // trim(filename)
-      call execute_command_line(test_cmd, exitstat=status)
-      is_executable = (status == 0)
+      is_file       = file_is_regular(filename)
+      is_dir        = file_is_directory(filename)
+      is_readable   = file_is_readable(filename)
+      is_writable   = file_is_writable(filename)
+      is_executable = file_is_executable(filename)
     else
       is_file = .false.
       is_dir = .false.
