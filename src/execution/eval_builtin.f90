@@ -12,7 +12,7 @@ contains
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, exit_code
-    character(len=4096) :: eval_command
+    character(len=:), allocatable :: eval_command  ! grow with the command; never truncate at 4096
     type(command_node_t), pointer :: ast_root
 
     ! If no arguments, just return success
