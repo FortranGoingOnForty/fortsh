@@ -4274,6 +4274,7 @@ contains
   end subroutine
 
   subroutine builtin_fc(cmd, shell)
+    use trap_dispatch, only: eval_trap_string  ! run a string through the current shell
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     logical :: list_mode, no_line_numbers, reverse_order, subst_mode
@@ -4281,7 +4282,7 @@ contains
     character(len=:), allocatable :: line, tmpfile, edit_cmd
     character(len=40) :: fmt_buf
     integer :: first, last, i, arg_idx, iostat, tmp_unit
-    integer :: eq_pos, history_count
+    integer :: eq_pos, history_count, fc_ec
     logical :: found
 
     ! Pre-allocate line for intent(out) calls and Fortran read
@@ -4455,8 +4456,10 @@ contains
       ! Print the command being executed
       write(output_unit, '(a)') trim(line)
 
-      ! Execute using c_system
-      shell%last_exit_status = c_system(trim(line) // c_null_char)
+      ! Run it in the CURRENT shell (functions/aliases/locals visible), not
+      ! /bin/sh; eval_trap_string returns the real exit code, not a wait-status.
+      call eval_trap_string(trim(line), shell, fc_ec)
+      shell%last_exit_status = fc_ec
 
       return
     end if
@@ -4540,8 +4543,9 @@ contains
 
       if (len_trim(line) == 0 .or. line(1:1) == '#') cycle
 
-      ! Execute the line using c_system
-      shell%last_exit_status = c_system(trim(line) // c_null_char)
+      ! Run the edited line in the current shell (not /bin/sh)
+      call eval_trap_string(trim(line), shell, fc_ec)
+      shell%last_exit_status = fc_ec
     end do
 
     close(tmp_unit)
