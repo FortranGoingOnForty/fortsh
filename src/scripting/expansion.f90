@@ -306,6 +306,17 @@ contains
                   return
                 end if
 
+                ! Count total words so we can resolve negative offsets
+                w_count = 0; w_start = 1
+                do w_idx = 1, len_trim(all_str) + 1
+                  if (w_idx > len_trim(all_str) .or. all_str(w_idx:w_idx) == ' ') then
+                    if (w_idx > w_start) w_count = w_count + 1
+                    w_start = w_idx + 1
+                  end if
+                end do
+                if (s_offset < 0) s_offset = w_count + s_offset
+                if (s_offset < 0) s_offset = 0
+
                 ! Split into words and select slice
                 result_value = ''
                 w_count = 0; w_start = 1; w_out = 0
