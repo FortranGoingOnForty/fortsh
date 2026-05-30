@@ -88,15 +88,6 @@ module coprocess
     end function
   end interface
 
-  ! C system() binding (avoid duplicate - use from system_interface if available)
-  interface
-    function system_c(command) bind(C, name="system")
-      import :: c_int, c_char
-      character(kind=c_char), intent(in) :: command(*)
-      integer(c_int) :: system_c
-    end function
-  end interface
-
   integer, parameter :: SIGTERM = 15
   integer, parameter :: SIGKILL = 9
 
@@ -110,12 +101,13 @@ contains
   end subroutine
 
   ! Start a coprocess with optional name
-  function start_coprocess(command, name, interactive) result(coproc_id)
+  function start_coprocess(command, shell, name, interactive) result(coproc_id)
     character(len=*), intent(in) :: command
+    type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in), optional :: name
     logical, intent(in), optional :: interactive
     integer :: coproc_id
-    
+
     integer(c_int) :: pipe_to_child(2), pipe_from_child(2)
     integer(c_pid_t) :: pid
     integer :: i, ret
@@ -167,8 +159,8 @@ contains
       ret = close_c(pipe_from_child(1))
       ret = close_c(pipe_from_child(2))
 
-      ! Execute command using shell
-      call execute_command_in_shell(command)
+      ! Execute command natively through the AST executor
+      call execute_command_native(command, shell)
       
     else if (pid > 0) then
       ! Parent process
@@ -376,25 +368,15 @@ contains
     write(str, '(I0)') val
   end function
 
-  subroutine execute_command_in_shell(command)
+  subroutine execute_command_native(command, shell)
+    use trap_dispatch, only: eval_trap_string
     character(len=*), intent(in) :: command
+    type(shell_state_t), intent(inout) :: shell
+    integer :: exit_status
 
-    character(kind=c_char), target :: c_command(len(command)+1)
-    integer(c_int) :: exit_status
-    integer :: i
-
-    ! Convert command to C string
-    do i = 1, len(command)
-      c_command(i) = command(i:i)
-    end do
-    c_command(len(command)+1) = c_null_char
-
-    ! Execute command using system()
-    ! This runs the command in a subshell (via /bin/sh -c)
-    exit_status = system_c(c_command)
-
-    ! Exit with the command's exit status (use c_exit from iso_c_binding)
-    call c_exit(int(exit_status / 256, c_int))  ! Extract exit code from wait status
+    shell%is_interactive = .false.
+    call eval_trap_string(trim(command), shell, exit_status)
+    call c_exit(int(exit_status, c_int))
   end subroutine
 
 end module coprocess

@@ -2405,7 +2405,7 @@ contains
     end do
 
     ! Start the coprocess
-    coproc_id = start_coprocess(trim(command_str), trim(coproc_name), shell%is_interactive)
+    coproc_id = start_coprocess(trim(command_str), shell, trim(coproc_name), shell%is_interactive)
 
     if (coproc_id < 0) then
       write(error_unit, '(a)') 'coproc: failed to start coprocess'
