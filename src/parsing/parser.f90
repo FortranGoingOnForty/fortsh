@@ -1726,6 +1726,74 @@ contains
       else if (working_token(i:i) == char(1)) then
         ! Skip sentinel character (marks quote boundary from lexer)
         i = i + 1
+      else if ((working_token(i:i) == '<' .or. working_token(i:i) == '>') .and. &
+               i + 1 <= len_trim(working_token) .and. working_token(i+1:i+1) == '(' .and. &
+               .not. is_quoted) then
+        ! Process substitution <(cmd) / >(cmd) — bash model:
+        ! create pipe, fork child, use /dev/fd/N as the filename.
+        ! No FIFOs, no temp files, no leaks.
+        block
+          use trap_dispatch, only: eval_trap_string
+          use io_helpers, only: write_stderr
+          character(len=MAX_PATH_LEN) :: ps_command
+          character(len=32) :: devfd_path
+          logical :: ps_is_input, pipe_ok
+          integer :: ps_start, ps_depth, ps_exit
+          integer(c_pid_t) :: ps_pid
+          integer(c_int) :: read_fd, write_fd, parent_fd, child_fd, ret
+
+          ps_is_input = (working_token(i:i) == '<')
+          ps_start = i + 2
+          ps_depth = 1
+          i = ps_start
+
+          do while (i <= len_trim(working_token) .and. ps_depth > 0)
+            if (working_token(i:i) == '(') ps_depth = ps_depth + 1
+            if (working_token(i:i) == ')') ps_depth = ps_depth - 1
+            if (ps_depth > 0) i = i + 1
+          end do
+
+          if (ps_depth == 0) then
+            ps_command = working_token(ps_start:i-1)
+            i = i + 1
+
+            pipe_ok = create_pipe(read_fd, write_fd)
+            if (pipe_ok) then
+              if (ps_is_input) then
+                parent_fd = read_fd
+                child_fd = write_fd
+              else
+                parent_fd = write_fd
+                child_fd = read_fd
+              end if
+
+              ps_pid = c_fork()
+              if (ps_pid == 0) then
+                ! Child: close parent's end, redirect child's end
+                ret = c_close(parent_fd)
+                if (ps_is_input) then
+                  ret = c_dup2(child_fd, STDOUT_FD)
+                else
+                  ret = c_dup2(child_fd, STDIN_FD)
+                end if
+                ret = c_close(child_fd)
+                shell%is_interactive = .false.
+                call eval_trap_string(trim(ps_command), shell, ps_exit)
+                call c_exit(ps_exit)
+              else if (ps_pid > 0) then
+                ! Parent: close child's end, build /dev/fd/N path
+                ret = c_close(child_fd)
+                write(devfd_path, '(a,i0)') '/dev/fd/', parent_fd
+                call ensure_result_cap(j + len_trim(devfd_path))
+                result(j:j+len_trim(devfd_path)-1) = trim(devfd_path)
+                j = j + len_trim(devfd_path)
+              end if
+            end if
+          else
+            result(j:j) = working_token(i:i)
+            j = j + 1
+          end if
+        end block
       else
         result(j:j) = working_token(i:i)
         i = i + 1
@@ -2422,8 +2490,9 @@ contains
               pid = c_fork()
 
               if (pid == 0) then
-                ! Child process
-                call execute_proc_subst_command(trim(command), trim(fifo_path), is_input_subst)
+                ! Child process — run command natively through the AST
+                ! executor with stdout/stdin redirected to the FIFO.
+                call execute_proc_subst_native(trim(command), trim(fifo_path), is_input_subst, shell)
                 call c_exit(0)
               else
                 ! Parent process - track the PID
@@ -2460,40 +2529,42 @@ contains
     end do
   end subroutine
 
-  ! Execute a process substitution command with proper redirection
-  subroutine execute_proc_subst_command(command, fifo_path, is_input)
+  ! Execute a process substitution command natively through the AST
+  ! executor with stdout/stdin redirected to the FIFO.
+  subroutine execute_proc_subst_native(command, fifo_path, is_input, shell)
+    use trap_dispatch, only: eval_trap_string
+    use io_helpers, only: write_stderr
     character(len=*), intent(in) :: command, fifo_path
     logical, intent(in) :: is_input
-    character(len=512) :: full_command
-    character(len=256), target :: shell_cmd, command_c
-    character(len=16), target :: shell_flag
-    type(c_ptr), target :: argv(4)
-    integer :: result
+    type(shell_state_t), intent(inout) :: shell
+    integer(c_int) :: fifo_fd, ret
+    integer :: exit_status
+    character(len=MAX_PATH_LEN), target :: c_path
 
-    ! Build redirected command using shell
+    c_path = trim(fifo_path) // c_null_char
+
     if (is_input) then
-      ! <(command) - redirect command's stdout to FIFO
-      write(full_command, '(A,A,A,A)') trim(command), ' > ', trim(fifo_path), c_null_char
+      ! <(cmd): command writes to FIFO → redirect stdout to FIFO
+      fifo_fd = c_open(c_loc(c_path), O_WRONLY, 0)
+      if (fifo_fd < 0) then
+        call write_stderr('fortsh: process substitution: cannot open FIFO for writing')
+        call c_exit(1)
+      end if
+      ret = c_dup2(fifo_fd, STDOUT_FD)
     else
-      ! >(command) - redirect FIFO to command's stdin
-      write(full_command, '(A,A,A,A)') trim(command), ' < ', trim(fifo_path), c_null_char
+      ! >(cmd): command reads from FIFO → redirect stdin from FIFO
+      fifo_fd = c_open(c_loc(c_path), O_RDONLY, 0)
+      if (fifo_fd < 0) then
+        call write_stderr('fortsh: process substitution: cannot open FIFO for reading')
+        call c_exit(1)
+      end if
+      ret = c_dup2(fifo_fd, STDIN_FD)
     end if
+    ret = c_close(fifo_fd)
 
-    ! Execute via /bin/sh -c
-    shell_cmd = '/bin/sh'//c_null_char
-    shell_flag = '-c'//c_null_char
-    command_c = trim(full_command)
-
-    argv(1) = c_loc(shell_cmd)
-    argv(2) = c_loc(shell_flag)
-    argv(3) = c_loc(command_c)
-    argv(4) = c_null_ptr
-
-    result = c_execvp(c_loc(shell_cmd), c_loc(argv))
-    if (result < 0) then
-      write(error_unit, '(A)') 'fortsh: failed to execute process substitution command'
-      call c_exit(1)
-    end if
+    shell%is_interactive = .false.
+    call eval_trap_string(trim(command), shell, exit_status)
+    call c_exit(exit_status)
   end subroutine
 
   ! Execute a command via system shell (for process substitution)

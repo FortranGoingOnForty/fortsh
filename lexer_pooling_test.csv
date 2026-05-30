@@ -1,0 +1,2 @@
+Module,Total_Allocations,Total_Deallocations,Current_Strings,Peak_Strings,Current_Bytes,Peak_Bytes,Total_Bytes_Allocated
+lexer,2109,2109,0,100,4962,5282,326818
