@@ -247,19 +247,32 @@ contains
     if (.not. associated(node)) return
     tok = current_token(state)
     if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|') then
-      allocate(commands(10))
+      allocate(commands(16))
       num_commands = 1
       commands(1) = node
       do while (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|')
         call advance(state)
         call skip_newlines(state)
-        if (num_commands >= 10) exit
         temp_node => parse_command_node(state)
         if (.not. associated(temp_node)) then
           ! Incomplete pipeline - set error, print message, and exit
           call write_stderr('sh: -c: line 1: syntax error: unexpected end of file')
           state%has_error = .true.
           exit
+        end if
+        ! Grow the stage array instead of capping at a fixed count — long
+        ! pipelines (15-20 stages) used to stop here, leaving `| cmd` leftover.
+        if (num_commands >= size(commands)) then
+          block
+            type(command_node_t), pointer :: tmp(:)
+            integer :: gk
+            allocate(tmp(size(commands) * 2))
+            do gk = 1, num_commands
+              tmp(gk) = commands(gk)
+            end do
+            deallocate(commands)
+            commands => tmp
+          end block
         end if
         num_commands = num_commands + 1
         commands(num_commands) = temp_node
