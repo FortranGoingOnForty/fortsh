@@ -9109,9 +9109,9 @@ contains
     ! Build preview command
     if (len_trim(bat_path) > 0) then
       write(preview_cmd, '(a)') trim(bat_path) // &
-           ' --color=always --style=numbers,changes --line-range=:500 {}'
+           ' --color=always --style=numbers,changes --line-range=:500 "{}"'
     else
-      preview_cmd = 'head -n 500 {}'
+      preview_cmd = 'head -n 500 "{}"'
     end if
 
     ! Build fzf command with options (including multi-select)
@@ -9301,7 +9301,7 @@ contains
           'fd --type d --hidden --exclude .git || ' // &
           'find . -type d -not -path ''*/\.git/*'' 2>/dev/null) | ' // &
           'fzf --height=40% --reverse --border ' // &
-          '--preview=''ls -lah {}'' ' // &
+          '--preview=''ls -lah "{}"'' ' // &
           '--preview-window=right:60%:wrap ' // &
           '--header=''Alt-J: Jump to Directory | Select: CD into dir | ESC: Cancel'' ' // &
           '> /tmp/fortsh_fzf_dir.tmp 2>/dev/null'
@@ -9393,9 +9393,9 @@ contains
           'echo ""; echo "=== Branches ==="; ' // &
           'git branch --all; }'
 
-    write(preview_cmd, '(a)') 'if [[ {} == *"==="* ]]; then echo "Select an item below"; ' // &
-          'elif git show {}  >/dev/null 2>&1; then git show --stat {}; ' // &
-          'else git diff {}; fi'
+    write(preview_cmd, '(a)') 'if [[ "{}" == *"==="* ]]; then echo "Select an item below"; ' // &
+          'elif git show "{}" >/dev/null 2>&1; then git show --stat "{}"; ' // &
+          'else git diff "{}"; fi'
 
     write(fzf_cmd, '(a)') trim(git_cmd) // ' | ' // &
           'fzf --height=40% --reverse --border --ansi ' // &
