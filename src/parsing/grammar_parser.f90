@@ -300,6 +300,9 @@ contains
       case('{')
         node => parse_brace_group(state)
         is_compound = .true.
+      case('function')
+        ! ksh/bash `function name { ... }` (and `function name() { ... }`)
+        node => parse_function_stmt(state)
       case('coproc')
         node => parse_coproc_stmt(state)
         is_compound = .true.
@@ -326,6 +329,44 @@ contains
     ! (simple commands already handle redirections internally)
     if (is_compound .and. associated(node)) then
       call parse_trailing_redirections(state, node)
+    end if
+  end function
+
+  ! Parse the `function` keyword form: `function NAME [()] { ... }`
+  recursive function parse_function_stmt(state) result(node)
+    type(parser_state_t), intent(inout) :: state
+    type(command_node_t), pointer :: node, func_body
+    type(token_t) :: tok
+    character(len=MAX_TOKEN_LEN) :: func_name
+
+    node => null()
+    call advance(state)  ! consume 'function'
+
+    tok = current_token(state)
+    if (tok%token_type /= TOKEN_WORD) then
+      state%has_error = .true.
+      state%error_msg = 'expected name after "function"'
+      return
+    end if
+    func_name = tok%value
+    call advance(state)
+
+    ! Optional empty parentheses
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+      call advance(state)
+      tok = current_token(state)
+      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ')') call advance(state)
+    end if
+
+    call skip_newlines(state)
+    tok = current_token(state)
+    if (tok%token_type == TOKEN_KEYWORD .and. trim(tok%value) == '{') then
+      func_body => parse_brace_group(state)
+      node => create_function_def(trim(func_name), func_body)
+    else
+      state%has_error = .true.
+      state%error_msg = 'expected "{" in function definition'
     end if
   end function
 
