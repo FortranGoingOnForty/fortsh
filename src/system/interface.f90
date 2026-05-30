@@ -969,65 +969,56 @@ contains
     character(len=:), allocatable :: output
 
     type(c_ptr) :: pipe_ptr
-    character(kind=c_char), target :: buffer(4096)  ! Larger buffer per read
-    character(len=65536) :: temp_output  ! 64KB buffer
+    character(kind=c_char), target :: buffer(4096)  ! one fgets chunk
+    character(len=4096) :: chunk                     ! collapsed chunk (<= one read)
     type(c_ptr) :: ret_ptr
-    integer :: i, pos, bytes_read
-    character(len=256), target :: c_command
+    integer :: i, clen, cmdlen
+    ! Allocatable command/output — fixed buffers truncated the command at 256B
+    ! and the output at 64KB.
+    character(kind=c_char), dimension(:), allocatable, target :: c_command
     character(len=4), target :: c_mode
 
-    ! Convert strings to proper format
-    c_command = trim(command)//c_null_char
+    output = ''
+
+    cmdlen = len_trim(command)
+    allocate(c_command(cmdlen + 1))
+    do i = 1, cmdlen
+      c_command(i) = command(i:i)
+    end do
+    c_command(cmdlen + 1) = c_null_char
     c_mode = 'r'//c_null_char
 
-    ! Open pipe to command
     pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
+    if (.not. c_associated(pipe_ptr)) return
 
-    if (.not. c_associated(pipe_ptr)) then
-      allocate(character(len=0) :: output)
-      return
-    end if
-
-    temp_output = ''
-    pos = 1
-
-    ! Read output with larger buffer
+    ! Read the whole output, collapsing runs of newlines to single spaces,
+    ! growing an allocatable accumulator (append per chunk, not per char).
     do
-      ! Initialize buffer for this read
       buffer = c_null_char
-
       ret_ptr = c_fgets(c_loc(buffer), int(4096, c_int), pipe_ptr)
       if (.not. c_associated(ret_ptr)) exit
 
-      ! Convert to Fortran string
-      bytes_read = 0
+      clen = 0
       do i = 1, 4096
         if (buffer(i) == c_null_char) exit
-        bytes_read = bytes_read + 1
-        if (pos > len(temp_output)) exit  ! Buffer full
-
-        if (buffer(i) /= char(10)) then  ! Skip newlines
-          temp_output(pos:pos) = buffer(i)
-          pos = pos + 1
-        else if (pos > 1 .and. temp_output(pos-1:pos-1) /= ' ') then
-          temp_output(pos:pos) = ' '
-          pos = pos + 1
+        if (buffer(i) /= char(10)) then
+          clen = clen + 1
+          chunk(clen:clen) = buffer(i)
+        else
+          ! newline -> single space, unless the previous kept char is a space
+          if (clen > 0) then
+            if (chunk(clen:clen) /= ' ') then
+              clen = clen + 1; chunk(clen:clen) = ' '
+            end if
+          else if (len(output) > 0) then
+            if (output(len(output):len(output)) /= ' ') output = output // ' '
+          end if
         end if
       end do
-
-      ! Debug: Check if we should continue reading
-      ! Exit if we read less than expected OR hit buffer limit
-      if (pos > len(temp_output)) exit
-      if (bytes_read == 0) exit
+      if (clen > 0) output = output // chunk(1:clen)
     end do
 
-    ! Close pipe
     i = c_pclose(pipe_ptr)
-
-    ! Return output (deallocate first if already allocated, which shouldn't happen but prevents crash)
-    if (allocated(output)) deallocate(output)
-    allocate(character(len=pos-1) :: output)
-    output = temp_output(:pos-1)
   end function
 
   ! Like execute_and_capture but converts newlines to tabs instead of spaces.
@@ -1038,56 +1029,53 @@ contains
 
     type(c_ptr) :: pipe_ptr
     character(kind=c_char), target :: buffer(4096)
-    character(len=65536) :: temp_output
+    character(len=4096) :: chunk
     type(c_ptr) :: ret_ptr
-    integer :: i, pos, bytes_read
-    character(len=256), target :: c_command
+    integer :: i, clen, cmdlen
+    ! Allocatable command/output — fixed buffers capped command at 256B / output at 64KB
+    character(kind=c_char), dimension(:), allocatable, target :: c_command
     character(len=4), target :: c_mode
 
-    c_command = trim(command)//c_null_char
+    output = ''
+
+    cmdlen = len_trim(command)
+    allocate(c_command(cmdlen + 1))
+    do i = 1, cmdlen
+      c_command(i) = command(i:i)
+    end do
+    c_command(cmdlen + 1) = c_null_char
     c_mode = 'r'//c_null_char
 
     pipe_ptr = c_popen(c_loc(c_command), c_loc(c_mode))
-    if (.not. c_associated(pipe_ptr)) then
-      allocate(character(len=0) :: output)
-      return
-    end if
+    if (.not. c_associated(pipe_ptr)) return
 
-    temp_output = ''
-    pos = 1
-
+    ! Collapse runs of newlines to single tabs (preserves spaces in filenames),
+    ! growing an allocatable accumulator.
     do
       buffer = c_null_char
       ret_ptr = c_fgets(c_loc(buffer), int(4096, c_int), pipe_ptr)
       if (.not. c_associated(ret_ptr)) exit
 
-      bytes_read = 0
+      clen = 0
       do i = 1, 4096
         if (buffer(i) == c_null_char) exit
-        bytes_read = bytes_read + 1
-        if (pos > len(temp_output)) exit
-
         if (buffer(i) == char(10)) then
-          ! Convert newline to tab (preserves spaces in filenames)
-          if (pos > 1 .and. temp_output(pos-1:pos-1) /= char(9)) then
-            temp_output(pos:pos) = char(9)
-            pos = pos + 1
+          if (clen > 0) then
+            if (chunk(clen:clen) /= char(9)) then
+              clen = clen + 1; chunk(clen:clen) = char(9)
+            end if
+          else if (len(output) > 0) then
+            if (output(len(output):len(output)) /= char(9)) output = output // char(9)
           end if
         else
-          temp_output(pos:pos) = buffer(i)
-          pos = pos + 1
+          clen = clen + 1
+          chunk(clen:clen) = buffer(i)
         end if
       end do
-
-      if (pos > len(temp_output)) exit
-      if (bytes_read == 0) exit
+      if (clen > 0) output = output // chunk(1:clen)
     end do
 
     i = c_pclose(pipe_ptr)
-
-    if (allocated(output)) deallocate(output)
-    allocate(character(len=pos-1) :: output)
-    output = temp_output(:pos-1)
   end function
 
   ! Terminal control functions
