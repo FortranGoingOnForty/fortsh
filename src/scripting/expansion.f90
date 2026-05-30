@@ -370,6 +370,55 @@ contains
     ! Circular references (x->y->x) safely stop after one resolution.
     ! ========================================================================
     if (len_trim(var_name) > 1 .and. var_name(1:1) == '!' .and. index(var_name, '[') == 0) then
+      ! ${!prefix*} / ${!prefix@}: list variable names matching prefix
+      block
+        integer :: vn_len
+        character :: last_ch
+        vn_len = len_trim(var_name)
+        last_ch = var_name(vn_len:vn_len)
+        if (vn_len > 2 .and. (last_ch == '*' .or. last_ch == '@')) then
+          block
+            use system_interface, only: get_environ_entry
+            character(len=256) :: prefix
+            character(len=:), allocatable :: match_list, env_entry
+            integer :: eq_pos, env_idx, plen
+
+            prefix = var_name(2:vn_len-1)
+            plen = len_trim(prefix)
+            match_list = ''
+
+            ! Scan shell variables
+            do env_idx = 1, shell%num_variables
+              if (len_trim(shell%variables(env_idx)%name) >= plen .and. &
+                  shell%variables(env_idx)%name(1:plen) == prefix(1:plen)) then
+                if (len(match_list) > 0) match_list = match_list // ' '
+                match_list = match_list // trim(shell%variables(env_idx)%name)
+              end if
+            end do
+
+            ! Scan environment variables
+            env_idx = 0
+            do
+              env_entry = get_environ_entry(env_idx)
+              if (len(env_entry) == 0) exit
+              eq_pos = index(env_entry, '=')
+              if (eq_pos > plen) then
+                if (env_entry(1:plen) == prefix(1:plen)) then
+                  if (index(match_list, env_entry(1:eq_pos-1)) == 0) then
+                    if (len(match_list) > 0) match_list = match_list // ' '
+                    match_list = match_list // env_entry(1:eq_pos-1)
+                  end if
+                end if
+              end if
+              env_idx = env_idx + 1
+            end do
+
+            result_value = match_list
+            return
+          end block
+        end if
+      end block
+
       block
         integer :: ref_end
         character(len=4096) :: ref_name, resolved_name
