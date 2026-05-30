@@ -77,6 +77,15 @@ contains
       end if
     end if
 
+    ! Fast path: short lowercase names skip special-variable checks
+    if (len_trim(name) > 0 .and. len_trim(name) <= 3) then
+      block
+        character :: fc
+        fc = name(1:1)
+        if (fc >= 'a' .and. fc <= 'z') goto 200
+      end block
+    end if
+
     ! Handle special built-in variables
     select case (trim(name))
       case ('PS1')
@@ -155,6 +164,7 @@ contains
     end select
 
     ! Check if variable already exists
+200 continue
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
         ! Check if variable is readonly
@@ -228,6 +238,23 @@ contains
           end do
         end if
       end do
+    end if
+
+    ! Fast path: regular alphabetic variables (a-z, A-Z) can skip special-
+    ! variable checks entirely — all special names are either non-alpha
+    ! single chars ($, !, ?, 0, _, -, #, *, @) or uppercase multi-char
+    ! (RANDOM, LINENO, etc.). A lowercase first char of length 1-3 is
+    ! almost certainly a loop variable; jump straight to the variable table.
+    if (len_trim(name) > 0) then
+      block
+        character :: fc
+        integer :: nlen
+        fc = name(1:1)
+        nlen = len_trim(name)
+        if ((fc >= 'a' .and. fc <= 'z') .and. nlen <= 3) then
+          goto 100
+        end if
+      end block
     end if
 
     ! Handle special variables
@@ -352,6 +379,7 @@ contains
     end if
     
     ! Handle regular shell variables
+100 continue
     do i = 1, shell%num_variables
       if (trim(shell%variables(i)%name) == trim(name)) then
         ! Use value_len to preserve trailing whitespace
