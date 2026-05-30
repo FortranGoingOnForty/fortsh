@@ -306,6 +306,17 @@ contains
                   return
                 end if
 
+                ! Count total words so we can resolve negative offsets
+                w_count = 0; w_start = 1
+                do w_idx = 1, len_trim(all_str) + 1
+                  if (w_idx > len_trim(all_str) .or. all_str(w_idx:w_idx) == ' ') then
+                    if (w_idx > w_start) w_count = w_count + 1
+                    w_start = w_idx + 1
+                  end if
+                end do
+                if (s_offset < 0) s_offset = w_count + s_offset
+                if (s_offset < 0) s_offset = 0
+
                 ! Split into words and select slice
                 result_value = ''
                 w_count = 0; w_start = 1; w_out = 0
@@ -359,6 +370,55 @@ contains
     ! Circular references (x->y->x) safely stop after one resolution.
     ! ========================================================================
     if (len_trim(var_name) > 1 .and. var_name(1:1) == '!' .and. index(var_name, '[') == 0) then
+      ! ${!prefix*} / ${!prefix@}: list variable names matching prefix
+      block
+        integer :: vn_len
+        character :: last_ch
+        vn_len = len_trim(var_name)
+        last_ch = var_name(vn_len:vn_len)
+        if (vn_len > 2 .and. (last_ch == '*' .or. last_ch == '@')) then
+          block
+            use system_interface, only: get_environ_entry
+            character(len=256) :: prefix
+            character(len=:), allocatable :: match_list, env_entry
+            integer :: eq_pos, env_idx, plen
+
+            prefix = var_name(2:vn_len-1)
+            plen = len_trim(prefix)
+            match_list = ''
+
+            ! Scan shell variables
+            do env_idx = 1, shell%num_variables
+              if (len_trim(shell%variables(env_idx)%name) >= plen .and. &
+                  shell%variables(env_idx)%name(1:plen) == prefix(1:plen)) then
+                if (len(match_list) > 0) match_list = match_list // ' '
+                match_list = match_list // trim(shell%variables(env_idx)%name)
+              end if
+            end do
+
+            ! Scan environment variables
+            env_idx = 0
+            do
+              env_entry = get_environ_entry(env_idx)
+              if (len(env_entry) == 0) exit
+              eq_pos = index(env_entry, '=')
+              if (eq_pos > plen) then
+                if (env_entry(1:plen) == prefix(1:plen)) then
+                  if (index(match_list, env_entry(1:eq_pos-1)) == 0) then
+                    if (len(match_list) > 0) match_list = match_list // ' '
+                    match_list = match_list // env_entry(1:eq_pos-1)
+                  end if
+                end if
+              end if
+              env_idx = env_idx + 1
+            end do
+
+            result_value = match_list
+            return
+          end block
+        end if
+      end block
+
       block
         integer :: ref_end
         character(len=4096) :: ref_name, resolved_name
@@ -433,10 +493,11 @@ contains
       end select
     end if
 
-    ! Check for case conversion first (^, ^^, ,, ,,)
-    ! Find the position of ^ or , to determine if it's case conversion
+    ! Check for case conversion first (^, ^^, ,, ,,) — but only if this
+    ! isn't a pattern substitution (contains /). Otherwise ${x/pat/,}
+    ! gets misidentified as case conversion because the last char is ','.
     i = len_trim(var_name)
-    if (i > 1) then
+    if (i > 1 .and. index(var_name(1:i), '/') == 0) then
       if (var_name(i:i) == '^') then
         ! Check for ^^ (uppercase all) or ^ (uppercase first)
         if (i > 1 .and. var_name(i-1:i-1) == '^') then
@@ -1253,7 +1314,7 @@ contains
     ! gfortran path: character-by-character scan, no C dependencies
     integer :: in_len, pat_len, repl_len, i2, j2
     integer :: out_pos, out_cap
-    logical :: matched
+    logical :: matched, has_glob
     character(len=:), allocatable :: result_buf
 
     in_len = len_trim(input)
@@ -1265,6 +1326,10 @@ contains
       return
     end if
 
+    has_glob = (index(pattern(1:pat_len), '*') > 0 .or. &
+                index(pattern(1:pat_len), '?') > 0 .or. &
+                index(pattern(1:pat_len), '[') > 0)
+
     if (repl_len > pat_len) then
       out_cap = in_len + (in_len / pat_len + 1) * (repl_len - pat_len) + 1
     else
@@ -1275,14 +1340,23 @@ contains
 
     i2 = 1
     do while (i2 <= in_len)
-      ! Try glob pattern match at position i2 — find shortest match
       matched = .false.
-      do j2 = 1, in_len - i2 + 1
-        if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
+      if (has_glob) then
+        ! Glob pattern: try longest match first (bash semantics)
+        do j2 = in_len - i2 + 1, 1, -1
+          if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
+            matched = .true.
+            exit
+          end if
+        end do
+      else
+        ! Literal pattern: exact-length comparison only
+        if (i2 + pat_len - 1 <= in_len .and. &
+            input(i2:i2+pat_len-1) == pattern(1:pat_len)) then
           matched = .true.
-          exit  ! j2 = matched length
+          j2 = pat_len
         end if
-      end do
+      end if
       if (matched) then
         if (repl_len > 0) then
           result_buf(out_pos:out_pos + repl_len - 1) = replacement(1:repl_len)
@@ -1338,7 +1412,7 @@ contains
     i2 = 1
     do while (i2 <= in_len)
       matched = .false.
-      do j2 = 1, in_len - i2 + 1
+      do j2 = in_len - i2 + 1, 1, -1
         if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
           matched = .true.
           exit
@@ -4446,7 +4520,7 @@ contains
     character(len=*), intent(in) :: str
     integer, intent(out) :: iostat
     integer(kind=8) :: value
-    integer :: i, len_str, digit
+    integer :: i, len_str, digit, base, hash_pos
     character(len=256) :: trimmed_str
 
     value = 0
@@ -4456,6 +4530,40 @@ contains
 
     if (len_str == 0) then
       iostat = 1
+      return
+    end if
+
+    ! Check for base#value notation (e.g. 16#ff, 2#1010, 36#z)
+    hash_pos = index(trimmed_str(1:len_str), '#')
+    if (hash_pos > 1 .and. hash_pos < len_str) then
+      read(trimmed_str(1:hash_pos-1), *, iostat=iostat) base
+      if (iostat /= 0 .or. base < 2 .or. base > 64) then
+        iostat = 1
+        return
+      end if
+      value = 0
+      do i = hash_pos + 1, len_str
+        if (trimmed_str(i:i) >= '0' .and. trimmed_str(i:i) <= '9') then
+          digit = ichar(trimmed_str(i:i)) - ichar('0')
+        else if (trimmed_str(i:i) >= 'a' .and. trimmed_str(i:i) <= 'z') then
+          digit = ichar(trimmed_str(i:i)) - ichar('a') + 10
+        else if (trimmed_str(i:i) >= 'A' .and. trimmed_str(i:i) <= 'Z') then
+          digit = ichar(trimmed_str(i:i)) - ichar('A') + 10
+          if (base <= 36) digit = ichar(trimmed_str(i:i)) - ichar('A') + 10
+        else if (trimmed_str(i:i) == '@') then
+          digit = 62
+        else if (trimmed_str(i:i) == '_') then
+          digit = 63
+        else
+          iostat = 1
+          return
+        end if
+        if (digit >= base) then
+          iostat = 1
+          return
+        end if
+        value = value * int(base, 8) + int(digit, 8)
+      end do
       return
     end if
 

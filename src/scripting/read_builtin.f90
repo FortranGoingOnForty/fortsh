@@ -17,7 +17,7 @@ contains
     
     character(len=256) :: prompt, var_name, delimiter
     character(len=4096) :: input_line
-    integer :: timeout_sec, arg_index, actual_input_len
+    integer :: timeout_sec, arg_index, actual_input_len, parse_ios
     logical :: silent_mode, raw_mode, use_prompt, use_timeout, use_delimiter
     logical :: use_array, use_nchars
     integer :: nchars
@@ -54,8 +54,8 @@ contains
       case ('-t')
         ! Timeout
         if (arg_index + 1 <= cmd%num_tokens) then
-          read(cmd%tokens(arg_index + 1), *, iostat=arg_index) timeout_sec
-          if (arg_index /= 0) then
+          read(cmd%tokens(arg_index + 1), *, iostat=parse_ios) timeout_sec
+          if (parse_ios /= 0) then
             write(error_unit, '(a)') 'read: invalid timeout value'
             shell%last_exit_status = 1
             return
@@ -100,8 +100,8 @@ contains
       case ('-n')
         ! Read n characters
         if (arg_index + 1 <= cmd%num_tokens) then
-          read(cmd%tokens(arg_index + 1), *, iostat=arg_index) nchars
-          if (arg_index /= 0) then
+          read(cmd%tokens(arg_index + 1), *, iostat=parse_ios) nchars
+          if (parse_ios /= 0) then
             write(error_unit, '(a)') 'read: invalid character count'
             shell%last_exit_status = 1
             return
@@ -287,21 +287,26 @@ contains
   end subroutine
 
   subroutine read_with_timeout(timeout_sec, input_line, exit_status)
+    use system_interface, only: input_ready_within
     integer, intent(in) :: timeout_sec
     character(len=*), intent(out) :: input_line
     integer, intent(out) :: exit_status
     integer :: iostat
 
-    ! Simplified timeout implementation
-    ! In a real implementation, this would use select() or similar with timeout_sec
     input_line = ''
-    exit_status = 1  ! Timeout
-    if (.false.) print *, timeout_sec  ! Silence unused warning (timeout not yet implemented)
 
-    ! For now, just read normally
+    ! Wait up to timeout_sec for input via poll(); on timeout return a status
+    ! greater than 128 (bash's `read -t` semantics).
+    if (.not. input_ready_within(timeout_sec * 1000)) then
+      exit_status = 142  ! 128 + SIGALRM, matching bash's timeout status
+      return
+    end if
+
     read(input_unit, '(a)', iostat=iostat) input_line
     if (iostat == 0) then
       exit_status = 0
+    else
+      exit_status = 1  ! EOF / error
     end if
   end subroutine
 

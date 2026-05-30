@@ -2792,6 +2792,9 @@ contains
       ! Parent - wait for subshell
       status = wait_for_process(pid)
       exit_status = extract_exit_status(status)
+      ! POSIX: a failed subshell triggers errexit just like a simple command
+      ! (check_errexit honours the and-or / negation / condition suppressions).
+      call check_errexit(shell, exit_status)
     else
       write(error_unit, '(A)') 'fortsh: fork failed for subshell'
       exit_status = 1

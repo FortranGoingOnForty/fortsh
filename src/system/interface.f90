@@ -1528,6 +1528,22 @@ contains
     pending = (ret > 0 .and. iand(int(pfd%revents), int(POLLIN)) /= 0)
   end function input_pending
 
+  ! Wait up to timeout_ms for input on stdin (for `read -t`). Negative blocks
+  ! forever; 0 polls non-blocking. Returns .true. if input became ready.
+  function input_ready_within(timeout_ms) result(ready)
+    integer, intent(in) :: timeout_ms
+    logical :: ready
+    type(pollfd_t), target :: pfd
+    integer(c_int) :: ret
+
+    pfd%fd = STDIN_FD
+    pfd%events = POLLIN
+    pfd%revents = 0_c_short
+
+    ret = c_poll(c_loc(pfd), 1_c_int, int(timeout_ms, c_int))
+    ready = (ret > 0 .and. iand(int(pfd%revents), int(POLLIN)) /= 0)
+  end function input_ready_within
+
   ! Native directory listing via opendir/readdir (no `ls` subprocess).
   ! Fills the caller's names()/is_dir_flags() arrays (up to their size) with the
   ! raw directory entries — including "." and ".." — leaving any pattern

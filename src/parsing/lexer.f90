@@ -691,12 +691,30 @@ contains
             pos = pos + 1
             ! If paren_depth hits 0, we closed the $(...)
             if (paren_depth == 0) then
-              ! End of command substitution - finish token
-              call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
-                                      token_start, pos-1, token_has_quoted_part, in_escape)
-              state = LEX_NORMAL
-              in_escape = .false.
-              token_has_quoted_part = .false.
+              ! Check if next character continues the word (e.g., $((1+2))x)
+              if (pos <= input_len) then
+                next_ch = input(pos:pos)
+                if (next_ch == '$' .or. next_ch == '{' .or. next_ch == '"' .or. &
+                    next_ch == "'" .or. &
+                    (next_ch >= 'a' .and. next_ch <= 'z') .or. &
+                    (next_ch >= 'A' .and. next_ch <= 'Z') .or. &
+                    (next_ch >= '0' .and. next_ch <= '9') .or. &
+                    next_ch == '_' .or. next_ch == '-' .or. next_ch == '.') then
+                  ! Continue building the same token
+                else
+                  call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                          token_start, pos-1, token_has_quoted_part, in_escape)
+                  state = LEX_NORMAL
+                  in_escape = .false.
+                  token_has_quoted_part = .false.
+                end if
+              else
+                call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
+                                        token_start, pos-1, token_has_quoted_part, in_escape)
+                state = LEX_NORMAL
+                in_escape = .false.
+                token_has_quoted_part = .false.
+              end if
             end if
           else
             ! Inside $() - keep EVERYTHING including spaces
@@ -1411,6 +1429,58 @@ contains
             token_len = token_len + 1
             current_token(token_len:token_len) = char(hex_val)
           end if
+        case('u')
+          ! Unicode: \uHHHH (4 hex digits) → UTF-8
+          hex_val = 0
+          n_digits = 0
+          pos = pos + 2  ! skip \u
+          do while (pos <= input_len .and. n_digits < 4)
+            ch = input(pos:pos)
+            if (ch >= '0' .and. ch <= '9') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('0'))
+            else if (ch >= 'a' .and. ch <= 'f') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('a') + 10)
+            else if (ch >= 'A' .and. ch <= 'F') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('A') + 10)
+            else
+              exit
+            end if
+            pos = pos + 1
+            n_digits = n_digits + 1
+          end do
+          call encode_utf8(hex_val, current_token, token_len)
+        case('U')
+          ! Unicode: \UHHHHHHHH (8 hex digits) → UTF-8
+          hex_val = 0
+          n_digits = 0
+          pos = pos + 2  ! skip \U
+          do while (pos <= input_len .and. n_digits < 8)
+            ch = input(pos:pos)
+            if (ch >= '0' .and. ch <= '9') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('0'))
+            else if (ch >= 'a' .and. ch <= 'f') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('a') + 10)
+            else if (ch >= 'A' .and. ch <= 'F') then
+              hex_val = hex_val * 16 + (ichar(ch) - ichar('A') + 10)
+            else
+              exit
+            end if
+            pos = pos + 1
+            n_digits = n_digits + 1
+          end do
+          call encode_utf8(hex_val, current_token, token_len)
+        case('c')
+          ! Control character: \cX → char(ichar(X) & 31)
+          if (pos + 2 <= input_len) then
+            ch = input(pos+2:pos+2)
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = char(iand(ichar(ch), 31))
+            end if
+            pos = pos + 3
+          else
+            pos = pos + 2
+          end if
         case default
           ! Unknown escape: include backslash and character literally
           if (token_len < MAX_TOKEN_LEN - 1) then
@@ -1437,5 +1507,46 @@ contains
       current_token(token_len:token_len) = char(3)
     end if
   end subroutine process_ansi_c_quote
+
+  subroutine encode_utf8(codepoint, buf, buf_len)
+    integer, intent(in) :: codepoint
+    character(len=*), intent(inout) :: buf
+    integer, intent(inout) :: buf_len
+
+    if (codepoint < 0) return
+    if (codepoint <= 127) then
+      if (buf_len < MAX_TOKEN_LEN) then
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(codepoint)
+      end if
+    else if (codepoint <= int(z'7FF')) then
+      if (buf_len + 1 < MAX_TOKEN_LEN) then
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'C0'), ishft(codepoint, -6)))
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'80'), iand(codepoint, int(z'3F'))))
+      end if
+    else if (codepoint <= int(z'FFFF')) then
+      if (buf_len + 2 < MAX_TOKEN_LEN) then
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'E0'), ishft(codepoint, -12)))
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'80'), iand(ishft(codepoint, -6), int(z'3F'))))
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'80'), iand(codepoint, int(z'3F'))))
+      end if
+    else if (codepoint <= int(z'10FFFF')) then
+      if (buf_len + 3 < MAX_TOKEN_LEN) then
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'F0'), ishft(codepoint, -18)))
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'80'), iand(ishft(codepoint, -12), int(z'3F'))))
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'80'), iand(ishft(codepoint, -6), int(z'3F'))))
+        buf_len = buf_len + 1
+        buf(buf_len:buf_len) = char(ior(int(z'80'), iand(codepoint, int(z'3F'))))
+      end if
+    end if
+  end subroutine encode_utf8
 
 end module lexer

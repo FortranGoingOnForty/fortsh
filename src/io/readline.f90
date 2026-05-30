@@ -7343,7 +7343,7 @@ contains
   subroutine handle_kill_line(input_state)
     use iso_fortran_env, only: output_unit
     type(input_state_t), intent(inout) :: input_state
-    character(len=MAX_LINE_LEN) :: temp_buf
+    character(len=MAX_LINE_LEN) :: temp_buf, shifted_buf
     integer :: remaining_len
 
     ! unix-line-discard: kill from beginning of line to cursor position.
@@ -7355,11 +7355,14 @@ contains
       call state_kill_buffer_set(input_state, temp_buf(:input_state%cursor_pos))
       input_state%kill_length = input_state%cursor_pos
 
-      ! Shift remaining text (after cursor) to beginning of buffer
+      ! Shift remaining text (after cursor) to beginning of buffer. Copy via a
+      ! separate buffer: an overlapping self-assignment of temp_buf is undefined
+      ! in Fortran and SIGSEGVs under flang (same idiom as the old dd/cc crash).
       remaining_len = input_state%length - input_state%cursor_pos
       if (remaining_len > 0) then
-        temp_buf(1:remaining_len) = temp_buf(input_state%cursor_pos+1:input_state%length)
-        call state_buffer_set(input_state, temp_buf)
+        shifted_buf = ''
+        shifted_buf(1:remaining_len) = temp_buf(input_state%cursor_pos+1:input_state%length)
+        call state_buffer_set(input_state, shifted_buf)
       else
         call state_buffer_clear(input_state)
       end if

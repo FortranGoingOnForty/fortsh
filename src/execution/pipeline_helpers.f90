@@ -288,7 +288,8 @@ contains
               integer :: br_sc, br_ec, br_cc
               character(len=:), allocatable :: br_prefix, br_suffix
               character(len=16) :: br_num
-              integer :: br_nlen, br_plen, br_slen
+              character(len=16) :: br_fmt
+              integer :: br_nlen, br_plen, br_slen, br_pad
               logical :: br_fast
 
               br_fast = .false.
@@ -344,6 +345,29 @@ contains
                   if (bw_i == 0) then
                     ! Numeric range — generate tokens directly
                     br_fast = .true.
+
+                    ! Detect zero-padding: if either operand has a leading 0
+                    ! (e.g. {01..05}), pad output to the wider operand's width.
+                    br_pad = 0
+                    block
+                      character(len=64) :: s_start, s_end
+                      integer :: w1, w2
+                      if (br_dots2 > 0) then
+                        s_end = adjustl(cmd%tokens(i)(br_dots+2:br_dots2-1))
+                      else
+                        s_end = adjustl(cmd%tokens(i)(br_dots+2:br_close-1))
+                      end if
+                      s_start = adjustl(cmd%tokens(i)(br_open+1:br_dots-1))
+                      w1 = len_trim(s_start)
+                      w2 = len_trim(s_end)
+                      if ((w1 > 1 .and. s_start(1:1) == '0') .or. &
+                          (w2 > 1 .and. s_end(1:1) == '0') .or. &
+                          (w1 > 1 .and. s_start(1:1) == '-' .and. w1 > 2 .and. s_start(2:2) == '0') .or. &
+                          (w2 > 1 .and. s_end(1:1) == '-' .and. w2 > 2 .and. s_end(2:2) == '0')) then
+                        br_pad = max(w1, w2)
+                      end if
+                    end block
+
                     ! Step is a magnitude; direction comes from start vs end
                     ! (bash semantics). Guard a zero step (SIGFPE on the divide)
                     ! and a negative step (negative count -> bad allocation).
@@ -358,9 +382,14 @@ contains
                     if (total_tokens + br_count > temp_cap) &
                       call grow_temp_arrays(total_tokens + br_count)
                     br_cur = br_start
+                    if (br_pad > 0) then
+                      write(br_fmt, '(a,i0,a,i0,a)') '(I', br_pad, '.', br_pad, ')'
+                    else
+                      br_fmt = '(I0)'
+                    end if
                     if (br_start <= br_end) then
                       do while (br_cur <= br_end)
-                        write(br_num, '(I0)') br_cur
+                        write(br_num, br_fmt) br_cur
                         br_nlen = len_trim(br_num)
                         total_tokens = total_tokens + 1
                         if (br_plen > 0 .and. br_slen > 0) then
@@ -378,7 +407,7 @@ contains
                       end do
                     else
                       do while (br_cur >= br_end)
-                        write(br_num, '(I0)') br_cur
+                        write(br_num, br_fmt) br_cur
                         br_nlen = len_trim(br_num)
                         total_tokens = total_tokens + 1
                         if (br_plen > 0 .and. br_slen > 0) then

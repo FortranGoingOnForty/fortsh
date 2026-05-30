@@ -13,11 +13,53 @@ module io_helpers
 
   ! Note: c_write returns c_intptr_t (signed) to detect -1 error
 
+  interface
+    function c_get_errno() bind(C, name="fortsh_get_errno")
+      import :: c_int
+      integer(c_int) :: c_get_errno
+    end function c_get_errno
+
+    function c_strerror(errnum) bind(C, name="fortsh_strerror")
+      import :: c_int, c_ptr
+      integer(c_int), value :: errnum
+      type(c_ptr) :: c_strerror
+    end function c_strerror
+  end interface
+
+  ! errno from the most recent failed write, captured immediately so callers
+  ! can report an accurate strerror() message (e.g. ENOSPC for /dev/full).
+  integer, save :: last_write_errno = 0
+
   private
   public :: write_stdout, write_stderr, write_stdout_nonl
   public :: write_stdout_checked, write_stdout_nonl_checked
+  public :: write_error_message
 
 contains
+
+  ! Translate the errno from the most recent failed *_checked write into a
+  ! human-readable message, matching what bash prints (e.g. for `> /dev/full`).
+  function write_error_message() result(msg)
+    character(len=256) :: msg
+    type(c_ptr) :: cptr
+    character(kind=c_char), pointer :: cstr(:)
+    integer :: slen, ci
+    cptr = c_strerror(int(last_write_errno, c_int))
+    if (.not. c_associated(cptr)) then
+      msg = 'Unknown error'
+      return
+    end if
+    call c_f_pointer(cptr, cstr, [256])
+    slen = 0
+    do ci = 1, 256
+      if (cstr(ci) == c_null_char) exit
+      slen = slen + 1
+    end do
+    msg = ''
+    do ci = 1, slen
+      msg(ci:ci) = cstr(ci)
+    end do
+  end function write_error_message
 
   ! Write string to stdout with newline (respects C FD redirections)
   subroutine write_stdout(str)
@@ -47,8 +89,9 @@ contains
     ! Write to stdout via C FD (this respects dup2 redirections)
     bytes_written = c_write(STDOUT_FD, c_loc(c_str), int(str_len + 1, c_size_t))
 
-    ! c_write returns -1 on error
+    ! c_write returns -1 on error; capture errno before anything else clobbers it
     success = (bytes_written >= 0)
+    if (.not. success) last_write_errno = int(c_get_errno())
 
     deallocate(c_str)
   end subroutine write_stdout_checked
@@ -85,8 +128,9 @@ contains
     ! Write to stdout via C FD
     bytes_written = c_write(STDOUT_FD, c_loc(c_str), int(str_len, c_size_t))
 
-    ! c_write returns -1 on error
+    ! c_write returns -1 on error; capture errno before anything else clobbers it
     success = (bytes_written >= 0)
+    if (.not. success) last_write_errno = int(c_get_errno())
 
     deallocate(c_str)
   end subroutine write_stdout_nonl_checked
