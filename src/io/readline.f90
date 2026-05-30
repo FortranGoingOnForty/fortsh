@@ -3740,33 +3740,29 @@ contains
     integer, intent(out) :: num_completions
 
     character(len=256) :: var_prefix
-    character(len=4096) :: env_output
-    character(len=:), allocatable :: env_alloc
-    character(len=MAX_LINE_LEN), allocatable :: entries(:)
-    integer :: num_entries, i, score
+    integer :: i, score, eqpos
+    character(len=:), allocatable :: entry
 
     num_completions = 0
     ! Strip the $ from the prefix
     var_prefix = prefix_with_dollar(2:)
 
-    ! Get variable names from environment (exported + inherited)
-    env_alloc = execute_and_capture('env 2>/dev/null | cut -d= -f1 | tr ' // "'" // char(92) // 'n' // "' ' '")
-    env_output = env_alloc(:min(len(env_output), len(env_alloc)))
-    if (allocated(env_alloc)) deallocate(env_alloc)
-
-    ! Parse into entries
-    call parse_ls_output(env_output, entries, num_entries)
-
-    ! Match against prefix
-    do i = 1, num_entries
-      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
-      if (len_trim(entries(i)) == 0) cycle
-
-      score = fuzzy_match_score(trim(var_prefix), trim(entries(i)))
+    ! Iterate the environment natively (no `env | cut | tr` subprocess); each
+    ! entry is "NAME=value", so match on the NAME before '='.
+    i = 0
+    do
+      entry = get_environ_entry(i)
+      if (len(entry) == 0) exit  ! end of environ
+      i = i + 1
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) cycle
+      eqpos = index(entry, '=')
+      if (eqpos <= 1) cycle
+      score = fuzzy_match_score(trim(var_prefix), entry(1:eqpos-1))
       if (score >= 0) then
         num_completions = num_completions + 1
-        completions(num_completions) = '$' // trim(entries(i))
+        completions(num_completions) = '$' // entry(1:eqpos-1)
       end if
+      if (i > 100000) exit  ! safety bound
     end do
   end subroutine
 
