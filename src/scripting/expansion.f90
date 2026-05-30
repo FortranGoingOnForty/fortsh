@@ -1254,7 +1254,7 @@ contains
     ! gfortran path: character-by-character scan, no C dependencies
     integer :: in_len, pat_len, repl_len, i2, j2
     integer :: out_pos, out_cap
-    logical :: matched
+    logical :: matched, has_glob
     character(len=:), allocatable :: result_buf
 
     in_len = len_trim(input)
@@ -1266,6 +1266,10 @@ contains
       return
     end if
 
+    has_glob = (index(pattern(1:pat_len), '*') > 0 .or. &
+                index(pattern(1:pat_len), '?') > 0 .or. &
+                index(pattern(1:pat_len), '[') > 0)
+
     if (repl_len > pat_len) then
       out_cap = in_len + (in_len / pat_len + 1) * (repl_len - pat_len) + 1
     else
@@ -1276,14 +1280,23 @@ contains
 
     i2 = 1
     do while (i2 <= in_len)
-      ! Try glob pattern match at position i2 — find longest match (bash semantics)
       matched = .false.
-      do j2 = in_len - i2 + 1, 1, -1
-        if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
+      if (has_glob) then
+        ! Glob pattern: try longest match first (bash semantics)
+        do j2 = in_len - i2 + 1, 1, -1
+          if (pattern_matches_no_dotfile_check(pattern(1:pat_len), input(i2:i2+j2-1))) then
+            matched = .true.
+            exit
+          end if
+        end do
+      else
+        ! Literal pattern: exact-length comparison only
+        if (i2 + pat_len - 1 <= in_len .and. &
+            input(i2:i2+pat_len-1) == pattern(1:pat_len)) then
           matched = .true.
-          exit
+          j2 = pat_len
         end if
-      end do
+      end if
       if (matched) then
         if (repl_len > 0) then
           result_buf(out_pos:out_pos + repl_len - 1) = replacement(1:repl_len)
