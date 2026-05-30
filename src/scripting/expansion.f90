@@ -250,7 +250,7 @@ contains
               end block
               return
             else if (is_length_expansion) then
-              ! ${#arr[@]} — count of elements
+              ! ${#arr[@]} — count of non-empty elements (sparse-aware)
               block
                 integer :: ki, arr_count
                 character(len=:), allocatable :: all_str
