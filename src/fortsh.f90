@@ -7,7 +7,7 @@ program fortran_shell
   use signal_handler
   use signal_handling
   use parser, only: convert_backticks_to_dollar_paren, has_unclosed_quote, ends_with_continuation_backslash, &
-                    needs_compound_continuation, remove_line_continuations, process_substitutions, &
+                    needs_compound_continuation, remove_line_continuations, &
                     get_heredoc_delimiter
 
   use substitution, only: cleanup_all_fifos, wait_and_cleanup_proc_substs
@@ -228,15 +228,14 @@ program fortran_shell
 
     ! Handle line continuation (backslash-newline)
     command_string = remove_line_continuations(command_string)
-    call process_substitutions(shell, trim(command_string), proc_subst_line)
-
     ! POSIX set -v: Print input line before execution
     if (shell%option_verbose) then
       write(error_unit, '(A)') trim(command_string)
     end if
 
-    ! Parse to AST and execute
-    converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+    ! Parse to AST and execute (process substitution is handled during
+    ! word expansion at execution time, not pre-processing)
+    converted_line = convert_backticks_to_dollar_paren(trim(command_string))
     ast_root => parse_command_line(converted_line)
     if (associated(ast_root)) then
       shell%current_command = converted_line
@@ -259,6 +258,8 @@ program fortran_shell
 
     ! Execute EXIT trap if one is set (before exiting)
     call execute_trap_for_signal(shell, 0)  ! 0 is TRAP_EXIT
+    call wait_and_cleanup_proc_substs(shell)
+    call cleanup_all_fifos(shell)
 
     ! Exit with last command's exit status
     call c_exit(shell%last_exit_status)
@@ -278,6 +279,8 @@ program fortran_shell
       call print_performance_stats()
     end if
     call cleanup_performance_monitoring()
+    call wait_and_cleanup_proc_substs(shell)
+    call cleanup_all_fifos(shell)
     call c_exit(shell%last_exit_status)
   end if
 
@@ -450,18 +453,15 @@ program fortran_shell
       call expand_alias(shell, trim(input_line), expanded_line)
     end if
 
-    ! Process substitutions <() and >() before parsing
-    call process_substitutions(shell, expanded_line, proc_subst_line)
-
     ! POSIX set -v: Print input line before execution
     if (shell%option_verbose) then
       write(error_unit, '(A)') trim(expanded_line)
     end if
 
-    ! Parse and execute via AST
+    ! Parse and execute via AST (process substitution handled at execution time)
     call system_clock(cmd_start_time, clock_rate)
 
-    converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+    converted_line = convert_backticks_to_dollar_paren(expanded_line)
     ast_root => parse_command_line(converted_line)
     if (associated(ast_root)) then
       ! Store current command for job descriptions
@@ -1031,15 +1031,13 @@ contains
       end if
 
       ! Process substitutions <() and >() before parsing
-      call process_substitutions(shell, expanded_line, proc_subst_line)
-
       ! POSIX set -v: Print input line before execution
       if (shell%option_verbose) then
         write(error_unit, '(A)') trim(input_line)
       end if
 
-      ! Parse and execute via AST
-      converted_line = convert_backticks_to_dollar_paren(proc_subst_line)
+      ! Parse and execute via AST (process substitution handled at execution time)
+      converted_line = convert_backticks_to_dollar_paren(expanded_line)
       ast_root => parse_command_line(converted_line)
       if (associated(ast_root)) then
         if (shell%option_noexec) then

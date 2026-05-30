@@ -243,6 +243,28 @@ contains
           pos = pos + 1
           cycle
         end if
+        ! Process substitution: <( or >( starts a word token, not an operator.
+        ! The entire <(cmd) is kept as one word for execution-time expansion.
+        if ((ch == '<' .or. ch == '>') .and. pos < input_len .and. next_ch == '(') then
+          state = LEX_IN_WORD
+          token_start = pos
+          token_len = 2
+          current_token = ch // '('
+          paren_depth = 1
+          pos = pos + 2
+          ! Consume everything through the matching closing paren
+          do while (pos <= input_len .and. paren_depth > 0)
+            if (input(pos:pos) == '(') paren_depth = paren_depth + 1
+            if (input(pos:pos) == ')') paren_depth = paren_depth - 1
+            if (token_len < MAX_TOKEN_LEN) then
+              token_len = token_len + 1
+              current_token(token_len:token_len) = input(pos:pos)
+            end if
+            pos = pos + 1
+          end do
+          cycle
+        end if
+
         if (is_operator_start(ch)) then
           state = LEX_IN_OPERATOR
           token_start = pos

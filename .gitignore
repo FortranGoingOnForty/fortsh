@@ -28,3 +28,4 @@ lldb_interactive.sh
 scratch.sh
 docs/
 .docs/
+*.core

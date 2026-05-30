@@ -560,8 +560,10 @@ contains
     do while (i <= shell%num_proc_subst_fifos)
       if (shell%proc_subst_fifos(i)%active) then
         status = 0
-        ret_pid = c_waitpid(shell%proc_subst_fifos(i)%pid, c_loc(status), WNOHANG)
-        if (ret_pid /= 0) then
+        ! Blocking wait — the child is short-lived (already finished
+        ! writing/reading by the time the parent command completes).
+        ret_pid = c_waitpid(shell%proc_subst_fifos(i)%pid, c_loc(status), 0_c_int)
+        if (ret_pid > 0) then
           success = remove_file(trim(shell%proc_subst_fifos(i)%fifo_path))
           shell%proc_subst_fifos(i)%active = .false.
         end if

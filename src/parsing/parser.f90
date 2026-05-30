@@ -1726,6 +1726,74 @@ contains
       else if (working_token(i:i) == char(1)) then
         ! Skip sentinel character (marks quote boundary from lexer)
         i = i + 1
+      else if ((working_token(i:i) == '<' .or. working_token(i:i) == '>') .and. &
+               i + 1 <= len_trim(working_token) .and. working_token(i+1:i+1) == '(' .and. &
+               .not. is_quoted) then
+        ! Process substitution <(cmd) / >(cmd) — bash model:
+        ! create pipe, fork child, use /dev/fd/N as the filename.
+        ! No FIFOs, no temp files, no leaks.
+        block
+          use trap_dispatch, only: eval_trap_string
+          use io_helpers, only: write_stderr
+          character(len=MAX_PATH_LEN) :: ps_command
+          character(len=32) :: devfd_path
+          logical :: ps_is_input, pipe_ok
+          integer :: ps_start, ps_depth, ps_exit
+          integer(c_pid_t) :: ps_pid
+          integer(c_int) :: read_fd, write_fd, parent_fd, child_fd, ret
+
+          ps_is_input = (working_token(i:i) == '<')
+          ps_start = i + 2
+          ps_depth = 1
+          i = ps_start
+
+          do while (i <= len_trim(working_token) .and. ps_depth > 0)
+            if (working_token(i:i) == '(') ps_depth = ps_depth + 1
+            if (working_token(i:i) == ')') ps_depth = ps_depth - 1
+            if (ps_depth > 0) i = i + 1
+          end do
+
+          if (ps_depth == 0) then
+            ps_command = working_token(ps_start:i-1)
+            i = i + 1
+
+            pipe_ok = create_pipe(read_fd, write_fd)
+            if (pipe_ok) then
+              if (ps_is_input) then
+                parent_fd = read_fd
+                child_fd = write_fd
+              else
+                parent_fd = write_fd
+                child_fd = read_fd
+              end if
+
+              ps_pid = c_fork()
+              if (ps_pid == 0) then
+                ! Child: close parent's end, redirect child's end
+                ret = c_close(parent_fd)
+                if (ps_is_input) then
+                  ret = c_dup2(child_fd, STDOUT_FD)
+                else
+                  ret = c_dup2(child_fd, STDIN_FD)
+                end if
+                ret = c_close(child_fd)
+                shell%is_interactive = .false.
+                call eval_trap_string(trim(ps_command), shell, ps_exit)
+                call c_exit(ps_exit)
+              else if (ps_pid > 0) then
+                ! Parent: close child's end, build /dev/fd/N path
+                ret = c_close(child_fd)
+                write(devfd_path, '(a,i0)') '/dev/fd/', parent_fd
+                call ensure_result_cap(j + len_trim(devfd_path))
+                result(j:j+len_trim(devfd_path)-1) = trim(devfd_path)
+                j = j + len_trim(devfd_path)
+              end if
+            end if
+          else
+            result(j:j) = working_token(i:i)
+            j = j + 1
+          end if
+        end block
       else
         result(j:j) = working_token(i:i)
         i = i + 1
