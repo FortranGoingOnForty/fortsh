@@ -2818,7 +2818,6 @@ contains
       character(len=:), allocatable :: path_alloc
       character(len=4096) :: path_var
       character(len=:), allocatable :: path_comp, candidate
-      character(len=MAX_PATH_LEN) :: candidate_buf
       integer :: spos, epos, cpos
       character(kind=c_char), target :: c_path(1025)
       integer :: ci, acc_status
@@ -2852,18 +2851,23 @@ contains
         path_comp = path_var(spos:epos)
         if (len_trim(path_comp) == 0) path_comp = '.'
 
-        write(candidate_buf, '(a,a,a)') trim(path_comp), '/', trim(cmd_name)
-        candidate = trim(candidate_buf)
+        ! Build the candidate via allocatable concat — a fixed-buffer write here
+        ! aborted with "End of record" when path+name exceeded the buffer.
+        candidate = trim(path_comp) // '/' // trim(cmd_name)
 
-        ! Check executable via C access()
-        do ci = 1, len_trim(candidate)
-          c_path(ci) = candidate(ci:ci)
-        end do
-        c_path(len_trim(candidate) + 1) = c_null_char
-        acc_status = cache_access(c_path, int(1, c_int))  ! X_OK = 1
-        if (acc_status == 0) then
-          full_path = trim(candidate)
-          exit
+        ! Only probe candidates that fit the C path buffer; anything longer
+        ! cannot name a real executable (bash likewise reports "not found").
+        if (len_trim(candidate) + 1 <= size(c_path)) then
+          ! Check executable via C access()
+          do ci = 1, len_trim(candidate)
+            c_path(ci) = candidate(ci:ci)
+          end do
+          c_path(len_trim(candidate) + 1) = c_null_char
+          acc_status = cache_access(c_path, int(1, c_int))  ! X_OK = 1
+          if (acc_status == 0) then
+            full_path = trim(candidate)
+            exit
+          end if
         end if
 
         if (cpos == 0) exit
