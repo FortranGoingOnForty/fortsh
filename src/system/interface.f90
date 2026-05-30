@@ -828,6 +828,66 @@ contains
     end if
   end function
 
+  ! True if `name` is an executable found on $PATH (native access(X_OK) scan;
+  ! no `which` subprocess). Bare names only — a name with '/' is checked as-is.
+  function command_in_path(name) result(found)
+    character(len=*), intent(in) :: name
+    logical :: found
+    character(len=:), allocatable :: path_var, cand
+    character(kind=c_char), dimension(:), allocatable, target :: cpath
+    integer :: spos, cpos, epos, i, clen
+
+    found = .false.
+    if (len_trim(name) == 0) return
+
+    if (index(trim(name), '/') > 0) then
+      cand = trim(name)
+    else
+      path_var = get_environment_var('PATH')
+      if (len(path_var) == 0) path_var = '/usr/bin:/bin'
+      cand = ''
+    end if
+
+    spos = 1
+    do
+      if (index(trim(name), '/') > 0) then
+        ! absolute/relative path: single candidate
+        if (len(cand) == 0) exit
+      else
+        if (spos > len(path_var)) exit
+        cpos = index(path_var(spos:), ':')
+        if (cpos == 0) then
+          epos = len(path_var)
+        else
+          epos = spos + cpos - 2
+        end if
+        if (epos >= spos) then
+          cand = path_var(spos:epos)
+        else
+          cand = '.'
+        end if
+        if (len_trim(cand) == 0) cand = '.'
+        cand = trim(cand) // '/' // trim(name)
+      end if
+
+      clen = len(cand)
+      if (allocated(cpath)) deallocate(cpath)
+      allocate(cpath(clen + 1))
+      do i = 1, clen
+        cpath(i) = cand(i:i)
+      end do
+      cpath(clen + 1) = c_null_char
+      if (c_access(c_loc(cpath), X_OK) == 0) then
+        found = .true.
+        return
+      end if
+
+      if (index(trim(name), '/') > 0) exit
+      if (cpos == 0) exit
+      spos = spos + cpos
+    end do
+  end function command_in_path
+
   ! Terminal size via the C ioctl helper (no `tput` subprocess; safe on flang).
   function get_term_size_native(rows, cols) result(ok)
     integer, intent(out) :: rows, cols

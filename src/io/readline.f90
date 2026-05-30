@@ -853,37 +853,20 @@ contains
 
   ! Detect the clipboard tool at startup (idempotent).
   subroutine clipboard_detect()
-    character(len=:), allocatable :: result
-
     if (clipboard_initialized) return
     clipboard_initialized = .true.
 
-    ! Probe in preference order. execute_and_capture runs `which <tool>`
-    ! and returns the path if found, or an empty string if not.
-    result = execute_and_capture('which pbcopy 2>/dev/null')
-    if (len_trim(result) > 0) then
+    ! Probe in preference order via a native $PATH scan (access(X_OK)),
+    ! not a `which` subprocess.
+    if (command_in_path('pbcopy')) then
       clipboard_tool = CLIP_PBCOPY
-      return
-    end if
-
-    result = execute_and_capture('which wl-copy 2>/dev/null')
-    if (len_trim(result) > 0) then
+    else if (command_in_path('wl-copy')) then
       clipboard_tool = CLIP_WLCOPY
-      return
-    end if
-
-    result = execute_and_capture('which xclip 2>/dev/null')
-    if (len_trim(result) > 0) then
+    else if (command_in_path('xclip')) then
       clipboard_tool = CLIP_XCLIP
-      return
-    end if
-
-    result = execute_and_capture('which xsel 2>/dev/null')
-    if (len_trim(result) > 0) then
+    else if (command_in_path('xsel')) then
       clipboard_tool = CLIP_XSEL
-      return
     end if
-
     ! No tool found — clipboard_tool stays CLIP_NONE.
   end subroutine clipboard_detect
 
