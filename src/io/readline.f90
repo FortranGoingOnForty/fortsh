@@ -1353,6 +1353,7 @@ contains
     integer :: debug_stat
     ! Variables for RPROMPT (right-side prompt)
     integer :: rprompt_visual_len, padding_needed
+    logical :: rprompt_displayed
     ! Variables for multiline prompt support
     integer :: prompt_line_count
 
@@ -1434,6 +1435,7 @@ contains
 
     ! Check if we have RPROMPT and enough space
     ! Note: multi-line prompt RPROMPT is handled in fortsh.f90 by embedding into the prompt string
+    rprompt_displayed = .false.
     if (present(rprompt) .and. len_trim(rprompt) > 0) then
       rprompt_visual_len = visual_length(rprompt)
       if (rprompt_visual_len < 0) rprompt_visual_len = 0
@@ -1442,6 +1444,7 @@ contains
       padding_needed = term_cols - prompt_visual_len - 1 - rprompt_visual_len
 
       if (padding_needed >= 4) then  ! Minimum 4 chars gap
+        rprompt_displayed = .true.
         write(output_unit, '(a)', advance='no') prompt
         write(output_unit, '(a)', advance='no') ' '
 
@@ -1850,8 +1853,14 @@ contains
             ! Calculate current cursor position (add 1 for space after prompt)
             cursor_visual_pos = prompt_visual_len + 1 + module_input_state%cursor_pos
 
-            ! Calculate row/col from buffer state not stale screen tracking
-            current_row = cursor_visual_pos / term_cols
+            ! When RPROMPT was on the initial line, the entire terminal width
+            ! was filled (prompt + padding + rprompt). The first redraw must
+            ! account for this extra line of content that will be cleared.
+            if (rprompt_displayed) then
+              current_row = 1 + cursor_visual_pos / term_cols
+            else
+              current_row = cursor_visual_pos / term_cols
+            end if
             current_col = mod(cursor_visual_pos, term_cols)
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! === Buffered redraw: accumulate entire frame, write once ===
@@ -2008,6 +2017,10 @@ contains
             ! Show cursor, then flush entire buffer in one write
             call rdraw_append(ESC_SHOW_CURSOR)
             call rdraw_flush()
+
+            ! RPROMPT was cleared by ESC[J above; subsequent redraws
+            ! don't need the extra cursor-up compensation.
+            rprompt_displayed = .false.
 
             ! Debug: show state before recalculating cursor position
             if (debug_utf8) then
