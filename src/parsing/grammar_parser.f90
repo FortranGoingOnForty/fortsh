@@ -19,11 +19,14 @@ module grammar_parser
   ! Module-level variable to track if last parse had an error
   logical :: last_parse_had_error = .false.
 
+  integer, parameter :: MAX_PARSE_DEPTH = 128
+
   type :: parser_state_t
     type(token_t), allocatable :: tokens(:)
     integer :: num_tokens = 0
     integer :: pos = 1
     integer :: current_line = 1  ! Track line number for LINENO
+    integer :: depth = 0         ! Compound-command nesting depth
     logical :: has_error = .false.
     character(len=:), allocatable :: error_msg
     character(len=:), allocatable :: raw_input  ! For heredoc extraction
@@ -299,6 +302,15 @@ contains
     tok = current_token(state)
     is_compound = .false.
     if (tok%token_type == TOKEN_KEYWORD) then
+      ! Guard against excessive nesting depth (stack overflow on deep { { { ... } } })
+      state%depth = state%depth + 1
+      if (state%depth > MAX_PARSE_DEPTH) then
+        state%has_error = .true.
+        state%error_msg = 'maximum nesting depth exceeded'
+        state%depth = state%depth - 1
+        return
+      end if
+
       select case(trim(tok%value))
       case('!')
         ! Nested negation - parse as a pipeline with negation
@@ -332,6 +344,13 @@ contains
         node => parse_simple_cmd(state)
       end select
     else if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '(') then
+      state%depth = state%depth + 1
+      if (state%depth > MAX_PARSE_DEPTH) then
+        state%has_error = .true.
+        state%error_msg = 'maximum nesting depth exceeded'
+        state%depth = state%depth - 1
+        return
+      end if
       ! Check if this is (( for arithmetic command vs ( for subshell
       ! Key: (( with no space = arithmetic, ( ( with space = nested subshell
       next_tok = peek_token(state%tokens, state%pos + 1)
@@ -346,6 +365,8 @@ contains
     else
       node => parse_simple_cmd(state)
     end if
+
+    if (is_compound) state%depth = state%depth - 1
 
     ! Parse trailing redirections for compound commands
     ! (simple commands already handle redirections internally)
