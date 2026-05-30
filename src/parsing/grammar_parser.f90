@@ -110,6 +110,15 @@ contains
       call advance(state)
       tok = current_token(state)
     end do
+    ! Anything left at the top level (e.g. a stray ')' or 'done') is a syntax
+    ! error — without this, the leading fragment ran and the rest was silently
+    ! dropped while the shell reported success (bash returns 2 here).
+    if (tok%token_type /= TOKEN_EOF .and. .not. state%has_error) then
+      call write_stderr('sh: -c: line 1: syntax error near unexpected token `' &
+                        // trim(tok%value) // "'")
+      state%has_error = .true.
+      state%error_msg = 'syntax error near unexpected token ' // trim(tok%value)
+    end if
   end function
 
   recursive function parse_list(state) result(node)
