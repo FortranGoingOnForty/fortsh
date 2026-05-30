@@ -3836,7 +3836,12 @@ contains
       end if
 
       if (is_numeric) then
-        ! Numeric range expansion — O(n) with pre-allocated buffer
+        ! Numeric range expansion — O(n) with pre-allocated buffer.
+        ! The step is a magnitude; direction comes from start vs end (bash
+        ! semantics). A zero/negative step would otherwise make num_values
+        ! negative and the buffer allocation negative-sized -> crash.
+        step_val = abs(step_val)
+        if (step_val == 0) step_val = 1
         if (start_val <= end_val) then
           num_values = (end_val - start_val) / step_val + 1
         else

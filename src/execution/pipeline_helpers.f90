@@ -344,6 +344,11 @@ contains
                   if (bw_i == 0) then
                     ! Numeric range — generate tokens directly
                     br_fast = .true.
+                    ! Step is a magnitude; direction comes from start vs end
+                    ! (bash semantics). Guard a zero step (SIGFPE on the divide)
+                    ! and a negative step (negative count -> bad allocation).
+                    br_step = abs(br_step)
+                    if (br_step == 0) br_step = 1
                     if (br_start <= br_end) then
                       br_count = (br_end - br_start) / br_step + 1
                     else
