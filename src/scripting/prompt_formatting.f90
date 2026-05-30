@@ -220,12 +220,14 @@ contains
 
       ! Directory information
       case ('w')
-        ! Current working directory (full path, with ~ for HOME)
-        replacement = get_pretty_path(shell%cwd, shell)
+        ! Current working directory (full path, with ~ for HOME). Sanitize
+        ! control/escape bytes so a maliciously-named cwd can't inject ANSI
+        ! sequences into the prompt.
+        replacement = sanitize_for_display(get_pretty_path(shell%cwd, shell))
 
       case ('W')
-        ! Basename of current working directory
-        replacement = get_basename(shell%cwd)
+        ! Basename of current working directory (sanitized — see \w)
+        replacement = sanitize_for_display(get_basename(shell%cwd))
 
       ! Time and date
       case ('t')

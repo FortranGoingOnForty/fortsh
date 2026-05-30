@@ -4131,8 +4131,9 @@ contains
 
       ! Print items in rows, aligned to columns
       do i = 1, num_completions
-        ! Print item padded to column width
-        write(output_unit, '(a)', advance='no') trim(completions(i))
+        ! Print item padded to column width (sanitize control/escape bytes in
+        ! filenames so they can't inject terminal escape sequences)
+        write(output_unit, '(a)', advance='no') sanitize_for_display(trim(completions(i)))
 
         ! Calculate position in current row
         items_in_row = mod(i - 1, num_cols) + 1
@@ -5215,8 +5216,10 @@ contains
       do col = 1, items_per_row
         if (item_idx > input_state%menu_num_items) exit
 
-        ! Copy item to local variable to avoid substring operations on array element
-        current_item = input_state%menu_items(item_idx)
+        ! Copy item to local variable to avoid substring operations on array element.
+        ! Sanitize control/escape bytes for DISPLAY only (insertion uses the real
+        ! menu_items value) so a malicious filename can't inject ANSI sequences.
+        current_item = sanitize_for_display(input_state%menu_items(item_idx))
         item_len = len_trim(current_item)
 
         ! Highlight selected item with reverse video

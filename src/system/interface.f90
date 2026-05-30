@@ -908,6 +908,23 @@ contains
     ok = (ret == 0)
   end function
 
+  ! Replace control/escape bytes (C0 except tab, DEL, and ESC) with '?' so that
+  ! untrusted text (filenames, cwd) printed to the terminal cannot inject ANSI
+  ! escape sequences. Same length out (preserves column alignment).
+  function sanitize_for_display(s) result(out)
+    character(len=*), intent(in) :: s
+    character(len=len(s)) :: out
+    integer :: i, c
+    do i = 1, len(s)
+      c = iachar(s(i:i))
+      if (c == 9 .or. (c >= 32 .and. c /= 127)) then
+        out(i:i) = s(i:i)
+      else
+        out(i:i) = '?'
+      end if
+    end do
+  end function
+
   ! Securely create a temp file (mkstemp: random name, O_EXCL, 0600, no symlink
   ! follow) and return its path. Replaces predictable /tmp/<fixed-name> opens
   ! that were vulnerable to symlink/TOCTOU attacks.
