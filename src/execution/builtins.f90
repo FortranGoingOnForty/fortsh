@@ -748,7 +748,8 @@ contains
   end subroutine
 
   subroutine builtin_echo(cmd, shell)
-    use io_helpers, only: write_stdout_checked, write_stdout_nonl_checked
+    use io_helpers, only: write_stdout_checked, write_stdout_nonl_checked, &
+                          write_error_message
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
     integer :: i, j, len_token, start_token
@@ -762,7 +763,7 @@ contains
     if (.not. allocated(cmd%tokens) .or. cmd%num_tokens < 1) then
       call write_stdout_checked('', write_ok)
       if (.not. write_ok) then
-        call write_stderr('fortsh: echo: write error: Bad file descriptor')
+        call write_stderr('fortsh: echo: write error: ' // trim(write_error_message()))
         shell%last_exit_status = 1
       else
         shell%last_exit_status = 0
@@ -996,7 +997,7 @@ contains
     end if
 
     if (had_error) then
-      call write_stderr('fortsh: echo: write error: Bad file descriptor')
+      call write_stderr('fortsh: echo: write error: ' // trim(write_error_message()))
       shell%last_exit_status = 1
     else
       shell%last_exit_status = 0
