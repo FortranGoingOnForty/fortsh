@@ -396,6 +396,14 @@ module system_interface
       type(c_ptr) :: c_user_home
     end function
 
+    function c_make_temp(prefix, out, outlen) bind(C, name="fortsh_make_temp")
+      import :: c_char, c_int
+      character(kind=c_char), intent(in) :: prefix(*)
+      character(kind=c_char), intent(inout) :: out(*)
+      integer(c_int), value :: outlen
+      integer(c_int) :: c_make_temp
+    end function
+
     ! Native terminal size via ioctl done in C (src/c_interop/terminal_size.c),
     ! which avoids the flang-new crash on the Fortran c_loc(winsize) path.
     function c_get_term_size(rows, cols) bind(C, name="get_term_size_c")
@@ -898,6 +906,35 @@ contains
     rows = int(r)
     cols = int(c)
     ok = (ret == 0)
+  end function
+
+  ! Securely create a temp file (mkstemp: random name, O_EXCL, 0600, no symlink
+  ! follow) and return its path. Replaces predictable /tmp/<fixed-name> opens
+  ! that were vulnerable to symlink/TOCTOU attacks.
+  function make_temp_file(prefix, filename) result(ok)
+    character(len=*), intent(in) :: prefix
+    character(len=*), intent(out) :: filename
+    logical :: ok
+    character(kind=c_char), dimension(:), allocatable, target :: cprefix
+    character(kind=c_char), dimension(1024), target :: cout
+    integer :: i, plen, rc
+
+    filename = ''
+    plen = len_trim(prefix)
+    allocate(cprefix(plen + 1))
+    do i = 1, plen
+      cprefix(i) = prefix(i:i)
+    end do
+    cprefix(plen + 1) = c_null_char
+
+    rc = int(c_make_temp(cprefix, cout, 1024_c_int))
+    ok = (rc == 0)
+    if (ok) then
+      do i = 1, 1024
+        if (cout(i) == c_null_char) exit
+        if (i <= len(filename)) filename(i:i) = cout(i)
+      end do
+    end if
   end function
 
   ! Home directory for a named user via getpwnam (for ~user expansion).

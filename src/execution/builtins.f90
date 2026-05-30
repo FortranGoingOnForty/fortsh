@@ -4505,11 +4505,19 @@ contains
       end if
     end if
 
-    ! Create temporary file with commands to edit
-    write(fmt_buf, '(a,i15)') '/tmp/fortsh_fc_', c_getpid()
-    tmpfile = trim(adjustl(fmt_buf))
+    ! Securely create the temp file to edit (mkstemp: random name, 0600, O_EXCL)
+    ! — not a predictable /tmp/fortsh_fc_<pid> open vulnerable to symlink/TOCTOU.
+    block
+      character(len=1024) :: tf
+      if (.not. make_temp_file('fortsh_fc_', tf)) then
+        write(error_unit, '(a)') 'fc: failed to create temporary file'
+        shell%last_exit_status = 1
+        return
+      end if
+      tmpfile = trim(tf)
+    end block
 
-    open(newunit=tmp_unit, file=trim(tmpfile), status='replace', action='write', iostat=iostat)
+    open(newunit=tmp_unit, file=trim(tmpfile), status='old', action='write', iostat=iostat)
     if (iostat /= 0) then
       write(error_unit, '(a)') 'fc: failed to create temporary file'
       shell%last_exit_status = 1

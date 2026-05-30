@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <pwd.h>
@@ -11,6 +13,25 @@
 const char *fortsh_user_home(const char *name) {
     struct passwd *pw = getpwnam(name);
     return pw ? pw->pw_dir : (const char *)0;
+}
+
+// Securely create a temp file in $TMPDIR (or /tmp): builds "<dir>/<prefix>XXXXXX"
+// and mkstemp()s it (O_CREAT|O_EXCL, mode 0600, never follows a symlink, no
+// predictable name / race). Writes the chosen path to `out` and returns 0 on
+// success, -1 on failure. The unpredictable name makes a later open-by-name safe.
+int fortsh_make_temp(const char *prefix, char *out, int outlen) {
+    char tmpl[1024];
+    const char *dir = getenv("TMPDIR");
+    if (!dir || !*dir) dir = "/tmp";
+    if (snprintf(tmpl, sizeof(tmpl), "%s/%sXXXXXX", dir, prefix) >= (int)sizeof(tmpl))
+        return -1;
+    int fd = mkstemp(tmpl);
+    if (fd < 0) return -1;
+    close(fd);
+    if (outlen <= 0) return -1;
+    strncpy(out, tmpl, (size_t)(outlen - 1));
+    out[outlen - 1] = '\0';
+    return 0;
 }
 
 // macOS kernel bug workaround: set S_CTTYREF on the controlling terminal.
