@@ -396,6 +396,14 @@ module system_interface
       type(c_ptr) :: c_user_home
     end function
 
+    ! Native terminal size via ioctl done in C (src/c_interop/terminal_size.c),
+    ! which avoids the flang-new crash on the Fortran c_loc(winsize) path.
+    function c_get_term_size(rows, cols) bind(C, name="get_term_size_c")
+      import :: c_int
+      integer(c_int), intent(out) :: rows, cols
+      integer(c_int) :: c_get_term_size
+    end function
+
     function c_unsetenv(name) bind(C, name="unsetenv")
       import :: c_ptr, c_int
       type(c_ptr), value :: name
@@ -818,6 +826,18 @@ contains
     else
       allocate(character(len=0) :: value)
     end if
+  end function
+
+  ! Terminal size via the C ioctl helper (no `tput` subprocess; safe on flang).
+  function get_term_size_native(rows, cols) result(ok)
+    integer, intent(out) :: rows, cols
+    logical :: ok
+    integer(c_int) :: r, c, ret
+    r = 24; c = 80
+    ret = c_get_term_size(r, c)
+    rows = int(r)
+    cols = int(c)
+    ok = (ret == 0)
   end function
 
   ! Home directory for a named user via getpwnam (for ~user expansion).

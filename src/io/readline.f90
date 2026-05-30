@@ -1325,34 +1325,20 @@ contains
   ! Safe terminal size detection for macOS (avoids get_terminal_size crash on flang-new)
   subroutine safe_get_terminal_size(rows, cols)
     integer, intent(out) :: rows, cols
-    character(len=:), allocatable :: cols_str, rows_str
-    integer :: cols_val, rows_val, ios
+    integer :: r, c
+    logical :: ok
 
     ! Default fallback values
     cols = 80
     rows = 24
 
-    ! Try to get columns using tput
-    cols_str = execute_and_capture('tput cols 2>/dev/null')
-    if (allocated(cols_str) .and. len_trim(cols_str) > 0) then
-      read(cols_str, *, iostat=ios) cols_val
-      if (ios == 0 .and. cols_val > 0 .and. cols_val < 500) then
-        cols = cols_val
-      end if
+    ! Native ioctl via the C helper — no `tput` subprocess, and safe on
+    ! flang-new (the ioctl runs in C, not the crashing Fortran c_loc path).
+    ok = get_term_size_native(r, c)
+    if (ok) then
+      if (c > 0 .and. c < 500) cols = c
+      if (r > 0 .and. r < 500) rows = r
     end if
-
-    ! Try to get rows using tput
-    rows_str = execute_and_capture('tput lines 2>/dev/null')
-    if (allocated(rows_str) .and. len_trim(rows_str) > 0) then
-      read(rows_str, *, iostat=ios) rows_val
-      if (ios == 0 .and. rows_val > 0 .and. rows_val < 500) then
-        rows = rows_val
-      end if
-    end if
-
-    ! Clean up
-    if (allocated(cols_str)) deallocate(cols_str)
-    if (allocated(rows_str)) deallocate(rows_str)
   end subroutine safe_get_terminal_size
 #endif
 
@@ -1859,8 +1845,8 @@ contains
 
           ! Get terminal size for multiline handling
 #ifdef __APPLE__
-            ! WORKAROUND: get_terminal_size crashes on flang-new
-            ! Use tput command as a safe alternative
+            ! WORKAROUND: the Fortran get_terminal_size (c_loc on winsize)
+            ! crashes on flang-new; use the native C ioctl helper instead.
             call safe_get_terminal_size(term_rows, term_cols)
 #else
             ! Linux: Use actual terminal size
