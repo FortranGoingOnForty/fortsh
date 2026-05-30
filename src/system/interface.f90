@@ -597,6 +597,12 @@ module system_interface
       integer(c_int) :: c_poll
     end function
 
+    function c_fcntl(fd, cmd, arg) bind(C, name="fcntl")
+      import :: c_int
+      integer(c_int), value :: fd, cmd, arg
+      integer(c_int) :: c_fcntl
+    end function
+
     ! Native directory enumeration (src/c_interop/fortsh_dir.c) — replaces
     ! shelling out to `ls`. The C side owns the platform-specific struct dirent.
     function c_opendir(path) bind(C, name="fortsh_opendir")
@@ -781,6 +787,9 @@ module system_interface
   integer(c_int), parameter :: STDIN_FD = 0
   integer(c_int), parameter :: STDOUT_FD = 1
   integer(c_int), parameter :: STDERR_FD = 2
+
+  ! fcntl commands
+  integer(c_int), parameter :: F_DUPFD = 0  ! POSIX: duplicate fd to >= arg
 
   ! File mode bits (for stat st_mode field)
   integer(c_int), parameter :: S_IFMT   = int(o'170000', c_int)  ! File type mask
@@ -1085,6 +1094,33 @@ contains
       allocate(character(len=0) :: path)
     end if
   end function
+
+  ! Move an fd to a high number (>= min_fd) to avoid collisions with
+  ! user redirections 0-9. Returns the new fd, or -1 on failure.
+  function move_fd_high(fd, min_fd) result(new_fd)
+    integer(c_int), intent(in) :: fd
+    integer(c_int), intent(in), optional :: min_fd
+    integer(c_int) :: new_fd, threshold
+
+    threshold = 10
+    if (present(min_fd)) threshold = min_fd
+    if (fd >= threshold) then
+      new_fd = fd
+      return
+    end if
+    new_fd = c_fcntl(fd, F_DUPFD, threshold)
+    if (new_fd >= 0) then
+      call c_close_noerr(fd)
+    else
+      new_fd = fd
+    end if
+  end function
+
+  subroutine c_close_noerr(fd)
+    integer(c_int), intent(in) :: fd
+    integer(c_int) :: ret
+    ret = c_close(fd)
+  end subroutine
 
   function create_pipe(read_fd, write_fd) result(success)
     integer(c_int), intent(out) :: read_fd, write_fd
