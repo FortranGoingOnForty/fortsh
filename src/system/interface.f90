@@ -563,7 +563,29 @@ module system_interface
       integer(c_int), value :: timeout
       integer(c_int) :: c_poll
     end function
-    
+
+    ! Native directory enumeration (src/c_interop/fortsh_dir.c) — replaces
+    ! shelling out to `ls`. The C side owns the platform-specific struct dirent.
+    function c_opendir(path) bind(C, name="fortsh_opendir")
+      import :: c_ptr, c_char
+      character(kind=c_char), intent(in) :: path(*)
+      type(c_ptr) :: c_opendir
+    end function
+
+    function c_readdir(dirp, name_buf, buf_len, is_dir) bind(C, name="fortsh_readdir")
+      import :: c_ptr, c_char, c_int
+      type(c_ptr), value :: dirp
+      character(kind=c_char), intent(inout) :: name_buf(*)
+      integer(c_int), value :: buf_len
+      integer(c_int), intent(out) :: is_dir
+      integer(c_int) :: c_readdir
+    end function
+
+    subroutine c_closedir(dirp) bind(C, name="fortsh_closedir")
+      import :: c_ptr
+      type(c_ptr), value :: dirp
+    end subroutine
+
     subroutine c_cfmakeraw(termios_p) bind(C, name="cfmakeraw")
       import :: termios_t
       type(termios_t), intent(inout) :: termios_p
@@ -1327,6 +1349,60 @@ contains
     ret = c_poll(c_loc(pfd), 1_c_int, 0_c_int)
     pending = (ret > 0 .and. iand(int(pfd%revents), int(POLLIN)) /= 0)
   end function input_pending
+
+  ! Native directory listing via opendir/readdir (no `ls` subprocess).
+  ! Fills the caller's names()/is_dir_flags() arrays (up to their size) with the
+  ! raw directory entries — including "." and ".." — leaving any pattern
+  ! matching to the caller. `count` is the number of entries returned.
+  subroutine list_directory(path, names, is_dir_flags, count)
+    character(len=*), intent(in)    :: path
+    character(len=*), intent(inout) :: names(:)
+    logical,          intent(out)   :: is_dir_flags(:)
+    integer,          intent(out)   :: count
+
+    integer, parameter :: NAME_BUF_LEN = 1024
+    type(c_ptr) :: dirp
+    character(kind=c_char) :: cpath(len_trim(path) + 1)
+    character(kind=c_char) :: namebuf(NAME_BUF_LEN)
+    integer(c_int) :: is_dir, rc
+    integer :: i, plen, maxn, namelen
+
+    count = 0
+    maxn = min(size(names), size(is_dir_flags))
+    if (maxn <= 0) return
+
+    ! Build a NUL-terminated C path
+    plen = len_trim(path)
+    do i = 1, plen
+      cpath(i) = path(i:i)
+    end do
+    cpath(plen + 1) = c_null_char
+
+    dirp = c_opendir(cpath)
+    if (.not. c_associated(dirp)) return
+
+    do
+      if (count >= maxn) exit
+      rc = c_readdir(dirp, namebuf, int(NAME_BUF_LEN, c_int), is_dir)
+      if (rc /= 1) exit
+
+      ! Length of the NUL-terminated name returned by C
+      namelen = 0
+      do i = 1, NAME_BUF_LEN
+        if (namebuf(i) == c_null_char) exit
+        namelen = namelen + 1
+      end do
+
+      count = count + 1
+      names(count) = ''
+      do i = 1, min(namelen, len(names(count)))
+        names(count)(i:i) = namebuf(i)
+      end do
+      is_dir_flags(count) = (is_dir /= 0)
+    end do
+
+    call c_closedir(dirp)
+  end subroutine list_directory
 
   ! Get current process ID
   function get_pid() result(pid)
