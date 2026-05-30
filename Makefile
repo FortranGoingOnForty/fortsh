@@ -90,7 +90,7 @@ else ifeq ($(UNAME_S),Darwin)
 endif
 
 # Core C objects needed on all platforms (fd operations, terminal size, string ops)
-CORE_C_OBJS = $(BUILDDIR)/c_interop/fd_wrapper.o $(BUILDDIR)/c_interop/terminal_size.o $(BUILDDIR)/c_interop/fortsh_strings.o
+CORE_C_OBJS = $(BUILDDIR)/c_interop/fd_wrapper.o $(BUILDDIR)/c_interop/terminal_size.o $(BUILDDIR)/c_interop/fortsh_strings.o $(BUILDDIR)/c_interop/fortsh_dir.o
 
 ifeq ($(USE_C_STRINGS),1)
   C_STRING_LIB = $(BUILDDIR)/c_interop/libfortsh_strings.a
@@ -367,6 +367,10 @@ $(BUILDDIR)/c_interop/fd_wrapper.o: src/c_interop/fd_wrapper.c | $(BUILDDIR)/c_i
 
 # Compile C terminal size wrapper
 $(BUILDDIR)/c_interop/terminal_size.o: src/c_interop/terminal_size.c | $(BUILDDIR)/c_interop
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compile native directory enumeration helper (replaces shelling out to ls)
+$(BUILDDIR)/c_interop/fortsh_dir.o: src/c_interop/fortsh_dir.c | $(BUILDDIR)/c_interop
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Create static library from C objects
