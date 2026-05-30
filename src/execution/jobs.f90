@@ -443,7 +443,7 @@ contains
               '[', shell%jobs(i)%job_id, ']', cur_mark, &
               trim(state_str), &
               repeat(' ', max(1, &
-                27 - len_trim(state_str))), &
+                24 - len_trim(state_str))), &
               trim(cmd_display)
           end if
         end block

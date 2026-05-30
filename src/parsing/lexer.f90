@@ -475,6 +475,62 @@ contains
                 end if
                 cycle  ! pos already advanced past octal digits
               end block
+            case('u')
+              ! Unicode: \uHHHH (up to 4 hex digits) → UTF-8
+              block
+                integer :: uval, udigits
+                character :: uch
+                uval = 0; udigits = 0
+                pos = pos + 2
+                do while (pos <= input_len .and. udigits < 4)
+                  uch = input(pos:pos)
+                  if (uch >= '0' .and. uch <= '9') then
+                    uval = uval * 16 + (ichar(uch) - ichar('0'))
+                  else if (uch >= 'a' .and. uch <= 'f') then
+                    uval = uval * 16 + (ichar(uch) - ichar('a') + 10)
+                  else if (uch >= 'A' .and. uch <= 'F') then
+                    uval = uval * 16 + (ichar(uch) - ichar('A') + 10)
+                  else
+                    exit
+                  end if
+                  pos = pos + 1
+                  udigits = udigits + 1
+                end do
+                if (udigits > 0) call encode_utf8(uval, current_token, token_len)
+                cycle
+              end block
+            case('U')
+              ! Unicode: \UHHHHHHHH (up to 8 hex digits) → UTF-8
+              block
+                integer :: uval, udigits
+                character :: uch
+                uval = 0; udigits = 0
+                pos = pos + 2
+                do while (pos <= input_len .and. udigits < 8)
+                  uch = input(pos:pos)
+                  if (uch >= '0' .and. uch <= '9') then
+                    uval = uval * 16 + (ichar(uch) - ichar('0'))
+                  else if (uch >= 'a' .and. uch <= 'f') then
+                    uval = uval * 16 + (ichar(uch) - ichar('a') + 10)
+                  else if (uch >= 'A' .and. uch <= 'F') then
+                    uval = uval * 16 + (ichar(uch) - ichar('A') + 10)
+                  else
+                    exit
+                  end if
+                  pos = pos + 1
+                  udigits = udigits + 1
+                end do
+                if (udigits > 0) call encode_utf8(uval, current_token, token_len)
+                cycle
+              end block
+            case('c')
+              ! Control character: \cX → char(ichar(X) & 31)
+              if (pos + 2 <= input_len) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = char(iand(ichar(input(pos+2:pos+2)), 31))
+                pos = pos + 3
+                cycle
+              end if
             case default
               ! Unknown escape — keep both chars
               token_len = token_len + 1
