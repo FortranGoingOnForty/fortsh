@@ -1327,6 +1327,7 @@ contains
 
   ! Enhanced readline with character-by-character input processing
   subroutine readline_enhanced(prompt, line, iostat, rprompt, keep_raw)
+    use signal_handler, only: g_terminal_resized
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
@@ -1502,6 +1503,45 @@ contains
         if (.not. success) then
           iostat = -1
           exit
+        end if
+
+        ! Handle terminal resize (SIGWINCH) mid-readline. The terminal has
+        ! reflowed existing content, so the cursor position is unknown. Move
+        ! to column 1 of the current line, clear to end of screen, and force
+        ! a full repaint. This avoids ghost lines from the old geometry.
+        if (g_terminal_resized) then
+          g_terminal_resized = .false.
+          rprompt_displayed = .false.
+          ! Move cursor to column 1 and clear everything below
+          write(output_unit, '(a)', advance='no') char(13)  ! CR
+          write(output_unit, '(a)', advance='no') char(27) // '[J'  ! clear to end of screen
+          ! Reprint prompt
+          block
+            integer :: pr_i2
+            do pr_i2 = 1, len_trim(prompt)
+              if (prompt(pr_i2:pr_i2) == char(10)) then
+                write(output_unit, '(a)', advance='no') char(13) // char(10)
+              else
+                write(output_unit, '(a)', advance='no') prompt(pr_i2:pr_i2)
+              end if
+            end do
+          end block
+          write(output_unit, '(a)', advance='no') ' '
+          ! Reprint buffer content
+          if (module_input_state%length > 0) then
+            call state_buffer_get(module_input_state, temp_buf)
+            write(output_unit, '(a)', advance='no') temp_buf(1:module_input_state%length)
+          end if
+          flush(output_unit)
+          ! Reset cursor tracking to match new geometry
+          success = get_terminal_size(term_rows, term_cols)
+          if (.not. success) term_cols = 80
+          prompt_visual_len = visual_length(prompt)
+          if (prompt_visual_len < 0) prompt_visual_len = 0
+          call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, &
+                                  module_cursor_screen_row, module_cursor_screen_col)
+          module_input_state%dirty = .false.
+          cycle
         end if
 
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
