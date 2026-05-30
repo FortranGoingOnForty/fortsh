@@ -46,6 +46,12 @@ void fortsh_set_cttyref(void) {
 #endif
 }
 
+// Wrapper for fcntl() with integer arg — Fortran's bind(C) can't call
+// variadic C functions correctly on all ABIs (macOS ARM64 in particular).
+int fortsh_fcntl(int fd, int cmd, int arg) {
+    return fcntl(fd, cmd, arg);
+}
+
 // Install SIGWINCH with SA_RESTART cleared so read() returns EINTR
 // on terminal resize, allowing the readline loop to handle it immediately.
 #include <signal.h>

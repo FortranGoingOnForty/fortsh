@@ -597,7 +597,7 @@ module system_interface
       integer(c_int) :: c_poll
     end function
 
-    function c_fcntl(fd, cmd, arg) bind(C, name="fcntl")
+    function c_fcntl(fd, cmd, arg) bind(C, name="fortsh_fcntl")
       import :: c_int
       integer(c_int), value :: fd, cmd, arg
       integer(c_int) :: c_fcntl

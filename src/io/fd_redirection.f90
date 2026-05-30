@@ -133,13 +133,15 @@ contains
 
   ! Apply a single redirection
   ! permanent: if true, don't save original fd (for exec redirections)
-  subroutine apply_single_redirection(redir, success, noclobber, permanent)
+  subroutine apply_single_redirection(redir, success, noclobber, permanent, shell)
     use iso_c_binding, only: c_int
-    use system_interface, only: file_exists, file_is_regular
+    use system_interface, only: file_exists, file_is_regular, move_fd_high, F_DUPFD, c_fcntl
+    use variables, only: set_shell_variable, get_shell_variable
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
     logical, intent(in), optional :: noclobber
     logical, intent(in), optional :: permanent
+    type(shell_state_t), intent(inout), optional :: shell
     integer(c_int) :: file_fd, flags, mode
     character(len=:), allocatable :: filename_c
     logical :: check_noclobber, is_permanent
@@ -160,12 +162,20 @@ contains
           success = .false.
           return
         end if
-        if (.not. is_permanent) call save_fd(FD_STDIN)
-        if (c_dup2(file_fd, FD_STDIN) < 0) then
-          success = .false.
-        end if
-        if (c_close(file_fd) < 0) then
-          ! Error closing file descriptor
+        if (redir%is_varassign .and. present(shell)) then
+          file_fd = move_fd_high(file_fd)
+          block
+            character(len=16) :: fd_str
+            write(fd_str, '(I0)') file_fd
+            call set_shell_variable(shell, trim(redir%varassign_name), trim(fd_str))
+          end block
+        else
+          if (.not. is_permanent) call save_fd(FD_STDIN)
+          if (c_dup2(file_fd, FD_STDIN) < 0) then
+            success = .false.
+          end if
+          if (c_close(file_fd) < 0) then
+          end if
         end if
 
       case (REDIR_OUT)
@@ -186,14 +196,24 @@ contains
           success = .false.
           return
         end if
-        if (.not. is_permanent) call save_fd(FD_STDOUT)
-        if (c_dup2(file_fd, FD_STDOUT) < 0) then
-          success = .false.
+        if (redir%is_varassign .and. present(shell)) then
+          ! {VAR}>file: move fd high and assign number to variable
+          file_fd = move_fd_high(file_fd)
+          block
+            character(len=16) :: fd_str
+            write(fd_str, '(I0)') file_fd
+            call set_shell_variable(shell, trim(redir%varassign_name), trim(fd_str))
+          end block
+        else
+          if (.not. is_permanent) call save_fd(FD_STDOUT)
+          if (c_dup2(file_fd, FD_STDOUT) < 0) then
+            success = .false.
+          end if
+          if (c_close(file_fd) < 0) then
+            ! Error closing file descriptor
+          end if
         end if
-        if (c_close(file_fd) < 0) then
-          ! Error closing file descriptor
-        end if
-        
+
       case (REDIR_APPEND)
         ! >> file (append stdout to file)
         filename_c = trim(redir%filename) // c_null_char
@@ -205,14 +225,22 @@ contains
           success = .false.
           return
         end if
-        if (.not. is_permanent) call save_fd(FD_STDOUT)
-        if (c_dup2(file_fd, FD_STDOUT) < 0) then
-          success = .false.
+        if (redir%is_varassign .and. present(shell)) then
+          file_fd = move_fd_high(file_fd)
+          block
+            character(len=16) :: fd_str
+            write(fd_str, '(I0)') file_fd
+            call set_shell_variable(shell, trim(redir%varassign_name), trim(fd_str))
+          end block
+        else
+          if (.not. is_permanent) call save_fd(FD_STDOUT)
+          if (c_dup2(file_fd, FD_STDOUT) < 0) then
+            success = .false.
+          end if
+          if (c_close(file_fd) < 0) then
+          end if
         end if
-        if (c_close(file_fd) < 0) then
-          ! Error closing file descriptor
-        end if
-        
+
       case (REDIR_FD_IN)
         ! n< file (redirect fd n from file)
         filename_c = trim(redir%filename) // c_null_char
@@ -336,10 +364,26 @@ contains
         end if
         
       case (REDIR_CLOSE)
-        ! n>&- (close fd n)
-        if (.not. is_permanent) call save_fd(redir%fd)
-        if (c_close(redir%fd) < 0) then
-          success = .false.
+        ! n>&- or {VAR}>&- (close fd)
+        if (redir%is_varassign .and. present(shell)) then
+          ! Look up fd number from shell variable
+          block
+            character(len=:), allocatable :: var_val
+            integer :: close_fd, ios
+            var_val = get_shell_variable(shell, trim(redir%varassign_name))
+            if (len_trim(var_val) > 0) then
+              read(var_val, *, iostat=ios) close_fd
+              if (ios == 0 .and. close_fd >= 0) then
+                if (.not. is_permanent) call save_fd(close_fd)
+                if (c_close(close_fd) < 0) success = .false.
+              end if
+            end if
+          end block
+        else
+          if (.not. is_permanent) call save_fd(redir%fd)
+          if (c_close(redir%fd) < 0) then
+            success = .false.
+          end if
         end if
 
       case (REDIR_READWRITE)
