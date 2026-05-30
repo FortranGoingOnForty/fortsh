@@ -572,21 +572,21 @@ contains
         end if
         num_redirects = num_redirects + 1
 
-          ! Check if previous word was a file descriptor number (e.g., "2" before ">", "3" before "<&")
-          ! FD must be a single digit (0-9) to avoid false positives like "/tmp"
+          ! Check if previous word was a file descriptor number (e.g., "2" before ">", "10" before "<&")
           if (num_words > 0 .and. (trim(tok%value) == '>' .or. trim(tok%value) == '>&' .or. &
                                     trim(tok%value) == '<' .or. trim(tok%value) == '<&' .or. &
                                     trim(tok%value) == '>>' .or. trim(tok%value) == '<>')) then
-            ! Only treat as FD if it's exactly one digit character
-            if (len_trim(words(num_words)) == 1 .and. &
-                index('0123456789', trim(words(num_words))) > 0) then
+            ! Treat as an fd only if the word is all digits (1-3 of them), so
+            ! multi-digit fds like `exec 10>f` work; non-numeric words (/tmp) don't.
+            if (len_trim(words(num_words)) >= 1 .and. len_trim(words(num_words)) <= 3 .and. &
+                verify(trim(words(num_words)), '0123456789') == 0) then
               read(words(num_words), *, iostat=io_stat) fd_num
             else
-              ! Not a single digit, treat as regular word
+              ! Not numeric, treat as regular word
               io_stat = -1  ! Force failure
               fd_num = -1
             end if
-            if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 9) then
+            if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 255) then
               ! Previous word was a single digit - this is fd redirection
               select case(trim(tok%value))
               case('>&')
