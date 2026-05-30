@@ -4460,7 +4460,7 @@ contains
     character(len=*), intent(in) :: str
     integer, intent(out) :: iostat
     integer(kind=8) :: value
-    integer :: i, len_str, digit
+    integer :: i, len_str, digit, base, hash_pos
     character(len=256) :: trimmed_str
 
     value = 0
@@ -4470,6 +4470,40 @@ contains
 
     if (len_str == 0) then
       iostat = 1
+      return
+    end if
+
+    ! Check for base#value notation (e.g. 16#ff, 2#1010, 36#z)
+    hash_pos = index(trimmed_str(1:len_str), '#')
+    if (hash_pos > 1 .and. hash_pos < len_str) then
+      read(trimmed_str(1:hash_pos-1), *, iostat=iostat) base
+      if (iostat /= 0 .or. base < 2 .or. base > 64) then
+        iostat = 1
+        return
+      end if
+      value = 0
+      do i = hash_pos + 1, len_str
+        if (trimmed_str(i:i) >= '0' .and. trimmed_str(i:i) <= '9') then
+          digit = ichar(trimmed_str(i:i)) - ichar('0')
+        else if (trimmed_str(i:i) >= 'a' .and. trimmed_str(i:i) <= 'z') then
+          digit = ichar(trimmed_str(i:i)) - ichar('a') + 10
+        else if (trimmed_str(i:i) >= 'A' .and. trimmed_str(i:i) <= 'Z') then
+          digit = ichar(trimmed_str(i:i)) - ichar('A') + 10
+          if (base <= 36) digit = ichar(trimmed_str(i:i)) - ichar('A') + 10
+        else if (trimmed_str(i:i) == '@') then
+          digit = 62
+        else if (trimmed_str(i:i) == '_') then
+          digit = 63
+        else
+          iostat = 1
+          return
+        end if
+        if (digit >= base) then
+          iostat = 1
+          return
+        end if
+        value = value * int(base, 8) + int(digit, 8)
+      end do
       return
     end if
 
