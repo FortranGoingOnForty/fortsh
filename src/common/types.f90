@@ -429,8 +429,9 @@ module shell_types
     logical :: bypass_functions = .false.     ! Set by 'command' builtin to skip function lookup
     logical :: bypass_aliases = .false.       ! Set by 'command' builtin to skip alias expansion
     ! Process substitution
-    type(proc_subst_fifo_t) :: proc_subst_fifos(10)
+    type(proc_subst_fifo_t), allocatable :: proc_subst_fifos(:)
     integer :: num_proc_subst_fifos = 0
+    integer :: proc_subst_fifos_cap = 0
     ! Directory history (Fish-style prevd/nextd)
     character(len=MAX_PATH_LEN) :: dir_history(50)  ! Circular buffer of directories
     integer :: dir_history_size = 0                  ! Number of directories in history

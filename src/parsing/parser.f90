@@ -2422,8 +2422,9 @@ contains
               pid = c_fork()
 
               if (pid == 0) then
-                ! Child process
-                call execute_proc_subst_command(trim(command), trim(fifo_path), is_input_subst)
+                ! Child process — run command natively through the AST
+                ! executor with stdout/stdin redirected to the FIFO.
+                call execute_proc_subst_native(trim(command), trim(fifo_path), is_input_subst, shell)
                 call c_exit(0)
               else
                 ! Parent process - track the PID
@@ -2460,40 +2461,42 @@ contains
     end do
   end subroutine
 
-  ! Execute a process substitution command with proper redirection
-  subroutine execute_proc_subst_command(command, fifo_path, is_input)
+  ! Execute a process substitution command natively through the AST
+  ! executor with stdout/stdin redirected to the FIFO.
+  subroutine execute_proc_subst_native(command, fifo_path, is_input, shell)
+    use trap_dispatch, only: eval_trap_string
+    use io_helpers, only: write_stderr
     character(len=*), intent(in) :: command, fifo_path
     logical, intent(in) :: is_input
-    character(len=512) :: full_command
-    character(len=256), target :: shell_cmd, command_c
-    character(len=16), target :: shell_flag
-    type(c_ptr), target :: argv(4)
-    integer :: result
+    type(shell_state_t), intent(inout) :: shell
+    integer(c_int) :: fifo_fd, ret
+    integer :: exit_status
+    character(len=MAX_PATH_LEN), target :: c_path
 
-    ! Build redirected command using shell
+    c_path = trim(fifo_path) // c_null_char
+
     if (is_input) then
-      ! <(command) - redirect command's stdout to FIFO
-      write(full_command, '(A,A,A,A)') trim(command), ' > ', trim(fifo_path), c_null_char
+      ! <(cmd): command writes to FIFO → redirect stdout to FIFO
+      fifo_fd = c_open(c_loc(c_path), O_WRONLY, 0)
+      if (fifo_fd < 0) then
+        call write_stderr('fortsh: process substitution: cannot open FIFO for writing')
+        call c_exit(1)
+      end if
+      ret = c_dup2(fifo_fd, STDOUT_FD)
     else
-      ! >(command) - redirect FIFO to command's stdin
-      write(full_command, '(A,A,A,A)') trim(command), ' < ', trim(fifo_path), c_null_char
+      ! >(cmd): command reads from FIFO → redirect stdin from FIFO
+      fifo_fd = c_open(c_loc(c_path), O_RDONLY, 0)
+      if (fifo_fd < 0) then
+        call write_stderr('fortsh: process substitution: cannot open FIFO for reading')
+        call c_exit(1)
+      end if
+      ret = c_dup2(fifo_fd, STDIN_FD)
     end if
+    ret = c_close(fifo_fd)
 
-    ! Execute via /bin/sh -c
-    shell_cmd = '/bin/sh'//c_null_char
-    shell_flag = '-c'//c_null_char
-    command_c = trim(full_command)
-
-    argv(1) = c_loc(shell_cmd)
-    argv(2) = c_loc(shell_flag)
-    argv(3) = c_loc(command_c)
-    argv(4) = c_null_ptr
-
-    result = c_execvp(c_loc(shell_cmd), c_loc(argv))
-    if (result < 0) then
-      write(error_unit, '(A)') 'fortsh: failed to execute process substitution command'
-      call c_exit(1)
-    end if
+    shell%is_interactive = .false.
+    call eval_trap_string(trim(command), shell, exit_status)
+    call c_exit(exit_status)
   end subroutine
 
   ! Execute a command via system shell (for process substitution)

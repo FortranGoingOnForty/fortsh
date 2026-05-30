@@ -10,6 +10,7 @@ program fortran_shell
                     needs_compound_continuation, remove_line_continuations, process_substitutions, &
                     get_heredoc_delimiter
 
+  use substitution, only: cleanup_all_fifos, wait_and_cleanup_proc_substs
   use grammar_parser  ! New grammar-aware parser
   use ast_executor, only: execute_ast, register_trap_evaluator
   use command_tree    ! Command tree for new parser
@@ -475,6 +476,9 @@ program fortran_shell
         shell%last_exit_status = exit_code
       end if
 
+      ! Reap finished process substitution children and unlink their FIFOs
+      call wait_and_cleanup_proc_substs(shell)
+
       ! Flush output after command execution — flang-new buffers Fortran I/O
       ! and won't flush to PTY until the buffer fills or process exits.
       ! Without this, interactive output appears delayed or missing.
@@ -535,6 +539,9 @@ program fortran_shell
   if (shell%is_interactive) then
     write(output_unit, '(a)') 'Goodbye!'
   end if
+
+  ! Clean up any leaked process substitution FIFOs before exit
+  call cleanup_all_fifos(shell)
 
   ! Exit with the last command's exit status (preserves exit code from EXIT trap)
   call c_exit(shell%last_exit_status)

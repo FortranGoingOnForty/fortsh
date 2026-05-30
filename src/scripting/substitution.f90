@@ -449,17 +449,16 @@ contains
       return
     end if
 
-    ! Track the FIFO in shell state
-    if (shell%num_proc_subst_fifos < 10) then
-      idx = shell%num_proc_subst_fifos + 1
-      shell%proc_subst_fifos(idx)%fifo_path = fifo_path
-      shell%proc_subst_fifos(idx)%is_input = is_input
-      shell%proc_subst_fifos(idx)%active = .true.
-      shell%proc_subst_fifos(idx)%pid = 0  ! Will be set when process is forked
-      shell%num_proc_subst_fifos = idx
-    else
-      write(error_unit, '(A)') 'fortsh: too many process substitutions (max 10)'
+    ! Track the FIFO in shell state (grow dynamically)
+    if (shell%num_proc_subst_fifos >= shell%proc_subst_fifos_cap) then
+      call grow_fifo_array(shell)
     end if
+    idx = shell%num_proc_subst_fifos + 1
+    shell%proc_subst_fifos(idx)%fifo_path = fifo_path
+    shell%proc_subst_fifos(idx)%is_input = is_input
+    shell%proc_subst_fifos(idx)%active = .true.
+    shell%proc_subst_fifos(idx)%pid = 0
+    shell%num_proc_subst_fifos = idx
   end function
 
   ! Update FIFO with background process PID
@@ -510,6 +509,8 @@ contains
     integer :: i
     logical :: success
 
+    if (.not. allocated(shell%proc_subst_fifos)) return
+
     do i = 1, shell%num_proc_subst_fifos
       if (shell%proc_subst_fifos(i)%active) then
         success = remove_file(trim(shell%proc_subst_fifos(i)%fifo_path))
@@ -522,6 +523,51 @@ contains
     end do
 
     shell%num_proc_subst_fifos = 0
+  end subroutine
+
+  subroutine grow_fifo_array(shell)
+    type(shell_state_t), intent(inout) :: shell
+    type(proc_subst_fifo_t), allocatable :: tmp(:)
+    integer :: new_cap, k
+
+    new_cap = max(16, shell%proc_subst_fifos_cap * 2)
+    allocate(tmp(new_cap))
+    do k = 1, new_cap
+      tmp(k)%fifo_path = ''
+      tmp(k)%pid = 0
+      tmp(k)%active = .false.
+      tmp(k)%is_input = .false.
+    end do
+    if (allocated(shell%proc_subst_fifos)) then
+      do k = 1, shell%num_proc_subst_fifos
+        tmp(k) = shell%proc_subst_fifos(k)
+      end do
+    end if
+    call move_alloc(tmp, shell%proc_subst_fifos)
+    shell%proc_subst_fifos_cap = new_cap
+  end subroutine
+
+  subroutine wait_and_cleanup_proc_substs(shell)
+    type(shell_state_t), intent(inout) :: shell
+    integer :: i
+    integer(c_int), target :: status
+    integer(c_pid_t) :: ret_pid
+    logical :: success
+
+    if (.not. allocated(shell%proc_subst_fifos)) return
+
+    i = 1
+    do while (i <= shell%num_proc_subst_fifos)
+      if (shell%proc_subst_fifos(i)%active) then
+        status = 0
+        ret_pid = c_waitpid(shell%proc_subst_fifos(i)%pid, c_loc(status), WNOHANG)
+        if (ret_pid /= 0) then
+          success = remove_file(trim(shell%proc_subst_fifos(i)%fifo_path))
+          shell%proc_subst_fifos(i)%active = .false.
+        end if
+      end if
+      i = i + 1
+    end do
   end subroutine
 
 end module substitution
