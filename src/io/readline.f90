@@ -1327,6 +1327,7 @@ contains
 
   ! Enhanced readline with character-by-character input processing
   subroutine readline_enhanced(prompt, line, iostat, rprompt, keep_raw)
+    use signal_handler, only: g_terminal_resized
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
@@ -1497,11 +1498,61 @@ contains
     if (raw_enabled) then
       ! Enhanced input processing
       do while (.not. done)
+        ! Handle terminal resize BEFORE reading input. read_utf8_char
+        ! returns every 100ms on poll timeout, so this fires promptly.
+        if (g_terminal_resized) then
+          g_terminal_resized = .false.
+          rprompt_displayed = .false.
+
+          block
+            integer :: old_cols, reflow_rows, up_i
+            old_cols = term_cols
+
+            success = get_terminal_size(term_rows, term_cols)
+            if (.not. success) then
+              term_cols = 80; term_rows = 24
+            end if
+
+            reflow_rows = (old_cols + term_cols - 1) / term_cols &
+                          + prompt_line_count
+            do up_i = 1, reflow_rows
+              write(output_unit, '(a)', advance='no') char(27) // '[A'
+            end do
+            write(output_unit, '(a)', advance='no') char(13)
+            write(output_unit, '(a)', advance='no') char(27) // '[J'
+            flush(output_unit)
+          end block
+
+          prompt_visual_len = visual_length(prompt)
+          if (prompt_visual_len < 0) prompt_visual_len = 0
+          prompt_line_count = 0
+          block
+            integer :: pr_i2
+            do pr_i2 = 1, len_trim(prompt)
+              if (prompt(pr_i2:pr_i2) == char(10)) prompt_line_count = prompt_line_count + 1
+            end do
+          end block
+
+          module_cursor_screen_row = 0
+          module_cursor_screen_col = 0
+          module_input_state%skip_cursor_up_on_redraw = .true.
+          module_input_state%dirty = .true.
+          cycle  ! repaint via the dirty-redraw block below
+        end if
+
         ! Read a complete UTF-8 character (1-4 bytes)
         success = read_utf8_char(utf8_char, utf8_num_bytes)
         if (.not. success) then
           iostat = -1
           exit
+        end if
+        ! Poll timeout (no input within 100ms) — cycle back to check
+        ! for signals, but let dirty redraws (e.g. post-resize) through.
+        if (utf8_num_bytes == 0) then
+          if (module_input_state%dirty) then
+            goto 500  ! jump to redraw block
+          end if
+          cycle
         end if
 
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
@@ -1814,6 +1865,7 @@ contains
         end if
 
         ! Redraw line if needed
+500     continue
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         ! Skip redraw when in menu selection mode - menu handles its own display
         ! In test mode, skip full redraw to avoid polluting PTY output
@@ -1850,17 +1902,28 @@ contains
               prompt_visual_len = 0
             end if
 
-            ! Calculate current cursor position (add 1 for space after prompt)
-            cursor_visual_pos = prompt_visual_len + 1 + module_input_state%cursor_pos
-
-            ! When RPROMPT was on the initial line, the entire terminal width
-            ! was filled (prompt + padding + rprompt). The first redraw must
-            ! account for this extra line of content that will be cleared.
-            if (rprompt_displayed) then
-              current_row = 1 + cursor_visual_pos / term_cols
-            else
-              current_row = cursor_visual_pos / term_cols
-            end if
+            ! Cursor-up count: how many terminal rows from the cursor
+            ! position back to the start of the prompt. For multi-line
+            ! prompts, count only the last line's visual width for cursor
+            ! math (earlier lines contribute prompt_line_count rows).
+            ! The redraw strips ESC[nG RPROMPT content, so the visible
+            ! prompt is just the base text — use last-line width only.
+            block
+              integer :: last_nl_pos, last_line_vis
+              last_nl_pos = 0
+              do i_redraw = 1, len_trim(prompt)
+                if (prompt(i_redraw:i_redraw) == char(10)) last_nl_pos = i_redraw
+              end do
+              if (last_nl_pos > 0 .and. last_nl_pos < len_trim(prompt)) then
+                last_line_vis = visual_length(prompt(last_nl_pos+1:len_trim(prompt)))
+              else
+                last_line_vis = prompt_visual_len
+              end if
+              if (last_line_vis < 0) last_line_vis = 0
+              cursor_visual_pos = last_line_vis + 1 + module_input_state%cursor_pos
+              current_row = prompt_line_count + cursor_visual_pos / term_cols
+              if (rprompt_displayed) current_row = current_row + 1
+            end block
             current_col = mod(cursor_visual_pos, term_cols)
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! === Buffered redraw: accumulate entire frame, write once ===
@@ -1869,9 +1932,11 @@ contains
             call rdraw_clear()
 
             ! Move cursor to start of prompt UNLESS we just exited menu mode
+            ! current_row already includes rows from prompt line wrapping
+            ! and explicit newlines — don't add prompt_line_count again.
             if (.not. module_input_state%skip_cursor_up_on_redraw) then
-              if (current_row + prompt_line_count > 0) then
-                do i_redraw = 1, current_row + prompt_line_count
+              if (current_row > 0) then
+                do i_redraw = 1, current_row
                   call rdraw_append(char(27) // '[A')
                 end do
               end if
@@ -1889,14 +1954,50 @@ contains
             ! Clear from cursor to end of screen
             call rdraw_append(char(27) // '[J')
 
-            ! Redraw prompt (replace bare LF with CR+LF for raw mode)
+            ! Redraw prompt (replace bare LF with CR+LF for raw mode).
+            ! Strip ESC[nG (cursor-column) escapes — these are embedded
+            ! RPROMPT positioning from fortsh.f90 that becomes stale
+            ! after a terminal resize and causes line duplication.
             block
-              integer :: pr_j
-              do pr_j = 1, len_trim(prompt)
-                if (prompt(pr_j:pr_j) == char(10)) then
+              integer :: pr_j, pr_plen
+              logical :: in_cg_esc
+              pr_plen = len_trim(prompt)
+              in_cg_esc = .false.
+              pr_j = 1
+              do while (pr_j <= pr_plen)
+                if (prompt(pr_j:pr_j) == char(27) .and. pr_j + 1 <= pr_plen &
+                    .and. prompt(pr_j+1:pr_j+1) == '[') then
+                  ! Check if this is ESC[<digits>G (cursor column)
+                  block
+                    integer :: esc_end
+                    esc_end = pr_j + 2
+                    do while (esc_end <= pr_plen .and. &
+                              prompt(esc_end:esc_end) >= '0' .and. &
+                              prompt(esc_end:esc_end) <= '9')
+                      esc_end = esc_end + 1
+                    end do
+                    if (esc_end <= pr_plen .and. prompt(esc_end:esc_end) == 'G') then
+                      ! Skip this ESC[nG sequence and any RPROMPT text
+                      ! up to the next newline (the RPROMPT content that
+                      ! follows the cursor-position escape)
+                      esc_end = esc_end + 1
+                      do while (esc_end <= pr_plen .and. prompt(esc_end:esc_end) /= char(10))
+                        esc_end = esc_end + 1
+                      end do
+                      pr_j = esc_end
+                      cycle
+                    else
+                      ! Other ESC[ sequence — emit normally
+                      call rdraw_append_char(prompt(pr_j:pr_j))
+                      pr_j = pr_j + 1
+                    end if
+                  end block
+                else if (prompt(pr_j:pr_j) == char(10)) then
                   call rdraw_append(char(13) // char(10))
+                  pr_j = pr_j + 1
                 else
                   call rdraw_append_char(prompt(pr_j:pr_j))
+                  pr_j = pr_j + 1
                 end if
               end do
             end block
@@ -4216,6 +4317,42 @@ contains
     end if
   end function
 
+  ! Backslash-escape shell metacharacters in a filename for unquoted insertion.
+  ! Matches bash's completion escaping: spaces, quotes, parens, etc.
+  function escape_for_completion(input) result(output)
+    character(len=*), intent(in) :: input
+    character(len=:), allocatable :: output
+    integer :: i, ilen, opos
+    character(len=1) :: ch
+    character(len=MAX_LINE_LEN) :: buf
+
+    ilen = len_trim(input)
+    opos = 1
+    do i = 1, ilen
+      ch = input(i:i)
+      select case(ch)
+      case(' ', "'", '"', '\', '(', ')', '&', '|', ';', '<', '>', &
+           '*', '?', '[', ']', '{', '}', '$', '!', '#', '~', '`')
+        if (opos + 1 <= MAX_LINE_LEN) then
+          buf(opos:opos) = '\'
+          opos = opos + 1
+          buf(opos:opos) = ch
+          opos = opos + 1
+        end if
+      case default
+        if (opos <= MAX_LINE_LEN) then
+          buf(opos:opos) = ch
+          opos = opos + 1
+        end if
+      end select
+    end do
+    if (opos > 1) then
+      output = buf(1:opos-1)
+    else
+      output = ''
+    end if
+  end function escape_for_completion
+
   ! Enhanced tab completion that handles partial completion
   subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed, input_len)
     character(len=*), intent(in) :: partial_input
@@ -4298,10 +4435,22 @@ contains
           else
             completed_line = quote_char // trim(completions(1)) // quote_char
           end if
-        else if (last_space_pos > 0) then
-          completed_line = prefix_part(:last_space_pos) // trim(completions(1))
         else
-          completed_line = trim(completions(1))
+          block
+            character(len=:), allocatable :: comp_result
+            ! Don't escape variable completions ($VAR) or command substitutions
+            if (len_trim(completions(1)) > 0 .and. &
+                (completions(1)(1:1) == '$' .or. completions(1)(1:1) == '~')) then
+              comp_result = trim(completions(1))
+            else
+              comp_result = escape_for_completion(trim(completions(1)))
+            end if
+            if (last_space_pos > 0) then
+              completed_line = prefix_part(:last_space_pos) // comp_result
+            else
+              completed_line = comp_result
+            end if
+          end block
         end if
       end block
       completed = .true.
@@ -4315,14 +4464,21 @@ contains
 
         do j = 1, num_completions
           if (j > 1) then
-            ! Add space separator
             expanded_matches(pos:pos) = ' '
             pos = pos + 1
           end if
 
-          ! Add this match
-          expanded_matches(pos:pos+len_trim(completions(j))-1) = trim(completions(j))
-          pos = pos + len_trim(completions(j))
+          block
+            character(len=:), allocatable :: esc_match
+            if (len_trim(completions(j)) > 0 .and. &
+                (completions(j)(1:1) == '$' .or. completions(j)(1:1) == '~')) then
+              esc_match = trim(completions(j))
+            else
+              esc_match = escape_for_completion(trim(completions(j)))
+            end if
+            expanded_matches(pos:pos+len(esc_match)-1) = esc_match
+            pos = pos + len(esc_match)
+          end block
         end do
 
         ! Replace glob pattern with expanded matches
@@ -8826,6 +8982,11 @@ contains
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     integer :: num_completions, last_space_pos, i, input_len, last_word_len
     type(suggestion_result_t) :: path_result
+    ! Memoize: skip dir scan if the last word hasn't changed
+    character(len=MAX_LINE_LEN), save :: prev_last_word = ''
+    integer, save :: prev_last_word_len = 0
+    character(len=MAX_LINE_LEN), save :: prev_completions(MAX_LOCAL_COMPLETIONS)
+    integer, save :: prev_num_completions = 0
 
     ! Clear any existing suggestion
     input_state%suggestion = ''
@@ -8852,8 +9013,18 @@ contains
     last_word_len = len_trim(last_word)
     if (last_word_len == 0) return
 
-    ! Get filesystem completions for the last word
-    call complete_files_enhanced(last_word(1:last_word_len), completions, num_completions)
+    ! Reuse cached completions if the last word is unchanged
+    if (last_word_len == prev_last_word_len .and. &
+        last_word(1:last_word_len) == prev_last_word(1:prev_last_word_len)) then
+      num_completions = prev_num_completions
+      completions = prev_completions
+    else
+      call complete_files_enhanced(last_word(1:last_word_len), completions, num_completions)
+      prev_last_word = last_word
+      prev_last_word_len = last_word_len
+      prev_completions = completions
+      prev_num_completions = num_completions
+    end if
 
     ! Delegate suggestion selection to the suggestions module
     path_result = compute_path_suggestion(last_word, last_word_len, completions, num_completions)

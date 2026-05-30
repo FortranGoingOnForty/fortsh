@@ -288,18 +288,6 @@ contains
           cycle
         end if
 
-        ! Check for $' - ANSI-C quoting
-        if (ch == '$' .and. pos < input_len .and. next_ch == "'") then
-          state = LEX_IN_WORD
-          token_start = pos
-          token_len = 0
-          current_token = ''
-          token_has_quoted_part = .true.
-          pos = pos + 2  ! Skip $'
-          call process_ansi_c_quote(input, pos, input_len, current_token, token_len)
-          cycle
-        end if
-
         ! Assignment detection: VAR=value
         ! (This is complex - we'll detect it as WORD and let parser handle it)
 

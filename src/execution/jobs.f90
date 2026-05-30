@@ -392,15 +392,17 @@ contains
     end if
   end subroutine
 
-  subroutine list_jobs(shell, show_pids)
+  subroutine list_jobs(shell, show_pids, show_long)
     type(shell_state_t), intent(in) :: shell
-    logical, intent(in), optional :: show_pids
-    logical :: show_pid_info
+    logical, intent(in), optional :: show_pids, show_long
+    logical :: show_pid_info, show_long_info
     integer :: i
     character(len=16) :: state_str
-    
+
     show_pid_info = .false.
+    show_long_info = .false.
     if (present(show_pids)) show_pid_info = show_pids
+    if (present(show_long)) show_long_info = show_long
     
     do i = 1, MAX_JOBS
       if (shell%jobs(i)%job_id > 0) then
@@ -438,6 +440,14 @@ contains
           end if
           if (show_pid_info) then
             write(output_unit, '(i0)') shell%jobs(i)%pgid
+          else if (show_long_info) then
+            write(output_unit, '(a,i0,a,a,1x,i0,1x,a,a,a)') &
+              '[', shell%jobs(i)%job_id, ']', cur_mark, &
+              shell%jobs(i)%pgid, &
+              trim(state_str), &
+              repeat(' ', max(1, &
+                24 - len_trim(state_str))), &
+              trim(cmd_display)
           else
             write(output_unit, '(a,i0,a,a,2x,a,a,a)') &
               '[', shell%jobs(i)%job_id, ']', cur_mark, &

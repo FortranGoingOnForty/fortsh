@@ -37,7 +37,7 @@ compare_output "pipefail all succeed" 'set -o pipefail; true | true; echo $?'
 compare_output "pipefail all fail" 'set -o pipefail; false | false; echo $?'
 compare_exit "errexit plus pipefail" 'set -eo pipefail; false | true; echo unreachable'
 compare_output "pipefail disabled by default" 'false | true; echo $?'
-compare_output "pipefail with echo" 'set -o pipefail; echo hello | true; echo $?'
+compare_output "pipefail with echo" 'set -o pipefail; echo hello | cat >/dev/null; echo $?'
 
 section "5. error propagation"
 compare_output "function return status" 'f() { return 1; }; f; echo $?'

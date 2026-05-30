@@ -401,9 +401,9 @@ install: $(TARGET)
 	@echo "Fortsh installed to /usr/local/bin/"
 
 # Development targets
-test: $(TARGET)
-	@echo "Running basic functionality test..."
-	@echo "echo 'Hello from Fortsh!'" | $(TARGET)
+test: test-posix-full test-bench
+	@echo ""
+	@echo "All tests passed!"
 
 ifeq ($(FC),flang-new)
 debug: FCFLAGS += -g

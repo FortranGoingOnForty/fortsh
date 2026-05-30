@@ -14,7 +14,10 @@ module prompt_formatting
   ! History counter for prompts
   integer, save :: prompt_history_number = 1
 
-  ! Prompt element cache (valid for one prompt expansion cycle)
+  ! Prompt element cache — git results carry a 2-second TTL so rapid
+  ! redraws (Ctrl-L, window resize, continuation prompts) don't fork
+  ! git on every prompt.  invalidate_prompt_cache() is still called at
+  ! the start of each expand_prompt cycle to reset the per-cycle flags.
   character(len=256), save :: cached_git_branch = ''
   character(len=64), save :: cached_git_status = ''
   character(len=64), save :: cached_git_ahead_behind = ''
@@ -23,6 +26,9 @@ module prompt_formatting
   logical, save :: cache_status_valid = .false.
   logical, save :: cache_ahead_behind_valid = .false.
   logical, save :: cache_venv_valid = .false.
+  ! Time-based TTL for git data (avoid forking git on rapid redraws)
+  integer, parameter :: GIT_CACHE_TTL_MS = 2000
+  integer, save :: git_cache_timestamp = -1
 
   ! Public interface
   public :: expand_prompt, safe_expand_prompt, expand_zsh_colors
@@ -1338,10 +1344,27 @@ contains
 
   ! Invalidate prompt element cache (call at start of each prompt expansion)
   subroutine invalidate_prompt_cache()
-    cache_branch_valid = .false.
-    cache_status_valid = .false.
-    cache_ahead_behind_valid = .false.
+    integer :: now_ms, count, count_rate
+
+    ! Venv cache always invalidates (cheap to recompute)
     cache_venv_valid = .false.
+
+    ! Git caches use a TTL — avoid forking git 2-3 times on every
+    ! prompt when the user is just typing, resizing, or pressing Ctrl-L.
+    call system_clock(count, count_rate)
+    if (count_rate > 0) then
+      now_ms = int(real(count) / real(count_rate) * 1000.0)
+    else
+      now_ms = 0
+    end if
+
+    if (git_cache_timestamp < 0 .or. &
+        abs(now_ms - git_cache_timestamp) > GIT_CACHE_TTL_MS) then
+      cache_branch_valid = .false.
+      cache_status_valid = .false.
+      cache_ahead_behind_valid = .false.
+      git_cache_timestamp = now_ms
+    end if
   end subroutine
 
   ! Check if a prompt template contains a specific escape sequence (\char)

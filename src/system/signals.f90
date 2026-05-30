@@ -45,6 +45,11 @@ module signal_handler
       integer(c_int) :: ret
     end function
 
+    subroutine c_install_winch_norestart(handler) bind(C, name="fortsh_install_winch_norestart")
+      import :: c_funptr
+      type(c_funptr), value :: handler
+    end subroutine
+
     function alarm_c(seconds) bind(C, name="alarm") result(ret)
       import :: c_int
       integer(c_int), value :: seconds
@@ -91,8 +96,10 @@ contains
     ! Handle alarm for timeouts
     old_handler = c_signal(SIGALRM, c_funloc(sigalrm_handler))
 
-    ! Handle terminal window resize
-    old_handler = c_signal(SIGWINCH, c_funloc(sigwinch_handler))
+    ! Handle terminal window resize — use sigaction without SA_RESTART
+    ! so that read() returns EINTR on resize, allowing readline to
+    ! handle the resize immediately instead of waiting for a keypress.
+    call c_install_winch_norestart(c_funloc(sigwinch_handler))
   end subroutine
 
   subroutine sigchld_handler() bind(C)

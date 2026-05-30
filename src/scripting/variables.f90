@@ -1199,13 +1199,8 @@ contains
               temp_array(k)%str = shell%variables(i)%array_values(k)%str
             end do
           end if
-          if (allocated(shell%variables(i)%array_values)) deallocate(shell%variables(i)%array_values)
-          allocate(shell%variables(i)%array_values(new_size))
-          do k = 1, new_size
-            shell%variables(i)%array_values(k)%str = temp_array(k)%str
-          end do
+          call move_alloc(temp_array, shell%variables(i)%array_values)
           shell%variables(i)%array_size = new_size
-          deallocate(temp_array)
         end if
 
         ! Set the element

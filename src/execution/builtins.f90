@@ -1009,14 +1009,19 @@ contains
     type(shell_state_t), intent(inout) :: shell
     logical :: show_pids
     
-    ! Check for -p flag to show PIDs
+    ! Check for -p (PIDs only) or -l (long format with PIDs) flag
     show_pids = .false.
-    if (cmd%num_tokens > 1 .and. trim(cmd%tokens(2)) == '-p') then
-      show_pids = .true.
-    end if
-    
-    call update_job_status(shell)
-    call list_jobs(shell, show_pids)
+    block
+      logical :: show_long
+      show_long = .false.
+      if (cmd%num_tokens > 1) then
+        if (trim(cmd%tokens(2)) == '-p') show_pids = .true.
+        if (trim(cmd%tokens(2)) == '-l') show_long = .true.
+      end if
+
+      call update_job_status(shell)
+      call list_jobs(shell, show_pids, show_long)
+    end block
     shell%last_exit_status = 0
   end subroutine
 
