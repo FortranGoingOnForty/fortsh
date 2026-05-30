@@ -3596,11 +3596,10 @@ contains
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
 
+    integer, parameter :: MAX_DIR_ENTRIES = 4096
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
-    character(len=1024) :: ls_command
-    character(len=:), allocatable :: ls_output_alloc
-    character(len=8192) :: ls_output  ! Large buffer for ls output (8KB)
-    character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
+    character(len=256), allocatable :: entries(:)
+    logical, allocatable :: is_dir_flags(:)
     integer :: num_entries, i, last_slash_pos
     character(len=MAX_LINE_LEN) :: full_path
     logical :: is_dir
@@ -3625,19 +3624,9 @@ contains
       file_pattern = trim(pattern)
     end if
 
-    ! Use ls command to get directory listing (same as scan_directory)
-    ls_command = 'ls -1a "' // trim(dir_path) // '" 2>/dev/null'
-    ls_output_alloc = execute_and_capture(ls_command)
-
-    ! Copy to fixed buffer (use larger buffer to avoid truncation)
-    if (allocated(ls_output_alloc)) then
-      ls_output = ls_output_alloc(:min(len(ls_output), len(ls_output_alloc)))
-    else
-      ls_output = ''
-    end if
-
-    ! Parse ls output into individual entries
-    call parse_ls_output(ls_output, entries, num_entries)
+    ! Enumerate the directory natively (opendir/readdir) — same as scan_directory
+    allocate(entries(MAX_DIR_ENTRIES), is_dir_flags(MAX_DIR_ENTRIES))
+    call list_directory(trim(dir_path), entries, is_dir_flags, num_entries)
 
     ! Match entries against glob pattern
     do i = 1, num_entries
@@ -3655,8 +3644,8 @@ contains
           full_path = trim(dir_path) // '/' // trim(entries(i))
         end if
 
-        ! Check if it's a directory and add trailing slash
-        is_dir = is_directory(full_path)
+        ! Directory-ness comes straight from readdir (no per-entry test -d)
+        is_dir = is_dir_flags(i)
         num_completions = num_completions + 1
         if (is_dir) then
           completions(num_completions) = trim(full_path) // '/'
@@ -3666,8 +3655,9 @@ contains
       end if
     end do
 
-    ! Clean up allocatable array
+    ! Clean up allocatable arrays
     if (allocated(entries)) deallocate(entries)
+    if (allocated(is_dir_flags)) deallocate(is_dir_flags)
   end subroutine expand_glob_for_completion
 
   subroutine complete_commands(prefix, completions, num_completions)
@@ -3947,10 +3937,10 @@ contains
     character(len=MAX_LINE_LEN), intent(inout) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(inout) :: num_completions
 
-    character(len=1024) :: ls_command, expanded_dir  ! Large enough for command
-    character(len=:), allocatable :: ls_output_alloc  ! From execute_and_capture
-    character(len=8192) :: ls_output  ! 8KB buffer for large directories (with grep filter)
-    character(len=MAX_LINE_LEN), allocatable :: entries(:)  ! Now allocatable to avoid stack overflow
+    integer, parameter :: MAX_DIR_ENTRIES = 4096
+    character(len=1024) :: expanded_dir
+    character(len=256), allocatable :: entries(:)       ! one filename per slot
+    logical, allocatable :: is_dir_flags(:)             ! parallel to entries
     character(len=MAX_LINE_LEN) :: full_path
     character(len=:), allocatable :: home_dir, debug_mode
     ! Use allocatable array to avoid static storage
@@ -3985,72 +3975,32 @@ contains
       end if
     end if
 
-    ! Use ls command with -F flag to mark directories with / (avoids calling test -d for each file)
-    ! Trailing / on directory forces ls to list contents (not the symlink itself on macOS)
-    ! When pattern is non-empty, filter with grep to avoid buffer overflow on large directories
-    ! Use tr to convert newlines to spaces for easier parsing
-    ! Filter with grep when pattern exists to limit output size
-    ! No tr needed — execute_and_capture_tabs converts newlines to tabs
-    if (pattern_len > 0) then
-      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null | grep -i "^' // &
-        trim(pattern) // '"'
-    else
-      ls_command = 'ls -1aF "' // trim(expanded_dir) // '/" 2>/dev/null'
-    end if
-
-    ! Debug output
-    if (debug_enabled) then
-    end if
-
-    ! Get output from command — use tab-delimited capture to preserve spaces in filenames
-    ls_output_alloc = execute_and_capture_tabs(ls_command)
-
-    ! Copy to fixed buffer (avoids flang-new issues with allocatable strings)
-    ls_output = ls_output_alloc(:min(len(ls_output), len(ls_output_alloc)))
-
-    ! Clean up allocatable
-    if (allocated(ls_output_alloc)) deallocate(ls_output_alloc)
-
-    ! Parse ls output — tab-delimited to preserve spaces in filenames
-    call parse_ls_output(ls_output, entries, num_entries, use_tab_delim=.true.)
-
-    ! Debug output
-    if (debug_enabled) then
-    end if
+    ! Enumerate the directory natively via opendir/readdir — no `ls` subprocess.
+    ! This removes shell injection, dependence on the host `ls`/locale, and (the
+    ! bug that started this) any chance of a subprocess printing onto the
+    ! terminal mid-redraw. readdir reports directory-ness directly (symlinks to
+    ! directories are followed). Pattern matching stays below in fuzzy_match_score.
+    allocate(entries(MAX_DIR_ENTRIES), is_dir_flags(MAX_DIR_ENTRIES))
+    call list_directory(trim(expanded_dir), entries, is_dir_flags, num_entries)
 
     ! Score entries using fuzzy matching
     num_scored = 0
     do i = 1, num_entries
       if (num_scored >= MAX_SCORED_ITEMS) exit
 
-      ! Skip . and .. unless explicitly requested (ls -F adds / to these too)
-      if (trim(entries(i)) == './' .or. trim(entries(i)) == '../' .or. &
-          trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
+      ! Skip . and .. unless the user explicitly typed a leading dot
+      if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
         if (pattern_len == 0 .or. (pattern_len > 0 .and. pattern(1:1) /= '.')) then
           cycle
         end if
       end if
 
-      ! Check if entry is a directory (ls -F adds / to directories)
-      is_dir = .false.
-      if (len_trim(entries(i)) > 0) then
-        if (entries(i)(len_trim(entries(i)):len_trim(entries(i))) == '/') then
-          is_dir = .true.
-          ! Remove the trailing / for matching
-          full_path = entries(i)(:len_trim(entries(i))-1)
-        else
-          ! Remove executable markers (*) and other ls -F markers (@, =, |, %)
-          if (index('*@=|%', entries(i)(len_trim(entries(i)):len_trim(entries(i)))) > 0) then
-            full_path = entries(i)(:len_trim(entries(i))-1)
-          else
-            full_path = trim(entries(i))
-          end if
-        end if
-      else
-        full_path = trim(entries(i))
-      end if
+      ! Directory-ness comes straight from readdir; the name is already clean
+      ! (no ls -F markers to strip).
+      is_dir = is_dir_flags(i)
+      full_path = trim(entries(i))
 
-      ! Calculate fuzzy match score (without the ls -F marker)
+      ! Calculate fuzzy match score
       score = fuzzy_match_score(pattern, trim(full_path))
       if (score >= 0) then  ! Negative score = no match
         ! Build full path for display (use original dir_path to preserve ~ in display)
@@ -4100,19 +4050,9 @@ contains
     ! Clean up allocatable arrays
     if (allocated(scored)) deallocate(scored)
     if (allocated(entries)) deallocate(entries)
+    if (allocated(is_dir_flags)) deallocate(is_dir_flags)
   end subroutine
 
-  ! Check if a path is a directory
-  function is_directory(path) result(is_dir)
-    character(len=*), intent(in) :: path
-    logical :: is_dir
-    character(len=MAX_LINE_LEN) :: test_command, output
-
-    ! Use test command to check if path is a directory
-    test_command = 'test -d "' // trim(path) // '" && echo "yes" || echo "no"'
-    output = execute_and_capture(test_command)
-    is_dir = (index(output, 'yes') > 0)
-  end function
 
   ! Parse ls output into individual entries
   subroutine parse_ls_output(output, entries, num_entries, use_tab_delim)
