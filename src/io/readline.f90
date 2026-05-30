@@ -1513,6 +1513,16 @@ contains
               term_cols = 80; term_rows = 24
             end if
 
+            ! Update COLUMNS/LINES env vars so $COLUMNS/$LINES reflect
+            ! the new size immediately, not just at the next prompt.
+            block
+              character(len=16) :: cols_s, rows_s
+              write(cols_s, '(I0)') term_cols
+              write(rows_s, '(I0)') term_rows
+              success = set_environment_var('COLUMNS', trim(cols_s))
+              success = set_environment_var('LINES', trim(rows_s))
+            end block
+
             reflow_rows = (old_cols + term_cols - 1) / term_cols &
                           + prompt_line_count
             do up_i = 1, reflow_rows

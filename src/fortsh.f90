@@ -351,17 +351,26 @@ program fortran_shell
       read(input_unit, '(a)', iostat=iostat) input_line
     end if
 
-    ! Check for terminal resize that may have occurred during readline
-    ! (SIGWINCH can arrive while waiting for input)
+    ! Always re-query terminal size after readline returns — readline's
+    ! SIGWINCH handler clears g_terminal_resized before we get here, so
+    ! we can't rely on the flag. This is cheap (one ioctl) and ensures
+    ! $COLUMNS/$LINES are correct for the command about to execute.
+    block
+      integer :: new_rows, new_cols
+      success = get_terminal_size(new_rows, new_cols)
+      if (success .and. (new_cols /= shell%term_cols .or. new_rows /= shell%term_rows)) then
+        shell%term_cols = new_cols
+        shell%term_rows = new_rows
+        write(cols_str, '(I0)') shell%term_cols
+        write(rows_str, '(I0)') shell%term_rows
+        success = set_environment_var('COLUMNS', trim(cols_str))
+        success = set_environment_var('LINES', trim(rows_str))
+        call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
+        call set_shell_variable(shell, 'LINES', trim(rows_str))
+      end if
+    end block
     if (g_terminal_resized) then
       g_terminal_resized = .false.
-      success = get_terminal_size(shell%term_rows, shell%term_cols)
-      write(cols_str, '(I0)') shell%term_cols
-      write(rows_str, '(I0)') shell%term_rows
-      success = set_environment_var('COLUMNS', trim(cols_str))
-      success = set_environment_var('LINES', trim(rows_str))
-      call set_shell_variable(shell, 'COLUMNS', trim(cols_str))
-      call set_shell_variable(shell, 'LINES', trim(rows_str))
     end if
 
     ! Check for EOF (Ctrl-D)
