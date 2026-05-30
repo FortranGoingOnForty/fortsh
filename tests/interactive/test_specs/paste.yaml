@@ -1,0 +1,56 @@
+# Bracketed Paste Tests for fortsh
+# Instant-render paste, multi-line collapse, and ANSI-injection sanitization.
+
+metadata:
+  category: "Paste"
+  description: "Bracketed paste: full-line insert, newline handling, control-byte sanitization"
+  phase: 7
+
+tests:
+  # =============================================================
+  # BASIC PASTE — whole command lands, then executes on Enter
+  # =============================================================
+  - name: "Pasted command runs"
+    steps:
+      - send_paste: "echo pasted_hello"
+      - send_key: "Enter"
+    expect_output: "pasted_hello"
+    match_type: "contains"
+
+  - name: "Paste then edit then run"
+    steps:
+      - send_paste: "echo paste_edit"
+      - send: "_tail"
+      - send_key: "Enter"
+    expect_output: "paste_edit_tail"
+    match_type: "contains"
+
+  # =============================================================
+  # MULTI-LINE PASTE — newlines collapse to spaces, ONE command runs
+  # (a pasted newline must NOT split into multiple commands)
+  # =============================================================
+  - name: "Multi-line paste collapses to single command"
+    steps:
+      - send_paste: "echo first\necho second"
+      - send_key: "Enter"
+    expect_output: "first echo second"
+    match_type: "contains"
+
+  # =============================================================
+  # SANITIZATION — embedded escape sequences are neutralized.
+  # If ESC[2J leaked through it would clear the screen and the
+  # raw bytes would corrupt the buffer; sanitized, it just runs.
+  # =============================================================
+  - name: "Embedded ANSI escape is stripped from paste"
+    steps:
+      - send_paste: "echo TAG\x1b[2JEND"
+      - send_key: "Enter"
+    expect_output: "TAGEND"
+    match_type: "contains"
+
+  - name: "Embedded BEL/control bytes dropped from paste"
+    steps:
+      - send_paste: "echo CTL\x07\x01OK"
+      - send_key: "Enter"
+    expect_output: "CTLOK"
+    match_type: "contains"

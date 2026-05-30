@@ -202,6 +202,18 @@ class FortshPTY:
             raise RuntimeError("fortsh not started")
         self.child.sendline(text)
 
+    def send_paste(self, text: str) -> None:
+        """
+        Send text wrapped in bracketed-paste markers (ESC[200~ ... ESC[201~),
+        exactly as a terminal delivers a clipboard paste. No trailing Enter.
+
+        Args:
+            text: Text to paste into the line
+        """
+        if self.child is None:
+            raise RuntimeError("fortsh not started")
+        self.child.send("\x1b[200~" + text + "\x1b[201~")
+
     def send_key(self, key_name: str) -> None:
         """
         Send a special key by name.
