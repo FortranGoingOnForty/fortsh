@@ -70,11 +70,12 @@ contains
       if (option_str == '--') then
         setting_positional = .true.
         i = i + 1
-        ! Clear existing positional parameters
+        ! Clear and resize positional parameters to hold all args (no 50 cap)
         shell%num_positional = 0
-        ! Set remaining arguments as positional parameters
+        if (allocated(shell%positional_params)) deallocate(shell%positional_params)
+        allocate(shell%positional_params(max(1, cmd%num_tokens - i + 1)))
         param_idx = 1
-        do while (i <= cmd%num_tokens .and. param_idx <= 50)
+        do while (i <= cmd%num_tokens)
           shell%positional_params(param_idx)%str = trim(cmd%tokens(i))
           write(param_idx_str, '(I0)') param_idx
           call set_shell_variable(shell, trim(param_idx_str), trim(cmd%tokens(i)))
@@ -91,8 +92,10 @@ contains
       if (arg_len >= 1 .and. option_str(1:1) /= '-' .and. option_str(1:1) /= '+') then
         setting_positional = .true.
         shell%num_positional = 0
+        if (allocated(shell%positional_params)) deallocate(shell%positional_params)
+        allocate(shell%positional_params(max(1, cmd%num_tokens - i + 1)))
         param_idx = 1
-        do while (i <= cmd%num_tokens .and. param_idx <= 50)
+        do while (i <= cmd%num_tokens)
           shell%positional_params(param_idx)%str = trim(cmd%tokens(i))
           write(param_idx_str, '(I0)') param_idx
           call set_shell_variable(shell, trim(param_idx_str), trim(cmd%tokens(i)))
