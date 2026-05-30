@@ -384,6 +384,12 @@ module system_interface
       integer(c_int) :: c_setenv
     end function
 
+    function c_strlen(s) bind(C, name="strlen")
+      import :: c_ptr, c_size_t
+      type(c_ptr), value :: s
+      integer(c_size_t) :: c_strlen
+    end function
+
     function c_unsetenv(name) bind(C, name="unsetenv")
       import :: c_ptr, c_int
       type(c_ptr), value :: name
@@ -786,23 +792,23 @@ contains
     character(len=:), allocatable :: value
     type(c_ptr) :: c_value_ptr
     character(kind=c_char), pointer :: c_value(:)
-    integer :: i
+    integer :: i, vlen
     character(len=256), target :: c_var_name
-    
+
     c_var_name = trim(var_name)//c_null_char
     c_value_ptr = c_getenv(c_loc(c_var_name))
-    
+
     if (c_associated(c_value_ptr)) then
-      call c_f_pointer(c_value_ptr, c_value, [MAX_ENV_LEN])
-      
-      do i = 1, MAX_ENV_LEN
-        if (c_value(i) == c_null_char) exit
-      end do
-      
-      allocate(character(len=i-1) :: value)
-      do i = 1, len(value)
-        value(i:i) = c_value(i)
-      end do
+      ! Map the exact C-string length (strlen) — a fixed MAX_ENV_LEN window
+      ! both capped long values and over-claimed the pointer extent.
+      vlen = int(c_strlen(c_value_ptr))
+      allocate(character(len=vlen) :: value)
+      if (vlen > 0) then
+        call c_f_pointer(c_value_ptr, c_value, [vlen])
+        do i = 1, vlen
+          value(i:i) = c_value(i)
+        end do
+      end if
     else
       allocate(character(len=0) :: value)
     end if
@@ -811,12 +817,23 @@ contains
   function set_environment_var(var_name, var_value) result(success)
     character(len=*), intent(in) :: var_name, var_value
     logical :: success
-    integer :: ret
-    character(len=MAX_TOKEN_LEN), target :: c_var_name
-    character(len=MAX_PATH_LEN), target :: c_var_value
+    integer :: ret, i, nlen, vlen
+    ! Allocatable c_char targets sized to the actual strings — fixed buffers
+    ! truncated long exported values (e.g. a big PATH) at 4096 bytes.
+    character(kind=c_char), dimension(:), allocatable, target :: c_var_name, c_var_value
 
-    c_var_name = trim(var_name)//c_null_char
-    c_var_value = trim(var_value)//c_null_char
+    nlen = len_trim(var_name)
+    vlen = len_trim(var_value)
+    allocate(c_var_name(nlen + 1), c_var_value(vlen + 1))
+    do i = 1, nlen
+      c_var_name(i) = var_name(i:i)
+    end do
+    c_var_name(nlen + 1) = c_null_char
+    do i = 1, vlen
+      c_var_value(i) = var_value(i:i)
+    end do
+    c_var_value(vlen + 1) = c_null_char
+
     ret = c_setenv(c_loc(c_var_name), c_loc(c_var_value), 1_c_int)
     success = (ret == 0)
   end function
