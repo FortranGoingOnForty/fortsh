@@ -409,6 +409,9 @@ class YAMLTestRunner:
             for key in step['send_keys']:
                 fortsh.send_key(key)
                 time.sleep(0.02 * ds)
+        elif 'send_paste' in step:
+            fortsh.send_paste(step['send_paste'])
+            time.sleep(0.05 * ds)
         elif 'wait' in step:
             time.sleep(step['wait'] * ds)
         elif 'wait_for_prompt' in step:

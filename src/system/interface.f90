@@ -53,6 +53,16 @@ module system_interface
     integer(c_short) :: ws_ypixel   ! Vertical pixels
   end type winsize_t
 
+  ! poll(2) descriptor — { int fd; short events; short revents; } is identical
+  ! on Linux x86_64/aarch64, macOS, and FreeBSD, and POLLIN == 0x0001 on all of
+  ! them, so no per-platform layout is required (unlike struct termios/stat).
+  type, bind(c) :: pollfd_t
+    integer(c_int)   :: fd
+    integer(c_short) :: events
+    integer(c_short) :: revents
+  end type pollfd_t
+  integer(c_short), parameter :: POLLIN = int(z'0001', c_short)
+
   ! termios structure - must match C struct termios exactly
   type, bind(c) :: termios_t
 #ifdef __APPLE__
@@ -542,6 +552,16 @@ module system_interface
       type(c_ptr), value :: buf
       integer(c_size_t), value :: count
       integer(c_size_t) :: c_read
+    end function
+
+    ! poll(2): nfds_t is unsigned long (Linux) / unsigned int (BSD/macOS);
+    ! passing a small positive c_int for nfds is ABI-safe by integer promotion.
+    function c_poll(fds, nfds, timeout) bind(C, name="poll")
+      import :: c_int, c_ptr
+      type(c_ptr), value :: fds
+      integer(c_int), value :: nfds
+      integer(c_int), value :: timeout
+      integer(c_int) :: c_poll
     end function
     
     subroutine c_cfmakeraw(termios_p) bind(C, name="cfmakeraw")
@@ -1288,6 +1308,25 @@ contains
     num_bytes = expected_bytes
     success = .true.
   end function read_utf8_char
+
+  ! Non-blocking check for bytes already queued on stdin. Used by the readline
+  ! loop to coalesce a burst (paste / fast typing) into a single redraw: while
+  ! this returns .true. the loop keeps consuming input and defers the redraw.
+  ! poll() with timeout 0 returns immediately; at EOF/hangup it reports POLLHUP
+  ! (not POLLIN), so this yields .false. and the caller falls through to a
+  ! normal blocking read that returns 0 bytes and exits cleanly.
+  function input_pending() result(pending)
+    logical :: pending
+    type(pollfd_t), target :: pfd
+    integer(c_int) :: ret
+
+    pfd%fd = STDIN_FD
+    pfd%events = POLLIN
+    pfd%revents = 0_c_short
+
+    ret = c_poll(c_loc(pfd), 1_c_int, 0_c_int)
+    pending = (ret > 0 .and. iand(int(pfd%revents), int(POLLIN)) /= 0)
+  end function input_pending
 
   ! Get current process ID
   function get_pid() result(pid)

@@ -217,6 +217,15 @@ module readline
     ! measured in BYTES (consistent with cursor_pos and length — pattern #11).
     integer :: selection_anchor = -1      ! -1 = no anchor set
     logical :: selection_active = .false. ! .true. iff a selection is live
+
+    ! Paste highlight (fish-style): the span just inserted by a bracketed paste
+    ! is shown in reverse video until the next keystroke. This is DISTINCT from
+    ! selection_active on purpose — selection_active triggers type-over delete in
+    ! insert_char_impl, which would erase the pasted text on the next key.
+    ! Range is [paste_hl_start .. paste_hl_end) in BYTES, like the selection.
+    logical :: paste_hl_active = .false.
+    integer :: paste_hl_start = 0
+    integer :: paste_hl_end = 0
   end type input_state_t
 
   type :: history_t
@@ -1366,6 +1375,7 @@ contains
     integer :: current_col, current_row
     integer :: highlighted_len  ! Actual length of highlighted string
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
+    logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -1520,6 +1530,14 @@ contains
         if (.not. success) then
           iostat = -1
           exit
+        end if
+
+        ! Fish-style paste highlight clears on the next key. The bracketed-paste
+        ! handler re-arms it after inserting, so clearing here (before dispatch)
+        ! correctly leaves it lit only until the user's next keystroke/motion.
+        if (module_input_state%paste_hl_active) then
+          module_input_state%paste_hl_active = .false.
+          module_input_state%dirty = .true.
         end if
 
         ! If multi-byte UTF-8 character, insert all bytes with correct visual width
@@ -1810,12 +1828,26 @@ contains
         end select
 
 
+        ! Coalesce input bursts (paste / fast typing): if bytes are already
+        ! queued on stdin, defer the redraw and loop to consume them, so the
+        ! whole burst lands in ONE frame (like bash/zsh) instead of redrawing
+        ! per character. dirty stays set, so the draw happens on the first
+        ! drained iteration. Never defer when the line is being submitted
+        ! (done) or in modes that own their own display.
+        defer_redraw = .false.
+        if (module_input_state%dirty .and. .not. done .and. &
+            .not. module_input_state%in_menu_select .and. &
+            .not. module_input_state%in_search) then
+          if (input_pending()) defer_redraw = .true.
+        end if
+
         ! Redraw line if needed
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         ! Skip redraw when in menu selection mode - menu handles its own display
         ! In test mode, skip full redraw to avoid polluting PTY output
         if (.not. test_mode_initialized) call init_test_mode()
-        if (module_input_state%dirty .and. .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
+        if (module_input_state%dirty .and. .not. defer_redraw .and. &
+            .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
           ! Search mode: delegate to two-line search display instead of normal redraw
           if (module_input_state%in_search) then
             call update_search_display(module_input_state, prompt)
@@ -1901,6 +1933,23 @@ contains
                 sel_end   = max(module_input_state%selection_anchor, module_input_state%cursor_pos)
                 if (sel_start < 0) sel_start = 0
                 if (sel_end > module_input_state%length) sel_end = module_input_state%length
+                if (sel_start > 0) then
+                  call rdraw_append(temp_buf(1:sel_start))
+                end if
+                if (sel_end > sel_start) then
+                  call rdraw_append(char(27) // '[7m')
+                  call rdraw_append(temp_buf(sel_start+1:sel_end))
+                  call rdraw_append(char(27) // '[27m')
+                end if
+                if (sel_end < module_input_state%length) then
+                  call rdraw_append(temp_buf(sel_end+1:module_input_state%length))
+                end if
+
+              ! Paste highlight: just-pasted span in reverse video (fish-style).
+              ! Mutually exclusive with selection (paste-over clears selection).
+              else if (module_input_state%paste_hl_active) then
+                sel_start = max(0, module_input_state%paste_hl_start)
+                sel_end   = min(module_input_state%length, module_input_state%paste_hl_end)
                 if (sel_start > 0) then
                   call rdraw_append(temp_buf(1:sel_start))
                 end if
@@ -6226,8 +6275,9 @@ contains
     character :: ch1, ch2, ch3
     logical :: success
     character(len=MAX_LINE_LEN) :: paste_buffer
-    integer :: paste_len, i
+    integer :: paste_len
     character :: ch_paste
+    integer :: ic, inserted
 
     if (.false.) print *, done  ! Silence unused warning
 
@@ -6303,10 +6353,15 @@ contains
                           end if
                         end block
 
-                        ! Insert buffered text at cursor position
-                        do i = 1, paste_len
-                          call insert_char_wrapper(input_state, paste_buffer(i:i))
-                        end do
+                        ! Insert the whole sanitized paste in one operation so
+                        ! it lands in a single redraw, and light the just-pasted
+                        ! span in reverse video until the next keystroke.
+                        call insert_bytes_at_cursor(input_state, paste_buffer, paste_len, inserted)
+                        if (inserted > 0) then
+                          input_state%paste_hl_start = input_state%cursor_pos - inserted
+                          input_state%paste_hl_end   = input_state%cursor_pos
+                          input_state%paste_hl_active = .true.
+                        end if
                         input_state%dirty = .true.
                         return
                       end if
@@ -6314,17 +6369,26 @@ contains
                   end if
                 end if
               end if
-              ! Not end marker, add ESC and what we read to buffer
-              paste_len = paste_len + 1
-              paste_buffer(paste_len:paste_len) = char(27)
-              if (paste_len < MAX_LINE_LEN) then
-                paste_len = paste_len + 1
-                paste_buffer(paste_len:paste_len) = ch1
-              end if
+              ! Not the end marker: this was an embedded escape sequence in the
+              ! pasted content. Drop the ESC and the lookahead bytes we consumed
+              ! (ANSI-injection guard) — any printable remainder still in the
+              ! stream comes through as literal text below.
             else
-              ! Regular character, add to paste buffer
-              paste_len = paste_len + 1
-              paste_buffer(paste_len:paste_len) = ch_paste
+              ! Regular pasted byte: sanitize before buffering.
+              !   tab (9)            -> keep
+              !   newline (10)       -> single space (keeps the line single, so a
+              !                         multi-line paste can't split into commands)
+              !   CR/DEL/NUL/other   -> drop (terminal-escape / control guard)
+              !   printable + UTF-8  -> keep
+              ! ESC (27) never reaches here — handled by the branch above.
+              ic = iachar(ch_paste)
+              if (ic == 10) then
+                paste_len = paste_len + 1
+                paste_buffer(paste_len:paste_len) = ' '
+              else if (ic == 9 .or. (ic >= 32 .and. ic /= 127)) then
+                paste_len = paste_len + 1
+                paste_buffer(paste_len:paste_len) = ch_paste
+              end if
             end if
           end do
         end if
@@ -8006,6 +8070,63 @@ contains
     input_state%length = input_state%length + insert_len
     input_state%cursor_pos = input_state%cursor_pos + insert_len
     input_state%dirty = .true.
+  end subroutine
+
+  ! Insert exactly n bytes at the cursor in one operation (used for paste).
+  ! Unlike insert_string_at_cursor this takes an explicit byte count (no
+  ! len_trim, so trailing spaces and control bytes survive) and inserts in a
+  ! single O(n) shift. `inserted` returns the count actually inserted (clamped
+  ! to the buffer), so the caller can highlight exactly the pasted span.
+  subroutine insert_bytes_at_cursor(input_state, bytes, n, inserted)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: bytes
+    integer, intent(in) :: n
+    integer, intent(out) :: inserted
+    integer :: insert_len, cur, oldlen
+    character(len=:), allocatable :: src, dst
+
+    inserted = 0
+    if (n <= 0) return
+
+    ! Paste-over: a paste replaces any active selection (mirrors insert_char_impl)
+    if (input_state%selection_active) call delete_selection(input_state)
+
+    ! Same -1 headroom guard as insert_char_impl to avoid writing past the buffer
+    insert_len = min(n, MAX_LINE_LEN - 1 - input_state%length)
+    if (insert_len <= 0) return
+
+    cur = input_state%cursor_pos
+    oldlen = input_state%length
+
+    ! Build the result in a SEPARATE buffer rather than a self-aliased slice
+    ! move within one variable — the dd/cc SIGSEGV (obs #791) was exactly that
+    ! idiom, which flang-new/aarch64 miscompiles.
+    allocate(character(len=MAX_LINE_LEN) :: src)
+    allocate(character(len=MAX_LINE_LEN) :: dst)
+    call state_buffer_get(input_state, src)
+    ! Blank-fill via a SLICE — `dst = ''` would reallocate a deferred-length
+    ! allocatable to length 0, dropping every slice write that follows.
+    dst(:) = ' '
+    if (cur > 0) dst(1:cur) = src(1:cur)
+    dst(cur+1:cur+insert_len) = bytes(1:insert_len)
+    if (oldlen > cur) dst(cur+insert_len+1:oldlen+insert_len) = src(cur+1:oldlen)
+    call state_buffer_set(input_state, dst)
+    deallocate(src)
+    deallocate(dst)
+
+    input_state%length = oldlen + insert_len
+    input_state%cursor_pos = cur + insert_len
+    input_state%dirty = .true.
+    inserted = insert_len
+
+    ! Test mode skips the dirty redraw, so echo the inserted bytes directly —
+    ! this replaces the per-char echo the old char-by-char paste loop relied on.
+    if (test_mode_enabled) then
+      write(output_unit, '(a)', advance='no') bytes(1:insert_len)
+      flush(output_unit)
+    end if
+
+    call update_autosuggestion(input_state)
   end subroutine
 
   ! Cursor flash effect for visual feedback
