@@ -4336,12 +4336,18 @@ contains
           end if
         else
           block
-            character(len=:), allocatable :: escaped
-            escaped = escape_for_completion(trim(completions(1)))
-            if (last_space_pos > 0) then
-              completed_line = prefix_part(:last_space_pos) // escaped
+            character(len=:), allocatable :: comp_result
+            ! Don't escape variable completions ($VAR) or command substitutions
+            if (len_trim(completions(1)) > 0 .and. &
+                (completions(1)(1:1) == '$' .or. completions(1)(1:1) == '~')) then
+              comp_result = trim(completions(1))
             else
-              completed_line = escaped
+              comp_result = escape_for_completion(trim(completions(1)))
+            end if
+            if (last_space_pos > 0) then
+              completed_line = prefix_part(:last_space_pos) // comp_result
+            else
+              completed_line = comp_result
             end if
           end block
         end if
@@ -4363,7 +4369,12 @@ contains
 
           block
             character(len=:), allocatable :: esc_match
-            esc_match = escape_for_completion(trim(completions(j)))
+            if (len_trim(completions(j)) > 0 .and. &
+                (completions(j)(1:1) == '$' .or. completions(j)(1:1) == '~')) then
+              esc_match = trim(completions(j))
+            else
+              esc_match = escape_for_completion(trim(completions(j)))
+            end if
             expanded_matches(pos:pos+len(esc_match)-1) = esc_match
             pos = pos + len(esc_match)
           end block
