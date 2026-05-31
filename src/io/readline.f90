@@ -2200,6 +2200,7 @@ contains
                 first_diff_byte = min(cframe_pos, prev_render_len) + 1
               end if
               if (first_diff_byte > 0) then
+                call adjust_diff_to_boundary(content_frame, cframe_pos, first_diff_byte)
                 call content_byte_to_row_col(content_frame, cframe_pos, first_diff_byte, &
                                              term_cols, diff_row, diff_col)
                 rdraw_pos = 0
@@ -9924,6 +9925,46 @@ contains
     end if
 
     flush(output_unit)
+  end subroutine
+
+  ! Back up diff_pos if it lands inside an ANSI escape or UTF-8 sequence.
+  ! Writing a partial ESC[...m produces visible garbage; a partial UTF-8
+  ! sequence produces replacement characters. Backing up to the start of
+  ! the sequence is safe because ANSI codes are zero-width and the visual
+  ! column calculation already skips them.
+  subroutine adjust_diff_to_boundary(buf, buf_len, diff_pos)
+    integer, intent(in) :: buf_len
+    character(len=*), intent(in) :: buf
+    integer, intent(inout) :: diff_pos
+    integer :: scan, byte_val
+
+    if (diff_pos <= 1 .or. diff_pos > buf_len) return
+
+    ! UTF-8: if diff_pos is a continuation byte (10xxxxxx), back up to lead
+    byte_val = iand(iachar(buf(diff_pos:diff_pos)), 255)
+    if (iand(byte_val, 192) == 128) then
+      do while (diff_pos > 1)
+        diff_pos = diff_pos - 1
+        byte_val = iand(iachar(buf(diff_pos:diff_pos)), 255)
+        if (iand(byte_val, 192) /= 128) exit
+      end do
+      return
+    end if
+
+    ! ANSI: scan backward for an unterminated ESC[ sequence
+    scan = diff_pos - 1
+    do while (scan >= 1)
+      if (buf(scan:scan) == char(27)) then
+        if (scan + 1 <= buf_len .and. buf(scan+1:scan+1) == '[') then
+          diff_pos = scan
+        end if
+        return
+      end if
+      byte_val = iachar(buf(scan:scan))
+      if (byte_val >= 64 .and. byte_val <= 126 .and. buf(scan:scan) /= '[') return
+      if (byte_val < 32 .and. buf(scan:scan) /= char(27)) return
+      scan = scan - 1
+    end do
   end subroutine
 
   ! Restore terminal from raw mode — called by REPL after all continuation prompts
