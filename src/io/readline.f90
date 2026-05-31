@@ -1370,7 +1370,7 @@ contains
     integer :: highlighted_len  ! Actual length of highlighted string
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
     logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
-    integer :: first_diff_byte, diff_row, diff_byte_start  ! Phase 2 diff
+    integer :: first_diff_byte, diff_row, diff_col  ! Phase 2/3 diff
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -2187,6 +2187,7 @@ contains
             ! Phase 2: stop mirroring, compare, conditionally rebuild
             rdraw_mirror = .false.
 
+            ! Phase 2+3: find first differing byte, skip matching prefix
             first_diff_byte = 0
             if (prev_render_valid .and. cframe_pos > 0 .and. prev_render_len > 0) then
               do i_redraw = 1, min(cframe_pos, prev_render_len)
@@ -2199,28 +2200,31 @@ contains
                 first_diff_byte = min(cframe_pos, prev_render_len) + 1
               end if
               if (first_diff_byte > 0) then
-                call content_byte_to_row(content_frame, cframe_pos, first_diff_byte, &
-                                         term_cols, diff_row)
-                if (diff_row > 0) then
-                  call row_to_content_byte(content_frame, cframe_pos, diff_row, &
-                                           term_cols, diff_byte_start)
-                  rdraw_pos = 0
-                  if (.not. module_input_state%skip_cursor_up_on_redraw) then
-                    if (nav_cursor_row > 0) then
-                      do i_redraw = 1, nav_cursor_row
-                        call rdraw_append(char(27) // '[A')
-                      end do
-                    end if
+                call content_byte_to_row_col(content_frame, cframe_pos, first_diff_byte, &
+                                             term_cols, diff_row, diff_col)
+                rdraw_pos = 0
+                if (.not. module_input_state%skip_cursor_up_on_redraw) then
+                  if (nav_cursor_row > 0) then
+                    do i_redraw = 1, nav_cursor_row
+                      call rdraw_append(char(27) // '[A')
+                    end do
                   end if
-                  call rdraw_append(ESC_HIDE_CURSOR)
+                end if
+                call rdraw_append(ESC_HIDE_CURSOR)
+                if (diff_row > 0) then
                   do i_redraw = 1, diff_row
                     call rdraw_append(char(27) // '[B')
                   end do
-                  call rdraw_append_char(char(13))
-                  call rdraw_append(char(27) // '[J')
-                  if (diff_byte_start <= cframe_pos) then
-                    call rdraw_append(content_frame(diff_byte_start:cframe_pos))
-                  end if
+                end if
+                call rdraw_append_char(char(13))
+                if (diff_col > 0) then
+                  do i_redraw = 1, diff_col
+                    call rdraw_append(char(27) // '[C')
+                  end do
+                end if
+                call rdraw_append(char(27) // '[J')
+                if (first_diff_byte <= cframe_pos) then
+                  call rdraw_append(content_frame(first_diff_byte:cframe_pos))
                 end if
               end if
             end if
@@ -9825,15 +9829,16 @@ contains
 
   ! Walk a rendered content buffer (with ANSI codes) and return the visual
   ! row that byte_pos falls on (0-based, wrapping at term_cols).
-  subroutine content_byte_to_row(buf, buf_len, byte_pos, term_cols, row)
+  subroutine content_byte_to_row_col(buf, buf_len, byte_pos, term_cols, row, col_out)
     integer, intent(in) :: buf_len, byte_pos, term_cols
     character(len=*), intent(in) :: buf
-    integer, intent(out) :: row
+    integer, intent(out) :: row, col_out
     integer :: pos, col
 
     row = 0
     col = 0
     pos = 1
+    col_out = 0
     if (term_cols <= 0) return
     do while (pos < byte_pos .and. pos <= buf_len)
       if (buf(pos:pos) == char(27) .and. pos + 1 <= buf_len &
@@ -9862,57 +9867,7 @@ contains
       end if
       pos = pos + 1
     end do
-  end subroutine
-
-  ! Return the byte offset in a rendered content buffer where visual
-  ! row target_row begins (0-based rows, wrapping at term_cols).
-  subroutine row_to_content_byte(buf, buf_len, target_row, term_cols, byte_pos)
-    integer, intent(in) :: buf_len, target_row, term_cols
-    character(len=*), intent(in) :: buf
-    integer, intent(out) :: byte_pos
-    integer :: pos, col, row
-
-    row = 0
-    col = 0
-    byte_pos = 1
-    if (target_row <= 0 .or. term_cols <= 0) return
-    pos = 1
-    do while (pos <= buf_len)
-      if (buf(pos:pos) == char(27) .and. pos + 1 <= buf_len &
-          .and. buf(pos+1:pos+1) == '[') then
-        pos = pos + 2
-        do while (pos <= buf_len)
-          if (iachar(buf(pos:pos)) >= 64 .and. iachar(buf(pos:pos)) <= 126) then
-            pos = pos + 1
-            exit
-          end if
-          pos = pos + 1
-        end do
-        cycle
-      end if
-      if (buf(pos:pos) == char(13) .and. pos + 1 <= buf_len &
-          .and. buf(pos+1:pos+1) == char(10)) then
-        row = row + 1
-        col = 0
-        pos = pos + 2
-        if (row >= target_row) then
-          byte_pos = pos
-          return
-        end if
-        cycle
-      end if
-      col = col + 1
-      if (col >= term_cols) then
-        row = row + 1
-        col = 0
-        if (row >= target_row) then
-          byte_pos = pos + 1
-          return
-        end if
-      end if
-      pos = pos + 1
-    end do
-    byte_pos = pos
+    col_out = col
   end subroutine
 
   ! Move cursor from old position to new position, handling line wrapping
