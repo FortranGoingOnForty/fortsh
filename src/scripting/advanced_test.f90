@@ -355,8 +355,8 @@ contains
         do match_idx = 0, 9
           ! Check if this match is valid (rm_so != -1)
           if (pmatch(match_idx + 1)%rm_so /= -1) then
-            match_start = pmatch(match_idx + 1)%rm_so + 1  ! Convert to 1-based
-            match_end = pmatch(match_idx + 1)%rm_eo
+            match_start = int(pmatch(match_idx + 1)%rm_so) + 1  ! Convert to 1-based
+            match_end = int(pmatch(match_idx + 1)%rm_eo)
 
             ! Extract matched substring
             matched_str = ''

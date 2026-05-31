@@ -265,7 +265,7 @@ contains
           use variables, only: set_shell_variable
           use parser, only: expand_variables
           integer :: assign_idx, assign_eq_pos, value_len, token_len, saved_status
-          character(len=256) :: assign_name
+          character(len=MAX_TOKEN_LEN) :: assign_name
           character(len=:), allocatable :: assign_value, expanded_value
 
           ! Save the exit status before assignment expansion
@@ -771,7 +771,7 @@ contains
         ! Fire RETURN trap if set (before cleanup, while still in function scope)
         block
           use signal_handling, only: get_trap_command, TRAP_RETURN
-          character(len=256) :: return_trap_cmd
+          character(len=MAX_TOKEN_LEN) :: return_trap_cmd
           return_trap_cmd = get_trap_command(shell, TRAP_RETURN)
           if (len_trim(return_trap_cmd) > 0 .and. &
               .not. shell%executing_trap) then

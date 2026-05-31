@@ -1460,7 +1460,6 @@ contains
     character(c_char), target :: bytes(4)
     integer(c_size_t) :: bytes_read
     integer :: lead_byte_val, i, expected_bytes
-    integer(c_int) :: err_val
 
     ! Initialize output
     utf8_char = ''

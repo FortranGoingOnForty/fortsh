@@ -1357,7 +1357,7 @@ contains
     integer, intent(inout) :: token_len
 
     character :: ch, esc_ch
-    integer :: oct_val, hex_val, n_digits, i
+    integer :: oct_val, hex_val, n_digits
 
     ! Add sentinel to mark start of quoted content (no expansion)
     if (token_len < MAX_TOKEN_LEN) then
