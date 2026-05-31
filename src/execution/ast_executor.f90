@@ -2072,7 +2072,8 @@ contains
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status, i, j, glob_count, word_idx, k, split_count, fd_mark
-    integer, parameter :: MAX_GLOB = 256, MAX_SPLIT = 256
+    integer, parameter :: MAX_GLOB = 256
+    integer :: max_split_actual
     character(len=MAX_TOKEN_LEN), allocatable :: glob_matches(:)
     character(len=MAX_TOKEN_LEN), allocatable :: expanded_words(:)
     character(len=:), allocatable :: expanded_word, ifs_chars
@@ -2145,7 +2146,8 @@ contains
       write(error_unit, '(A)') 'fortsh: for: allocation failure'
       deallocate(expanded_words); exit_status = 1; return
     end if
-    allocate(split_words(MAX_SPLIT), stat=i)
+    max_split_actual = MAX_TOKENS
+    allocate(split_words(max_split_actual), stat=i)
     if (i /= 0) then
       write(error_unit, '(A)') 'fortsh: for: allocation failure'
       deallocate(expanded_words); deallocate(glob_matches); exit_status = 1; return
