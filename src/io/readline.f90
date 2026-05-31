@@ -2075,6 +2075,8 @@ contains
                 else if (prompt(pr_j:pr_j) == char(10)) then
                   call rdraw_append(char(13) // char(10))
                   pr_j = pr_j + 1
+                else if (prompt(pr_j:pr_j) == char(0)) then
+                  pr_j = pr_j + 1
                 else
                   call rdraw_append_char(prompt(pr_j:pr_j))
                   pr_j = pr_j + 1
@@ -9852,6 +9854,10 @@ contains
           end if
           pos = pos + 1
         end do
+        cycle
+      end if
+      if (buf(pos:pos) == char(0)) then
+        pos = pos + 1
         cycle
       end if
       if (buf(pos:pos) == char(13) .and. pos + 1 <= buf_len &
