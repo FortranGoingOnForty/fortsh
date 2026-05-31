@@ -282,6 +282,16 @@ module readline
   logical, save :: prev_diff_valid = .false.
   character(len=MAX_LINE_LEN), save :: prev_diff_content
 
+  ! Display diffing (Phase 2): line-level content comparison
+  ! Mirror rendered content into content_frame during redraw; compare
+  ! with prev_render_frame to skip unchanged leading lines.
+  logical, save :: rdraw_mirror = .false.
+  character(len=REDRAW_BUF_SIZE), save :: content_frame
+  integer, save :: cframe_pos = 0
+  character(len=REDRAW_BUF_SIZE), save :: prev_render_frame
+  integer, save :: prev_render_len = 0
+  logical, save :: prev_render_valid = .false.
+
   ! Track actual cursor screen position (row, col) to fix redraw issues
   ! Used to know where cursor is on screen vs where buffer says it should be
   integer, save :: module_cursor_screen_row = 0
@@ -327,12 +337,14 @@ contains
     character(len=*), intent(in) :: s
     integer :: slen
     slen = len(s)
+    if (rdraw_mirror .and. cframe_pos + slen <= REDRAW_BUF_SIZE) then
+      content_frame(cframe_pos+1:cframe_pos+slen) = s
+      cframe_pos = cframe_pos + slen
+    end if
     if (rdraw_pos + slen > REDRAW_BUF_SIZE) then
-      ! Buffer full — flush what we have, then continue
       call rdraw_flush()
     end if
     if (slen > REDRAW_BUF_SIZE) then
-      ! Oversized single string — write directly
       write(output_unit, '(a)', advance='no') s
       return
     end if
@@ -342,6 +354,10 @@ contains
 
   subroutine rdraw_append_char(ch)
     character, intent(in) :: ch
+    if (rdraw_mirror .and. cframe_pos + 1 <= REDRAW_BUF_SIZE) then
+      cframe_pos = cframe_pos + 1
+      content_frame(cframe_pos:cframe_pos) = ch
+    end if
     if (rdraw_pos + 1 > REDRAW_BUF_SIZE) call rdraw_flush()
     rdraw_pos = rdraw_pos + 1
     rdraw_buf(rdraw_pos:rdraw_pos) = ch
@@ -1350,9 +1366,11 @@ contains
     integer :: prompt_visual_len, cursor_visual_pos, current_line
     integer :: suggestion_display_len, available_space
     integer :: current_col, current_row
+    integer :: nav_cursor_row  ! Saved current_row for cursor-up navigation
     integer :: highlighted_len  ! Actual length of highlighted string
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
     logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
+    integer :: first_diff_byte, diff_row, diff_byte_start  ! Phase 2 diff
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -1409,6 +1427,7 @@ contains
     raw_enabled = .false.
     highlighted_len = 0
     prev_diff_valid = .false.
+    prev_render_valid = .false.
 
     ! Initialize history on first use
     call init_history()
@@ -1512,6 +1531,7 @@ contains
           g_terminal_resized = .false.
           rprompt_displayed = .false.
           prev_diff_valid = .false.
+          prev_render_valid = .false.
 
           block
             integer :: old_cols, reflow_rows, up_i
@@ -2007,6 +2027,13 @@ contains
             ! Clear from cursor to end of screen
             call rdraw_append(char(27) // '[J')
 
+            ! Save cursor-up row count before content overwrites it
+            nav_cursor_row = current_row
+
+            ! Phase 2: mirror rendered content for line-level diff
+            cframe_pos = 0
+            rdraw_mirror = .true.
+
             ! Redraw prompt (replace bare LF with CR+LF for raw mode).
             ! Strip ESC[nG (cursor-column) escapes — these are embedded
             ! RPROMPT positioning from fortsh.f90 that becomes stale
@@ -2156,6 +2183,51 @@ contains
                 end if
               end if
             end if
+
+            ! Phase 2: stop mirroring, compare, conditionally rebuild
+            rdraw_mirror = .false.
+
+            first_diff_byte = 0
+            if (prev_render_valid .and. cframe_pos > 0 .and. prev_render_len > 0) then
+              do i_redraw = 1, min(cframe_pos, prev_render_len)
+                if (content_frame(i_redraw:i_redraw) /= prev_render_frame(i_redraw:i_redraw)) then
+                  first_diff_byte = i_redraw
+                  exit
+                end if
+              end do
+              if (first_diff_byte == 0 .and. cframe_pos /= prev_render_len) then
+                first_diff_byte = min(cframe_pos, prev_render_len) + 1
+              end if
+              if (first_diff_byte > 0) then
+                call content_byte_to_row(content_frame, cframe_pos, first_diff_byte, &
+                                         term_cols, diff_row)
+                if (diff_row > 0) then
+                  call row_to_content_byte(content_frame, cframe_pos, diff_row, &
+                                           term_cols, diff_byte_start)
+                  rdraw_pos = 0
+                  if (.not. module_input_state%skip_cursor_up_on_redraw) then
+                    if (nav_cursor_row > 0) then
+                      do i_redraw = 1, nav_cursor_row
+                        call rdraw_append(char(27) // '[A')
+                      end do
+                    end if
+                  end if
+                  call rdraw_append(ESC_HIDE_CURSOR)
+                  do i_redraw = 1, diff_row
+                    call rdraw_append(char(27) // '[B')
+                  end do
+                  call rdraw_append_char(char(13))
+                  call rdraw_append(char(27) // '[J')
+                  if (diff_byte_start <= cframe_pos) then
+                    call rdraw_append(content_frame(diff_byte_start:cframe_pos))
+                  end if
+                end if
+              end if
+            end if
+
+            prev_render_frame(1:cframe_pos) = content_frame(1:cframe_pos)
+            prev_render_len = cframe_pos
+            prev_render_valid = .true.
 
             ! Position cursor correctly (if not at end of input)
             if (module_input_state%cursor_pos < module_input_state%length) then
@@ -9749,6 +9821,98 @@ contains
     ! Calculate row and column (0-based)
     cursor_row = total_pos / term_cols
     cursor_col = mod(total_pos, term_cols)
+  end subroutine
+
+  ! Walk a rendered content buffer (with ANSI codes) and return the visual
+  ! row that byte_pos falls on (0-based, wrapping at term_cols).
+  subroutine content_byte_to_row(buf, buf_len, byte_pos, term_cols, row)
+    integer, intent(in) :: buf_len, byte_pos, term_cols
+    character(len=*), intent(in) :: buf
+    integer, intent(out) :: row
+    integer :: pos, col
+
+    row = 0
+    col = 0
+    pos = 1
+    if (term_cols <= 0) return
+    do while (pos < byte_pos .and. pos <= buf_len)
+      if (buf(pos:pos) == char(27) .and. pos + 1 <= buf_len &
+          .and. buf(pos+1:pos+1) == '[') then
+        pos = pos + 2
+        do while (pos <= buf_len)
+          if (iachar(buf(pos:pos)) >= 64 .and. iachar(buf(pos:pos)) <= 126) then
+            pos = pos + 1
+            exit
+          end if
+          pos = pos + 1
+        end do
+        cycle
+      end if
+      if (buf(pos:pos) == char(13) .and. pos + 1 <= buf_len &
+          .and. buf(pos+1:pos+1) == char(10)) then
+        row = row + 1
+        col = 0
+        pos = pos + 2
+        cycle
+      end if
+      col = col + 1
+      if (col >= term_cols) then
+        row = row + 1
+        col = 0
+      end if
+      pos = pos + 1
+    end do
+  end subroutine
+
+  ! Return the byte offset in a rendered content buffer where visual
+  ! row target_row begins (0-based rows, wrapping at term_cols).
+  subroutine row_to_content_byte(buf, buf_len, target_row, term_cols, byte_pos)
+    integer, intent(in) :: buf_len, target_row, term_cols
+    character(len=*), intent(in) :: buf
+    integer, intent(out) :: byte_pos
+    integer :: pos, col, row
+
+    row = 0
+    col = 0
+    byte_pos = 1
+    if (target_row <= 0 .or. term_cols <= 0) return
+    pos = 1
+    do while (pos <= buf_len)
+      if (buf(pos:pos) == char(27) .and. pos + 1 <= buf_len &
+          .and. buf(pos+1:pos+1) == '[') then
+        pos = pos + 2
+        do while (pos <= buf_len)
+          if (iachar(buf(pos:pos)) >= 64 .and. iachar(buf(pos:pos)) <= 126) then
+            pos = pos + 1
+            exit
+          end if
+          pos = pos + 1
+        end do
+        cycle
+      end if
+      if (buf(pos:pos) == char(13) .and. pos + 1 <= buf_len &
+          .and. buf(pos+1:pos+1) == char(10)) then
+        row = row + 1
+        col = 0
+        pos = pos + 2
+        if (row >= target_row) then
+          byte_pos = pos
+          return
+        end if
+        cycle
+      end if
+      col = col + 1
+      if (col >= term_cols) then
+        row = row + 1
+        col = 0
+        if (row >= target_row) then
+          byte_pos = pos + 1
+          return
+        end if
+      end if
+      pos = pos + 1
+    end do
+    byte_pos = pos
   end subroutine
 
   ! Move cursor from old position to new position, handling line wrapping
