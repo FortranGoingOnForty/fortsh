@@ -37,7 +37,7 @@ program fortran_shell
   character(len=MAX_VAR_VALUE_LEN) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
   character(len=MAX_VAR_VALUE_LEN) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
   character(len=:), allocatable :: rprompt_value  ! RPROMPT variable value
-  integer :: iostat, i, num_args
+  integer :: iostat, num_args
   character(len=MAX_PATH_LEN) :: arg1, command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
   character(len=:), allocatable :: script_file

@@ -427,9 +427,10 @@ contains
     type(redirection_t), allocatable :: redirects(:)
     integer :: num_words, num_redirects, i, fd_num, io_stat, saved_pos, alloc_stat
     type(token_t) :: tok, next_tok, peek_tok, delim_tok
-    ! Prefix assignments (VAR=value before command)
-    character(len=MAX_TOKEN_LEN) :: assignments(MAX_PREFIX_ASSIGNMENTS)
-    integer :: assignment_lens(MAX_PREFIX_ASSIGNMENTS)
+    ! Prefix assignments (VAR=value before command) — allocatable to
+    ! avoid exceeding stack-var-size limit (20 × 4096 = 80KB).
+    character(len=MAX_TOKEN_LEN), allocatable :: assignments(:)
+    integer, allocatable :: assignment_lens(:)
     integer :: num_assignments, eq_pos
     logical :: seen_command
     allocate(words(MAX_TOKENS), stat=alloc_stat)
@@ -446,6 +447,8 @@ contains
     num_words = 0
     num_redirects = 0
     num_assignments = 0
+    allocate(assignments(MAX_PREFIX_ASSIGNMENTS))
+    allocate(assignment_lens(MAX_PREFIX_ASSIGNMENTS))
     assignment_lens = 0
     seen_command = .false.
     nullify(node)

@@ -1938,7 +1938,8 @@ contains
       shell%positional_params(i)%str = cmd%tokens(i + 1)
     end do
 
-    ! Get function body
+    ! Get function body (allocate empty first to silence -Wmaybe-uninitialized)
+    allocate(function_body(0))
     function_body = get_function_body(shell, cmd%tokens(1))
 
     function_returned = .false.
