@@ -5845,94 +5845,62 @@ contains
   end subroutine
 
   subroutine get_process_list(processes, pids, num_processes)
+    use system_interface, only: execute_and_capture
     character(len=MAX_LINE_LEN), intent(out) :: processes(MAX_MENU_ITEMS)
     integer, intent(out) :: pids(MAX_MENU_ITEMS)
     integer, intent(out) :: num_processes
 
-    integer :: unit, iostat, pid
+    integer :: iostat, pid, line_start, line_end, output_len
     character(len=512) :: line, cmd_name, username
+    character(len=:), allocatable :: ps_output
     integer :: stat
 
     num_processes = 0
 
-    ! Get current username for filtering
     call get_environment_variable('USER', username, status=stat)
-    if (stat /= 0) then
-      username = ''  ! Fall back to showing all processes if USER not set
-    end if
+    if (stat /= 0) username = ''
 
-    ! Use ps command to get process list for current user
-    ! -u USER: processes for current user only
-    ! -o pid,comm: output PID and command name
-    ! --no-headers: no headers
-    open(newunit=unit, file='/tmp/fortsh_procs.tmp', status='replace', &
-         action='write', iostat=iostat)
-    if (iostat /= 0) return
-    close(unit)
-
-    ! Execute ps and capture output - filter to current user
+    ! Capture ps output via pipe+fork (no temp file, no world-readable leak)
 #if defined(__APPLE__) || defined(__FreeBSD__)
-    ! BSD ps doesn't support --no-headers; use = suffix for headerless output
     if (len_trim(username) > 0) then
-      call execute_command_line('ps -u ' // trim(username) // &
-                               ' -o pid= -o comm= > /tmp/fortsh_procs.tmp 2>/dev/null', &
-                               exitstat=iostat)
+      ps_output = execute_and_capture('ps -u ' // trim(username) // ' -o pid= -o comm=')
     else
-      call execute_command_line('ps -ax -o pid= -o comm= > /tmp/fortsh_procs.tmp 2>/dev/null', &
-                               exitstat=iostat)
+      ps_output = execute_and_capture('ps -ax -o pid= -o comm=')
     end if
 #else
-    ! Linux uses GNU ps with --no-headers
     if (len_trim(username) > 0) then
-      call execute_command_line('ps -u ' // trim(username) // &
-                               ' -o pid,comm --no-headers > /tmp/fortsh_procs.tmp 2>/dev/null', &
-                               exitstat=iostat)
+      ps_output = execute_and_capture('ps -u ' // trim(username) // ' -o pid,comm --no-headers')
     else
-      call execute_command_line('ps -eo pid,comm --no-headers > /tmp/fortsh_procs.tmp 2>/dev/null', &
-                               exitstat=iostat)
+      ps_output = execute_and_capture('ps -eo pid,comm --no-headers')
     end if
 #endif
 
-    if (iostat == 0) then
-      ! Read the process list
-      open(newunit=unit, file='/tmp/fortsh_procs.tmp', status='old', &
-           action='read', iostat=iostat)
+    if (.not. allocated(ps_output)) return
+    output_len = len(ps_output)
+    if (output_len == 0) return
 
-      if (iostat == 0) then
-        ! Skip header if BSD-style (first line contains PID)
-        read(unit, '(a)', iostat=iostat) line
-        if (iostat == 0 .and. index(line, 'PID') > 0) then
-          ! This was a header, skip it
-        else if (iostat == 0) then
-          ! Not a header, process it
-          read(line, *, iostat=iostat) pid, cmd_name
-          if (iostat == 0 .and. num_processes < MAX_MENU_ITEMS) then
-            num_processes = num_processes + 1
-            pids(num_processes) = pid
-            processes(num_processes) = trim(cmd_name)
-          end if
-        end if
-
-        ! Read remaining lines
-        do while (iostat == 0 .and. num_processes < MAX_MENU_ITEMS)
-          read(unit, '(a)', iostat=iostat) line
-          if (iostat == 0 .and. len_trim(line) > 0) then
-            ! Parse PID and command
-            read(line, *, iostat=iostat) pid, cmd_name
-            if (iostat == 0) then
-              num_processes = num_processes + 1
-              pids(num_processes) = pid
-              processes(num_processes) = trim(cmd_name)
-            end if
-          end if
-        end do
-
-        close(unit)
+    ! Parse line by line from captured output
+    line_start = 1
+    do while (line_start <= output_len .and. num_processes < MAX_MENU_ITEMS)
+      line_end = index(ps_output(line_start:), char(10))
+      if (line_end == 0) then
+        line = ps_output(line_start:output_len)
+        line_start = output_len + 1
+      else
+        line_end = line_start + line_end - 2
+        line = ps_output(line_start:line_end)
+        line_start = line_end + 2
       end if
-    end if
 
-    ! Clean up temp file
-    call execute_command_line('rm -f /tmp/fortsh_procs.tmp 2>/dev/null')
+      if (len_trim(line) > 0 .and. index(line, 'PID') == 0) then
+        read(line, *, iostat=iostat) pid, cmd_name
+        if (iostat == 0) then
+          num_processes = num_processes + 1
+          pids(num_processes) = pid
+          processes(num_processes) = trim(cmd_name)
+        end if
+      end if
+    end do
   end subroutine
 
   subroutine handle_process_selection(input_state)

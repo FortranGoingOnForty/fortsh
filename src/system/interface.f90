@@ -778,10 +778,19 @@ module system_interface
   ! File flags for open() - platform-specific values
   integer(c_int), parameter :: O_RDONLY = 0
   integer(c_int), parameter :: O_WRONLY = 1
-  ! macOS/Darwin values (TODO: add Linux support)
-  integer(c_int), parameter :: O_CREAT = 512   ! 0x200 on macOS, 0x40 on Linux
-  integer(c_int), parameter :: O_TRUNC = 1024  ! 0x400 on macOS, 0x200 on Linux
-  integer(c_int), parameter :: O_APPEND = 8    ! 0x8 on macOS, 0x400 on Linux
+#if defined(__APPLE__)
+  integer(c_int), parameter :: O_CREAT  = int(z'0200', c_int)  ! macOS
+  integer(c_int), parameter :: O_TRUNC  = int(z'0400', c_int)
+  integer(c_int), parameter :: O_APPEND = int(z'0008', c_int)
+#elif defined(__FreeBSD__)
+  integer(c_int), parameter :: O_CREAT  = int(z'0200', c_int)  ! FreeBSD (same as macOS)
+  integer(c_int), parameter :: O_TRUNC  = int(z'0400', c_int)
+  integer(c_int), parameter :: O_APPEND = int(z'0008', c_int)
+#else
+  integer(c_int), parameter :: O_CREAT  = int(z'0040', c_int)  ! Linux
+  integer(c_int), parameter :: O_TRUNC  = int(z'0200', c_int)
+  integer(c_int), parameter :: O_APPEND = int(z'0400', c_int)
+#endif
 
   ! File descriptors
   integer(c_int), parameter :: STDIN_FD = 0

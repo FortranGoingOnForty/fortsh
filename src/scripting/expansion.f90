@@ -3774,7 +3774,6 @@ contains
         output = ''
       else
         output = input(2:len_input-1)
-        ! TODO: Process escape sequences within double quotes
       end if
       return
     end if
@@ -4373,8 +4372,7 @@ contains
       ! ~ followed by whitespace
       output = trim(home_dir) // input(2:)
     else
-      ! ~username - not implemented, leave as-is
-      ! TODO: Implement ~username expansion using getpwnam()
+      ! ~username handled by parser's expand_variables via get_user_home
       return
     end if
   end subroutine

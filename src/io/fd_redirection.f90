@@ -135,7 +135,7 @@ contains
   ! permanent: if true, don't save original fd (for exec redirections)
   subroutine apply_single_redirection(redir, success, noclobber, permanent, shell)
     use iso_c_binding, only: c_int
-    use system_interface, only: file_exists, file_is_regular, move_fd_high, F_DUPFD, c_fcntl
+    use system_interface, only: file_exists, file_is_regular, move_fd_high
     use variables, only: set_shell_variable, get_shell_variable
     type(redirection_t), intent(in) :: redir
     logical, intent(out) :: success
