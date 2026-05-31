@@ -275,6 +275,13 @@ module readline
   character(len=REDRAW_BUF_SIZE), save :: rdraw_buf
   integer, save :: rdraw_pos = 0
 
+  ! Display diffing (Phase 1): skip full redraws when only cursor moved
+  integer, save :: prev_diff_buf_len = -1
+  integer, save :: prev_diff_cursor_pos = -1
+  integer, save :: prev_diff_suggest_len = 0
+  logical, save :: prev_diff_valid = .false.
+  character(len=MAX_LINE_LEN), save :: prev_diff_content
+
   ! Track actual cursor screen position (row, col) to fix redraw issues
   ! Used to know where cursor is on screen vs where buffer says it should be
   integer, save :: module_cursor_screen_row = 0
@@ -1401,6 +1408,7 @@ contains
     done = .false.
     raw_enabled = .false.
     highlighted_len = 0
+    prev_diff_valid = .false.
 
     ! Initialize history on first use
     call init_history()
@@ -1503,6 +1511,7 @@ contains
         if (g_terminal_resized) then
           g_terminal_resized = .false.
           rprompt_displayed = .false.
+          prev_diff_valid = .false.
 
           block
             integer :: old_cols, reflow_rows, up_i
@@ -1888,6 +1897,40 @@ contains
             module_input_state%dirty = .false.
             cycle
           end if
+
+          ! Display diffing (Phase 1): skip full clear+redraw when content
+          ! unchanged and only the cursor moved. Emit cursor-movement escapes
+          ! instead (~6 bytes vs ~700 bytes per keystroke).
+          if (prev_diff_valid .and. &
+              .not. module_input_state%selection_active .and. &
+              .not. module_input_state%paste_hl_active .and. &
+              .not. module_input_state%in_prefix_search .and. &
+              module_input_state%length == prev_diff_buf_len .and. &
+              module_input_state%suggestion_length == prev_diff_suggest_len) then
+            call state_buffer_get(module_input_state, temp_buf)
+            if (module_input_state%length == 0 .or. &
+                temp_buf(:module_input_state%length) == &
+                prev_diff_content(:prev_diff_buf_len)) then
+              if (module_input_state%cursor_pos == prev_diff_cursor_pos) then
+                module_input_state%dirty = .false.
+                cycle
+              end if
+              if (prev_diff_suggest_len == 0 .or. &
+                  (prev_diff_cursor_pos /= prev_diff_buf_len .and. &
+                   module_input_state%cursor_pos /= module_input_state%length)) then
+                call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
+                                        term_cols, current_row, current_col)
+                call cursor_move(module_cursor_screen_row, module_cursor_screen_col, &
+                                 current_row, current_col)
+                module_cursor_screen_row = current_row
+                module_cursor_screen_col = current_col
+                prev_diff_cursor_pos = module_input_state%cursor_pos
+                module_input_state%dirty = .false.
+                cycle
+              end if
+            end if
+          end if
+
           ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
           ! Variables moved to subroutine level
 
@@ -2148,6 +2191,16 @@ contains
               write(error_unit, '(a,i0,a,i0)') '[REDRAW] AFTER cursor_get_row_col: screen_row=', &
                 module_cursor_screen_row, ' screen_col=', module_cursor_screen_col
             end if
+
+          ! Save state for display diffing (Phase 1)
+          if (module_input_state%length > 0) then
+            call state_buffer_get(module_input_state, temp_buf)
+            prev_diff_content(:module_input_state%length) = temp_buf(:module_input_state%length)
+          end if
+          prev_diff_buf_len = module_input_state%length
+          prev_diff_cursor_pos = module_input_state%cursor_pos
+          prev_diff_suggest_len = module_input_state%suggestion_length
+          prev_diff_valid = .true.
 
           module_input_state%dirty = .false.
         end if
