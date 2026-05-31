@@ -622,14 +622,48 @@ contains
           if (num_words > 0 .and. (trim(tok%value) == '>' .or. trim(tok%value) == '>&' .or. &
                                     trim(tok%value) == '<' .or. trim(tok%value) == '<&' .or. &
                                     trim(tok%value) == '>>' .or. trim(tok%value) == '<>')) then
+            ! Check for {VAR} fd variable assignment (bash: exec {fd}>file)
+            block
+              character(len=256) :: prev_word
+              integer :: pw_len
+              logical :: is_varfd
+              prev_word = trim(words(num_words))
+              pw_len = len_trim(prev_word)
+              is_varfd = .false.
+              if (pw_len >= 3 .and. prev_word(1:1) == '{' .and. &
+                  prev_word(pw_len:pw_len) == '}') then
+                is_varfd = .true.
+              end if
+
+              if (is_varfd) then
+                ! {VAR}>file — variable fd assignment
+                select case(trim(tok%value))
+                case('>&')
+                  redirects(num_redirects)%type = REDIR_DUP_OUT
+                case('<&')
+                  redirects(num_redirects)%type = REDIR_DUP_IN
+                case('>>')
+                  redirects(num_redirects)%type = REDIR_APPEND
+                case('<')
+                  redirects(num_redirects)%type = REDIR_IN
+                case('<>')
+                  redirects(num_redirects)%type = REDIR_READWRITE
+                case default
+                  redirects(num_redirects)%type = REDIR_OUT
+                end select
+                redirects(num_redirects)%fd = -1
+                redirects(num_redirects)%is_varassign = .true.
+                allocate(redirects(num_redirects)%varassign_name, &
+                  source=prev_word(2:pw_len-1))
+                num_words = num_words - 1
+              else
             ! Treat as an fd only if the word is all digits (1-3 of them), so
             ! multi-digit fds like `exec 10>f` work; non-numeric words (/tmp) don't.
-            if (len_trim(words(num_words)) >= 1 .and. len_trim(words(num_words)) <= 3 .and. &
-                verify(trim(words(num_words)), '0123456789') == 0) then
-              read(words(num_words), *, iostat=io_stat) fd_num
+            if (pw_len >= 1 .and. pw_len <= 3 .and. &
+                verify(trim(prev_word), '0123456789') == 0) then
+              read(prev_word, *, iostat=io_stat) fd_num
             else
-              ! Not numeric, treat as regular word
-              io_stat = -1  ! Force failure
+              io_stat = -1
               fd_num = -1
             end if
             if (io_stat == 0 .and. fd_num >= 0 .and. fd_num <= 255) then
@@ -668,6 +702,8 @@ contains
                 redirects(num_redirects)%type = REDIR_OUT
               end select
             end if
+              end if  ! is_varfd else
+            end block  ! {VAR} detection block
           else
             select case(trim(tok%value))
             case('<')

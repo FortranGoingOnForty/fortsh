@@ -545,8 +545,12 @@ contains
               temp_redirect%filename = ''
             end if
             temp_redirect%force_clobber = node%simple_cmd%redirects(i)%force_clobber
+            temp_redirect%is_varassign = node%simple_cmd%redirects(i)%is_varassign
+            if (allocated(node%simple_cmd%redirects(i)%varassign_name)) then
+              temp_redirect%varassign_name = node%simple_cmd%redirects(i)%varassign_name
+            end if
 
-            call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber, permanent=.true.)
+            call apply_single_redirection(temp_redirect, redir_success, shell%option_noclobber, permanent=.true., shell=shell)
             if (.not. redir_success) then
               exit_status = 1
               return

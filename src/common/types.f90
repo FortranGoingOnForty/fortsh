@@ -74,6 +74,8 @@ module shell_types
     character(len=:), allocatable :: target_fd_expr  ! for variable FD like >&${var}
     logical :: close_fd = .false. ! for n>&- syntax
     logical :: force_clobber = .false. ! for >| operator (override noclobber)
+    logical :: is_varassign = .false.  ! {VAR}>file: allocate fd, assign to VAR
+    character(len=:), allocatable :: varassign_name  ! variable name from {VAR}
   end type redirection_t
 
   ! =====================================
