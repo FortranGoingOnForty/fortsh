@@ -1371,6 +1371,7 @@ contains
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
     logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
     integer :: first_diff_byte, diff_row, diff_col  ! Phase 2/3 diff
+    integer :: last_sgr_start, last_sgr_end, sgr_scan, sgr_esc_end  ! SGR restore
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -2227,6 +2228,37 @@ contains
                 end if
                 call rdraw_append(char(27) // '[J')
                 if (first_diff_byte <= cframe_pos) then
+                  ! Restore ANSI attribute state: the terminal's SGR state
+                  ! after cursor movement is whatever the PREVIOUS render
+                  ! left (typically ESC[0m = reset), not what the content
+                  ! expects at this byte. Find and re-emit the last SGR
+                  ! sequence (ESC[...m) before first_diff_byte.
+                  last_sgr_start = 0
+                  last_sgr_end = 0
+                  sgr_scan = 1
+                  do while (sgr_scan < first_diff_byte)
+                    if (content_frame(sgr_scan:sgr_scan) == char(27) .and. &
+                        sgr_scan + 1 < first_diff_byte .and. &
+                        content_frame(sgr_scan+1:sgr_scan+1) == '[') then
+                      sgr_esc_end = sgr_scan + 2
+                      do while (sgr_esc_end <= cframe_pos .and. &
+                                .not. (iachar(content_frame(sgr_esc_end:sgr_esc_end)) >= 64 &
+                                .and. iachar(content_frame(sgr_esc_end:sgr_esc_end)) <= 126))
+                        sgr_esc_end = sgr_esc_end + 1
+                      end do
+                      if (sgr_esc_end <= cframe_pos .and. &
+                          content_frame(sgr_esc_end:sgr_esc_end) == 'm') then
+                        last_sgr_start = sgr_scan
+                        last_sgr_end = sgr_esc_end
+                      end if
+                      sgr_scan = sgr_esc_end + 1
+                    else
+                      sgr_scan = sgr_scan + 1
+                    end if
+                  end do
+                  if (last_sgr_start > 0) then
+                    call rdraw_append(content_frame(last_sgr_start:last_sgr_end))
+                  end if
                   call rdraw_append(content_frame(first_diff_byte:cframe_pos))
                 end if
               end if
