@@ -923,7 +923,7 @@ contains
     use command_tree, only: destroy_command_node, command_node_t
     use ast_executor, only: execute_ast
     type(shell_state_t), intent(inout) :: shell
-    character(len=16384) :: input_line, proc_subst_line, converted_line
+    character(len=16384) :: input_line, converted_line
     character(len=16384) :: continuation_line
     integer :: file_unit, iostat, exit_code
     type(command_node_t), pointer :: ast_root

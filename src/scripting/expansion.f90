@@ -271,7 +271,7 @@ contains
               block
                 character(len=:), allocatable :: all_str
                 character(len=256) :: slice_spec
-                integer :: colon_after, sc_pos2, ios1, ios2
+                integer :: sc_pos2, ios1, ios2
                 integer :: s_offset, s_length, w_count, w_start, w_idx, w_out
                 logical :: has_slice
                 all_str = trim(get_array_all_elements(shell, trim(array_name)))
@@ -4140,7 +4140,7 @@ contains
     character(len=MAX_TOKEN_LEN), allocatable, intent(out) :: words(:)
     integer, intent(out) :: word_count
 
-    character(len=:), allocatable :: expanded, wrd
+    character(len=:), allocatable :: expanded
     integer :: i, wstart, cap
 
     ! Use existing expand_braces which returns space-separated result

@@ -444,7 +444,7 @@ contains
         ! Relative path — resolve logically against $PWD (POSIX default -L behavior)
         block
           character(len=MAX_PATH_LEN) :: logical_path
-          integer :: lp_len, slash_pos
+          integer :: lp_len
 #ifdef USE_MEMORY_POOL
           logical_path = trim(old_cwd) // '/' // trim(target_dir_ref%data)
 #else
@@ -4286,7 +4286,6 @@ contains
     logical :: list_mode, no_line_numbers, reverse_order, subst_mode
     character(len=:), allocatable :: editor, old_str, new_str
     character(len=:), allocatable :: line, tmpfile, edit_cmd
-    character(len=40) :: fmt_buf
     integer :: first, last, i, arg_idx, iostat, tmp_unit
     integer :: eq_pos, history_count, fc_ec
     logical :: found
