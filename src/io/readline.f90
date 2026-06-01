@@ -5747,6 +5747,11 @@ contains
     ! so the redraw shouldn't try to move up based on cursor position
     input_state%skip_cursor_up_on_redraw = .true.
 
+    ! Invalidate display diff state — the menu exit repositioned the
+    ! cursor and cleared screen regions, so prev_render_frame is stale.
+    prev_diff_valid = .false.
+    prev_render_valid = .false.
+
     ! Mark dirty to trigger redraw
     input_state%dirty = .true.
 

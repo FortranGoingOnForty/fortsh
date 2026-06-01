@@ -537,6 +537,7 @@ rpm: dist
 dev-install: $(TARGET)
 	@echo "Installing fortsh for development..."
 	mkdir -p ~/.local/bin
+	rm -f ~/.local/bin/fortsh
 	cp $(TARGET) ~/.local/bin/
 	@echo "fortsh installed to ~/.local/bin/fortsh"
 	@echo "Make sure ~/.local/bin is in your PATH"
