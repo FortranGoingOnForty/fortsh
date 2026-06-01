@@ -275,6 +275,23 @@ module readline
   character(len=REDRAW_BUF_SIZE), save :: rdraw_buf
   integer, save :: rdraw_pos = 0
 
+  ! Display diffing (Phase 1): skip full redraws when only cursor moved
+  integer, save :: prev_diff_buf_len = -1
+  integer, save :: prev_diff_cursor_pos = -1
+  integer, save :: prev_diff_suggest_len = 0
+  logical, save :: prev_diff_valid = .false.
+  character(len=MAX_LINE_LEN), save :: prev_diff_content
+
+  ! Display diffing (Phase 2): line-level content comparison
+  ! Mirror rendered content into content_frame during redraw; compare
+  ! with prev_render_frame to skip unchanged leading lines.
+  logical, save :: rdraw_mirror = .false.
+  character(len=REDRAW_BUF_SIZE), save :: content_frame
+  integer, save :: cframe_pos = 0
+  character(len=REDRAW_BUF_SIZE), save :: prev_render_frame
+  integer, save :: prev_render_len = 0
+  logical, save :: prev_render_valid = .false.
+
   ! Track actual cursor screen position (row, col) to fix redraw issues
   ! Used to know where cursor is on screen vs where buffer says it should be
   integer, save :: module_cursor_screen_row = 0
@@ -320,12 +337,14 @@ contains
     character(len=*), intent(in) :: s
     integer :: slen
     slen = len(s)
+    if (rdraw_mirror .and. cframe_pos + slen <= REDRAW_BUF_SIZE) then
+      content_frame(cframe_pos+1:cframe_pos+slen) = s
+      cframe_pos = cframe_pos + slen
+    end if
     if (rdraw_pos + slen > REDRAW_BUF_SIZE) then
-      ! Buffer full — flush what we have, then continue
       call rdraw_flush()
     end if
     if (slen > REDRAW_BUF_SIZE) then
-      ! Oversized single string — write directly
       write(output_unit, '(a)', advance='no') s
       return
     end if
@@ -335,6 +354,10 @@ contains
 
   subroutine rdraw_append_char(ch)
     character, intent(in) :: ch
+    if (rdraw_mirror .and. cframe_pos + 1 <= REDRAW_BUF_SIZE) then
+      cframe_pos = cframe_pos + 1
+      content_frame(cframe_pos:cframe_pos) = ch
+    end if
     if (rdraw_pos + 1 > REDRAW_BUF_SIZE) call rdraw_flush()
     rdraw_pos = rdraw_pos + 1
     rdraw_buf(rdraw_pos:rdraw_pos) = ch
@@ -1343,9 +1366,12 @@ contains
     integer :: prompt_visual_len, cursor_visual_pos, current_line
     integer :: suggestion_display_len, available_space
     integer :: current_col, current_row
+    integer :: nav_cursor_row  ! Saved current_row for cursor-up navigation
     integer :: highlighted_len  ! Actual length of highlighted string
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
     logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
+    integer :: first_diff_byte, diff_row, diff_col  ! Phase 2/3 diff
+    integer :: last_sgr_start, last_sgr_end, sgr_scan, sgr_esc_end  ! SGR restore
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
     ! Variables for UTF-8 support (moved out of block to avoid flang-new crash)
     character(len=4) :: utf8_char
@@ -1401,6 +1427,8 @@ contains
     done = .false.
     raw_enabled = .false.
     highlighted_len = 0
+    prev_diff_valid = .false.
+    prev_render_valid = .false.
 
     ! Initialize history on first use
     call init_history()
@@ -1503,6 +1531,8 @@ contains
         if (g_terminal_resized) then
           g_terminal_resized = .false.
           rprompt_displayed = .false.
+          prev_diff_valid = .false.
+          prev_render_valid = .false.
 
           block
             integer :: old_cols, reflow_rows, up_i
@@ -1888,6 +1918,40 @@ contains
             module_input_state%dirty = .false.
             cycle
           end if
+
+          ! Display diffing (Phase 1): skip full clear+redraw when content
+          ! unchanged and only the cursor moved. Emit cursor-movement escapes
+          ! instead (~6 bytes vs ~700 bytes per keystroke).
+          if (prev_diff_valid .and. &
+              .not. module_input_state%selection_active .and. &
+              .not. module_input_state%paste_hl_active .and. &
+              .not. module_input_state%in_prefix_search .and. &
+              module_input_state%length == prev_diff_buf_len .and. &
+              module_input_state%suggestion_length == prev_diff_suggest_len) then
+            call state_buffer_get(module_input_state, temp_buf)
+            if (module_input_state%length == 0 .or. &
+                temp_buf(:module_input_state%length) == &
+                prev_diff_content(:prev_diff_buf_len)) then
+              if (module_input_state%cursor_pos == prev_diff_cursor_pos) then
+                module_input_state%dirty = .false.
+                cycle
+              end if
+              if (prev_diff_suggest_len == 0 .or. &
+                  (prev_diff_cursor_pos /= prev_diff_buf_len .and. &
+                   module_input_state%cursor_pos /= module_input_state%length)) then
+                call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
+                                        term_cols, current_row, current_col)
+                call cursor_move(module_cursor_screen_row, module_cursor_screen_col, &
+                                 current_row, current_col)
+                module_cursor_screen_row = current_row
+                module_cursor_screen_col = current_col
+                prev_diff_cursor_pos = module_input_state%cursor_pos
+                module_input_state%dirty = .false.
+                cycle
+              end if
+            end if
+          end if
+
           ! WORKAROUND: Removed 'block' construct to avoid flang-new crash on macOS ARM64
           ! Variables moved to subroutine level
 
@@ -1964,6 +2028,13 @@ contains
             ! Clear from cursor to end of screen
             call rdraw_append(char(27) // '[J')
 
+            ! Save cursor-up row count before content overwrites it
+            nav_cursor_row = current_row
+
+            ! Phase 2: mirror rendered content for line-level diff
+            cframe_pos = 0
+            rdraw_mirror = .true.
+
             ! Redraw prompt (replace bare LF with CR+LF for raw mode).
             ! Strip ESC[nG (cursor-column) escapes — these are embedded
             ! RPROMPT positioning from fortsh.f90 that becomes stale
@@ -2004,6 +2075,8 @@ contains
                   end block
                 else if (prompt(pr_j:pr_j) == char(10)) then
                   call rdraw_append(char(13) // char(10))
+                  pr_j = pr_j + 1
+                else if (prompt(pr_j:pr_j) == char(0)) then
                   pr_j = pr_j + 1
                 else
                   call rdraw_append_char(prompt(pr_j:pr_j))
@@ -2114,6 +2187,87 @@ contains
               end if
             end if
 
+            ! Phase 2: stop mirroring, compare, conditionally rebuild
+            rdraw_mirror = .false.
+
+            ! Phase 2+3: find first differing byte, skip matching prefix
+            first_diff_byte = 0
+            if (prev_render_valid .and. cframe_pos > 0 .and. prev_render_len > 0) then
+              do i_redraw = 1, min(cframe_pos, prev_render_len)
+                if (content_frame(i_redraw:i_redraw) /= prev_render_frame(i_redraw:i_redraw)) then
+                  first_diff_byte = i_redraw
+                  exit
+                end if
+              end do
+              if (first_diff_byte == 0 .and. cframe_pos /= prev_render_len) then
+                first_diff_byte = min(cframe_pos, prev_render_len) + 1
+              end if
+              if (first_diff_byte > 0) then
+                call adjust_diff_to_boundary(content_frame, cframe_pos, first_diff_byte)
+                call content_byte_to_row_col(content_frame, cframe_pos, first_diff_byte, &
+                                             term_cols, diff_row, diff_col)
+                rdraw_pos = 0
+                if (.not. module_input_state%skip_cursor_up_on_redraw) then
+                  if (nav_cursor_row > 0) then
+                    do i_redraw = 1, nav_cursor_row
+                      call rdraw_append(char(27) // '[A')
+                    end do
+                  end if
+                end if
+                call rdraw_append(ESC_HIDE_CURSOR)
+                if (diff_row > 0) then
+                  do i_redraw = 1, diff_row
+                    call rdraw_append(char(27) // '[B')
+                  end do
+                end if
+                call rdraw_append_char(char(13))
+                if (diff_col > 0) then
+                  do i_redraw = 1, diff_col
+                    call rdraw_append(char(27) // '[C')
+                  end do
+                end if
+                call rdraw_append(char(27) // '[J')
+                if (first_diff_byte <= cframe_pos) then
+                  ! Restore ANSI attribute state: the terminal's SGR state
+                  ! after cursor movement is whatever the PREVIOUS render
+                  ! left (typically ESC[0m = reset), not what the content
+                  ! expects at this byte. Find and re-emit the last SGR
+                  ! sequence (ESC[...m) before first_diff_byte.
+                  last_sgr_start = 0
+                  last_sgr_end = 0
+                  sgr_scan = 1
+                  do while (sgr_scan < first_diff_byte)
+                    if (content_frame(sgr_scan:sgr_scan) == char(27) .and. &
+                        sgr_scan + 1 < first_diff_byte .and. &
+                        content_frame(sgr_scan+1:sgr_scan+1) == '[') then
+                      sgr_esc_end = sgr_scan + 2
+                      do while (sgr_esc_end <= cframe_pos .and. &
+                                .not. (iachar(content_frame(sgr_esc_end:sgr_esc_end)) >= 64 &
+                                .and. iachar(content_frame(sgr_esc_end:sgr_esc_end)) <= 126))
+                        sgr_esc_end = sgr_esc_end + 1
+                      end do
+                      if (sgr_esc_end <= cframe_pos .and. &
+                          content_frame(sgr_esc_end:sgr_esc_end) == 'm') then
+                        last_sgr_start = sgr_scan
+                        last_sgr_end = sgr_esc_end
+                      end if
+                      sgr_scan = sgr_esc_end + 1
+                    else
+                      sgr_scan = sgr_scan + 1
+                    end if
+                  end do
+                  if (last_sgr_start > 0) then
+                    call rdraw_append(content_frame(last_sgr_start:last_sgr_end))
+                  end if
+                  call rdraw_append(content_frame(first_diff_byte:cframe_pos))
+                end if
+              end if
+            end if
+
+            prev_render_frame(1:cframe_pos) = content_frame(1:cframe_pos)
+            prev_render_len = cframe_pos
+            prev_render_valid = .true.
+
             ! Position cursor correctly (if not at end of input)
             if (module_input_state%cursor_pos < module_input_state%length) then
               call cursor_get_row_col(prompt, module_input_state%length, term_cols, current_row, current_col)
@@ -2148,6 +2302,16 @@ contains
               write(error_unit, '(a,i0,a,i0)') '[REDRAW] AFTER cursor_get_row_col: screen_row=', &
                 module_cursor_screen_row, ' screen_col=', module_cursor_screen_col
             end if
+
+          ! Save state for display diffing (Phase 1)
+          if (module_input_state%length > 0) then
+            call state_buffer_get(module_input_state, temp_buf)
+            prev_diff_content(:module_input_state%length) = temp_buf(:module_input_state%length)
+          end if
+          prev_diff_buf_len = module_input_state%length
+          prev_diff_cursor_pos = module_input_state%cursor_pos
+          prev_diff_suggest_len = module_input_state%suggestion_length
+          prev_diff_valid = .true.
 
           module_input_state%dirty = .false.
         end if
@@ -9698,6 +9862,53 @@ contains
     cursor_col = mod(total_pos, term_cols)
   end subroutine
 
+  ! Walk a rendered content buffer (with ANSI codes) and return the visual
+  ! row that byte_pos falls on (0-based, wrapping at term_cols).
+  subroutine content_byte_to_row_col(buf, buf_len, byte_pos, term_cols, row, col_out)
+    integer, intent(in) :: buf_len, byte_pos, term_cols
+    character(len=*), intent(in) :: buf
+    integer, intent(out) :: row, col_out
+    integer :: pos, col
+
+    row = 0
+    col = 0
+    pos = 1
+    col_out = 0
+    if (term_cols <= 0) return
+    do while (pos < byte_pos .and. pos <= buf_len)
+      if (buf(pos:pos) == char(27) .and. pos + 1 <= buf_len &
+          .and. buf(pos+1:pos+1) == '[') then
+        pos = pos + 2
+        do while (pos <= buf_len)
+          if (iachar(buf(pos:pos)) >= 64 .and. iachar(buf(pos:pos)) <= 126) then
+            pos = pos + 1
+            exit
+          end if
+          pos = pos + 1
+        end do
+        cycle
+      end if
+      if (buf(pos:pos) == char(0)) then
+        pos = pos + 1
+        cycle
+      end if
+      if (buf(pos:pos) == char(13) .and. pos + 1 <= buf_len &
+          .and. buf(pos+1:pos+1) == char(10)) then
+        row = row + 1
+        col = 0
+        pos = pos + 2
+        cycle
+      end if
+      col = col + 1
+      if (col >= term_cols) then
+        row = row + 1
+        col = 0
+      end if
+      pos = pos + 1
+    end do
+    col_out = col
+  end subroutine
+
   ! Move cursor from old position to new position, handling line wrapping
   subroutine cursor_move(old_row, old_col, new_row, new_col)
     use iso_fortran_env, only: output_unit, error_unit
@@ -9752,6 +9963,46 @@ contains
     end if
 
     flush(output_unit)
+  end subroutine
+
+  ! Back up diff_pos if it lands inside an ANSI escape or UTF-8 sequence.
+  ! Writing a partial ESC[...m produces visible garbage; a partial UTF-8
+  ! sequence produces replacement characters. Backing up to the start of
+  ! the sequence is safe because ANSI codes are zero-width and the visual
+  ! column calculation already skips them.
+  subroutine adjust_diff_to_boundary(buf, buf_len, diff_pos)
+    integer, intent(in) :: buf_len
+    character(len=*), intent(in) :: buf
+    integer, intent(inout) :: diff_pos
+    integer :: scan, byte_val
+
+    if (diff_pos <= 1 .or. diff_pos > buf_len) return
+
+    ! UTF-8: if diff_pos is a continuation byte (10xxxxxx), back up to lead
+    byte_val = iand(iachar(buf(diff_pos:diff_pos)), 255)
+    if (iand(byte_val, 192) == 128) then
+      do while (diff_pos > 1)
+        diff_pos = diff_pos - 1
+        byte_val = iand(iachar(buf(diff_pos:diff_pos)), 255)
+        if (iand(byte_val, 192) /= 128) exit
+      end do
+      return
+    end if
+
+    ! ANSI: scan backward for an unterminated ESC[ sequence
+    scan = diff_pos - 1
+    do while (scan >= 1)
+      if (buf(scan:scan) == char(27)) then
+        if (scan + 1 <= buf_len .and. buf(scan+1:scan+1) == '[') then
+          diff_pos = scan
+        end if
+        return
+      end if
+      byte_val = iachar(buf(scan:scan))
+      if (byte_val >= 64 .and. byte_val <= 126 .and. buf(scan:scan) /= '[') return
+      if (byte_val < 32 .and. buf(scan:scan) /= char(27)) return
+      scan = scan - 1
+    end do
   end subroutine
 
   ! Restore terminal from raw mode — called by REPL after all continuation prompts
