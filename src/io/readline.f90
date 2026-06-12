@@ -109,6 +109,13 @@ module readline
   integer, parameter :: MAX_DIR_ENTRIES = 200  ! Max directory entries (increased for better completion)
   integer, parameter :: MAX_SCORED_ITEMS = 50  ! Max scored completion items (increased from 30)
 
+  ! True number of matches found by the most recent completion scan, before
+  ! MAX_SCORED_ITEMS / MAX_LOCAL_COMPLETIONS truncation. Feeds the menu's
+  ! "... N more items available" indicator with the real total — without it
+  ! the indicator can never fire, since stored completions are capped at
+  ! MAX_LOCAL_COMPLETIONS == MAX_MENU_ITEMS. Reset per smart_tab_complete run.
+  integer, save :: completion_total_matches = 0
+
   ! Test mode configuration
   logical, save :: test_mode_enabled = .false.
   logical, save :: completion_disabled = .false.
@@ -3799,6 +3806,7 @@ contains
             completions(i) = trim(temp_completions(i))
           end do
           num_completions = min(temp_count, MAX_LOCAL_COMPLETIONS)
+          completion_total_matches = completion_total_matches + temp_count
           used_programmable_completion = .true.
         end if
       end if
@@ -3882,6 +3890,10 @@ contains
       completions(i) = temp_completions(i)
     end do
     num_completions = new_count
+
+    ! The directory-only count of matches beyond the stored cap is
+    ! unknowable, so the "more items" indicator must not claim one
+    completion_total_matches = 0
   end subroutine
 
   ! Check if a string contains glob characters
@@ -3955,15 +3967,17 @@ contains
     allocate(entries(MAX_DIR_ENTRIES), is_dir_flags(MAX_DIR_ENTRIES))
     call list_directory(trim(dir_path), entries, is_dir_flags, num_entries)
 
-    ! Match entries against glob pattern
+    ! Match entries against glob pattern. Keep scanning past the storage cap
+    ! so the true match count reaches the menu's "more items" indicator.
     do i = 1, num_entries
-      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
-
       ! Skip . and ..
       if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') cycle
 
       ! Use pattern_matches from glob module to match against pattern
       if (pattern_matches(file_pattern, trim(entries(i)))) then
+        completion_total_matches = completion_total_matches + 1
+        if (num_completions >= MAX_LOCAL_COMPLETIONS) cycle  ! count only
+
         ! Build full path
         if (trim(dir_path) == '.') then
           full_path = trim(entries(i))
@@ -4139,6 +4153,7 @@ contains
     do i = 1, num_completions
       completions(i) = scored(i)%text
     end do
+    completion_total_matches = completion_total_matches + num_scored
 
     ! Clean up allocatable array
     if (allocated(scored)) deallocate(scored)
@@ -4268,7 +4283,7 @@ contains
     character(len=:), allocatable :: home_dir, debug_mode
     ! Use allocatable array to avoid static storage
     type(scored_completion_t), allocatable :: scored(:)
-    integer :: num_entries, i, pattern_len, num_scored, score, j
+    integer :: num_entries, i, pattern_len, num_scored, score, j, total_matches
     logical :: is_dir, debug_enabled
 
     ! Check if debug mode is enabled
@@ -4306,11 +4321,12 @@ contains
     allocate(entries(MAX_DIR_ENTRIES), is_dir_flags(MAX_DIR_ENTRIES))
     call list_directory(trim(expanded_dir), entries, is_dir_flags, num_entries)
 
-    ! Score entries using fuzzy matching
+    ! Score entries using fuzzy matching. Keep scanning past the storage cap
+    ! so total_matches reflects the real match count — the menu reports
+    ! "... N more items available" from it.
     num_scored = 0
+    total_matches = 0
     do i = 1, num_entries
-      if (num_scored >= MAX_SCORED_ITEMS) exit
-
       ! Skip . and .. unless the user explicitly typed a leading dot
       if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
         if (pattern_len == 0 .or. (pattern_len > 0 .and. pattern(1:1) /= '.')) then
@@ -4326,6 +4342,9 @@ contains
       ! Calculate fuzzy match score
       score = fuzzy_match_score(pattern, trim(full_path))
       if (score >= 0) then  ! Negative score = no match
+        total_matches = total_matches + 1
+        if (num_scored >= MAX_SCORED_ITEMS) cycle  ! count, but storage is full
+
         ! Build full path for display (use original dir_path to preserve ~ in display)
         if (trim(dir_path) == '.') then
           full_path = trim(full_path)
@@ -4353,6 +4372,8 @@ contains
         end if
       end if
     end do
+
+    completion_total_matches = completion_total_matches + total_matches
 
     ! Sort by score
     if (num_scored > 0) then
@@ -4610,6 +4631,9 @@ contains
     character(len=4096) :: expanded_matches
     integer :: last_space_pos, i, pos, j, actual_len
     logical :: is_glob_pattern
+
+    ! Fresh completion run — backends below accumulate the true match count
+    completion_total_matches = 0
 
     ! Use provided length if given, otherwise use len_trim
     if (present(input_len)) then
@@ -5253,7 +5277,7 @@ contains
         else
           if (.not. input_state%completions_shown .or. tab_buffer_changed) then
             ! First tab - store completions and draw grid menu
-            input_state%menu_total_items = tab_num_completions
+            input_state%menu_total_items = max(tab_num_completions, completion_total_matches)
             input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
               ! Copy via temp buffer to avoid flang-new bugs with allocatables
@@ -5331,7 +5355,7 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. tab_buffer_changed) then
         ! First tab - store completions and draw grid menu
-        input_state%menu_total_items = tab_num_completions
+        input_state%menu_total_items = max(tab_num_completions, completion_total_matches)
         input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
           ! Copy via temp buffer to avoid flang-new bugs with allocatables
@@ -5462,7 +5486,7 @@ contains
           ! At common prefix already - show available options only if not already shown
           if (.not. input_state%completions_shown .or. buffer_changed) then
             ! Store completions for menu mode and draw once
-            input_state%menu_total_items = num_completions
+            input_state%menu_total_items = max(num_completions, completion_total_matches)
             input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
             do i = 1, input_state%menu_num_items
               ! Use temp_buffer and explicit copy to avoid truncation warnings
@@ -5489,7 +5513,7 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. buffer_changed) then
         ! First tab - store completions and draw menu
-        input_state%menu_total_items = num_completions
+        input_state%menu_total_items = max(num_completions, completion_total_matches)
         input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
         do i = 1, input_state%menu_num_items
           ! Use temp_buffer and explicit copy to avoid truncation warnings
@@ -5523,7 +5547,7 @@ contains
 
     ! Store menu items
     input_state%in_menu_select = .true.
-    input_state%menu_total_items = num_completions
+    input_state%menu_total_items = max(num_completions, completion_total_matches)
     input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
 
     ! Clear autosuggestion when entering menu mode
@@ -5664,7 +5688,7 @@ contains
 
     ! Show "more items" indicator if there are truncated completions
     if (input_state%menu_total_items > input_state%menu_num_items) then
-      write(output_unit, '(a,i15,a)') &
+      write(output_unit, '(a,i0,a)') &
         '  ... ', input_state%menu_total_items - input_state%menu_num_items, ' more items available'
     end if
 
