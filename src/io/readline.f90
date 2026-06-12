@@ -1609,6 +1609,26 @@ contains
           if (module_input_state%in_search) cycle
           ! Cancel prefix search on any typed character
           if (module_input_state%in_prefix_search) call cancel_prefix_search(module_input_state)
+          ! Completion menu handling mirrors the single-byte path: typing
+          ! while navigating accepts the selection (space-separated), typing
+          ! with the menu merely shown dismisses it
+          if (module_input_state%in_menu_select) then
+            if (module_input_state%in_process_kill_mode) then
+              call exit_menu_select_mode(module_input_state)
+              module_input_state%in_process_kill_mode = .false.
+            else
+              call accept_menu_selection(module_input_state)
+              if (module_input_state%length > 0) then
+                call state_buffer_get(module_input_state, temp_buf)
+                if (temp_buf(module_input_state%length:module_input_state%length) /= '/') then
+                  call insert_char_wrapper(module_input_state, ' ')
+                end if
+              end if
+            end if
+          else if (module_input_state%completions_shown .and. &
+                   module_input_state%menu_num_items > 0) then
+            call exit_menu_select_mode(module_input_state)
+          end if
           ! Multi-byte UTF-8 character (emoji, CJK, etc.)
           ! Determine visual width: 3-4 byte UTF-8 is always 2-wide, 2-byte varies
           if (utf8_num_bytes >= 3) then
@@ -1632,6 +1652,32 @@ contains
         ! Cancel prefix search on any key except escape (arrows handled inside escape handler)
         if (module_input_state%in_prefix_search .and. char_code /= KEY_ESC) then
           call cancel_prefix_search(module_input_state)
+        end if
+
+        ! Completion menu state machine, centralized (fish pager behavior).
+        ! With the table drawn the physical cursor is parked below it, so
+        ! any key path that redraws from line state corrupts the display
+        ! unless the table is taken down first.
+        ! - Drawn but not entered: TAB enters it (tab handler), arrows
+        !   enter it (escape handler), Enter erases it before submitting
+        !   (enter handler); every other key dismisses it, then acts on
+        !   the line normally.
+        ! - Entered (in_menu_select): TAB/Enter/arrows/ESC navigate or
+        !   accept (menu handlers), printable chars accept-and-continue
+        !   (32:126 case); any other control key exits the menu first.
+        if (.not. module_input_state%in_signal_input .and. &
+            .not. module_input_state%in_search .and. &
+            module_input_state%menu_num_items > 0 .and. &
+            char_code /= KEY_TAB .and. char_code /= KEY_ESC .and. &
+            char_code /= KEY_ENTER .and. char_code /= 13) then
+          if (.not. module_input_state%in_menu_select) then
+            if (module_input_state%completions_shown) then
+              call exit_menu_select_mode(module_input_state)
+            end if
+          else if (char_code < 32 .or. char_code == 127) then
+            call exit_menu_select_mode(module_input_state)
+            module_input_state%in_process_kill_mode = .false.
+          end if
         end if
 
         select case(char_code)
@@ -1664,6 +1710,15 @@ contains
             flush(output_unit)
             done = .true.
           else
+            ! Table drawn but not entered: erase it before submitting so it
+            ! doesn't linger above the output (fish behavior). Leaves the
+            ! cursor on the command line row at column 0, so skip the
+            ! suggestion ESC[K below (it would wipe the rendered line).
+            if (module_input_state%completions_shown .and. &
+                module_input_state%menu_num_items > 0) then
+              call clear_menu_display_below(module_input_state)
+              module_input_state%suggestion_length = 0
+            end if
             ! Clear shadow text (suggestion) from cursor to end of line before newline
             if (module_input_state%suggestion_length > 0) then
               write(output_unit, '(a)', advance='no') char(27) // '[K'
@@ -1869,9 +1924,24 @@ contains
             ! Handle signal input for process kill
             call handle_signal_input(module_input_state, ch)
           else if (module_input_state%in_menu_select) then
-            ! Exit menu mode and process character normally
-            call exit_menu_select_mode(module_input_state)
-            call insert_char_wrapper(module_input_state, ch)
+            if (module_input_state%in_process_kill_mode) then
+              ! Process menu: typing cancels it and edits the line
+              call exit_menu_select_mode(module_input_state)
+              module_input_state%in_process_kill_mode = .false.
+              call insert_char_wrapper(module_input_state, ch)
+            else
+              ! Typing while navigating the menu accepts the selected item,
+              ! then the typed character continues the line, space-separated
+              ! (fish appends a space after non-directory completions)
+              call accept_menu_selection(module_input_state)
+              if (module_input_state%length > 0) then
+                call state_buffer_get(module_input_state, temp_buf)
+                if (temp_buf(module_input_state%length:module_input_state%length) /= '/') then
+                  call insert_char_wrapper(module_input_state, ' ')
+                end if
+              end if
+              call insert_char_wrapper(module_input_state, ch)
+            end if
           else if (module_input_state%in_search) then
             call search_add_char(module_input_state, ch, prompt)
           else if (module_input_state%editing_mode == EDITING_MODE_VI .and. &
@@ -5203,7 +5273,6 @@ contains
           else
             ! Second tab - enter menu selection mode
             ! Activate menu mode (items already stored and displayed)
-            write(error_unit, '(a)') '[ENTERING_MENU_SELECT_MODE]'
             input_state%in_menu_select = .true.
 
             ! Clear autosuggestion when entering menu mode
@@ -5742,17 +5811,8 @@ contains
     input_state%length = completed_len
     input_state%cursor_pos = completed_len  ! Cursor at end
 
-    ! CRITICAL: Set flag to skip upward cursor movement on redraw
-    ! We're already on the first line after exit_menu_select_mode,
-    ! so the redraw shouldn't try to move up based on cursor position
-    input_state%skip_cursor_up_on_redraw = .true.
-
-    ! Invalidate display diff state — the menu exit repositioned the
-    ! cursor and cleared screen regions, so prev_render_frame is stale.
-    prev_diff_valid = .false.
-    prev_render_valid = .false.
-
-    ! Mark dirty to trigger redraw
+    ! Mark dirty to trigger redraw (exit_menu_select_mode already set
+    ! skip_cursor_up_on_redraw and invalidated the display-diff frames)
     input_state%dirty = .true.
 
     ! Update autosuggestion for future use
@@ -5803,6 +5863,14 @@ contains
       write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down (all menu)
       write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Move back up to command line
       write(output_unit, '(a)', advance='no') char(13)  ! Back to start of command line
+
+      ! Cursor is now at the start of the command line row with the screen
+      ! below cleared. The next redraw must start from here rather than
+      ! moving up, and the display-diff frames are stale. Every menu exit
+      ! path needs this, not just Enter-accept.
+      input_state%skip_cursor_up_on_redraw = .true.
+      prev_diff_valid = .false.
+      prev_render_valid = .false.
     end if
 
     input_state%in_menu_select = .false.
@@ -5812,6 +5880,108 @@ contains
     input_state%menu_prefix_len = 0
     input_state%completions_shown = .false.
     input_state%dirty = .true.
+  end subroutine
+
+  ! Activate menu selection on a table that is already drawn (first tab,
+  ! not yet entered) — used when an arrow key enters the menu, matching
+  ! fish's pager. Same activation as the second-tab path but without
+  ! advancing the selection: the arrow itself navigates from item 1.
+  subroutine activate_menu_select_from_shown(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: buf
+    integer :: i, last_space_pos
+
+    input_state%in_menu_select = .true.
+
+    ! Clear autosuggestion when entering menu mode
+    input_state%suggestion = ''
+    input_state%suggestion_length = 0
+
+    ! Derive menu prefix from the current buffer (unchanged since the tab
+    ! that drew the table — any edit would have dismissed it)
+    call state_buffer_get(input_state, buf)
+    last_space_pos = 0
+    do i = input_state%length, 1, -1
+      if (buf(i:i) == ' ') then
+        last_space_pos = i
+        exit
+      end if
+    end do
+
+    if (last_space_pos > 0) then
+#ifdef __APPLE__
+      ! Copy character by character to avoid substring on allocatable (flang-new bug)
+      input_state%menu_prefix = ''
+      do i = 1, last_space_pos
+        input_state%menu_prefix(i:i) = buf(i:i)
+      end do
+#else
+#ifdef USE_MEMORY_POOL
+      input_state%menu_prefix_ref%data = buf(:last_space_pos)
+#else
+      input_state%menu_prefix = buf(:last_space_pos)
+#endif
+#endif
+      input_state%menu_prefix_len = last_space_pos
+    else
+#ifdef USE_C_STRINGS
+      input_state%menu_prefix = ''
+#elif defined(USE_MEMORY_POOL)
+      input_state%menu_prefix_ref%data = ''
+#else
+      input_state%menu_prefix = ''
+#endif
+      input_state%menu_prefix_len = 0
+    end if
+  end subroutine
+
+  ! Erase the drawn table without touching the command line row, leaving
+  ! the cursor on the command line at column 0. Used when Enter submits
+  ! with the table shown but not entered: exit_menu_select_mode would
+  ! clear the command line row and schedule a redraw, but submission
+  ! needs the rendered line left intact.
+  subroutine clear_menu_display_below(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i, num_rows, term_rows, term_cols, cols_per_item, items_per_row, extra_lines
+    logical :: success
+
+    if (input_state%menu_num_items <= 0) return
+
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_cols <= 0) then
+      term_cols = 80
+    end if
+
+    cols_per_item = 0
+    do i = 1, input_state%menu_num_items
+      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
+    end do
+    cols_per_item = cols_per_item + 2
+
+    items_per_row = max(1, term_cols / cols_per_item)
+    num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
+
+    extra_lines = 0
+    if (input_state%menu_total_items > input_state%menu_num_items) then
+      extra_lines = 1
+    end if
+
+    ! Layout: [cmd][blank][row1]...[rowN][extra?][cursor here]
+    ! Move up to the blank line, erase it and everything below, then step
+    ! up onto the command line row
+    do i = 1, num_rows + extra_lines + 1
+      write(output_unit, '(a)', advance='no') char(27) // '[A'
+    end do
+    write(output_unit, '(a)', advance='no') char(13)
+    write(output_unit, '(a)', advance='no') char(27) // '[J'
+    write(output_unit, '(a)', advance='no') char(27) // '[A'
+    flush(output_unit)
+
+    input_state%menu_num_items = 0
+    input_state%menu_total_items = 0
+    input_state%menu_selection = 1
+    input_state%menu_prefix_len = 0
+    input_state%completions_shown = .false.
   end subroutine
 
   subroutine update_menu_selection(input_state, old_selection)
@@ -6313,6 +6483,55 @@ contains
           ! Unknown escape sequence in menu mode
           continue
         end select
+      end if
+      return
+    end if
+
+    ! Menu drawn but not entered (first tab): arrow keys enter and navigate
+    ! it (fish pager behavior). Bare ESC or any other sequence dismisses the
+    ! table; the key itself is swallowed (its bytes are consumed so trailing
+    ! sequence characters don't leak into the line as literal input).
+    if (input_state%completions_shown .and. input_state%menu_num_items > 0 .and. &
+        .not. input_state%in_signal_input .and. .not. input_state%in_search) then
+      success = read_single_char(ch1)
+      if (.not. success) then
+        ! Bare ESC - dismiss the table
+        call exit_menu_select_mode(input_state)
+        return
+      end if
+
+      if (ch1 == '[') then
+        success = read_single_char(ch2)
+        if (.not. success) return
+
+        select case(ch2)
+        case('A')
+          call activate_menu_select_from_shown(input_state)
+          call handle_menu_navigation(input_state, KEY_UP, done)
+        case('B')
+          call activate_menu_select_from_shown(input_state)
+          call handle_menu_navigation(input_state, KEY_DOWN, done)
+        case('C')
+          call activate_menu_select_from_shown(input_state)
+          call handle_menu_navigation(input_state, KEY_RIGHT, done)
+        case('D')
+          call activate_menu_select_from_shown(input_state)
+          call handle_menu_navigation(input_state, KEY_LEFT, done)
+        case default
+          ! Consume the rest of the sequence (parameter bytes through the
+          ! terminator) so it doesn't leak, then dismiss the table
+          block
+            character :: chx
+            chx = ch2
+            do while ((chx >= '0' .and. chx <= '9') .or. chx == ';')
+              if (.not. read_single_char(chx)) exit
+            end do
+          end block
+          call exit_menu_select_mode(input_state)
+        end select
+      else
+        ! Alt+key combination - dismiss the table, swallow the key
+        call exit_menu_select_mode(input_state)
       end if
       return
     end if
