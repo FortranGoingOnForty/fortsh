@@ -106,7 +106,6 @@ module readline
   integer, parameter :: MAX_MENU_ITEM_LEN = 256
   integer, parameter :: MAX_MENU_ITEMS = 40  ! Increased from 20 for better usability
   integer, parameter :: MAX_LOCAL_COMPLETIONS = 40  ! Max completions to process locally
-  integer, parameter :: MAX_DIR_ENTRIES = 200  ! Max directory entries (increased for better completion)
   integer, parameter :: MAX_SCORED_ITEMS = 512  ! Max scored completion items (raised for pager)
 
   ! Pager item store: backs the scrollable completion menu (fish-style
@@ -4318,7 +4317,7 @@ contains
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
 
-    integer, parameter :: MAX_DIR_ENTRIES = 4096
+    integer, parameter :: MAX_DIR_ENTRIES = 16384  ! AR-06: 4x coverage (was 4096)
     character(len=MAX_LINE_LEN) :: dir_path, file_pattern
     character(len=256), allocatable :: entries(:)
     logical, allocatable :: is_dir_flags(:)
@@ -4477,6 +4476,9 @@ contains
 
     ! Iterate the environment natively (no `env | cut | tr` subprocess); each
     ! entry is "NAME=value", so match on the NAME before '='.
+    ! NOTE: environ holds only EXPORTED names. Completing unexported shell
+    ! variables needs the live shell_state_t, which the interactive readline
+    ! backend does not currently receive — see AR-06b for the threading plan.
     i = 0
     do
       entry = get_environ_entry(i)
@@ -4756,7 +4758,7 @@ contains
     character(len=MAX_LINE_LEN), intent(inout) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(inout) :: num_completions
 
-    integer, parameter :: MAX_DIR_ENTRIES = 4096
+    integer, parameter :: MAX_DIR_ENTRIES = 16384  ! AR-06: 4x coverage (was 4096)
     character(len=1024) :: expanded_dir
     character(len=256), allocatable :: entries(:)       ! one filename per slot
     logical, allocatable :: is_dir_flags(:)             ! parallel to entries
@@ -8129,11 +8131,13 @@ contains
       return
     end if
 
-    ! Require prefix match unless fuzzy-complete is enabled.
+    ! Require a prefix match unless fuzzy-complete is enabled (AR-06).
     ! With fuzzy off (default): behaves like bash/zsh — only prefix matches.
-    ! With fuzzy on (set -o fuzzy-complete): short patterns still require
-    ! prefix, longer patterns allow fuzzy subsequence matching.
-    if (.not. global_fuzzy_complete .or. pattern_len <= 3) then
+    ! With fuzzy on (set -o fuzzy-complete): uniform fuzzy subsequence matching
+    ! at any length (dropped the arbitrary len<=3 gate, which fish has no
+    ! analogue for) — EXCEPT an option-looking token (leading '-') stays prefix,
+    ! so `-x`+Tab doesn't fuzzily match unrelated flags.
+    if (.not. global_fuzzy_complete .or. pattern(1:1) == '-') then
       is_prefix_match = .true.
       do i = 1, pattern_len
         if (to_lowercase(pattern(i:i)) /= to_lowercase(candidate(i:i))) then
