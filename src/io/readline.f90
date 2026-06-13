@@ -7308,6 +7308,9 @@ contains
       case('/')
         ! Alt+/ — redo (DIV-1), the counterpart to Ctrl-/ undo.
         call handle_redo(input_state)
+      case('t')
+        ! Alt+t — transpose-words (DIV-4): swap the two words around the cursor.
+        call handle_transpose_words(input_state)
       case(char(127))
         ! Alt+Backspace - backward-kill-word (punctuation-aware small word;
         ! distinct from Ctrl+W = backward-kill-path-component, DIV-3).
@@ -9119,6 +9122,56 @@ contains
       input_state%cursor_pos = input_state%cursor_pos + 1
       input_state%dirty = .true.
     end if
+  end subroutine
+
+  ! Alt-t — transpose-words (DIV-4): swap the word at/before the cursor with the
+  ! preceding word, leaving the cursor after the relocated word (fish/emacs).
+  ! Word boundaries use the DIV-3 small-word classifier.
+  subroutine handle_transpose_words(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=MAX_LINE_LEN) :: buf, out
+    integer :: c, n, w1s, w1e, w2s, w2e, i
+
+    n = input_state%length
+    c = input_state%cursor_pos
+    if (n < 3 .or. c == 0) return
+
+    call state_buffer_get(input_state, buf)
+
+    ! word2 = the word containing or just before the cursor.
+    w2e = c
+    do while (w2e > 0 .and. char_class(buf(w2e:w2e)) /= 1)
+      w2e = w2e - 1
+    end do
+    if (w2e == 0) return
+    ! Extend through the rest of the word if the cursor sat inside it.
+    do while (w2e < n .and. char_class(buf(w2e+1:w2e+1)) == 1)
+      w2e = w2e + 1
+    end do
+    w2s = w2e
+    do while (w2s > 1 .and. char_class(buf(w2s-1:w2s-1)) == 1)
+      w2s = w2s - 1
+    end do
+
+    ! word1 = the word immediately before word2 (across the separator).
+    w1e = w2s - 1
+    do while (w1e > 0 .and. char_class(buf(w1e:w1e)) /= 1)
+      w1e = w1e - 1
+    end do
+    if (w1e == 0) return    ! only one word — nothing to transpose
+    w1s = w1e
+    do while (w1s > 1 .and. char_class(buf(w1s-1:w1s-1)) == 1)
+      w1s = w1s - 1
+    end do
+
+    ! Rebuild: prefix + word2 + separator + word1 + suffix (length unchanged).
+    out = buf(1:w1s-1) // buf(w2s:w2e) // buf(w1e+1:w2s-1) // buf(w1s:w1e) // buf(w2e+1:n)
+    do i = 1, n
+      call state_buffer_set_char(input_state, i, out(i:i))
+    end do
+    input_state%length = n
+    input_state%cursor_pos = w2e   ! end of the relocated word1
+    input_state%dirty = .true.
   end subroutine
 
   ! Yank last argument from previous command (Alt+.)

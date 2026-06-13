@@ -95,3 +95,11 @@ def test_alt_d_kills_small_word_forward(fortsh_path, tmp_path):
                      b"\x01" + b"\x1b[C" * 5 + b"\x1bd")
     assert ".bb" in rows
     assert "aa.bb" not in rows
+
+
+def test_alt_t_transposes_words(fortsh_path, tmp_path):
+    """Alt-t swaps the two words around the cursor: `foo bar` -> `bar foo`
+    (DIV-4 — previously a no-op)."""
+    rows = _edit_run(fortsh_path, tmp_path, b"echo foo bar", b"\x1bt")
+    assert "bar foo" in rows
+    assert "foo bar" not in rows
