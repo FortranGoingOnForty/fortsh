@@ -1943,11 +1943,12 @@ contains
             ! Delete last word from search query
             call search_kill_word(module_input_state, prompt)
           else
-            ! Kill previous word (exit menu mode first if active)
+            ! Ctrl+W = fish backward-kill-path-component (exit menu first).
+            ! Alt+Backspace remains the punctuation-aware backward-kill-word.
             if (module_input_state%in_menu_select) then
               call exit_menu_select_mode(module_input_state)
             end if
-            call handle_kill_word(module_input_state)
+            call handle_kill_path_component(module_input_state)
           end if
           
         case(KEY_CTRL_V)
@@ -3706,9 +3707,29 @@ contains
     input_state%dirty = .true.
   end subroutine
 
+  ! Character class for fish-style punctuation-aware word motion (DIV-3):
+  ! 0 = whitespace, 1 = word char (alnum + '_'), 2 = punctuation (other).
+  ! A "small word" is a maximal run of a single non-space class, so a
+  ! punctuation run (e.g. "@", "://") is its own word, matching fish.
+  pure integer function char_class(c)
+    character, intent(in) :: c
+    integer :: ic
+    ic = iachar(c)
+    if (c == ' ' .or. c == char(9)) then
+      char_class = 0
+    else if ((ic >= iachar('0') .and. ic <= iachar('9')) .or. &
+             (ic >= iachar('A') .and. ic <= iachar('Z')) .or. &
+             (ic >= iachar('a') .and. ic <= iachar('z')) .or. &
+             c == '_') then
+      char_class = 1
+    else
+      char_class = 2
+    end if
+  end function char_class
+
   subroutine move_to_next_word(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: pos
+    integer :: pos, cls
     integer :: old_cursor_pos
 
     ! Plain word-motion with active selection: clear, then proceed from
@@ -3737,15 +3758,19 @@ contains
       ! 3. Now at START of next word (or end of line)
       input_state%cursor_pos = min(pos - 1, input_state%length)
     else
-      ! Emacs mode (Alt+f): Skip spaces first, then move to END of word
-      ! Skip any leading spaces
-      do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) == ' ')
+      ! Emacs mode (Alt+f): fish forward-word — skip whitespace, then consume
+      ! ONE class-run (punctuation runs are their own small-word; DIV-3).
+      do while (pos <= input_state%length .and. &
+                char_class(state_buffer_get_char(input_state, pos)) == 0)
         pos = pos + 1
       end do
-      ! Skip word characters (stop at end of word)
-      do while (pos <= input_state%length .and. state_buffer_get_char(input_state, pos) /= ' ')
-        pos = pos + 1
-      end do
+      if (pos <= input_state%length) then
+        cls = char_class(state_buffer_get_char(input_state, pos))
+        do while (pos <= input_state%length .and. &
+                  char_class(state_buffer_get_char(input_state, pos)) == cls)
+          pos = pos + 1
+        end do
+      end if
       input_state%cursor_pos = min(pos - 1, input_state%length)
     end if
 
@@ -3758,7 +3783,7 @@ contains
 
   subroutine move_to_previous_word(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: pos
+    integer :: pos, cls
     integer :: old_cursor_pos
 
     ! Plain word-motion with active selection: clear, then proceed from
@@ -3779,19 +3804,30 @@ contains
 
     pos = input_state%cursor_pos - 1
 
-    ! Skip spaces
-    do while (pos > 0 .and. state_buffer_get_char(input_state, pos) == ' ')
-      pos = pos - 1
-    end do
+    if (input_state%editing_mode == EDITING_MODE_VI) then
+      ! Vi 'b': whitespace-delimited (vi word-style refinement is AR-05b/DIV-7).
+      do while (pos > 0 .and. state_buffer_get_char(input_state, pos) == ' ')
+        pos = pos - 1
+      end do
+      do while (pos > 0 .and. state_buffer_get_char(input_state, pos) /= ' ')
+        pos = pos - 1
+      end do
+    else
+      ! Emacs (Alt+b): fish backward-word — skip whitespace, then step back over
+      ! ONE class-run so a punctuation run is its own small-word (DIV-3).
+      do while (pos > 0 .and. char_class(state_buffer_get_char(input_state, pos)) == 0)
+        pos = pos - 1
+      end do
+      if (pos > 0) then
+        cls = char_class(state_buffer_get_char(input_state, pos))
+        do while (pos > 0 .and. char_class(state_buffer_get_char(input_state, pos)) == cls)
+          pos = pos - 1
+        end do
+      end if
+    end if
 
-    ! Find beginning of word
-    do while (pos > 0 .and. state_buffer_get_char(input_state, pos) /= ' ')
-      pos = pos - 1
-    end do
-
-    ! pos is now at a space (or 0 if at beginning)
-    ! cursor_pos represents position between characters,
-    ! so space position is correct (cursor will be after space, before first char of word)
+    ! pos is now just before the word start (or 0). cursor_pos is a
+    ! between-characters index, so this lands the cursor at the word start.
     input_state%cursor_pos = pos
     input_state%dirty = .true.
 
@@ -8388,7 +8424,7 @@ contains
   
   subroutine handle_kill_word(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: word_start, i
+    integer :: word_start, i, cls
     character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Shift-phase (Sprint 3): Ctrl+W with an active selection becomes a
@@ -8406,20 +8442,25 @@ contains
       return
     end if
 
-    ! Find start of current word (skip trailing spaces first)
+    ! Find start of the small-word to kill (DIV-3: punctuation-aware, fish
+    ! backward-kill-word). Skip trailing whitespace, then step back over one
+    ! class-run so "user/repo" loses just "repo", then "/", then "user".
     word_start = input_state%cursor_pos
 
-    ! Skip any trailing whitespace
-    do while (word_start > 0 .and. state_buffer_get_char(input_state, word_start) == ' ')
+    do while (word_start > 0 .and. &
+              char_class(state_buffer_get_char(input_state, word_start)) == 0)
       word_start = word_start - 1
     end do
 
-    ! Find beginning of word (non-space characters)
-    do while (word_start > 0 .and. state_buffer_get_char(input_state, word_start) /= ' ')
-      word_start = word_start - 1
-    end do
+    if (word_start > 0) then
+      cls = char_class(state_buffer_get_char(input_state, word_start))
+      do while (word_start > 0 .and. &
+                char_class(state_buffer_get_char(input_state, word_start)) == cls)
+        word_start = word_start - 1
+      end do
+    end if
 
-    ! word_start is now at space before word, or 0 if at beginning
+    ! word_start is now just before the killed run, or 0 if at beginning
     if (word_start < input_state%cursor_pos) then
       ! Save killed text
       call state_buffer_get(input_state, temp_buf)
@@ -8447,24 +8488,93 @@ contains
     end if
   end subroutine
 
+  ! Ctrl+W — fish backward-kill-path-component: kill back to the previous '/'
+  ! or whitespace, removing one path component (and a trailing slash). On
+  ! "git@github.com:user/repo" this leaves "git@github.com:user/" (DIV-3).
+  subroutine handle_kill_path_component(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: word_start, i
+    character :: c
+    character(len=MAX_LINE_LEN) :: temp_buf
+
+    ! Selection cut, mirroring handle_kill_word.
+    if (input_state%selection_active) then
+      call copy_selection_to_kill_buffer(input_state)
+      call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
+
+    if (input_state%cursor_pos == 0) then
+      input_state%kill_length = 0
+      return
+    end if
+
+    word_start = input_state%cursor_pos
+
+    ! Skip trailing whitespace.
+    do while (word_start > 0 .and. &
+              char_class(state_buffer_get_char(input_state, word_start)) == 0)
+      word_start = word_start - 1
+    end do
+
+    ! Skip one trailing slash so "foo/bar/" kills "bar/".
+    if (word_start > 0) then
+      if (state_buffer_get_char(input_state, word_start) == '/') word_start = word_start - 1
+    end if
+
+    ! Kill back to the previous '/' or whitespace.
+    do while (word_start > 0)
+      c = state_buffer_get_char(input_state, word_start)
+      if (c == '/' .or. char_class(c) == 0) exit
+      word_start = word_start - 1
+    end do
+
+    if (word_start < input_state%cursor_pos) then
+      call state_buffer_get(input_state, temp_buf)
+      call state_kill_buffer_set(input_state, temp_buf(word_start+1:input_state%cursor_pos))
+      input_state%kill_length = input_state%cursor_pos - word_start
+
+      do i = word_start + 1, input_state%length - input_state%cursor_pos + word_start
+        if (input_state%cursor_pos + i - word_start <= input_state%length) then
+          call state_buffer_set_char(input_state, i, &
+            state_buffer_get_char(input_state, input_state%cursor_pos + i - word_start))
+        else
+          call state_buffer_set_char(input_state, i, ' ')
+        end if
+      end do
+
+      input_state%length = input_state%length - (input_state%cursor_pos - word_start)
+      input_state%cursor_pos = word_start
+      input_state%dirty = .true.
+      call update_autosuggestion(input_state)
+    else
+      input_state%kill_length = 0
+    end if
+  end subroutine
+
   ! Alt+d — kill word forward (delete from cursor to end of next word)
   subroutine handle_kill_word_forward(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: word_end, i, chars_to_delete
+    integer :: word_end, i, chars_to_delete, cls
 
     if (input_state%cursor_pos >= input_state%length) return
 
     word_end = input_state%cursor_pos + 1
 
-    ! Skip whitespace first
-    do while (word_end <= input_state%length .and. state_buffer_get_char(input_state, word_end) == ' ')
+    ! fish kill-word: skip whitespace, then consume ONE class-run (DIV-3).
+    do while (word_end <= input_state%length .and. &
+              char_class(state_buffer_get_char(input_state, word_end)) == 0)
       word_end = word_end + 1
     end do
 
-    ! Skip word characters
-    do while (word_end <= input_state%length .and. state_buffer_get_char(input_state, word_end) /= ' ')
-      word_end = word_end + 1
-    end do
+    if (word_end <= input_state%length) then
+      cls = char_class(state_buffer_get_char(input_state, word_end))
+      do while (word_end <= input_state%length .and. &
+                char_class(state_buffer_get_char(input_state, word_end)) == cls)
+        word_end = word_end + 1
+      end do
+    end if
 
     chars_to_delete = word_end - input_state%cursor_pos - 1
     if (chars_to_delete <= 0) return
