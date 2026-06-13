@@ -106,3 +106,73 @@ def test_menu_repeat_at_edge_jumps(fortsh_path, tmp_path):
             jumped = True
             break
     assert jumped, f"no stop-then-jump pattern at the edge: {seq!r}"
+
+
+def _menu_rows(screen):
+    """Menu item rows, excluding the prompt/command line itself."""
+    return [r.rstrip() for r in screen.display
+            if "file_" in r and not r.lstrip().startswith(">")]
+
+
+def test_esc_dismisses_entered_menu(fortsh_path, tmp_path):
+    """ESC dismisses the menu after entering it (Tab Tab), leaving the command
+    line intact and editable. (Previously ESC blocked on a no-timeout read and
+    never dismissed.)"""
+    child, screen, drain = _open_menu(fortsh_path, tmp_path)
+    assert len(_menu_rows(screen)) > 0, "menu did not open"
+    child.send(b"\x1b")  # bare ESC
+    drain(1.2)
+    remaining = _menu_rows(screen)
+    cmd = next((r.rstrip() for r in screen.display if r.lstrip().startswith(">")), "")
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    assert remaining == [], f"ESC did not dismiss the menu: {remaining!r}"
+    # ESC restores the original typed text, discarding the live preview
+    # (e.g. not left on `cat file_hotel.txt`).
+    assert cmd.rstrip().endswith("cat file_"), \
+        f"ESC did not restore the original command line: {cmd!r}"
+
+
+def test_esc_dismisses_shown_menu(fortsh_path, tmp_path):
+    """ESC dismisses the menu when shown but not entered (single Tab)."""
+    for n in ("alpha", "bravo", "charlie", "delta", "echo_f", "foxtrot",
+              "golf", "hotel", "india", "juliet"):
+        (tmp_path / f"file_{n}.txt").write_text("x\n")
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, 90))
+    screen = pyte.Screen(90, ROWS)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs=1.0):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"cat file_")
+    drain(0.5)
+    child.send(b"\t")  # draw menu, do NOT enter
+    drain(0.8)
+    assert len(_menu_rows(screen)) > 0, "menu did not open"
+    child.send(b"\x1b")
+    drain(1.2)
+    remaining = _menu_rows(screen)
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    assert remaining == [], f"ESC did not dismiss shown menu: {remaining!r}"

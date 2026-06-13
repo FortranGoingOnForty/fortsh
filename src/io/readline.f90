@@ -127,6 +127,11 @@ module readline
   ! moves the selection.
   integer, save :: menu_edge_armed = 0
 
+  ! Timeout (ms) to wait for a byte following ESC before treating it as a bare
+  ! ESC. A real arrow/sequence arrives as one burst; 50ms is comfortably above
+  ! that yet far below human keystroke timing. (AR-03 Esc-dismiss)
+  integer, parameter :: MENU_ESC_TIMEOUT_MS = 50
+
   ! True number of matches found by the most recent completion scan, before
   ! MAX_SCORED_ITEMS / MAX_LOCAL_COMPLETIONS truncation. Feeds the menu's
   ! "... N more items available" indicator with the real total — without it
@@ -6881,6 +6886,15 @@ contains
 
     ! Check if we're in menu select mode - route arrow keys to menu navigation
     if (input_state%in_menu_select) then
+      ! Peek for a following byte with a short timeout. A real arrow key sends
+      ! ESC[ as one burst, so the next byte is already waiting; a bare ESC has
+      ! nothing following. read_single_char() blocks (no timeout), so without
+      ! this poll a bare ESC would hang until the next keystroke and then
+      ! mis-read it — which is why ESC never dismissed the menu. (AR-03)
+      if (.not. input_ready_within(MENU_ESC_TIMEOUT_MS)) then
+        call handle_menu_navigation(input_state, KEY_ESC, done)
+        return
+      end if
       ! Try to read the next character to see if it's an arrow key
       success = read_single_char(ch1)
       if (.not. success) then
@@ -6917,6 +6931,12 @@ contains
     ! sequence characters don't leak into the line as literal input).
     if (input_state%completions_shown .and. input_state%menu_num_items > 0 .and. &
         .not. input_state%in_signal_input .and. .not. input_state%in_search) then
+      ! Short-timeout peek (see above): bare ESC dismisses the shown table
+      ! instead of blocking on read_single_char until the next keystroke.
+      if (.not. input_ready_within(MENU_ESC_TIMEOUT_MS)) then
+        call exit_menu_select_mode(input_state)
+        return
+      end if
       success = read_single_char(ch1)
       if (.not. success) then
         ! Bare ESC - dismiss the table
