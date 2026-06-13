@@ -9592,6 +9592,21 @@ contains
     input_state%suggestion = ''
     input_state%suggestion_length = 0
 
+    ! SAFETY (AR-01): a trailing space means the user FINISHED the current
+    ! token. We must NOT keep suggesting a path completion for the PREVIOUS
+    ! token — len_trim() below would silently drop the space and re-suggest
+    ! e.g. a "/" for a just-completed directory. That stale "/" ghost renders
+    ! after the space and, if accepted, becomes a SEPARATE argument:
+    ! `rm -rf /path/dir ` -> `rm -rf /path/dir /`  (deletes /). Bail here so a
+    ! finished token carries no path suggestion. (History suggestions, handled
+    ! before this is called, already match the full line incl. the space.)
+    if (len(current_input) >= 1) then
+      if (current_input(len(current_input):len(current_input)) == ' ' .or. &
+          current_input(len(current_input):len(current_input)) == char(9)) then
+        return
+      end if
+    end if
+
     input_len = len_trim(current_input)
     if (input_len == 0) return
 

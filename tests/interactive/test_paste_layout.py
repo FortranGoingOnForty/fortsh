@@ -132,3 +132,61 @@ def test_wrapped_paste_home_no_duplication(fortsh_path):
     echo_rows = [r for r in rows if "echo A" in r]
     assert len(echo_rows) == 1, \
         f"wrapped line duplicated after Home; echo rows={echo_rows!r}"
+
+
+def test_paste_dir_then_space_no_stale_slash_ghost(fortsh_path, tmp_path):
+    """AR-01 safety: pasting a path that ends in an existing directory shows a
+    '/' autosuggestion ghost; pressing Space FINISHES the token and must clear
+    that ghost. A stale '/' ghost rendered after the space can be accepted as a
+    SEPARATE argument (e.g. `rm -rf /path/dir ` -> `rm -rf /path/dir /`), which
+    nearly deleted '/'. The token-finished suggestion must be empty."""
+    import os
+    d = tmp_path / "compatdata" / "1086940"
+    d.mkdir(parents=True)
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(24, 120))
+    screen = pyte.Screen(120, 24)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs=1.3):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    def ghost_chars():
+        out = []
+        for y in range(24):
+            for x in sorted(screen.buffer[y]):
+                cell = screen.buffer[y][x]
+                if cell.data.strip() and str(cell.fg) in ("brightblack", "8"):
+                    out.append(cell.data)
+        return out
+
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"\x1b[200~rm -rf " + str(d).encode() + b"\x1b[201~")
+    drain(1.3)
+    # after paste, a '/' ghost (dir completion) is expected and fine
+    child.send(b" ")  # Space finishes the token
+    drain(1.3)
+    after_space = ghost_chars()
+    try:
+        child.send(b"\x1b[F")  # End — must not strand an acceptable '/'
+        drain(1.0)
+        after_end = ghost_chars()
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        after_end = after_space
+    assert "/" not in after_space, \
+        f"stale '/' autosuggestion ghost persisted after Space: {after_space!r}"
+    assert "/" not in after_end, \
+        f"stale '/' ghost still present after End (could be accepted as 2nd arg): {after_end!r}"
