@@ -22,8 +22,8 @@ ROWS, COLS = 24, 80
 
 
 def _run_paste(fortsh_path, payload):
-    """Spawn fortsh, bracketed-paste `payload`, press Enter, return the
-    pyte screen after execution."""
+    """Spawn fortsh, bracketed-paste `payload`, press Enter, return
+    (rows, reverse_cell_count) from the pyte screen after execution."""
     import os
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
@@ -48,19 +48,22 @@ def _run_paste(fortsh_path, payload):
     drain(0.6)
     child.send(b"\r")
     drain(0.8)
+    reverse = sum(1 for r in range(ROWS)
+                  for _, ch in screen.buffer[r].items()
+                  if ch.reverse and ch.data.strip())
     try:
         child.send(b"\x03")
         child.sendline(b"exit")
         child.close()
     except Exception:
         pass
-    return [r.rstrip() for r in screen.display]
+    return [r.rstrip() for r in screen.display], reverse
 
 
 def test_paste_execute_output_on_own_line(fortsh_path):
     """A pasted echo must leave its output on a row of its own, not fused
     onto the command line or the next prompt."""
-    rows = _run_paste(fortsh_path, b"echo PASTEMARK")
+    rows, _ = _run_paste(fortsh_path, b"echo PASTEMARK")
     # The command line row contains 'echo PASTEMARK'; the output row is
     # 'PASTEMARK' alone (no prompt, no 'echo'). The corruption produced
     # rows like 'echo PASTEMARKPASTEMARK' or a prompt fused to output.
@@ -74,6 +77,14 @@ def test_paste_execute_output_on_own_line(fortsh_path):
 
 def test_paste_execute_next_prompt_isolated(fortsh_path):
     """The prompt after a pasted command must not share a row with output."""
-    rows = _run_paste(fortsh_path, b"echo ISOLATED")
+    rows, _ = _run_paste(fortsh_path, b"echo ISOLATED")
     fused = [r for r in rows if "ISOLATED" in r and ">" in r and "echo" not in r]
     assert not fused, f"prompt fused with output; screen={rows!r}"
+
+
+def test_paste_highlight_cleared_after_execute(fortsh_path):
+    """The reverse-video paste highlight must not survive into scrollback —
+    the submitted command line is repainted un-highlighted before the
+    newline, so no reverse-video cells remain."""
+    _, reverse = _run_paste(fortsh_path, b"echo HLCHECK")
+    assert reverse == 0, f"paste highlight left {reverse} reverse-video cells in scrollback"

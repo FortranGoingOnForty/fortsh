@@ -1392,6 +1392,8 @@ contains
     integer :: highlighted_len  ! Actual length of highlighted string
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
     logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
+    logical :: submit_pending  ! Normal Enter: defer the newline until after the
+                               ! in-place redraw (clears paste highlight first)
     integer :: first_diff_byte, diff_row, diff_col  ! Phase 2/3 diff
     integer :: last_sgr_start, last_sgr_end, sgr_scan, sgr_esc_end  ! SGR restore
     character(len=MAX_LINE_LEN) :: temp_buf  ! For buffer extraction
@@ -1459,6 +1461,7 @@ contains
     ! Initialize variables
     iostat = 0
     done = .false.
+    submit_pending = .false.
     raw_enabled = .false.
     highlighted_len = 0
     prev_diff_valid = .false.
@@ -1749,23 +1752,30 @@ contains
             write(output_unit, '(a)', advance='no') char(13) // char(10)
             flush(output_unit)
             done = .true.
-          else
+          else if (module_input_state%completions_shown .and. &
+                   module_input_state%menu_num_items > 0) then
             ! Table drawn but not entered: erase it before submitting so it
-            ! doesn't linger above the output (fish behavior). Leaves the
-            ! cursor on the command line row at column 0, so skip the
-            ! suggestion ESC[K below (it would wipe the rendered line).
-            if (module_input_state%completions_shown .and. &
-                module_input_state%menu_num_items > 0) then
-              call clear_menu_display_below(module_input_state)
-              module_input_state%suggestion_length = 0
-            end if
-            ! Clear shadow text (suggestion) from cursor to end of line before newline
+            ! doesn't linger above the output (fish behavior). This leaves the
+            ! cursor on the command line row with the screen below cleared, so
+            ! submit immediately with an inline newline — no deferred redraw
+            ! (a redraw here would repaint over the just-cleared region).
+            call clear_menu_display_below(module_input_state)
+            module_input_state%suggestion_length = 0
+            write(output_unit, '(a)', advance='no') char(13) // char(10)
+            flush(output_unit)
+            done = .true.
+          else
+            ! Normal submit. Clear shadow text (suggestion) from cursor to end
+            ! of line, then DEFER the newline: if the line is still dirty (a
+            ! paste whose reverse-video highlight must be cleared), the redraw
+            ! block below repaints it un-highlighted IN PLACE first, and the
+            ! deferred newline (emitted after that block) then moves below the
+            ! clean line. Emitting the newline here would either repaint on top
+            ! of the command output or strand the highlight in scrollback.
             if (module_input_state%suggestion_length > 0) then
               write(output_unit, '(a)', advance='no') char(27) // '[K'
             end if
-            ! In raw mode, \n alone doesn't CR — must send \r\n explicitly
-            write(output_unit, '(a)', advance='no') char(13) // char(10)
-            flush(output_unit)
+            submit_pending = .true.
             done = .true.
           end if
 
@@ -2019,14 +2029,16 @@ contains
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         ! Skip redraw when in menu selection mode - menu handles its own display
         ! In test mode, skip full redraw to avoid polluting PTY output
-        ! Skip when submitting (done): the Enter handler already emitted the
-        ! newline, so a redraw here repaints the command line BELOW it, on top
-        ! of the command's output. This bit the paste path specifically: a
-        ! paste defers its redraw while Enter is queued (input_pending), so
-        ! dirty is still set on the Enter iteration; typed input doesn't defer,
-        ! so its dirty was already cleared before Enter and it never hit this.
+        ! Skip when a done-setting key already emitted its own newline (Ctrl-C,
+        ! search accept, menu submit, EOF): a redraw here would repaint the
+        ! command line BELOW that newline, on top of the command output. The
+        ! normal Enter submit is the exception — it sets submit_pending and
+        ! defers its newline to AFTER this block, so the redraw runs IN PLACE
+        ! first (repainting un-highlighted, clearing a paste's reverse-video),
+        ! then the deferred newline moves below the clean line.
         if (.not. test_mode_initialized) call init_test_mode()
-        if (module_input_state%dirty .and. .not. defer_redraw .and. .not. done .and. &
+        if (module_input_state%dirty .and. .not. defer_redraw .and. &
+            (.not. done .or. submit_pending) .and. &
             .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
           ! Search mode: delegate to two-line search display instead of normal redraw
           if (module_input_state%in_search) then
@@ -2431,8 +2443,18 @@ contains
 
           module_input_state%dirty = .false.
         end if
+
+        ! Deferred submit newline (normal Enter): emitted AFTER the redraw
+        ! above so the command line is repainted in place (un-highlighted)
+        ! before we move past it. The cursor is left at the input position
+        ! (end of line for a paste); \r\n moves cleanly to the next row.
+        if (submit_pending) then
+          write(output_unit, '(a)', advance='no') char(13) // char(10)
+          flush(output_unit)
+          submit_pending = .false.
+        end if
       end do
-      
+
       ! Restore terminal (unless keep_raw requested for continuation prompts)
       if (present(keep_raw)) then
         if (.not. keep_raw) then
