@@ -132,3 +132,50 @@ def test_alt_f_accepts_one_word(fortsh_path, tmp_path):
 def test_ctrl_right_accepts_one_word(fortsh_path, tmp_path):
     """Ctrl-Right accepts one word of the autosuggestion at EOL (AS-6)."""
     assert _word_accept_and_run(fortsh_path, tmp_path, b"\x1b[1;5C") == "foo"
+
+
+def test_suggestion_renders_on_wrapped_line(fortsh_path, tmp_path):
+    """AS-2: the autosuggestion still renders once the input wraps past row 0.
+
+    Raw-byte check (pyte mistracks the bright-black ghost): force a wrap with a
+    narrow terminal, then assert the keystroke that redraws in the wrapped state
+    emits ESC[90m (the ghost SGR). Before the fix the `current_row == 0` gate
+    suppressed the suggestion on any wrapped line, so no ESC[90m appeared.
+    """
+    cols = 40
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, cols))
+    raw = bytearray()
+
+    def drain(secs=0.8):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                raw.extend(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"echo " + b"q" * 60 + b"\r")  # history entry
+    drain(0.7)
+    prefix = b"echo " + b"q" * 50  # 55 chars: wraps at cols=40 regardless of prompt
+    for ch in prefix[:-1]:
+        child.send(bytes([ch]))
+        time.sleep(0.02)
+    drain(0.6)
+    mark = len(raw)
+    child.send(bytes([prefix[-1]]))  # final keystroke redraws in the wrapped state
+    drain(0.6)
+    tail = bytes(raw[mark:])
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    assert b"\x1b[90m" in tail, "no bright-black ghost emitted on the wrapped line"

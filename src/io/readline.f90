@@ -2333,7 +2333,12 @@ contains
                   if (available_space < 0) available_space = 0
                   if (available_space > term_cols) available_space = 0
 
-                  if (current_row == 0 .and. available_space >= 3) then
+                  ! Render on whatever physical row the end-of-line lands (AS-2).
+                  ! cursor_pos == length means this is the last row; the
+                  ! suggestion is truncated to available_space-2 so it never
+                  ! wraps off this row, and the trailing ESC[D backtrack returns
+                  ! the cursor to end-of-input regardless of the row number.
+                  if (available_space >= 3) then
                     suggestion_display_len = min(module_input_state%suggestion_length, available_space - 2)
                     if (suggestion_display_len < 0) suggestion_display_len = 0
                     if (suggestion_display_len > MAX_LINE_LEN) suggestion_display_len = 0
