@@ -98,3 +98,36 @@ def test_dotfile_completes_with_leading_dot(fortsh_path, tmp_path):
     rows = [r.rstrip() for r in screen.display if r.strip()]
     _cleanup(child)
     assert ".hidden" in rows
+
+
+def test_trailing_space_after_unique_file(fortsh_path, tmp_path):
+    """A unique file completion gets a trailing space, so a marker typed right
+    after Tab is a separate echo arg: `echo readme.txt Z` -> `readme.txt Z`."""
+    (tmp_path / "readme.txt").write_text("")
+    child, screen, drain = _spawn(fortsh_path, tmp_path)
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"echo readme\t")
+    drain(0.8)
+    child.send(b"Z\r")
+    drain(0.8)
+    rows = [r.rstrip() for r in screen.display if r.strip()]
+    _cleanup(child)
+    assert "readme.txt Z" in rows
+    assert "readme.txtZ" not in rows
+
+
+def test_no_trailing_space_after_dir(fortsh_path, tmp_path):
+    """A directory completion ends in `/` with no trailing space, so a marker
+    typed after Tab abuts the slash: `echo mydir/Z`."""
+    (tmp_path / "mydir").mkdir()
+    child, screen, drain = _spawn(fortsh_path, tmp_path)
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"echo mydi\t")
+    drain(0.8)
+    child.send(b"Z\r")
+    drain(0.8)
+    rows = [r.rstrip() for r in screen.display if r.strip()]
+    _cleanup(child)
+    assert "mydir/Z" in rows

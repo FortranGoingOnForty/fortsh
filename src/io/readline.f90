@@ -5771,6 +5771,20 @@ contains
       input_state%cursor_pos = input_state%length
       input_state%dirty = .true.
 
+      ! AR-06: a UNIQUE non-directory completion gets a trailing space, so the
+      ! next token can be typed immediately (fish; mirrors the menu-accept path).
+      ! Directories already end in '/'. Skip glob expansions (multi-word).
+      if (tab_num_completions == 1 .and. input_state%length >= 1 .and. &
+          input_state%length < MAX_LINE_LEN .and. &
+          .not. has_glob_chars(tab_partial_input)) then
+        if (state_buffer_get_char(input_state, input_state%length) /= '/' .and. &
+            state_buffer_get_char(input_state, input_state%length) /= ' ') then
+          call state_buffer_set_char(input_state, input_state%length + 1, ' ')
+          input_state%length = input_state%length + 1
+          input_state%cursor_pos = input_state%length
+        end if
+      end if
+
       ! Recompute autosuggestion for the completed buffer — without this,
       ! the stale suggestion from before tab (e.g. "tsh" for "fort" → "fortsh")
       ! persists and renders as ghost text after the completed word.
