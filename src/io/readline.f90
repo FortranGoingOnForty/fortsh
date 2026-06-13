@@ -5655,11 +5655,11 @@ contains
               input_state%menu_prefix_len = 0
             end if
 
-            ! Advance selection to second item to show we've entered menu mode
-            ! Update in place without reprinting the whole menu
-            if (input_state%menu_num_items > 1) then
-              input_state%menu_selection = 2  ! Change from 1 to 2
-              call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
+            ! Enter on the FIRST item, highlighted (AR-03 menu-sel: was item 2)
+            if (input_state%menu_num_items >= 1) then
+              input_state%menu_selection = 1
+              call update_menu_selection(input_state, 1)
+              call update_live_preview(input_state)
             end if
             flush(output_unit)
           end if
@@ -5722,12 +5722,10 @@ contains
           input_state%menu_prefix_len = 0
         end if
 
-        ! Advance selection to second item to show we've entered menu mode
-        ! Update in place without reprinting the whole menu
-        if (input_state%menu_num_items > 1) then
-          input_state%menu_selection = 2  ! Change from 1 to 2
-          call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
-          ! Update command line preview with selected item
+        ! Enter on the FIRST item, highlighted (AR-03 menu-sel: was item 2)
+        if (input_state%menu_num_items >= 1) then
+          input_state%menu_selection = 1
+          call update_menu_selection(input_state, 1)
           call update_live_preview(input_state)
         end if
         flush(output_unit)
@@ -5927,13 +5925,10 @@ contains
       input_state%menu_prefix_len = 0
     end if
 
-    ! Advance selection to second item to make it clear we've entered menu mode
-    ! This provides visual feedback that menu selection is now active
-    ! Update in place without reprinting the whole menu
-    if (input_state%menu_num_items > 1) then
-      input_state%menu_selection = 2  ! Change from 1 to 2
-      call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
-      ! Show initial preview
+    ! Enter on the FIRST item, highlighted (AR-03 menu-sel: was item 2)
+    if (input_state%menu_num_items >= 1) then
+      input_state%menu_selection = 1
+      call update_menu_selection(input_state, 1)
       call update_live_preview(input_state)
     end if
     flush(output_unit)

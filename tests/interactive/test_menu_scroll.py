@@ -176,3 +176,56 @@ def test_esc_dismisses_shown_menu(fortsh_path, tmp_path):
     except Exception:
         pass
     assert remaining == [], f"ESC did not dismiss shown menu: {remaining!r}"
+
+
+def test_menu_enters_on_first_item(fortsh_path, tmp_path):
+    """AR-03 menu-sel: entering the menu (2nd Tab) keeps the selection on the
+    FIRST item (highlighted), not advancing to item 2/3. Verified via raw
+    ESC[7m capture, since pyte mis-tracks reverse-video across the ESC[s/ESC[u
+    the live preview uses."""
+    import re
+    for n in ("alpha", "bravo", "charlie", "delta", "echo_f", "foxtrot",
+              "golf", "hotel", "india", "juliet"):
+        (tmp_path / f"file_{n}.txt").write_text("x\n")
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, 28))
+
+    def grab(secs=0.9):
+        out = b""
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                out += child.read_nonblocking(65536, timeout=0.2)
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+        return out
+
+    def highlighted(frame):
+        m = re.search(rb"\x1b\[7m([^\x1b]*)\x1b\[0m", frame)
+        return m.group(1).decode("utf-8", "replace").strip() if m else None
+
+    time.sleep(1.0)
+    grab(1.0)
+    child.send(b"cat file_")
+    grab(0.6)
+    first_tab = grab(0.0)  # nothing new; force a real frame next
+    child.send(b"\t")
+    draw = grab(0.9)
+    item_on_draw = highlighted(draw)        # first item, highlighted by the draw
+    child.send(b"\t")
+    enter = grab(0.9)
+    item_on_enter = highlighted(enter)      # must still be the first item
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    assert item_on_draw, f"no highlighted item after first Tab: {draw!r}"
+    assert item_on_enter == item_on_draw, (
+        f"entering the menu advanced off item 1: draw={item_on_draw!r} "
+        f"enter={item_on_enter!r}")
