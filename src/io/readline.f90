@@ -4808,10 +4808,12 @@ contains
     num_scored = 0
     total_matches = 0
     do i = 1, num_entries
-      ! Skip . and .. unless the user explicitly typed a leading dot
-      if (trim(entries(i)) == '.' .or. trim(entries(i)) == '..') then
-        if (pattern_len == 0 .or. (pattern_len > 0 .and. pattern(1:1) /= '.')) then
-          cycle
+      ! Hide dotfiles (incl. '.' and '..') unless the pattern itself starts with
+      ! '.' (fish convention; AR-06). Previously only '.'/'..' were skipped, so a
+      ! bare `ls `+Tab leaked .hidden/.bashrc into the candidate set.
+      if (len_trim(entries(i)) > 0) then
+        if (entries(i)(1:1) == '.') then
+          if (pattern_len == 0 .or. pattern(1:1) /= '.') cycle
         end if
       end if
 
