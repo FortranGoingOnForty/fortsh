@@ -120,6 +120,13 @@ module readline
   logical, save :: pager_active = .false.
   logical, save :: pager_collect = .false.
 
+  ! Menu vertical-scroll edge state (AR-03 NEW-2): Up/Down STOP at the top/
+  ! bottom of the table (no infinite wrap). When already at an edge, the NEXT
+  ! same-direction press jumps to the opposite edge. 0=none, 1=armed-at-top,
+  ! 2=armed-at-bottom. Reset whenever a menu opens/closes or any other nav key
+  ! moves the selection.
+  integer, save :: menu_edge_armed = 0
+
   ! True number of matches found by the most recent completion scan, before
   ! MAX_SCORED_ITEMS / MAX_LOCAL_COMPLETIONS truncation. Feeds the menu's
   ! "... N more items available" indicator with the real total — without it
@@ -5844,6 +5851,7 @@ contains
     input_state%menu_selection = 1
     input_state%menu_row_start = 1
     input_state%menu_disclosed = .false.
+    menu_edge_armed = 0
   end subroutine
 
   ! Menu item accessor: pager-backed menus read from the module store,
@@ -5921,7 +5929,6 @@ contains
       input_state%menu_selection = 2  ! Change from 1 to 2
       call update_menu_selection(input_state, 1)  ! Update display (old was 1, new is 2)
       ! Show initial preview
-      write(error_unit, '(a)') '[CALLING_PREVIEW_FROM_ENTER_MENU]'
       call update_live_preview(input_state)
     end if
     flush(output_unit)
@@ -6072,7 +6079,7 @@ contains
     logical, intent(inout) :: done
     integer :: old_selection, new_selection
     integer :: items_per_row
-    integer :: current_row, current_col, target_row
+    integer :: current_row, current_col, target_row, last_row
 
     if (.false.) print *, done  ! Silence unused warning (set by caller)
 
@@ -6082,42 +6089,57 @@ contains
 
     select case (key)
     case (KEY_UP, KEY_DOWN)
-      ! 2D navigation: move up/down by one row in the grid
-      ! Use cached layout from input_state (avoids repeated array iterations)
+      ! 2D navigation: move up/down by one row in the grid, STOPPING at the
+      ! top/bottom (no infinite wrap). When already at the edge, the next
+      ! same-direction press jumps to the opposite edge. (AR-03 NEW-2)
       items_per_row = input_state%menu_items_per_row
 
-      ! Calculate current position in grid (1-indexed)
       current_row = (input_state%menu_selection - 1) / items_per_row + 1
       current_col = mod(input_state%menu_selection - 1, items_per_row) + 1
+      last_row = (input_state%menu_num_items - 1) / items_per_row + 1
 
       if (key == KEY_UP) then
-        ! Move up one row
-        target_row = current_row - 1
-        if (target_row < 1) then
-          ! Wrap to bottom row, same column
-          target_row = (input_state%menu_num_items - 1) / items_per_row + 1
+        if (current_row <= 1) then
+          ! At the top. First press: stop (no move) and arm. Repeat: jump
+          ! to the last item.
+          if (menu_edge_armed == 1) then
+            input_state%menu_selection = input_state%menu_num_items
+            menu_edge_armed = 0
+          else
+            menu_edge_armed = 1
+          end if
+        else
+          target_row = current_row - 1
+          new_selection = (target_row - 1) * items_per_row + current_col
+          if (new_selection < 1) new_selection = 1
+          if (new_selection > input_state%menu_num_items) &
+            new_selection = input_state%menu_num_items
+          input_state%menu_selection = new_selection
+          menu_edge_armed = 0
         end if
       else  ! KEY_DOWN
-        ! Move down one row
-        target_row = current_row + 1
-        if ((target_row - 1) * items_per_row + current_col > input_state%menu_num_items) then
-          ! Wrap to top row, same column
-          target_row = 1
+        ! "At the bottom" = the cell one row down (same column) does not exist.
+        if (current_row >= last_row .or. &
+            current_row * items_per_row + current_col > input_state%menu_num_items) then
+          if (menu_edge_armed == 2) then
+            input_state%menu_selection = 1
+            menu_edge_armed = 0
+          else
+            menu_edge_armed = 2
+          end if
+        else
+          target_row = current_row + 1
+          new_selection = (target_row - 1) * items_per_row + current_col
+          if (new_selection > input_state%menu_num_items) &
+            new_selection = input_state%menu_num_items
+          input_state%menu_selection = new_selection
+          menu_edge_armed = 0
         end if
       end if
-
-      ! Calculate new selection
-      new_selection = (target_row - 1) * items_per_row + current_col
-      ! Clamp to valid range
-      if (new_selection < 1) new_selection = 1
-      if (new_selection > input_state%menu_num_items) then
-        ! If target position doesn't exist (incomplete last row), go to last item
-        new_selection = input_state%menu_num_items
-      end if
-      input_state%menu_selection = new_selection
 
     case (KEY_LEFT)
       ! Move left one item (same row)
+      menu_edge_armed = 0
       input_state%menu_selection = input_state%menu_selection - 1
       if (input_state%menu_selection < 1) then
         input_state%menu_selection = input_state%menu_num_items  ! Wrap to end
@@ -6125,13 +6147,16 @@ contains
 
     case (KEY_RIGHT)
       ! Move right one item (same row)
+      menu_edge_armed = 0
       input_state%menu_selection = input_state%menu_selection + 1
       if (input_state%menu_selection > input_state%menu_num_items) then
         input_state%menu_selection = 1  ! Wrap to beginning
       end if
 
     case (KEY_TAB)
-      ! Tab continues to cycle sequentially through all items
+      ! Tab continues to cycle sequentially through all items (wrap is fine —
+      ! Tab is the explicit "cycle through everything" key, not scroll)
+      menu_edge_armed = 0
       input_state%menu_selection = input_state%menu_selection + 1
       if (input_state%menu_selection > input_state%menu_num_items) then
         input_state%menu_selection = 1
