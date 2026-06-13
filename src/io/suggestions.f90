@@ -20,6 +20,7 @@ module suggestions
     character(len=SUGGEST_BUF_LEN) :: text = ''
     integer :: length = 0
     integer :: source = 0  ! SUGGEST_NONE, SUGGEST_PATH, SUGGEST_HISTORY
+    integer :: matched_index = 0  ! history slot the match came from (1-based)
   end type suggestion_result_t
 
   public :: compute_path_suggestion, compute_history_suggestion
@@ -80,25 +81,35 @@ contains
   !
   ! Searches history_lines backwards for the first entry that starts with
   ! current_input. Returns the remaining suffix (truncated at newlines).
+  !
+  ! max_index (optional) caps the search to slots 1..max_index, letting the
+  ! caller re-search past a rejected match (AS-7 history validation): pass
+  ! matched_index-1 to get the next-older candidate.
   ! --------------------------------------------------------------------------
   function compute_history_suggestion(current_input, input_len, &
-      history_lines, history_count) result(res)
+      history_lines, history_count, max_index) result(res)
     character(len=*), intent(in) :: current_input
     integer, intent(in) :: input_len
     character(len=*), intent(in) :: history_lines(:)
     integer, intent(in) :: history_count
+    integer, intent(in), optional :: max_index
     type(suggestion_result_t) :: res
 
-    integer :: i, j, hist_len, remainder_len, newline_pos
+    integer :: i, j, hist_len, remainder_len, newline_pos, search_from
     logical :: matches
 
     res%text = ''
     res%length = 0
     res%source = SUGGEST_NONE
+    res%matched_index = 0
 
     if (input_len == 0 .or. history_count == 0) return
 
-    do i = history_count, 1, -1
+    search_from = history_count
+    if (present(max_index)) search_from = min(max_index, history_count)
+    if (search_from < 1) return
+
+    do i = search_from, 1, -1
       hist_len = len_trim(history_lines(i))
       if (hist_len > input_len) then
         ! Check prefix match character-by-character
@@ -141,6 +152,7 @@ contains
           end do
           res%length = remainder_len
           res%source = SUGGEST_HISTORY
+          res%matched_index = i
           return
         end if
       end if

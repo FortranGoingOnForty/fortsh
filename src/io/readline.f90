@@ -9878,7 +9878,7 @@ contains
 
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: j
+    integer :: j, search_max
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
     type(suggestion_result_t) :: hist_result
@@ -9920,21 +9920,34 @@ contains
       current_input(j:j) = state_buffer_get_char(input_state, j)
     end do
 
-    ! Priority 1: history-based suggestion (fish-style: history first)
+    ! Priority 1: history-based suggestion (fish-style: history first).
+    ! AS-7: a history entry that is `cd`/`pushd` into a now-missing directory
+    ! is rejected (mirrors fish autosuggest_validate_from_history); keep
+    ! searching older entries via max_index until a valid match or none.
     if (command_history%count > 0 .and. allocated(command_history%lines)) then
-      hist_result = compute_history_suggestion( &
-        current_input, input_state%length, &
-        command_history%lines, command_history%count)
+      search_max = command_history%count
+      do
+        hist_result = compute_history_suggestion( &
+          current_input, input_state%length, &
+          command_history%lines, command_history%count, search_max)
 
-      if (hist_result%source /= SUGGEST_NONE) then
-        input_state%suggestion = ''
-        do j = 1, hist_result%length
-          input_state%suggestion(j:j) = hist_result%text(j:j)
-        end do
-        input_state%suggestion_length = hist_result%length
-        if (allocated(current_input)) deallocate(current_input)
-        return
-      end if
+        if (hist_result%source == SUGGEST_NONE) exit
+
+        if (history_suggestion_valid(current_input(1:input_state%length), &
+                                     hist_result%text(1:hist_result%length))) then
+          input_state%suggestion = ''
+          do j = 1, hist_result%length
+            input_state%suggestion(j:j) = hist_result%text(j:j)
+          end do
+          input_state%suggestion_length = hist_result%length
+          if (allocated(current_input)) deallocate(current_input)
+          return
+        end if
+
+        ! Rejected — search entries older than this match.
+        if (hist_result%matched_index <= 1) exit
+        search_max = hist_result%matched_index - 1
+      end do
     end if
 
     ! Priority 2: path-based suggestion (fallback when no history match)
@@ -9942,6 +9955,75 @@ contains
 
     if (allocated(current_input)) deallocate(current_input)
   end subroutine
+
+  ! AS-7: a history suggestion is invalid only when we are confident its command
+  ! is `cd`/`pushd` into a LITERAL path that no longer exists (mirrors fish
+  ! autosuggest_validate_from_history). Anything ambiguous — globs, $vars,
+  ! command substitution, quoted or multi-token args, options, ~user — is
+  ! treated as valid so a genuine suggestion is never hidden.
+  logical function history_suggestion_valid(typed, remainder)
+    character(len=*), intent(in) :: typed, remainder
+    character(len=MAX_LINE_LEN) :: full, arg, expanded
+    character(len=:), allocatable :: home
+    integer :: n, p, cmd_start, cmd_end, arg_start, i
+
+    history_suggestion_valid = .true.
+
+    ! Reconstruct the full command. Do NOT trim `typed` — its trailing space
+    ! (e.g. "cd ") is the separator before the suggested path.
+    full = typed // remainder
+    n = len_trim(full)
+    if (n == 0) return
+
+    ! Command word = first whitespace-delimited token.
+    p = 1
+    do while (p <= n .and. (full(p:p) == ' ' .or. full(p:p) == char(9)))
+      p = p + 1
+    end do
+    cmd_start = p
+    do while (p <= n .and. full(p:p) /= ' ' .and. full(p:p) /= char(9))
+      p = p + 1
+    end do
+    cmd_end = p - 1
+    if (cmd_end < cmd_start) return
+    if (.not. (full(cmd_start:cmd_end) == 'cd' .or. &
+               full(cmd_start:cmd_end) == 'pushd')) return
+
+    ! Argument = the rest of the line.
+    do while (p <= n .and. (full(p:p) == ' ' .or. full(p:p) == char(9)))
+      p = p + 1
+    end do
+    arg_start = p
+    if (n < arg_start) return                 ! no arg -> HOME, valid
+    if (full(arg_start:arg_start) == '-') return  ! cd - / options, valid
+
+    ! Ambiguous tokens -> skip validation (treat as valid).
+    do i = arg_start, n
+      select case (full(i:i))
+      case ('$', '`', '*', '?', '[', '"', "'", ' ', char(9))
+        return
+      end select
+    end do
+
+    arg = full(arg_start:n)
+
+    ! Expand a leading ~ (but not ~user, which we can't resolve here).
+    if (arg(1:1) == '~') then
+      home = get_environment_var('HOME')
+      if (.not. allocated(home)) return
+      if (len_trim(arg) == 1) then
+        expanded = trim(home)
+      else if (arg(2:2) == '/') then
+        expanded = trim(home) // trim(arg(2:))
+      else
+        return
+      end if
+    else
+      expanded = arg
+    end if
+
+    if (.not. file_is_directory(trim(expanded))) history_suggestion_valid = .false.
+  end function history_suggestion_valid
 
   ! Accept the current autosuggestion
   subroutine accept_autosuggestion(input_state)

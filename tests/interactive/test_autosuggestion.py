@@ -236,3 +236,62 @@ def test_second_right_after_paste_accepts(fortsh_path, tmp_path):
     """AR-01-fu: once the highlight is cleared, the next Right accepts the
     suggestion (fish forward-char semantics)."""
     assert _paste_then_right_run(fortsh_path, tmp_path, 2) == "ZZprefix_and_the_suffix"
+
+
+def test_history_cd_suggestion_validated(fortsh_path, tmp_path):
+    """AS-7: a `cd` history suggestion into a now-missing directory is not
+    offered (fish autosuggest_validate_from_history). Raw-byte: the ghost SGR
+    ESC[90m appears for `cd goned` while gonedir123 exists, and is gone once the
+    directory is removed."""
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, COLS))
+    raw = bytearray()
+
+    def drain(secs=0.7):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                raw.extend(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    def prefix_suggests(prefix):
+        # type all but the last char, then check only the final keystroke's redraw
+        for ch in prefix[:-1]:
+            child.send(bytes([ch]))
+            time.sleep(0.03)
+        drain(0.5)
+        mark = len(raw)
+        child.send(bytes([prefix[-1]]))
+        time.sleep(0.05)
+        drain(0.6)
+        return b"\x1b[90m" in bytes(raw[mark:])
+
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"mkdir gonedir123\r")
+    drain(0.6)
+    child.send(b"cd gonedir123\r")  # adds `cd gonedir123` to history
+    drain(0.6)
+    child.send(b"cd ..\r")
+    drain(0.6)
+    exists = prefix_suggests(b"cd goned")
+    child.send(b"\x15")  # Ctrl-U clear line
+    drain(0.3)
+    child.send(b"rmdir gonedir123\r")
+    drain(0.6)
+    removed = prefix_suggests(b"cd goned")
+    child.send(b"\x15")
+    drain(0.2)
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    assert exists, "ghost expected while the cd target directory exists"
+    assert not removed, "stale cd target must not be suggested (AS-7)"
