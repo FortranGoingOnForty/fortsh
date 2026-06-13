@@ -8284,6 +8284,13 @@ contains
       input_state%cursor_pos = input_state%length
       ! Mark dirty to trigger full redraw with correct cursor position
       input_state%dirty = .true.
+    else if (input_state%cursor_pos == input_state%length .and. &
+             input_state%suggestion_length > 0 .and. &
+             .not. module_extending_selection) then
+      ! Already at end of line with an autosuggestion: accept the whole thing,
+      ! mirroring Right (AR-04 AS-1: End/Ctrl-E were no-ops here). Not during
+      ! shift-extension.
+      call accept_autosuggestion(input_state)
     end if
 
     if (module_extending_selection) then
