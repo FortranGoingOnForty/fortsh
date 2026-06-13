@@ -107,7 +107,18 @@ module readline
   integer, parameter :: MAX_MENU_ITEMS = 40  ! Increased from 20 for better usability
   integer, parameter :: MAX_LOCAL_COMPLETIONS = 40  ! Max completions to process locally
   integer, parameter :: MAX_DIR_ENTRIES = 200  ! Max directory entries (increased for better completion)
-  integer, parameter :: MAX_SCORED_ITEMS = 50  ! Max scored completion items (increased from 30)
+  integer, parameter :: MAX_SCORED_ITEMS = 512  ! Max scored completion items (raised for pager)
+
+  ! Pager item store: backs the scrollable completion menu (fish-style
+  ! disclosure + row scrolling). tab_completions stays capped at
+  ! MAX_LOCAL_COMPLETIONS for common-prefix logic; the menu reads from
+  ! here when pager_active. pager_collect gates filling so backend calls
+  ! from the autosuggestion path can't clobber the store between draws.
+  integer, parameter :: PAGER_STORE_MAX = 512
+  character(len=MAX_MENU_ITEM_LEN), save :: pager_items(PAGER_STORE_MAX)
+  integer, save :: pager_item_count = 0
+  logical, save :: pager_active = .false.
+  logical, save :: pager_collect = .false.
 
   ! True number of matches found by the most recent completion scan, before
   ! MAX_SCORED_ITEMS / MAX_LOCAL_COMPLETIONS truncation. Feeds the menu's
@@ -194,6 +205,11 @@ module readline
     integer :: menu_cols_per_item = 0
     integer :: menu_items_per_row = 0
     integer :: menu_num_rows = 0
+    ! Pager window (fish-style disclosure + row scrolling)
+    integer :: menu_row_start = 1      ! First visible grid row (1-based)
+    logical :: menu_disclosed = .false. ! Expanded to full available height
+    integer :: menu_visible_rows = 0   ! Rows shown by the last draw
+    integer :: menu_drawn_lines = 0    ! Lines of the last menu render (rows + progress line)
 
     ! Process kill mode support (Ctrl-X)
     logical :: in_process_kill_mode = .false.  ! Currently in process kill mode
@@ -1169,6 +1185,10 @@ contains
     state%menu_total_items = 0
     state%menu_selection = 1
     state%menu_prefix_len = 0
+    state%menu_row_start = 1
+    state%menu_disclosed = .false.
+    state%menu_visible_rows = 0
+    state%menu_drawn_lines = 0
     state%selected_pid = 0
 
     ! Initialize logical fields
@@ -3807,6 +3827,13 @@ contains
           end do
           num_completions = min(temp_count, MAX_LOCAL_COMPLETIONS)
           completion_total_matches = completion_total_matches + temp_count
+          if (pager_collect) then
+            do i = 1, temp_count
+              if (pager_item_count >= PAGER_STORE_MAX) exit
+              pager_item_count = pager_item_count + 1
+              pager_items(pager_item_count) = temp_completions(i)(1:min(len(temp_completions(i)), MAX_MENU_ITEM_LEN))
+            end do
+          end if
           used_programmable_completion = .true.
         end if
       end if
@@ -3890,6 +3917,21 @@ contains
       completions(i) = temp_completions(i)
     end do
     num_completions = new_count
+
+    ! Filter the pager store the same way so directory-only menus
+    ! (cd/pushd/popd) never page through files
+    if (pager_item_count > 0) then
+      new_count = 0
+      do i = 1, pager_item_count
+        if (len_trim(pager_items(i)) > 0) then
+          if (pager_items(i)(len_trim(pager_items(i)):len_trim(pager_items(i))) == '/') then
+            new_count = new_count + 1
+            pager_items(new_count) = pager_items(i)
+          end if
+        end if
+      end do
+      pager_item_count = new_count
+    end if
 
     ! The directory-only count of matches beyond the stored cap is
     ! unknowable, so the "more items" indicator must not claim one
@@ -3976,7 +4018,8 @@ contains
       ! Use pattern_matches from glob module to match against pattern
       if (pattern_matches(file_pattern, trim(entries(i)))) then
         completion_total_matches = completion_total_matches + 1
-        if (num_completions >= MAX_LOCAL_COMPLETIONS) cycle  ! count only
+        if (num_completions >= MAX_LOCAL_COMPLETIONS .and. &
+            (.not. pager_collect .or. pager_item_count >= PAGER_STORE_MAX)) cycle  ! count only
 
         ! Build full path
         if (trim(dir_path) == '.') then
@@ -3987,11 +4030,14 @@ contains
 
         ! Directory-ness comes straight from readdir (no per-entry test -d)
         is_dir = is_dir_flags(i)
-        num_completions = num_completions + 1
-        if (is_dir) then
-          completions(num_completions) = trim(full_path) // '/'
-        else
+        if (is_dir) full_path = trim(full_path) // '/'
+        if (num_completions < MAX_LOCAL_COMPLETIONS) then
+          num_completions = num_completions + 1
           completions(num_completions) = trim(full_path)
+        end if
+        if (pager_collect .and. pager_item_count < PAGER_STORE_MAX) then
+          pager_item_count = pager_item_count + 1
+          pager_items(pager_item_count) = full_path(1:MAX_MENU_ITEM_LEN)
         end if
       end if
     end do
@@ -4154,6 +4200,15 @@ contains
       completions(i) = scored(i)%text
     end do
     completion_total_matches = completion_total_matches + num_scored
+
+    ! Fill the pager store for menu scrolling
+    if (pager_collect) then
+      do i = 1, num_scored
+        if (pager_item_count >= PAGER_STORE_MAX) exit
+        pager_item_count = pager_item_count + 1
+        pager_items(pager_item_count) = scored(i)%text(1:MAX_MENU_ITEM_LEN)
+      end do
+    end if
 
     ! Clean up allocatable array
     if (allocated(scored)) deallocate(scored)
@@ -4386,6 +4441,15 @@ contains
       num_completions = num_completions + 1
       completions(num_completions) = scored(j)%text
     end do
+
+    ! Fill the pager store with the full sorted set for menu scrolling
+    if (pager_collect) then
+      do j = 1, num_scored
+        if (pager_item_count >= PAGER_STORE_MAX) exit
+        pager_item_count = pager_item_count + 1
+        pager_items(pager_item_count) = scored(j)%text(1:MAX_MENU_ITEM_LEN)
+      end do
+    end if
 
     ! Debug output
     if (debug_enabled) then
@@ -4633,7 +4697,10 @@ contains
     logical :: is_glob_pattern
 
     ! Fresh completion run — backends below accumulate the true match count
+    ! and (while pager_collect is set) fill the pager item store
     completion_total_matches = 0
+    pager_item_count = 0
+    pager_collect = .true.
 
     ! Use provided length if given, otherwise use len_trim
     if (present(input_len)) then
@@ -4676,6 +4743,10 @@ contains
 
     ! Pass the actual length to preserve trailing spaces
     call enhanced_tab_complete(partial_input, completions, num_completions, input_len=actual_len)
+
+    ! Backends are done — stop pager collection so later backend calls
+    ! (e.g. from the autosuggestion path) can't clobber the store
+    pager_collect = .false.
 
     if (num_completions == 0) then
       ! No completions found
@@ -5212,13 +5283,12 @@ contains
   ! This modifies the SAVE'd input_state directly without problematic returns
   subroutine handle_tab_key_separate(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: tab_num_completions, i, j, last_space_pos, copy_len
+    integer :: tab_num_completions, i, last_space_pos
     logical :: tab_completed, tab_made_progress, tab_buffer_changed
     character(len=MAX_LINE_LEN) :: tab_completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: tab_partial_input
     character(len=MAX_LINE_LEN) :: tab_completed_line
     character(len=MAX_LINE_LEN) :: tab_saved_input
-    character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
 
     ! Exit history mode if we're browsing
     if (input_state%in_history) then
@@ -5277,18 +5347,7 @@ contains
         else
           if (.not. input_state%completions_shown .or. tab_buffer_changed) then
             ! First tab - store completions and draw grid menu
-            input_state%menu_total_items = max(tab_num_completions, completion_total_matches)
-            input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
-            do i = 1, input_state%menu_num_items
-              ! Copy via temp buffer to avoid flang-new bugs with allocatables
-              temp_buffer = ' '
-              copy_len = min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i)))
-              do j = 1, copy_len
-                temp_buffer(j:j) = tab_completions(i)(j:j)
-              end do
-              input_state%menu_items(i) = temp_buffer
-            end do
-            input_state%menu_selection = 1
+            call menu_setup_items(input_state, tab_completions, tab_num_completions)
             write(output_unit, '()')  ! Blank line before menu
             call draw_completion_menu(input_state, .true.)
             call state_last_completion_buffer_set_from_buffer(input_state)
@@ -5355,18 +5414,7 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. tab_buffer_changed) then
         ! First tab - store completions and draw grid menu
-        input_state%menu_total_items = max(tab_num_completions, completion_total_matches)
-        input_state%menu_num_items = min(tab_num_completions, MAX_MENU_ITEMS)
-        do i = 1, input_state%menu_num_items
-          ! Copy via temp buffer to avoid flang-new bugs with allocatables
-          temp_buffer = ' '
-          copy_len = min(MAX_MENU_ITEM_LEN, len_trim(tab_completions(i)))
-          do j = 1, copy_len
-            temp_buffer(j:j) = tab_completions(i)(j:j)
-          end do
-          input_state%menu_items(i) = temp_buffer
-        end do
-        input_state%menu_selection = 1
+        call menu_setup_items(input_state, tab_completions, tab_num_completions)
         write(output_unit, '()')  ! Blank line before menu
         call draw_completion_menu(input_state, .true.)
         call state_last_completion_buffer_set_from_buffer(input_state)
@@ -5437,8 +5485,7 @@ contains
     character(len=MAX_LINE_LEN) :: completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: completed_line
     character(len=MAX_LINE_LEN) :: saved_input
-    character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
-    integer :: num_completions, i
+    integer :: num_completions
     logical :: completed, made_progress, buffer_changed
 
     ! Exit history mode if we're browsing
@@ -5486,14 +5533,7 @@ contains
           ! At common prefix already - show available options only if not already shown
           if (.not. input_state%completions_shown .or. buffer_changed) then
             ! Store completions for menu mode and draw once
-            input_state%menu_total_items = max(num_completions, completion_total_matches)
-            input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
-            do i = 1, input_state%menu_num_items
-              ! Use temp_buffer and explicit copy to avoid truncation warnings
-              temp_buffer = completions(i)(1:min(len_trim(completions(i)), MAX_MENU_ITEM_LEN))
-              input_state%menu_items(i) = temp_buffer
-            end do
-            input_state%menu_selection = 1
+            call menu_setup_items(input_state, completions, num_completions)
             write(output_unit, '()')  ! Blank line before menu
             call draw_completion_menu(input_state, .true.)
             call state_last_completion_buffer_set_from_buffer(input_state)
@@ -5513,14 +5553,7 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. buffer_changed) then
         ! First tab - store completions and draw menu
-        input_state%menu_total_items = max(num_completions, completion_total_matches)
-        input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
-        do i = 1, input_state%menu_num_items
-          ! Use temp_buffer and explicit copy to avoid truncation warnings
-          temp_buffer = completions(i)(1:min(len_trim(completions(i)), MAX_MENU_ITEM_LEN))
-          input_state%menu_items(i) = temp_buffer
-        end do
-        input_state%menu_selection = 1
+        call menu_setup_items(input_state, completions, num_completions)
         write(output_unit, '()')  ! Blank line before menu
         call draw_completion_menu(input_state, .true.)
         call state_last_completion_buffer_set_from_buffer(input_state)
@@ -5537,28 +5570,66 @@ contains
   ! Menu Selection Mode (zsh/fish-style interactive completion)
   ! ===========================================================================
 
+  ! Configure menu item sourcing and reset the pager window for a fresh
+  ! menu. The pager store backs the menu when it covers the completion
+  ! set (making it scrollable past MAX_MENU_ITEMS); otherwise fall back
+  ! to copying into the fixed menu_items array.
+  subroutine menu_setup_items(input_state, completions, num_completions)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: completions(:)
+    integer, intent(in) :: num_completions
+    character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
+    integer :: i, j, copy_len
+
+    pager_active = (pager_item_count > 0 .and. pager_item_count >= num_completions)
+    if (pager_active) then
+      input_state%menu_num_items = pager_item_count
+    else
+      input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
+      do i = 1, input_state%menu_num_items
+        ! Copy via temp buffer to avoid flang-new bugs with allocatables
+        temp_buffer = ' '
+        copy_len = min(MAX_MENU_ITEM_LEN, len_trim(completions(i)))
+        do j = 1, copy_len
+          temp_buffer(j:j) = completions(i)(j:j)
+        end do
+        input_state%menu_items(i) = temp_buffer
+      end do
+    end if
+    input_state%menu_total_items = max(input_state%menu_num_items, completion_total_matches)
+    input_state%menu_selection = 1
+    input_state%menu_row_start = 1
+    input_state%menu_disclosed = .false.
+  end subroutine
+
+  ! Menu item accessor: pager-backed menus read from the module store,
+  ! fixed menus (process kill, small fallbacks) from menu_items
+  function menu_item_get(input_state, idx) result(item)
+    type(input_state_t), intent(in) :: input_state
+    integer, intent(in) :: idx
+    character(len=MAX_MENU_ITEM_LEN) :: item
+
+    if (pager_active) then
+      item = pager_items(idx)
+    else
+      item = input_state%menu_items(idx)
+    end if
+  end function
+
   subroutine enter_menu_select_mode(input_state, completions, num_completions, current_input)
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN), intent(in) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(in) :: num_completions
     character(len=*), intent(in) :: current_input
-    character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
     integer :: i, last_space_pos
 
-    ! Store menu items
+    ! Store menu items (matches the already-drawn first-tab menu)
     input_state%in_menu_select = .true.
-    input_state%menu_total_items = max(num_completions, completion_total_matches)
-    input_state%menu_num_items = min(num_completions, MAX_MENU_ITEMS)
+    call menu_setup_items(input_state, completions, num_completions)
 
     ! Clear autosuggestion when entering menu mode
     input_state%suggestion = ''
     input_state%suggestion_length = 0
-
-    do i = 1, input_state%menu_num_items
-      ! Use temp_buffer and explicit copy to avoid truncation warnings
-      temp_buffer = completions(i)(1:min(len_trim(completions(i)), MAX_MENU_ITEM_LEN))
-      input_state%menu_items(i) = temp_buffer
-    end do
 
     ! Find the prefix (everything before the last word being completed)
     last_space_pos = 0
@@ -5612,13 +5683,48 @@ contains
     flush(output_unit)
   end subroutine
 
+  ! Compute the pager window height for the current menu: how many grid
+  ! rows fit, honoring fish-style disclosure. Mirrors fish's pager:
+  ! undisclosed menus get at most max(height/2, 4) rows; disclosed menus
+  ! the full available height. A remainder of exactly one row is shown
+  ! instead of spending the progress line announcing it.
+  subroutine menu_window_metrics(input_state, total_rows, visible_rows)
+    type(input_state_t), intent(in) :: input_state
+    integer, intent(out) :: total_rows, visible_rows
+    integer :: term_rows, term_cols, avail
+    logical :: success
+
+    success = get_terminal_size(term_rows, term_cols)
+    if (.not. success .or. term_rows <= 0) term_rows = 24
+
+    total_rows = input_state%menu_num_rows
+
+    ! Reserve: command line + blank line + progress line
+    avail = max(term_rows - 3, 4)
+    if (input_state%menu_disclosed) then
+      visible_rows = min(total_rows, avail)
+    else
+      visible_rows = min(total_rows, max(avail / 2, 4))
+      if (total_rows - visible_rows == 1) visible_rows = total_rows
+    end if
+  end subroutine
+
+  ! Render the menu window. The caller positions the cursor at the start
+  ! of the first menu line (the line after the blank separator). Output
+  ! is assembled in rdraw_buf and flushed in one write() so the terminal
+  ! repaints once per frame — no flicker. Rows are overwritten in place
+  ! (ESC[K clears each line's tail); ESC[J at the end drops any lines a
+  ! previous taller render left behind. The cursor ends on the line after
+  ! the last drawn line, which all erase math relies on (menu_drawn_lines).
   subroutine draw_completion_menu(input_state, initial_draw)
     type(input_state_t), intent(inout) :: input_state  ! inout to cache layout
     logical, intent(in) :: initial_draw
     integer :: i, j, cols_per_item, items_per_row, col, item_idx
     integer :: term_rows, term_cols, item_len
+    integer :: total_rows, visible_rows, row, row_stop
     character(len=MAX_MENU_ITEM_LEN) :: current_item
-    character(len=1) :: ch
+    character(len=128) :: progress
+    character(len=32) :: numbuf
     logical :: success
 
     if (.false.) print *, initial_draw  ! Silence unused warning
@@ -5633,7 +5739,7 @@ contains
     ! Note: Caller is responsible for outputting initial newline before calling with initial_draw=true
     cols_per_item = 0
     do i = 1, input_state%menu_num_items
-      current_item = input_state%menu_items(i)
+      current_item = menu_item_get(input_state, i)
       item_len = len_trim(current_item)
       cols_per_item = max(cols_per_item, item_len)
     end do
@@ -5645,55 +5751,75 @@ contains
     input_state%menu_items_per_row = items_per_row
     input_state%menu_num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
 
-    ! Draw menu items
-    item_idx = 1
-    do while (item_idx <= input_state%menu_num_items)
-      ! Draw one row
+    ! Pager window: clamp the start row so the window stays on the grid
+    call menu_window_metrics(input_state, total_rows, visible_rows)
+    if (input_state%menu_row_start > total_rows - visible_rows + 1) then
+      input_state%menu_row_start = total_rows - visible_rows + 1
+    end if
+    if (input_state%menu_row_start < 1) input_state%menu_row_start = 1
+    input_state%menu_visible_rows = visible_rows
+    row_stop = input_state%menu_row_start + visible_rows - 1
+
+    call rdraw_append(char(27) // '[?25l')  ! Hide cursor during the frame
+
+    ! Draw visible rows, overwriting in place
+    do row = input_state%menu_row_start, row_stop
       do col = 1, items_per_row
+        item_idx = (row - 1) * items_per_row + col
         if (item_idx > input_state%menu_num_items) exit
 
-        ! Copy item to local variable to avoid substring operations on array element.
-        ! Sanitize control/escape bytes for DISPLAY only (insertion uses the real
-        ! menu_items value) so a malicious filename can't inject ANSI sequences.
-        current_item = sanitize_for_display(input_state%menu_items(item_idx))
+        ! Sanitize control/escape bytes for DISPLAY only (insertion uses
+        ! the real item value) so a malicious filename can't inject ANSI
+        current_item = sanitize_for_display(menu_item_get(input_state, item_idx))
         item_len = len_trim(current_item)
 
-        ! Highlight selected item with reverse video
         if (item_idx == input_state%menu_selection) then
-          write(output_unit, '(a)', advance='no') char(27) // '[7m'  ! Reverse video
+          call rdraw_append(char(27) // '[7m')  ! Reverse video
+        end if
+        call rdraw_append(current_item(1:item_len))
+        if (item_idx == input_state%menu_selection) then
+          call rdraw_append(char(27) // '[0m')  ! Reset
         end if
 
-        ! Write menu item character by character from local variable
-        do j = 1, item_len
-          ch = current_item(j:j)
-          write(output_unit, '(a)', advance='no') ch
-        end do
-
-        if (item_idx == input_state%menu_selection) then
-          write(output_unit, '(a)', advance='no') char(27) // '[0m'  ! Reset
-        end if
-
-        ! Pad to column width for alignment (except last column in row)
+        ! Pad to column width for alignment (except after the row's last item)
         if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
-          ! Pad with spaces to reach full column width
           do j = item_len + 1, cols_per_item
-            write(output_unit, '(a)', advance='no') ' '
+            call rdraw_append(' ')
           end do
         end if
-
-        item_idx = item_idx + 1
       end do
-      write(output_unit, '()')  ! New line after each row
+      call rdraw_append(char(27) // '[K' // char(13) // char(10))  ! Clear tail, next line
     end do
 
-    ! Show "more items" indicator if there are truncated completions
+    ! Progress line (fish parity): undisclosed remainder, scroll position,
+    ! or storage truncation
+    progress = ''
+    if (.not. input_state%menu_disclosed .and. total_rows > visible_rows) then
+      write(numbuf, '(i0)') total_rows - visible_rows
+      progress = '...and ' // trim(numbuf) // ' more rows'
+    else if (input_state%menu_row_start > 1 .or. row_stop < total_rows) then
+      write(progress, '(a,i0,a,i0,a,i0)') &
+        'rows ', input_state%menu_row_start, ' to ', row_stop, ' of ', total_rows
+    end if
     if (input_state%menu_total_items > input_state%menu_num_items) then
-      write(output_unit, '(a,i0,a)') &
-        '  ... ', input_state%menu_total_items - input_state%menu_num_items, ' more items available'
+      write(numbuf, '(i0)') input_state%menu_total_items - input_state%menu_num_items
+      if (len_trim(progress) > 0) then
+        progress = trim(progress) // '; ' // trim(numbuf) // ' more items not shown'
+      else
+        progress = '  ... ' // trim(numbuf) // ' more items available'
+      end if
     end if
 
-    ! Mark that we need to redraw the command line
-    flush(output_unit)
+    if (len_trim(progress) > 0) then
+      call rdraw_append(trim(progress) // char(27) // '[K' // char(13) // char(10))
+      input_state%menu_drawn_lines = visible_rows + 1
+    else
+      input_state%menu_drawn_lines = visible_rows
+    end if
+
+    ! Clear anything below from a previous taller render, show cursor
+    call rdraw_append(char(27) // '[J' // char(27) // '[?25h')
+    call rdraw_flush()
   end subroutine
 
   subroutine handle_menu_navigation(input_state, key, done)
@@ -5819,7 +5945,7 @@ contains
       end do
     end if
 
-    current_item = input_state%menu_items(input_state%menu_selection)
+    current_item = menu_item_get(input_state, input_state%menu_selection)
     item_len = len_trim(current_item)
     do j = 1, item_len
       ch = current_item(j:j)
@@ -5845,48 +5971,27 @@ contains
 
   subroutine exit_menu_select_mode(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, num_rows, term_rows, term_cols, cols_per_item, items_per_row, extra_lines
-    logical :: success
+    integer :: i
 
     ! Clear the menu from screen before exiting
     if (input_state%menu_num_items > 0) then
-      ! Calculate how many rows the menu uses
-      success = get_terminal_size(term_rows, term_cols)
-      if (.not. success .or. term_cols <= 0) then
-        term_cols = 80
-      end if
-
-      ! Calculate layout to determine number of rows used
-      cols_per_item = 0
-      do i = 1, input_state%menu_num_items
-        cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
-      end do
-      cols_per_item = cols_per_item + 2
-
-      items_per_row = max(1, term_cols / cols_per_item)
-      num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
-
-      ! Account for "more items" indicator line if present
-      extra_lines = 0
-      if (input_state%menu_total_items > input_state%menu_num_items) then
-        extra_lines = 1
-      end if
-
-      ! Move cursor up to where the command line was (before the blank line and menu)
-      ! Cursor is currently on empty line after the menu rows + extra lines
-      ! Layout: [cmd][blank][row1]...[rowN][extra?][cursor here]
-      ! Move up: num_rows (menu content) + extra_lines (more items) + 1 (blank line) + 1 (to command line)
-      do i = 1, num_rows + extra_lines + 2
-        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+      ! Move cursor up to where the command line was. The cursor is parked
+      ! on the line after the last drawn menu line; erase what was drawn,
+      ! not a recomputed layout (the window may show fewer rows than the
+      ! item count implies, and the terminal may have resized since).
+      ! Layout: [cmd][blank][drawn menu lines][cursor here]
+      do i = 1, input_state%menu_drawn_lines + 2
+        call rdraw_append(char(27) // '[A')  ! Cursor up
       end do
 
       ! Now at command line - clear from next line down to remove menu
-      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return (start of command line)
-      write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear current line (remove old command)
-      write(output_unit, '(a)', advance='no') char(27) // '[B'  ! Move down to first menu line
-      write(output_unit, '(a)', advance='no') char(27) // '[J'  ! Clear from cursor down (all menu)
-      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Move back up to command line
-      write(output_unit, '(a)', advance='no') char(13)  ! Back to start of command line
+      call rdraw_append(char(13))            ! Start of command line
+      call rdraw_append(char(27) // '[K')    ! Clear current line (old command)
+      call rdraw_append(char(27) // '[B')    ! Down to blank line
+      call rdraw_append(char(27) // '[J')    ! Clear from cursor down (all menu)
+      call rdraw_append(char(27) // '[A')    ! Back up to command line
+      call rdraw_append(char(13))            ! Start of command line
+      call rdraw_flush()
 
       ! Cursor is now at the start of the command line row with the screen
       ! below cleared. The next redraw must start from here rather than
@@ -5902,7 +6007,12 @@ contains
     input_state%menu_total_items = 0
     input_state%menu_selection = 1
     input_state%menu_prefix_len = 0
+    input_state%menu_row_start = 1
+    input_state%menu_disclosed = .false.
+    input_state%menu_visible_rows = 0
+    input_state%menu_drawn_lines = 0
     input_state%completions_shown = .false.
+    pager_active = .false.
     input_state%dirty = .true.
   end subroutine
 
@@ -5966,109 +6076,124 @@ contains
   ! needs the rendered line left intact.
   subroutine clear_menu_display_below(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: i, num_rows, term_rows, term_cols, cols_per_item, items_per_row, extra_lines
-    logical :: success
+    integer :: i
 
     if (input_state%menu_num_items <= 0) return
 
-    success = get_terminal_size(term_rows, term_cols)
-    if (.not. success .or. term_cols <= 0) then
-      term_cols = 80
-    end if
-
-    cols_per_item = 0
-    do i = 1, input_state%menu_num_items
-      cols_per_item = max(cols_per_item, len_trim(input_state%menu_items(i)))
-    end do
-    cols_per_item = cols_per_item + 2
-
-    items_per_row = max(1, term_cols / cols_per_item)
-    num_rows = (input_state%menu_num_items + items_per_row - 1) / items_per_row
-
-    extra_lines = 0
-    if (input_state%menu_total_items > input_state%menu_num_items) then
-      extra_lines = 1
-    end if
-
-    ! Layout: [cmd][blank][row1]...[rowN][extra?][cursor here]
+    ! Layout: [cmd][blank][drawn menu lines][cursor here]
     ! Move up to the blank line, erase it and everything below, then step
     ! up onto the command line row
-    do i = 1, num_rows + extra_lines + 1
-      write(output_unit, '(a)', advance='no') char(27) // '[A'
+    do i = 1, input_state%menu_drawn_lines + 1
+      call rdraw_append(char(27) // '[A')
     end do
-    write(output_unit, '(a)', advance='no') char(13)
-    write(output_unit, '(a)', advance='no') char(27) // '[J'
-    write(output_unit, '(a)', advance='no') char(27) // '[A'
-    flush(output_unit)
+    call rdraw_append(char(13))
+    call rdraw_append(char(27) // '[J')
+    call rdraw_append(char(27) // '[A')
+    call rdraw_flush()
 
     input_state%menu_num_items = 0
     input_state%menu_total_items = 0
     input_state%menu_selection = 1
     input_state%menu_prefix_len = 0
+    input_state%menu_row_start = 1
+    input_state%menu_disclosed = .false.
+    input_state%menu_visible_rows = 0
+    input_state%menu_drawn_lines = 0
     input_state%completions_shown = .false.
+    pager_active = .false.
   end subroutine
 
   subroutine update_menu_selection(input_state, old_selection)
     type(input_state_t), intent(inout) :: input_state  ! inout to pass to draw function
     integer, intent(in) :: old_selection
-    integer :: i, num_menu_rows, extra_lines, total_lines
+    integer :: i, total_rows, visible_rows, sel_row, old_drawn
+    logical :: scrolled
 
-    if (.false.) print *, old_selection  ! Silence unused warning
-
-    ! Use cached layout from input_state (avoids repeated array iterations)
-    num_menu_rows = input_state%menu_num_rows
-
-    ! Account for "more items" indicator line if present
-    extra_lines = 0
-    if (input_state%menu_total_items > input_state%menu_num_items) then
-      extra_lines = 1
-    end if
-    total_lines = num_menu_rows + extra_lines
-
-    ! Move cursor up to the blank line before menu
-    ! Cursor is currently on new line after last menu row (each row ends with newline)
-    ! Menu layout: [blank line] [row 1] [row 2] ... [row N] [more items?] [cursor on new line]
-    ! So we move up: num_menu_rows + extra_lines + 1 to get to blank line
-    do i = 1, total_lines + 1
-      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
-    end do
-    write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
-
-    ! Clear the menu area including blank line (clear all lines including extra and blank)
-    do i = 1, total_lines + 1
-      write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear line
-      if (i < total_lines + 1) then
-        write(output_unit, '()')  ! Move to next line
+    ! Window adjustment (fish): selection above the window pulls it up;
+    ! selection below it discloses first, then scrolls
+    call menu_window_metrics(input_state, total_rows, visible_rows)
+    sel_row = (input_state%menu_selection - 1) / input_state%menu_items_per_row + 1
+    scrolled = .false.
+    if (sel_row < input_state%menu_row_start) then
+      input_state%menu_row_start = sel_row
+      scrolled = .true.
+    else if (sel_row > input_state%menu_row_start + visible_rows - 1) then
+      if (.not. input_state%menu_disclosed) then
+        input_state%menu_disclosed = .true.
+        call menu_window_metrics(input_state, total_rows, visible_rows)
       end if
-    end do
-
-    ! Move back up to start (the blank line before menu)
-    if (total_lines > 0) then
-      do i = 1, total_lines
-        write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
-      end do
-      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
-    else
-      write(output_unit, '(a)', advance='no') char(13)  ! Carriage return
+      if (sel_row > input_state%menu_row_start + visible_rows - 1) then
+        input_state%menu_row_start = sel_row - visible_rows + 1
+      end if
+      scrolled = .true.
     end if
 
-    ! We're now positioned at the START of the blank line
-    ! Output a blank line (to match initial draw spacing)
-    write(output_unit, '()')  ! Blank line before menu
+    if (scrolled) then
+      ! Window moved or grew: reposition to the menu top and repaint the
+      ! whole window in one buffered frame (overwrite in place, no
+      ! blank-then-redraw, so no flicker)
+      old_drawn = input_state%menu_drawn_lines
+      call rdraw_append(char(13))
+      do i = 1, old_drawn
+        call rdraw_append(char(27) // '[A')
+      end do
+      call draw_completion_menu(input_state, .false.)
+    else
+      ! Window unchanged: rewrite only the two cells whose highlight
+      ! changed (~60 bytes instead of a full repaint)
+      call menu_redraw_cell(input_state, old_selection, .false.)
+      call menu_redraw_cell(input_state, input_state%menu_selection, .true.)
+      call rdraw_flush()
+    end if
+  end subroutine
 
-    ! Redraw the menu with the new selection highlighted
-    call draw_completion_menu(input_state, .false.)
+  ! Rewrite one menu cell in place, relative to the parked cursor (the
+  ! line after the last drawn menu line). Appends to rdraw_buf; the
+  ! caller flushes. Off-window indices are ignored.
+  subroutine menu_redraw_cell(input_state, item_idx, selected)
+    type(input_state_t), intent(in) :: input_state
+    integer, intent(in) :: item_idx
+    logical, intent(in) :: selected
+    integer :: row, col, vrow, up, left, item_len
+    character(len=MAX_MENU_ITEM_LEN) :: current_item
+    character(len=16) :: numbuf
 
-    flush(output_unit)
+    if (item_idx < 1 .or. item_idx > input_state%menu_num_items) return
+    if (input_state%menu_items_per_row <= 0) return
+    row = (item_idx - 1) / input_state%menu_items_per_row + 1
+    if (row < input_state%menu_row_start .or. &
+        row > input_state%menu_row_start + input_state%menu_visible_rows - 1) return
+    col = mod(item_idx - 1, input_state%menu_items_per_row) + 1
+    vrow = row - input_state%menu_row_start + 1
+    up = input_state%menu_drawn_lines - vrow + 1
+    left = (col - 1) * input_state%menu_cols_per_item
+
+    current_item = sanitize_for_display(menu_item_get(input_state, item_idx))
+    item_len = len_trim(current_item)
+
+    call rdraw_append(char(13))
+    write(numbuf, '(i0)') up
+    call rdraw_append(char(27) // '[' // trim(numbuf) // 'A')
+    if (left > 0) then
+      write(numbuf, '(i0)') left
+      call rdraw_append(char(27) // '[' // trim(numbuf) // 'C')
+    end if
+    if (selected) call rdraw_append(char(27) // '[7m')
+    if (item_len > 0) call rdraw_append(current_item(1:item_len))
+    if (selected) call rdraw_append(char(27) // '[0m')
+    ! Park the cursor back on the line after the last drawn line
+    write(numbuf, '(i0)') up
+    call rdraw_append(char(27) // '[' // trim(numbuf) // 'B' // char(13))
   end subroutine
 
   subroutine update_live_preview(input_state)
     type(input_state_t), intent(in) :: input_state
-    integer :: i, j, num_menu_rows, extra_lines
+    integer :: i, j, up_rows, prompt_rows
     integer :: prompt_len, highlighted_len, item_len, preview_len
     character(len=MAX_LINE_LEN) :: preview_line, current_prefix
     character(len=MAX_MENU_ITEM_LEN) :: current_item
     character(len=MAX_HIGHLIGHT_LEN) :: highlighted_preview  ! Fixed-length to avoid flang-new bugs
+    character(len=16) :: numbuf
     character(len=1) :: ch
 
     ! Initialize buffer
@@ -6076,17 +6201,19 @@ contains
     highlighted_len = 0
     preview_line = ''
 
-    ! Use cached menu layout (avoids repeated array iterations and len_trim calls)
-    num_menu_rows = input_state%menu_num_rows
+    ! menu_prompt holds the FULL prompt, which may span several terminal
+    ! rows (the default fortsh prompt is two lines). The rewrite below
+    ! re-emits all of it, so the up-move must land on the FIRST prompt
+    ! row: one per drawn menu line, plus one per prompt row. (The "blank
+    ! separator" is just the newline terminating the command line — it
+    ! does not occupy a row of its own.)
+    prompt_rows = 1
+    do i = 1, len_trim(input_state%menu_prompt)
+      if (input_state%menu_prompt(i:i) == char(10)) prompt_rows = prompt_rows + 1
+    end do
+    up_rows = input_state%menu_drawn_lines + prompt_rows
 
-    ! Account for "more items" indicator line if present
-    extra_lines = 0
-    if (input_state%menu_total_items > input_state%menu_num_items) then
-      extra_lines = 1
-    end if
-
-    ! Save current cursor position (after menu) - ESC[s
-    write(output_unit, '(a)', advance='no') char(27) // '[s'
+    call rdraw_append(char(27) // '[?25l')
 
     ! Build preview line character by character (copy to local vars first)
     preview_len = 0
@@ -6111,7 +6238,7 @@ contains
         preview_line(preview_len:preview_len) = ch
       end do
     end if
-    current_item = input_state%menu_items(input_state%menu_selection)
+    current_item = menu_item_get(input_state, input_state%menu_selection)
     item_len = len_trim(current_item)
     do j = 1, item_len
       ch = current_item(j:j)
@@ -6119,17 +6246,16 @@ contains
       preview_line(preview_len:preview_len) = ch
     end do
 
-    ! Move cursor up past menu to command line
-    ! We need to go up: num_menu_rows + extra_lines (menu content) + 1 (blank line before menu) + 1 (to command line)
-    do i = 1, num_menu_rows + extra_lines + 2
-      write(output_unit, '(a)', advance='no') char(27) // '[A'  ! Cursor up
+    ! Move cursor up past the menu to the first prompt row
+    do i = 1, up_rows
+      call rdraw_append(char(27) // '[A')  ! Cursor up
     end do
 
     ! Move to start of line
-    write(output_unit, '(a)', advance='no') char(13)  ! CR
+    call rdraw_append(char(13))  ! CR
 
     ! Clear the entire line
-    write(output_unit, '(a)', advance='no') char(27) // '[K'  ! Clear from cursor to end of line
+    call rdraw_append(char(27) // '[K')  ! Clear from cursor to end of line
 
     ! Apply syntax highlighting to preview (use preview_len we calculated)
     call highlight_command_line(preview_line, highlighted_preview, highlighted_len, preview_len)
@@ -6142,27 +6268,29 @@ contains
       do i = 1, prompt_len
         current_prefix(i:i) = input_state%menu_prompt(i:i)
       end do
-      do i = 1, prompt_len
-        ch = current_prefix(i:i)
-        write(output_unit, '(a)', advance='no') ch
-      end do
+      call rdraw_append(current_prefix(1:prompt_len))
     end if
 
     ! Write space after prompt (to match the original spacing)
-    write(output_unit, '(a)', advance='no') ' '
+    call rdraw_append(' ')
 
-    ! Redraw highlighted preview character by character (already local var)
+    ! Redraw highlighted preview
     if (highlighted_len > 0 .and. highlighted_len <= MAX_HIGHLIGHT_LEN) then
-      do i = 1, highlighted_len
-        ch = highlighted_preview(i:i)
-        write(output_unit, '(a)', advance='no') ch
-      end do
+      call rdraw_append(highlighted_preview(1:highlighted_len))
     end if
 
-    ! Restore cursor position (back to after menu) - ESC[u
-    write(output_unit, '(a)', advance='no') char(27) // '[u'
+    ! Clear the tail of the command row: ESC[K at the top of this frame
+    ! only cleared the FIRST prompt row, so a longer previous preview
+    ! would otherwise leave its tail behind on this row
+    call rdraw_append(char(27) // '[K')
 
-    flush(output_unit)
+    ! Park the cursor back on the line after the last drawn menu line,
+    ! with relative moves only — ESC[u is unreliable across terminals
+    ! and breaks if the prompt rewrite ever scrolls the screen
+    write(numbuf, '(i0)') input_state%menu_drawn_lines + 1
+    call rdraw_append(char(27) // '[' // trim(numbuf) // 'B' // char(13) // char(27) // '[?25h')
+
+    call rdraw_flush()
     ! highlighted_preview is now fixed-length, no deallocation needed
   end subroutine
 
@@ -6193,6 +6321,9 @@ contains
     input_state%in_process_kill_mode = .true.
     input_state%in_menu_select = .true.  ! Reuse menu selection infrastructure
     input_state%menu_num_items = num_processes
+    pager_active = .false.               ! Process menu reads menu_items directly
+    input_state%menu_row_start = 1
+    input_state%menu_disclosed = .false.
 
     ! Store process info in menu items (format: "PID: process_name")
     do i = 1, num_processes
