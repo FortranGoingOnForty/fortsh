@@ -5324,6 +5324,10 @@ contains
   subroutine handle_tab_key_separate(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: tab_num_completions, i, last_space_pos
+#ifdef __APPLE__
+    integer :: j  ! only the flang-new menu_prefix copy loop uses j; declaring
+                  ! it unconditionally would warn as unused on gfortran
+#endif
     logical :: tab_completed, tab_made_progress, tab_buffer_changed
     character(len=MAX_LINE_LEN) :: tab_completions(MAX_LOCAL_COMPLETIONS)
     character(len=MAX_LINE_LEN) :: tab_partial_input
