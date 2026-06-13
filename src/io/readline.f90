@@ -1628,6 +1628,12 @@ contains
         if (module_input_state%paste_hl_active) then
           module_input_state%paste_hl_active = .false.
           module_input_state%dirty = .true.
+          ! The previous frame was rendered WITH the reverse-video highlight.
+          ! A cursor-only key must not take the Phase-1 "just move the
+          ! cursor" shortcut, or the highlight stays on screen — the
+          ! Phase-1 guard checks paste_hl_active after this clear, so it
+          ! can't catch this itself.
+          prev_diff_valid = .false.
         end if
 
         ! If multi-byte UTF-8 character, insert all bytes with correct visual width
