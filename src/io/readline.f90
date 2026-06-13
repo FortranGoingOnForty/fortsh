@@ -132,6 +132,16 @@ module readline
   ! that yet far below human keystroke timing. (AR-03 Esc-dismiss)
   integer, parameter :: MENU_ESC_TIMEOUT_MS = 50
 
+  ! Set for the single keystroke that clears a fish-style paste highlight
+  ! (AR-01-fu). The highlight is dropped at the top of the input loop before
+  ! the key dispatches, so a cursor-motion key that lands at end-of-line would
+  ! otherwise BOTH clear the highlight AND accept the autosuggestion in one
+  ! press — risky when the pasted text is, say, an `rm -rf` path. When this is
+  ! true, Right/End/Ctrl-E clear the highlight and stop instead of accepting;
+  ! the next press accepts as usual (fish forward-char semantics). Reset each
+  ! real keystroke.
+  logical, save :: module_paste_hl_cleared_this_key = .false.
+
   ! True number of matches found by the most recent completion scan, before
   ! MAX_SCORED_ITEMS / MAX_LOCAL_COMPLETIONS truncation. Feeds the menu's
   ! "... N more items available" indicator with the real total — without it
@@ -1652,8 +1662,10 @@ contains
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
         ! handler re-arms it after inserting, so clearing here (before dispatch)
         ! correctly leaves it lit only until the user's next keystroke/motion.
+        module_paste_hl_cleared_this_key = .false.
         if (module_input_state%paste_hl_active) then
           module_input_state%paste_hl_active = .false.
+          module_paste_hl_cleared_this_key = .true.  ! AR-01-fu: suppress accept on this key
           module_input_state%dirty = .true.
           ! The previous frame was rendered WITH the reverse-video highlight.
           ! A cursor-only key must not take the Phase-1 "just move the
@@ -7550,9 +7562,11 @@ contains
       module_cursor_screen_row = new_row
       module_cursor_screen_col = new_col
     else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0 &
-             .and. .not. module_extending_selection) then
+             .and. .not. module_extending_selection &
+             .and. .not. module_paste_hl_cleared_this_key) then
       ! At end of line with suggestion - accept it (but not during shift-extension —
-      ! Shift+Right at the end of the line should not eat an autosuggestion).
+      ! Shift+Right at the end of the line should not eat an autosuggestion; and
+      ! not on the press that clears a paste highlight — AR-01-fu).
       call accept_autosuggestion(input_state)
     end if
 
@@ -8291,10 +8305,12 @@ contains
       input_state%dirty = .true.
     else if (input_state%cursor_pos == input_state%length .and. &
              input_state%suggestion_length > 0 .and. &
-             .not. module_extending_selection) then
+             .not. module_extending_selection .and. &
+             .not. module_paste_hl_cleared_this_key) then
       ! Already at end of line with an autosuggestion: accept the whole thing,
       ! mirroring Right (AR-04 AS-1: End/Ctrl-E were no-ops here). Not during
-      ! shift-extension.
+      ! shift-extension, and not on the press that clears a paste highlight
+      ! (AR-01-fu).
       call accept_autosuggestion(input_state)
     end if
 

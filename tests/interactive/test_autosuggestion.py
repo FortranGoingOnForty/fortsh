@@ -179,3 +179,60 @@ def test_suggestion_renders_on_wrapped_line(fortsh_path, tmp_path):
     except Exception:
         pass
     assert b"\x1b[90m" in tail, "no bright-black ghost emitted on the wrapped line"
+
+
+def _paste_then_right_run(fortsh_path, tmp_path, n_right):
+    """Seed history `echo ZZprefix_and_the_suffix`, bracketed-paste
+    `echo ZZprefix` (surfaces highlight + ghost `_and_the_suffix`), press Right
+    n_right times, execute, and return the last echoed line. Suggestion NOT
+    accepted -> 'ZZprefix'; accepted -> 'ZZprefix_and_the_suffix'."""
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, COLS))
+    screen = pyte.Screen(COLS, ROWS)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs=1.0):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"echo ZZprefix_and_the_suffix\r")
+    drain(0.7)
+    child.send(b"\x1b[200~echo ZZprefix\x1b[201~")  # bracketed paste
+    drain(0.8)
+    for _ in range(n_right):
+        child.send(b"\x1b[C")
+        time.sleep(0.15)
+    drain(0.5)
+    child.send(b"\r")
+    drain(1.0)
+    rows = [r.rstrip() for r in screen.display if r.strip()]
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    hits = [r for r in rows if r in ("ZZprefix", "ZZprefix_and_the_suffix")]
+    return hits[-1] if hits else "(none)"
+
+
+def test_right_after_paste_clears_highlight_without_accepting(fortsh_path, tmp_path):
+    """AR-01-fu: the Right that clears the paste highlight must NOT also accept
+    the autosuggestion (safety — a pasted `rm -rf` path must not grow a tail)."""
+    assert _paste_then_right_run(fortsh_path, tmp_path, 1) == "ZZprefix"
+
+
+def test_second_right_after_paste_accepts(fortsh_path, tmp_path):
+    """AR-01-fu: once the highlight is cleared, the next Right accepts the
+    suggestion (fish forward-char semantics)."""
+    assert _paste_then_right_run(fortsh_path, tmp_path, 2) == "ZZprefix_and_the_suffix"
