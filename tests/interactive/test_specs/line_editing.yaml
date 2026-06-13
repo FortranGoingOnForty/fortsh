@@ -430,6 +430,21 @@ tests:
     expect_output: "hello world"
     match_type: "contains"
 
+  # Regression: kill ring is session state, must survive a command run
+  - name: "Ctrl+Y yank survives a command"
+    fresh_session: true
+    steps:
+      - send: "echo survives_yank"
+      - send_key: "C-u"
+      - send_line: "pwd"
+      - wait: 0.5
+      - send: "echo "
+      - send_key: "C-y"
+      - send_key: "Enter"
+      - wait: 0.5
+    expect_output: "survives_yank"
+    match_type: "contains"
+
   # =============================================================
   # TRANSPOSE - Ctrl+T
   # =============================================================

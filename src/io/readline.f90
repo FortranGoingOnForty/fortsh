@@ -286,6 +286,18 @@ module readline
   type(input_state_t), save, target :: module_input_state
   logical, save :: module_input_state_initialized = .false.
 
+  ! Kill ring content (see state_kill_buffer_set): session-lifetime, so
+  ! it survives the per-command string-pool invalidation and re-init
+  character(len=MAX_LINE_LEN), save :: session_kill_buffer = ''
+
+  ! Vi yank register: also session-lifetime. Fixed-length module storage,
+  ! NOT the per-state vi_yank_buffer allocatable — under USE_MEMORY_POOL
+  ! that allocatable is never allocated (init only touches the pooled
+  ! ref), so state_buffer_get into it and the self-slice that followed
+  ! segfaulted on every yy. Module storage is always valid and survives
+  ! the per-command re-init, matching vim's session-scoped register.
+  character(len=MAX_LINE_LEN), save :: session_vi_yank = ''
+
   ! Module-level syntax highlighting buffer (fixed-length to avoid flang-new allocatable bugs)
   character(len=4096), save :: module_highlighted_buffer
   integer, save :: module_highlighted_len
@@ -618,48 +630,31 @@ contains
   end subroutine state_original_buffer_clear
 
   ! Clear kill buffer
+  ! The kill ring content lives in plain module storage, NOT per-state
+  ! pooled/C-string buffers: it is SESSION state (Ctrl-Y must paste a
+  ! Ctrl-U'd line even after other commands ran, like bash/zsh/fish),
+  ! and command execution invalidates the string pool, which forces a
+  ! full init_input_state that would wipe any per-state copy.
   subroutine state_kill_buffer_clear(state)
     type(input_state_t), intent(inout) :: state
-#ifdef USE_C_STRINGS
-    call c_string_clear(state%kill_buffer_c)
-#else
-#ifdef USE_MEMORY_POOL
-    state%kill_buffer_ref%data = ''
-#else
-    state%kill_buffer = ''
-#endif
-#endif
+    if (.false.) print *, state%kill_length  ! Silence unused-dummy warning
+    session_kill_buffer = ''
   end subroutine state_kill_buffer_clear
 
   ! Set kill buffer from string
   subroutine state_kill_buffer_set(state, str)
     type(input_state_t), intent(inout) :: state
     character(len=*), intent(in) :: str
-#ifdef USE_C_STRINGS
-    logical :: success
-    success = c_string_set(state%kill_buffer_c, str)
-#else
-#ifdef USE_MEMORY_POOL
-    state%kill_buffer_ref%data = str
-#else
-    state%kill_buffer = str
-#endif
-#endif
+    if (.false.) print *, state%kill_length  ! Silence unused-dummy warning
+    session_kill_buffer = str
   end subroutine state_kill_buffer_set
 
   ! Get kill buffer as string
   subroutine state_kill_buffer_get(state, str)
     type(input_state_t), intent(in) :: state
     character(len=*), intent(out) :: str
-#ifdef USE_C_STRINGS
-    call c_string_to_fortran(state%kill_buffer_c, str)
-#else
-#ifdef USE_MEMORY_POOL
-    str = state%kill_buffer_ref%data
-#else
-    str = state%kill_buffer
-#endif
-#endif
+    if (.false.) print *, state%kill_length  ! Silence unused-dummy warning
+    str = session_kill_buffer
   end subroutine state_kill_buffer_get
 
   ! Clear last completion buffer
@@ -1429,9 +1424,21 @@ contains
 #ifdef USE_C_STRINGS
       call state_buffer_clear(module_input_state)
 #elif defined(USE_MEMORY_POOL)
-      ! Check if buffer_ref is still valid, reinitialize if not
+      ! Check if buffer_ref is still valid, reinitialize if not.
+      ! Command execution invalidates the string pool, so this is the
+      ! NORMAL path between commands. The kill ring and vi yank register
+      ! contents live in module-level session storage (session_kill_buffer
+      ! / session_vi_yank) and survive on their own; only their per-state
+      ! length companions would be wiped by init, so carry those over.
       if (.not. associated(module_input_state%buffer_ref%data)) then
-        call init_input_state(module_input_state)
+        block
+          integer :: saved_kill_len, saved_vi_len
+          saved_kill_len = module_input_state%kill_length
+          saved_vi_len = module_input_state%vi_yank_length
+          call init_input_state(module_input_state)
+          module_input_state%kill_length = saved_kill_len
+          module_input_state%vi_yank_length = saved_vi_len
+        end block
       else
         call state_buffer_clear(module_input_state)
       end if
@@ -3329,7 +3336,7 @@ contains
     case ('d')
       ! dd - delete entire line (yank into vi buffer first)
       call state_buffer_get(input_state, temp_yank)
-      input_state%vi_yank_buffer = temp_yank(:input_state%length)
+      session_vi_yank = temp_yank(:input_state%length)
       input_state%vi_yank_length = input_state%length
       call state_buffer_clear(input_state)
       input_state%length = 0
@@ -3407,8 +3414,7 @@ contains
     select case (motion)
     case ('y')
       ! yy - yank entire line
-      call state_buffer_get(input_state, input_state%vi_yank_buffer)
-      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+      call state_buffer_get(input_state, session_vi_yank)
       input_state%vi_yank_length = input_state%length
 
     case ('w')
@@ -3475,7 +3481,7 @@ contains
     if (motion == 'c') then
       ! cc - change entire line (yank into vi buffer first)
       call state_buffer_get(input_state, temp_yank)
-      input_state%vi_yank_buffer = temp_yank(:input_state%length)
+      session_vi_yank = temp_yank(:input_state%length)
       input_state%vi_yank_length = input_state%length
       call state_buffer_clear(input_state)
       input_state%length = 0
@@ -3547,7 +3553,7 @@ contains
     if (yank_len > 0 .and. start_pos >= 1 .and. start_pos <= input_state%length) then
       ! Extract buffer to temp, then substring
       call state_buffer_get(input_state, temp_buf)
-      input_state%vi_yank_buffer = temp_buf(start_pos:start_pos+yank_len-1)
+      session_vi_yank = temp_buf(start_pos:start_pos+yank_len-1)
       input_state%vi_yank_length = yank_len
     end if
   end subroutine
@@ -8198,17 +8204,10 @@ contains
       end if
     end do
 
-    ! Insert killed text at cursor position
+    ! Insert killed text at cursor position (session_kill_buffer is the
+    ! kill ring's single source of truth — see state_kill_buffer_set)
     do i = 1, insert_len
-#ifdef USE_C_STRINGS
-      call state_buffer_set_char(input_state, input_state%cursor_pos + i, c_string_get_char(input_state%kill_buffer_c, i))
-#else
-#ifdef USE_MEMORY_POOL
-      call state_buffer_set_char(input_state, input_state%cursor_pos + i, input_state%kill_buffer_ref%data(i:i))
-#else
-      call state_buffer_set_char(input_state, input_state%cursor_pos + i, input_state%kill_buffer(i:i))
-#endif
-#endif
+      call state_buffer_set_char(input_state, input_state%cursor_pos + i, session_kill_buffer(i:i))
     end do
     
     ! Update length and cursor position
@@ -9206,17 +9205,10 @@ contains
 
     ! Simplified: yank entire line (yy behavior)
     if (input_state%length > 0) then
-      call state_buffer_get(input_state, input_state%vi_yank_buffer)
-      input_state%vi_yank_buffer = input_state%vi_yank_buffer(:input_state%length)
+      call state_buffer_get(input_state, session_vi_yank)
       input_state%vi_yank_length = input_state%length
     else
-#ifdef USE_C_STRINGS
-      input_state%vi_yank_buffer = ''
-#elif defined(USE_MEMORY_POOL)
-      input_state%vi_yank_buffer_ref%data = ''
-#else
-      input_state%vi_yank_buffer = ''
-#endif
+      session_vi_yank = ''
       input_state%vi_yank_length = 0
     end if
   end subroutine
@@ -9240,11 +9232,14 @@ contains
       insert_pos = min(input_state%cursor_pos + 1, input_state%length)
     end if
 
-    ! Insert yanked text at insertion position
+    ! Insert yanked text at insertion position. Go through the buffer
+    ! accessors, NOT raw input_state%buffer(...) — under USE_MEMORY_POOL
+    ! the plain allocatable is never allocated (storage is buffer_ref),
+    ! so direct indexing segfaults. Mirrors handle_yank (Ctrl-Y).
 #ifdef USE_C_STRINGS
     ! Use C string API for insertion
     if (.not. c_string_insert(input_state%buffer_c, insert_pos + 1, &
-                               input_state%vi_yank_buffer(:insert_len))) then
+                               session_vi_yank(:insert_len))) then
       ! Insertion failed, silently ignore
       return
     end if
@@ -9252,13 +9247,13 @@ contains
     ! Shift existing text right to make room
     do i = input_state%length, insert_pos + 1, -1
       if (i + insert_len <= MAX_LINE_LEN) then
-        input_state%buffer(i + insert_len:i + insert_len) = input_state%buffer(i:i)
+        call state_buffer_set_char(input_state, i + insert_len, state_buffer_get_char(input_state, i))
       end if
     end do
 
     ! Insert yanked text at insertion position
     do i = 1, insert_len
-      input_state%buffer(insert_pos + i:insert_pos + i) = input_state%vi_yank_buffer(i:i)
+      call state_buffer_set_char(input_state, insert_pos + i, session_vi_yank(i:i))
     end do
 #endif
 

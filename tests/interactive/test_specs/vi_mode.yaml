@@ -509,6 +509,46 @@ tests:
     match_type: "contains"
 
   # =============================================================
+  # YANK AND PUT (regression: yy/p segfaulted under memory pooling)
+  # =============================================================
+  - name: "yy yanks line and p puts it back"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo yanktest"
+      - send_key: "Escape"
+      - wait: 0.3
+      - send: "yy"
+      - wait: 0.2
+      - send: "dd"
+      - wait: 0.2
+      - send: "p"
+      - wait: 0.2
+      - send_key: "Enter"
+    expect_output: "yanktest"
+    match_type: "contains"
+
+  - name: "vi yank register survives a command"
+    steps:
+      - send_line: "set -o vi"
+      - send: "echo persisted_yank"
+      - send_key: "Escape"
+      - wait: 0.3
+      - send: "yy"
+      - wait: 0.2
+      - send: "dd"
+      - wait: 0.2
+      - send: "i"
+      - send_line: "pwd"
+      - wait: 0.3
+      - send_key: "Escape"
+      - wait: 0.3
+      - send: "p"
+      - wait: 0.2
+      - send_key: "Enter"
+    expect_output: "persisted_yank"
+    match_type: "contains"
+
+  # =============================================================
   # RETURN TO EMACS MODE
   # =============================================================
   - name: "set -o emacs returns to emacs mode"
