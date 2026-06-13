@@ -88,3 +88,47 @@ def test_paste_highlight_cleared_after_execute(fortsh_path):
     newline, so no reverse-video cells remain."""
     _, reverse = _run_paste(fortsh_path, b"echo HLCHECK")
     assert reverse == 0, f"paste highlight left {reverse} reverse-video cells in scrollback"
+
+
+def test_wrapped_paste_home_no_duplication(fortsh_path):
+    """Pasting a line that wraps across terminal rows, then pressing Home,
+    must not duplicate the wrapped line. The paste-highlight clear forces a
+    full redraw; if it does a stale Phase-2/3 partial diff (or miscounts the
+    move-up), the wrapped line gets repainted from the wrong row."""
+    import os
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, COLS))
+    screen = pyte.Screen(COLS, ROWS)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs=0.7):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    # 'echo ' + 100 'A' wraps once on an 80-col terminal
+    child.send(b"\x1b[200~echo " + b"A" * 100 + b"\x1b[201~")
+    drain(0.8)
+    child.send(b"\x1b[H")  # Home
+    drain(0.7)
+    rows = [r.rstrip() for r in screen.display]
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    # Exactly one row should carry the command word "echo"; duplication
+    # produced a second "echo ..." row.
+    echo_rows = [r for r in rows if "echo A" in r]
+    assert len(echo_rows) == 1, \
+        f"wrapped line duplicated after Home; echo rows={echo_rows!r}"

@@ -1385,6 +1385,7 @@ contains
     integer :: char_code
     ! Variables for redraw (moved out of block to avoid flang-new crash)
     integer :: i_redraw, term_cols, term_rows
+    integer :: move_up_rows  ! prompt rows + physical wrap row, for redraw move-up
     integer :: prompt_visual_len, cursor_visual_pos, current_line
     integer :: suggestion_display_len, available_space
     integer :: current_col, current_row
@@ -1552,11 +1553,15 @@ contains
 
     module_input_state%menu_prompt = prompt  ! Store prompt for menu mode, live preview, and FZF functions
 
-    ! Initialize cursor screen position tracking
-    ! For multiline prompts, cursor starts at row = prompt_line_count (0-indexed from prompt start)
-    ! Column = prompt_visual_length + 1 (for space after prompt)
-    module_cursor_screen_row = prompt_line_count
-    module_cursor_screen_col = prompt_visual_len + 1
+    ! Initialize cursor screen position tracking. Use the SAME computation
+    ! the redraw uses (cursor_get_row_col), so module_cursor_screen_row holds
+    ! the wrap-row convention (rows below the last prompt line, excluding
+    ! prompt newlines) consistently from the first redraw. Setting it to
+    ! prompt_line_count here used a different (inclusive) convention, which
+    ! made the first full redraw's move-up over-count by prompt_line_count
+    ! and repaint a wrapped line from the wrong origin.
+    call cursor_get_row_col(prompt, 0, term_cols, &
+                            module_cursor_screen_row, module_cursor_screen_col)
 
 
     ! Log readline state
@@ -1642,8 +1647,14 @@ contains
           ! A cursor-only key must not take the Phase-1 "just move the
           ! cursor" shortcut, or the highlight stays on screen — the
           ! Phase-1 guard checks paste_hl_active after this clear, so it
-          ! can't catch this itself.
+          ! can't catch this itself. Also invalidate the render frame so
+          ! the redraw does a CLEAN full repaint from the prompt origin,
+          ! not a Phase-2/3 partial diff against the stale highlighted
+          ! frame — that partial diff navigates to the first-changed byte
+          ! and, on a wrapped line where the cursor also jumped, repaints
+          ! from the wrong row (duplicated wrapped line).
           prev_diff_valid = .false.
+          prev_render_valid = .false.
         end if
 
         ! If multi-byte UTF-8 character, insert all bytes with correct visual width
@@ -2133,15 +2144,33 @@ contains
             ! the new content arrives, eliminating visible flashing.
             call rdraw_clear()
 
-            ! Move cursor to start of prompt UNLESS we just exited menu mode
-            ! current_row already includes rows from prompt line wrapping
-            ! and explicit newlines — don't add prompt_line_count again.
+            ! Move cursor to start of prompt UNLESS we just exited menu mode.
+            ! Move up by the PHYSICAL cursor row (module_cursor_screen_row,
+            ! tracked from the previous render), NOT current_row (the row the
+            ! NEW cursor_pos will land on). They're equal for an edit at the
+            ! cursor, but a cursor JUMP that forces a full redraw (e.g. Home
+            ! after a paste, where clearing the paste highlight invalidates the
+            ! Phase-1 cursor-only path) leaves the physical cursor on a
+            ! different row than current_row implies — using current_row then
+            ! under/over-moves and repaints from the wrong origin (line
+            ! duplication on wrapped input).
+            ! Move up by the cursor's PHYSICAL row, not current_row. current_row
+            ! is prompt_line_count + the NEW cursor_pos's wrap row; the physical
+            ! cursor is at prompt_line_count + the OLD wrap row, tracked in
+            ! module_cursor_screen_row (which counts wrap rows only, excluding
+            ! prompt lines — same convention as cursor_get_row_col). They match
+            ! for an edit at the cursor, but a cursor JUMP that forces a full
+            ! redraw (Home after a paste: clearing the paste highlight
+            ! invalidates the Phase-1 cursor-only path) leaves the physical
+            ! cursor on a different wrap row than current_row implies, so using
+            ! current_row repaints from the wrong origin (wrapped-line dup).
+            ! (move_up_rows declared at subroutine scope — a 'block' construct
+            ! here crashes flang-new on macOS ARM64; see other workarounds.)
+            move_up_rows = prompt_line_count + module_cursor_screen_row
             if (.not. module_input_state%skip_cursor_up_on_redraw) then
-              if (current_row > 0) then
-                do i_redraw = 1, current_row
-                  call rdraw_append(char(27) // '[A')
-                end do
-              end if
+              do i_redraw = 1, move_up_rows
+                call rdraw_append(char(27) // '[A')
+              end do
               call rdraw_append_char(char(13))
             else
               call rdraw_append_char(char(13))
@@ -2396,13 +2425,30 @@ contains
             prev_render_len = cframe_pos
             prev_render_valid = .true.
 
-            ! Position cursor correctly (if not at end of input)
+            ! Position cursor correctly (if not at end of input). The repaint
+            ! left the cursor at the END of the content; move it back to the
+            ! cursor position. On a WRAPPED line the cursor position can be on
+            ! an earlier visual row than the end, so move UP by the row
+            ! difference first, THEN horizontally — moving only left (the old
+            ! behavior) stranded the cursor on the end's row.
             if (module_input_state%cursor_pos < module_input_state%length) then
               call cursor_get_row_col(prompt, module_input_state%length, term_cols, current_row, current_col)
               call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, cursor_visual_pos, i_redraw)
-              if (current_col > i_redraw) then
+              ! Vertical: target row (cursor_visual_pos) <= end row (current_row)
+              if (current_row > cursor_visual_pos) then
+                do current_line = 1, current_row - cursor_visual_pos
+                  call rdraw_append(char(27) // '[A')
+                end do
+              end if
+              ! Horizontal: from end col to target col (column is preserved
+              ! across the vertical move)
+              if (i_redraw < current_col) then
                 do current_line = 1, current_col - i_redraw
                   call rdraw_append(char(27) // '[D')
+                end do
+              else if (i_redraw > current_col) then
+                do current_line = 1, i_redraw - current_col
+                  call rdraw_append(char(27) // '[C')
                 end do
               end if
             end if
