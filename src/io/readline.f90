@@ -1484,13 +1484,16 @@ contains
 #endif
 
   ! Enhanced readline with character-by-character input processing
-  subroutine readline_enhanced(prompt, line, iostat, rprompt, keep_raw)
+  subroutine readline_enhanced(prompt, line, iostat, rprompt, keep_raw, shell)
     use signal_handler, only: g_terminal_resized
     character(len=*), intent(in) :: prompt
     character(len=*), intent(out) :: line
     integer, intent(out) :: iostat
     character(len=*), intent(in), optional :: rprompt  ! Right-side prompt (like zsh)
     logical, intent(in), optional :: keep_raw  ! Don't restore terminal on exit (for continuation)
+    ! Live shell state, threaded in for completion (AR-06b: unexported vars).
+    ! Optional so non-shell callers (tests, continuation prompts) still work.
+    type(shell_state_t), intent(inout), optional :: shell
 
     ! Use module-level module_input_state directly (avoids flang-new pointer corruption bug)
     character :: ch
@@ -2000,7 +2003,7 @@ contains
               call handle_menu_navigation(module_input_state, KEY_TAB, done)
             else
               ! Call separate subroutine to work around macOS ARM64 crash
-              call handle_tab_key_separate(module_input_state)
+              call handle_tab_key_separate(module_input_state, shell)
               ! All completion logic is now handled in the separate subroutine
             end if
           end if
@@ -4140,9 +4143,16 @@ contains
         end do
       else
         ! Check if completing a variable name ($VAR)
-        if (len_trim(last_word) > 1 .and. last_word(1:1) == '$') then
-          ! Variable completion — match against shell variables
-          call complete_variable_names(last_word, completions, num_completions)
+        if (len_trim(last_word) >= 1 .and. last_word(1:1) == '$') then
+          ! Variable completion (AR-06b: >=1 so a lone `$` lists all vars, like
+          ! fish; complete_variable_names with an empty prefix matches all).
+          ! Passing shell adds unexported locals (absent => environ only).
+          call complete_variable_names(last_word, completions, num_completions, shell)
+        else if (len_trim(last_word) >= 1 .and. last_word(1:1) == '~' .and. &
+                 index(trim(last_word), '/') == 0) then
+          ! ~user completion (AR-06b): no slash yet, so complete the username
+          ! (e.g. ~ro -> ~root/). ~/path and ~user/path go through file completion.
+          call complete_user_names(last_word, completions, num_completions)
         else if (has_glob_chars(last_word)) then
           ! Expand glob pattern instead of regular file completion
           call expand_glob_for_completion(last_word, completions, num_completions)
@@ -4461,14 +4471,17 @@ contains
   end subroutine
 
   ! Enhanced command completion with PATH executable scanning
-  subroutine complete_variable_names(prefix_with_dollar, completions, num_completions)
+  subroutine complete_variable_names(prefix_with_dollar, completions, num_completions, shell)
     character(len=*), intent(in) :: prefix_with_dollar
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
+    type(shell_state_t), intent(in), optional :: shell
 
     character(len=256) :: var_prefix
-    integer :: i, score, eqpos
+    integer :: i, j, score, eqpos
     character(len=:), allocatable :: entry
+    character(len=MAX_LINE_LEN) :: cand
+    logical :: dup
 
     num_completions = 0
     ! Strip the $ from the prefix
@@ -4476,9 +4489,6 @@ contains
 
     ! Iterate the environment natively (no `env | cut | tr` subprocess); each
     ! entry is "NAME=value", so match on the NAME before '='.
-    ! NOTE: environ holds only EXPORTED names. Completing unexported shell
-    ! variables needs the live shell_state_t, which the interactive readline
-    ! backend does not currently receive — see AR-06b for the threading plan.
     i = 0
     do
       entry = get_environ_entry(i)
@@ -4493,6 +4503,54 @@ contains
         completions(num_completions) = '$' // entry(1:eqpos-1)
       end if
       if (i > 100000) exit  ! safety bound
+    end do
+
+    ! Also offer unexported shell variables (AR-06b): the environ holds only
+    ! exported names, but fish completes all in-scope variables. Dedupe against
+    ! the exported names already added.
+    if (present(shell)) then
+      do i = 1, shell%num_variables
+        if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
+        if (len_trim(shell%variables(i)%name) == 0) cycle
+        if (fuzzy_match_score(trim(var_prefix), trim(shell%variables(i)%name)) < 0) cycle
+        cand = '$' // trim(shell%variables(i)%name)
+        dup = .false.
+        do j = 1, num_completions
+          if (trim(completions(j)) == trim(cand)) then
+            dup = .true.
+            exit
+          end if
+        end do
+        if (.not. dup) then
+          num_completions = num_completions + 1
+          completions(num_completions) = cand
+        end if
+      end do
+    end if
+  end subroutine
+
+  ! ~user completion (AR-06b): the prefix is "~name" with no slash. Enumerate the
+  ! passwd database for usernames starting with `name` and offer "~user/" for
+  ! each (the trailing / both signals a directory and lets the next Tab descend).
+  subroutine complete_user_names(prefix_with_tilde, completions, num_completions)
+    character(len=*), intent(in) :: prefix_with_tilde
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
+    integer, intent(out) :: num_completions
+
+    character(len=256) :: user_prefix
+    character(len=256) :: matches(MAX_LOCAL_COMPLETIONS)
+    integer :: i, count
+
+    num_completions = 0
+    ! Strip the leading '~'.
+    user_prefix = prefix_with_tilde(2:)
+
+    call get_user_matches(trim(user_prefix), matches, count)
+    do i = 1, count
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
+      if (len_trim(matches(i)) == 0) cycle
+      num_completions = num_completions + 1
+      completions(num_completions) = '~' // trim(matches(i)) // '/'
     end do
   end subroutine
 
@@ -5113,13 +5171,14 @@ contains
   end function escape_for_completion
 
   ! Enhanced tab completion that handles partial completion
-  subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed, input_len)
+  subroutine smart_tab_complete(partial_input, completions, num_completions, completed_line, completed, input_len, shell)
     character(len=*), intent(in) :: partial_input
     character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
     integer, intent(out) :: num_completions
     character(len=*), intent(out) :: completed_line
     logical, intent(out) :: completed
     integer, intent(in), optional :: input_len
+    type(shell_state_t), intent(inout), optional :: shell
 
     character(len=MAX_LINE_LEN) :: common_prefix, prefix_part, last_word
     character(len=4096) :: expanded_matches
@@ -5172,7 +5231,7 @@ contains
     is_glob_pattern = has_glob_chars(last_word)
 
     ! Pass the actual length to preserve trailing spaces
-    call enhanced_tab_complete(partial_input, completions, num_completions, input_len=actual_len)
+    call enhanced_tab_complete(partial_input, completions, num_completions, shell=shell, input_len=actual_len)
 
     ! Backends are done — stop pager collection so later backend calls
     ! (e.g. from the autosuggestion path) can't clobber the store
@@ -5714,8 +5773,9 @@ contains
 
   ! Separate tab completion handler to work around macOS ARM64 crash
   ! This modifies the SAVE'd input_state directly without problematic returns
-  subroutine handle_tab_key_separate(input_state)
+  subroutine handle_tab_key_separate(input_state, shell)
     type(input_state_t), intent(inout) :: input_state
+    type(shell_state_t), intent(inout), optional :: shell
     integer :: tab_num_completions, i, last_space_pos
 #ifdef __APPLE__
     integer :: j  ! only the flang-new menu_prefix copy loop uses j; declaring
@@ -5755,7 +5815,7 @@ contains
 
     ! Attempt smart completion (pass input_state%length to preserve trailing spaces)
     call smart_tab_complete(tab_partial_input, tab_completions, &
-                           tab_num_completions, tab_completed_line, tab_completed, input_state%length)
+                           tab_num_completions, tab_completed_line, tab_completed, input_state%length, shell)
 
     if (tab_num_completions == 0) then
       ! No completions found - ring bell

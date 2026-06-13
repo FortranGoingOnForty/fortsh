@@ -336,16 +336,16 @@ program fortran_shell
               char(27) // '[' // trim(col_str_buf) // 'G' // &
               trim(rprompt_str) // &
               prompt_str(newline_pos:len_trim(prompt_str))
-            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true.)
+            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true., shell=shell)
           else
-            call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
+            call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true., shell=shell)
           end if
         else
           ! Single-line prompt: pass RPROMPT to readline for its handling
-          call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true.)
+          call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true., shell=shell)
         end if
       else
-        call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true.)
+        call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true., shell=shell)
       end if
     else
       read(input_unit, '(a)', iostat=iostat) input_line
@@ -389,7 +389,7 @@ program fortran_shell
     do while (has_unclosed_quote(input_line) .or. ends_with_continuation_backslash(input_line))
       if (shell%is_interactive) then
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
-        call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true.)
+        call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true., shell=shell)
       else
         ! Non-interactive: just read next line
         read(input_unit, '(a)', iostat=iostat) proc_subst_line
@@ -416,7 +416,7 @@ program fortran_shell
     do while (needs_compound_continuation(input_line))
       if (shell%is_interactive) then
         prompt_str = expand_prompt(shell%ps2, shell, shell%ps2_len)
-        call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true.)
+        call readline_enhanced(prompt_str, proc_subst_line, iostat, keep_raw=.true., shell=shell)
       else
         ! Non-interactive: just read next line
         read(input_unit, '(a)', iostat=iostat) proc_subst_line

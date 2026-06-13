@@ -396,6 +396,14 @@ module system_interface
       type(c_ptr) :: c_user_home
     end function
 
+    function c_match_users(prefix, out, outlen, max_users) bind(C, name="fortsh_match_users")
+      import :: c_char, c_int
+      character(kind=c_char), intent(in) :: prefix(*)
+      character(kind=c_char), intent(inout) :: out(*)
+      integer(c_int), value :: outlen, max_users
+      integer(c_int) :: c_match_users
+    end function
+
     function c_make_temp(prefix, out, outlen) bind(C, name="fortsh_make_temp")
       import :: c_char, c_int
       character(kind=c_char), intent(in) :: prefix(*)
@@ -1009,6 +1017,51 @@ contains
       end if
     end if
   end function
+
+  ! Usernames starting with `prefix`, via getpwent (for ~user completion).
+  ! Fills names(1:count); each name is a bare username (no ~). count is capped
+  ! by size(names) and the C-side buffer.
+  subroutine get_user_matches(prefix, names, count)
+    character(len=*), intent(in) :: prefix
+    character(len=*), intent(out) :: names(:)
+    integer, intent(out) :: count
+    integer, parameter :: BUFLEN = 8192
+    character(kind=c_char), dimension(:), allocatable, target :: cprefix
+    character(kind=c_char), target :: cbuf(BUFLEN)
+    integer :: i, n, p, nlen, start, slot, maxn
+
+    count = 0
+    maxn = size(names)
+    if (maxn <= 0) return
+
+    nlen = len_trim(prefix)
+    allocate(cprefix(nlen + 1))
+    do i = 1, nlen
+      cprefix(i) = prefix(i:i)
+    end do
+    cprefix(nlen + 1) = c_null_char
+
+    n = int(c_match_users(cprefix, cbuf, BUFLEN, maxn))
+    if (n <= 0) return
+
+    ! Split the NUL-separated buffer into names.
+    slot = 0
+    start = 1
+    do p = 1, BUFLEN
+      if (cbuf(p) == c_null_char) then
+        if (p == start) exit          ! empty string => end of list (double-NUL)
+        slot = slot + 1
+        if (slot > maxn) exit
+        names(slot) = ''
+        do i = start, p - 1
+          if (i - start + 1 <= len(names(slot))) names(slot)(i-start+1:i-start+1) = cbuf(i)
+        end do
+        start = p + 1
+        if (slot >= n) exit
+      end if
+    end do
+    count = slot
+  end subroutine get_user_matches
 
   function set_environment_var(var_name, var_value) result(success)
     character(len=*), intent(in) :: var_name, var_value

@@ -15,6 +15,34 @@ const char *fortsh_user_home(const char *name) {
     return pw ? pw->pw_dir : (const char *)0;
 }
 
+// Enumerate passwd usernames that start with `prefix` (for ~user completion).
+// Writes them NUL-separated into `out` (followed by a final empty string, i.e.
+// double-NUL), capped by `outlen` bytes and `max_users` entries. Returns the
+// count written. NUL-separation avoids marshaling a 2D char array to Fortran.
+int fortsh_match_users(const char *prefix, char *out, int outlen, int max_users) {
+    int n = 0, pos = 0;
+    size_t plen = prefix ? strlen(prefix) : 0;
+    struct passwd *pw;
+    if (!out || outlen <= 0) return 0;
+    out[0] = '\0';
+    setpwent();
+    while (n < max_users && (pw = getpwent()) != (struct passwd *)0) {
+        const char *nm = pw->pw_name;
+        size_t L;
+        if (!nm) continue;
+        if (plen && strncmp(nm, prefix, plen) != 0) continue;
+        L = strlen(nm);
+        if (pos + (int)L + 2 > outlen) break;  // name + its NUL + final NUL
+        memcpy(out + pos, nm, L);
+        pos += (int)L;
+        out[pos++] = '\0';
+        n++;
+    }
+    endpwent();
+    if (pos < outlen) out[pos] = '\0';  // double-NUL terminate the list
+    return n;
+}
+
 // Securely create a temp file in $TMPDIR (or /tmp): builds "<dir>/<prefix>XXXXXX"
 // and mkstemp()s it (O_CREAT|O_EXCL, mode 0600, never follows a symlink, no
 // predictable name / race). Writes the chosen path to `out` and returns 0 on

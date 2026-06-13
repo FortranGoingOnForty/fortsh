@@ -15,7 +15,43 @@ try:
 except ImportError:  # pragma: no cover
     pyte = None
 
+try:
+    import pwd
+    _HAS_ROOT = pwd.getpwnam("root") is not None
+except Exception:  # pragma: no cover
+    _HAS_ROOT = False
+
 pytestmark = pytest.mark.skipif(pyte is None, reason="pyte not installed")
+
+
+def _tab_raw(fortsh_path, tmp_path, line):
+    """Type `line` (ending in Tab), return the raw bytes emitted in response.
+    Raw, not pyte: completion menus / inline expansions reposition the cursor in
+    ways pyte mistracks, but the candidate text is emitted verbatim first."""
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, COLS))
+    raw = bytearray()
+
+    def drain(secs=1.0):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                raw.extend(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    mark = len(raw)
+    child.send(line)
+    drain(1.2)
+    tail = bytes(raw[mark:])
+    _cleanup(child)
+    return tail
 
 ROWS, COLS = 24, 90
 
@@ -131,3 +167,36 @@ def test_no_trailing_space_after_dir(fortsh_path, tmp_path):
     rows = [r.rstrip() for r in screen.display if r.strip()]
     _cleanup(child)
     assert "mydir/Z" in rows
+
+
+def test_bare_dollar_lists_variables(fortsh_path, tmp_path):
+    """A lone `$`+Tab lists variables (AR-06b): previously the >1 guard meant a
+    bare `$` completed nothing. PATH is always set, so it must appear."""
+    tail = _tab_raw(fortsh_path, tmp_path, b"echo $\t")
+    assert b"PATH" in tail
+
+
+def test_unexported_var_completes(fortsh_path, tmp_path):
+    """An unexported shell variable is offered for `$`-completion (AR-06b: the
+    shell state is now threaded into the interactive completion backend). Set
+    `myvar` without export, complete `$myv`, execute, expect its value."""
+    child, screen, drain = _spawn(fortsh_path, tmp_path)
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"myvar=localval\r")   # unexported shell variable
+    drain(0.7)
+    child.send(b"echo $myv\t")        # completes to $myvar via shell%variables
+    drain(0.8)
+    child.send(b"\r")
+    drain(0.8)
+    rows = [r.rstrip() for r in screen.display if r.strip()]
+    _cleanup(child)
+    assert "localval" in rows
+
+
+@pytest.mark.skipif(not _HAS_ROOT, reason="no 'root' user to complete")
+def test_tilde_user_completes(fortsh_path, tmp_path):
+    """`~ro`+Tab completes a username via getpwent (AR-06b): `~root` is offered
+    (root exists on the test host)."""
+    tail = _tab_raw(fortsh_path, tmp_path, b"echo ~ro\t")
+    assert b"~root" in tail
