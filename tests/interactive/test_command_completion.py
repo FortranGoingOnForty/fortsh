@@ -88,3 +88,53 @@ def test_cmd_path_pattern_excludes_nonexecutables(fortsh_path, tmp_path):
     cmd = next((r for r in rows if "./r" in r and r.lstrip().startswith(">")), "")
     assert "runme" in cmd, f"executable not completed: {rows!r}"
     assert "readme" not in cmd, f"non-executable offered in command position: {rows!r}"
+
+
+def test_path_command_scan(fortsh_path, tmp_path):
+    """cand-1: a bare command-position prefix completes executables found on
+    $PATH (not just the ~35 hardcoded names). Uses a synthetic PATH dir so the
+    test doesn't depend on which system binaries exist."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    exe = bindir / "zzcustomcmd"
+    exe.write_text("#!/bin/sh\n")
+    os.chmod(exe, 0o755)
+    (bindir / "zzcustomdata").write_text("data\n")  # present but NOT executable
+
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["PATH"] = str(bindir) + ":" + env.get("PATH", "")
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, COLS))
+    screen = pyte.Screen(COLS, ROWS)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    for ch in b"zzcustom":
+        child.send(bytes([ch]))
+        time.sleep(0.03)
+    drain(0.4)
+    child.send(b"\t")  # unique executable match -> completes
+    drain(1.2)
+    rows = [r.rstrip() for r in screen.display if r.strip()]
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    blob = "\n".join(rows)
+    assert "zzcustomcmd" in blob, f"PATH executable not completed: {rows!r}"
+    cmd = next((r for r in rows if r.lstrip().startswith(">")), "")
+    assert "zzcustomdata" not in cmd, f"non-executable PATH entry completed: {rows!r}"

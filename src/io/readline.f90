@@ -4324,8 +4324,9 @@ contains
     type(scored_completion_t), allocatable :: scored(:)
     integer :: i, num_scored, score
 
-    ! Allocate scored array
-    allocate(scored(100))  ! This should be enough for builtins
+    ! Allocate scored array (room for builtins + a $PATH scan, capped at the
+    ! pager store size; output is still trimmed to 50 below)
+    allocate(scored(PAGER_STORE_MAX))
     num_completions = 0
     num_scored = 0
 
@@ -4334,23 +4335,31 @@ contains
       score = fuzzy_match_score(prefix, trim(builtin_commands(i)))
       if (score >= 0) then  ! Negative score = no match
         num_scored = num_scored + 1
-        if (num_scored <= 100) then
+        if (num_scored <= size(scored)) then
           scored(num_scored)%text = trim(builtin_commands(i))
           scored(num_scored)%score = score
         end if
       end if
     end do
 
-    ! Add common system commands
+    ! Add common system commands (kept as a fallback; deduped by the PATH scan)
     call add_system_commands_fuzzy(prefix, scored, num_scored)
+
+    ! Scan $PATH for executables matching the prefix (cand-1). This is what
+    ! makes `pyt`+Tab complete python3/pytest instead of only ~35 hardcoded
+    ! names. Deduped against builtins and common commands.
+    call add_path_commands_fuzzy(prefix, scored, num_scored)
 
     ! Sort by score
     if (num_scored > 0) then
       call sort_completions_by_score(scored, num_scored)
     end if
 
-    ! Copy top matches to output (limit to 50)
-    num_completions = min(num_scored, 50)
+    ! Copy top matches to the output array, which is sized MAX_LOCAL_COMPLETIONS.
+    ! (Was a literal 50 — a latent overflow that never fired until the $PATH
+    ! scan let num_scored exceed 40, smashing the stack. The pager store below
+    ! holds the full set for the scrollable menu.)
+    num_completions = min(num_scored, MAX_LOCAL_COMPLETIONS)
     do i = 1, num_completions
       completions(i) = scored(i)%text
     end do
@@ -4393,6 +4402,82 @@ contains
       end if
     end do
   end subroutine
+
+  ! Scan $PATH for executables whose basename starts with `prefix` and add them
+  ! to the scored set (deduped by basename against what's already there). Prefix
+  ! match (not fuzzy) keeps it cheap and matches fish's command completion; the
+  ! cheap prefix test runs BEFORE the access(X_OK) syscall so we only stat
+  ! candidates. Bounded by size(scored). (AR-02 cand-1)
+  subroutine add_path_commands_fuzzy(prefix, scored, num_scored)
+    character(len=*), intent(in) :: prefix
+    type(scored_completion_t), intent(inout) :: scored(:)
+    integer, intent(inout) :: num_scored
+
+    integer, parameter :: DIR_ENTRIES = 4096
+    character(len=:), allocatable :: path_env
+    character(len=1024) :: dir
+    character(len=256), allocatable :: names(:)
+    logical, allocatable :: is_dir_flags(:)
+    character(len=MAX_LINE_LEN) :: full_path
+    integer :: num_entries, i, j, ds, sep, plen, path_len, score, cap, nlen
+    logical :: dup
+
+    path_env = get_environment_var('PATH')
+    if (.not. allocated(path_env)) return
+    path_len = len_trim(path_env)
+    if (path_len == 0) return
+
+    plen = len_trim(prefix)
+    cap = size(scored)
+    allocate(names(DIR_ENTRIES), is_dir_flags(DIR_ENTRIES))
+
+    ! Walk PATH, splitting on ':'
+    ds = 1
+    do while (ds <= path_len)
+      if (num_scored >= cap) exit
+      sep = index(path_env(ds:path_len), ':')
+      if (sep == 0) then
+        dir = path_env(ds:path_len)
+        ds = path_len + 1
+      else
+        dir = path_env(ds:ds+sep-2)
+        ds = ds + sep
+      end if
+      if (len_trim(dir) == 0) cycle   ! empty PATH element
+
+      call list_directory(trim(dir), names, is_dir_flags, num_entries)
+      do i = 1, num_entries
+        if (num_scored >= cap) exit
+        if (is_dir_flags(i)) cycle    ! a command must be a file, not a dir
+        nlen = len_trim(names(i))
+        if (nlen == 0) cycle
+        ! cheap prefix filter before the access() syscall
+        if (plen > 0) then
+          if (nlen < plen) cycle
+          if (names(i)(1:plen) /= prefix(1:plen)) cycle
+        end if
+        full_path = trim(dir) // '/' // names(i)(1:nlen)
+        if (.not. file_is_executable(trim(full_path))) cycle
+        ! dedupe by basename (earlier PATH entry / builtin / common-cmd wins)
+        dup = .false.
+        do j = 1, num_scored
+          if (trim(scored(j)%text) == names(i)(1:nlen)) then
+            dup = .true.
+            exit
+          end if
+        end do
+        if (dup) cycle
+        score = fuzzy_match_score(prefix, names(i)(1:nlen))
+        if (score < 0) cycle
+        num_scored = num_scored + 1
+        scored(num_scored)%text = names(i)(1:nlen)
+        scored(num_scored)%score = score
+      end do
+    end do
+
+    if (allocated(names)) deallocate(names)
+    if (allocated(is_dir_flags)) deallocate(is_dir_flags)
+  end subroutine add_path_commands_fuzzy
 
   ! Fuzzy version of add_system_commands
   subroutine add_system_commands_fuzzy(prefix, scored, num_scored)
