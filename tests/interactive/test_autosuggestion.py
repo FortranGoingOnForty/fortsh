@@ -72,3 +72,63 @@ def test_end_accepts_autosuggestion(fortsh_path, tmp_path):
 def test_ctrl_e_accepts_autosuggestion(fortsh_path, tmp_path):
     """Ctrl-E accepts the whole autosuggestion (AS-1)."""
     assert _accept_and_run(fortsh_path, tmp_path, b"\x05") == "suggested_command_xyz"
+
+
+def _word_accept_and_run(fortsh_path, tmp_path, accept_key):
+    """Seed history with `echo foo bar baz`, type `echo f` to surface the
+    suggestion `oo bar baz`, press accept_key (word-accept), execute, and
+    return the echoed line. One-word accept -> 'foo'; whole -> 'foo bar baz';
+    no-op -> 'f'."""
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, COLS))
+    screen = pyte.Screen(COLS, ROWS)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs=1.0):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    child.send(b"echo foo bar baz\r")
+    drain(0.7)
+    for ch in b"echo f":
+        child.send(bytes([ch]))
+        time.sleep(0.03)
+    drain(0.8)
+    child.send(accept_key)
+    drain(0.7)
+    child.send(b"\r")
+    drain(1.0)
+    rows = [r.rstrip() for r in screen.display if r.strip()]
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    hits = [r for r in rows if r in ("foo", "foo bar baz", "f")]
+    return hits[-1] if hits else "(none)"
+
+
+def test_alt_right_accepts_one_word(fortsh_path, tmp_path):
+    """Alt-Right accepts one word of the autosuggestion at EOL (AS-6)."""
+    assert _word_accept_and_run(fortsh_path, tmp_path, b"\x1b[1;3C") == "foo"
+
+
+def test_alt_f_accepts_one_word(fortsh_path, tmp_path):
+    """Alt-f accepts one word of the autosuggestion at EOL (AS-6)."""
+    assert _word_accept_and_run(fortsh_path, tmp_path, b"\x1bf") == "foo"
+
+
+def test_ctrl_right_accepts_one_word(fortsh_path, tmp_path):
+    """Ctrl-Right accepts one word of the autosuggestion at EOL (AS-6)."""
+    assert _word_accept_and_run(fortsh_path, tmp_path, b"\x1b[1;5C") == "foo"

@@ -7085,8 +7085,9 @@ contains
         ! Alt+d - Delete forward one word (emacs standard)
         call handle_kill_word_forward(input_state)
       case('f')
-        ! Alt+f - Move forward one word
-        call move_to_next_word(input_state)
+        ! Alt+f - forward-word: move forward a word, or accept one suggestion
+        ! word at end-of-buffer (AS-6, fish nextd-or-forward-word)
+        call forward_word_or_accept(input_state)
       case('F')
         ! Alt+Shift+f - Extend selection one word forward (shift phase, Sprint 1)
         module_extending_selection = .true.
@@ -7320,11 +7321,9 @@ contains
 
         ! Check for Ctrl+Right arrow (modifier=5, terminator=C)
         if (modifier == '5' .and. terminator == 'C') then
-          ! Ctrl+Right arrow - accept one word from autosuggestion
-          if (input_state%cursor_pos == input_state%length .and. &
-              input_state%suggestion_length > 0) then
-            call accept_autosuggestion_word(input_state)
-          end if
+          ! Ctrl+Right arrow - forward-word: move forward a word, or accept
+          ! one suggestion word at end-of-buffer (AS-6, fish forward-word)
+          call forward_word_or_accept(input_state)
         ! ============================================================
         ! Shift-phase selection extension (modifiers 2 and 6)
         ! Sprint 1: state only; Sprint 2 adds the visible highlight.
@@ -7374,8 +7373,9 @@ contains
           ! Alt+Left - Move cursor backward one word (standard behavior)
           call move_to_previous_word(input_state)
         else if (modifier == '3' .and. terminator == 'C') then
-          ! Alt+Right - Move cursor forward one word (standard behavior)
-          call move_to_next_word(input_state)
+          ! Alt+Right - forward-word: move forward a word, or accept one
+          ! suggestion word at end-of-buffer (AS-6, fish nextd-or-forward-word)
+          call forward_word_or_accept(input_state)
         ! Check for Alt+Shift+Up arrow (modifier=4, terminator=A)
         else if (modifier == '4' .and. terminator == 'A') then
           ! Alt+Shift+Up - Go to parent directory (cd ..)
@@ -9994,6 +9994,20 @@ contains
 
     ! Update suggestion to remove accepted part
     call update_autosuggestion(input_state)
+  end subroutine
+
+  ! fish forward-word semantics (AS-6): move forward one word; or, when the
+  ! cursor is at end-of-buffer with a live autosuggestion, accept one word of
+  ! the suggestion. Bound to Alt-f, Alt-Right, and Ctrl-Right.
+  subroutine forward_word_or_accept(input_state)
+    type(input_state_t), intent(inout) :: input_state
+
+    if (input_state%cursor_pos == input_state%length .and. &
+        input_state%suggestion_length > 0) then
+      call accept_autosuggestion_word(input_state)
+    else
+      call move_to_next_word(input_state)
+    end if
   end subroutine
 
   ! ===========================================================================
