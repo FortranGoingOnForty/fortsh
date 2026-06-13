@@ -336,6 +336,29 @@ module readline
   integer, save :: last_yank_start = 0   ! buffer offset where the last yank landed
   integer, save :: last_yank_len = 0     ! length of the last-yanked span
 
+  ! Undo/redo (AR-05 DIV-1). Each edit pushes the PRE-edit snapshot (buffer +
+  ! cursor) onto the undo stack; undo restores it and moves the current state to
+  ! the redo stack; a fresh edit clears redo. Consecutive single-char inserts
+  ! coalesce into one group (undo removes a whole typed run, like fish). Reset
+  ! per readline() call — each command line has its own history.
+  integer, parameter :: UNDO_STACK_MAX = 128
+  character(len=MAX_LINE_LEN), save :: undo_stack(UNDO_STACK_MAX)
+  integer, save :: undo_stack_len(UNDO_STACK_MAX) = 0
+  integer, save :: undo_stack_cur(UNDO_STACK_MAX) = 0
+  integer, save :: undo_n = 0
+  character(len=MAX_LINE_LEN), save :: redo_stack(UNDO_STACK_MAX)
+  integer, save :: redo_stack_len(UNDO_STACK_MAX) = 0
+  integer, save :: redo_stack_cur(UNDO_STACK_MAX) = 0
+  integer, save :: redo_n = 0
+  ! Pre-dispatch snapshot of the live buffer, captured each keystroke.
+  character(len=MAX_LINE_LEN), save :: undo_pre_buf = ''
+  integer, save :: undo_pre_len = 0
+  integer, save :: undo_pre_cursor = 0
+  ! Insert-run coalescing + a guard so undo/redo itself isn't recorded as an edit.
+  logical, save :: undo_op_was_insert = .false.
+  logical, save :: undo_prev_was_insert = .false.
+  logical, save :: undo_navigate_this_key = .false.
+
   ! Vi yank register: also session-lifetime. Fixed-length module storage,
   ! NOT the per-state vi_yank_buffer allocatable — under USE_MEMORY_POOL
   ! that allocatable is never allocated (init only touches the pooled
@@ -1558,6 +1581,7 @@ contains
     highlighted_len = 0
     prev_diff_valid = .false.
     prev_render_valid = .false.
+    call undo_reset()   ! each line has its own undo history (DIV-1)
 
     ! Initialize history on first use
     call init_history()
@@ -1737,6 +1761,14 @@ contains
         yank_op_prev_key = yank_op_this_key
         yank_op_this_key = .false.
 
+        ! Undo (DIV-1): rotate the insert-run flag, clear the navigate guard, and
+        ! snapshot the live buffer BEFORE dispatch. undo_commit_if_changed (after
+        ! dispatch) pushes this snapshot iff the key actually changed the buffer.
+        undo_prev_was_insert = undo_op_was_insert
+        undo_op_was_insert = .false.
+        undo_navigate_this_key = .false.
+        call undo_capture_pre(module_input_state)
+
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
         ! handler re-arms it after inserting, so clearing here (before dispatch)
         ! correctly leaves it lit only until the user's next keystroke/motion.
@@ -1793,6 +1825,7 @@ contains
             utf8_i = utf8_char_width(utf8_char(1:1))  ! 2-byte can be 1 or 2
           end if
           call insert_utf8_char(module_input_state, utf8_char(1:utf8_num_bytes), utf8_num_bytes, utf8_i)
+          call undo_commit_if_changed(module_input_state)  ! DIV-1 (this path cycles)
           cycle  ! Skip the control character processing below
         end if
 
@@ -2082,6 +2115,14 @@ contains
           ! Transpose characters - no-op in search mode
           if (.not. module_input_state%in_search) call handle_transpose_chars(module_input_state)
 
+        case(31)
+          ! Ctrl-/ (and Ctrl-_, same byte 0x1f): undo (DIV-1). Skip in search/
+          ! menu modes, which own their own input handling.
+          if (.not. module_input_state%in_search .and. &
+              .not. module_input_state%in_menu_select) then
+            call handle_undo(module_input_state)
+          end if
+
         case(32:126)
           ! Regular printable characters
           if (module_input_state%in_signal_input) then
@@ -2124,6 +2165,8 @@ contains
           ! Ignore other control characters for now
         end select
 
+        ! Undo (DIV-1): record this keystroke's edit (if any) as an undo point.
+        call undo_commit_if_changed(module_input_state)
 
         ! Coalesce input bursts (paste / fast typing): if bytes are already
         ! queued on stdin, defer the redraw and loop to consume them, so the
@@ -5236,6 +5279,7 @@ contains
   subroutine insert_char_wrapper(input_state, ch)
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
+    undo_op_was_insert = .true.   ! DIV-1: mark a self-insert so a run coalesces
     call insert_char_impl(input_state, ch)
   end subroutine
 
@@ -5249,6 +5293,8 @@ contains
     integer :: i, j, term_cols
     logical :: debug_utf8
     integer :: debug_stat
+
+    undo_op_was_insert = .true.   ! DIV-1: multi-byte self-insert coalesces too
 
     ! Shift-phase type-over (Sprint 3): replace active selection before
     ! inserting a new multi-byte character.
@@ -7259,6 +7305,9 @@ contains
         ! Alt+y — yank-pop (DIV-2): replace the just-yanked text with the
         ! next-older kill-ring entry. No-op unless the previous key was a yank.
         call handle_yank_pop(input_state)
+      case('/')
+        ! Alt+/ — redo (DIV-1), the counterpart to Ctrl-/ undo.
+        call handle_redo(input_state)
       case(char(127))
         ! Alt+Backspace - backward-kill-word (punctuation-aware small word;
         ! distinct from Ctrl+W = backward-kill-path-component, DIV-3).
@@ -8765,6 +8814,159 @@ contains
     input_state%dirty = .true.
     yank_op_this_key = .true.
   end subroutine
+
+  ! ===========================================================================
+  ! Undo / redo (AR-05 DIV-1)
+  ! ===========================================================================
+
+  ! Reset the undo/redo history (per readline() call — each line is independent).
+  subroutine undo_reset()
+    undo_n = 0
+    redo_n = 0
+    undo_op_was_insert = .false.
+    undo_prev_was_insert = .false.
+    undo_navigate_this_key = .false.
+    undo_pre_len = 0
+    undo_pre_cursor = 0
+  end subroutine undo_reset
+
+  ! Capture the live buffer as this keystroke's pre-edit snapshot.
+  subroutine undo_capture_pre(state)
+    type(input_state_t), intent(in) :: state
+    integer :: j
+    undo_pre_buf = ''
+    do j = 1, state%length
+      undo_pre_buf(j:j) = state_buffer_get_char(state, j)
+    end do
+    undo_pre_len = state%length
+    undo_pre_cursor = state%cursor_pos
+  end subroutine undo_capture_pre
+
+  subroutine undo_stack_push(buf, blen, bcur)
+    character(len=*), intent(in) :: buf
+    integer, intent(in) :: blen, bcur
+    integer :: i
+    if (undo_n >= UNDO_STACK_MAX) then
+      do i = 1, UNDO_STACK_MAX - 1   ! drop oldest
+        undo_stack(i) = undo_stack(i+1)
+        undo_stack_len(i) = undo_stack_len(i+1)
+        undo_stack_cur(i) = undo_stack_cur(i+1)
+      end do
+      undo_n = UNDO_STACK_MAX - 1
+    end if
+    undo_n = undo_n + 1
+    undo_stack(undo_n) = buf
+    undo_stack_len(undo_n) = blen
+    undo_stack_cur(undo_n) = bcur
+  end subroutine undo_stack_push
+
+  subroutine redo_stack_push(buf, blen, bcur)
+    character(len=*), intent(in) :: buf
+    integer, intent(in) :: blen, bcur
+    integer :: i
+    if (redo_n >= UNDO_STACK_MAX) then
+      do i = 1, UNDO_STACK_MAX - 1
+        redo_stack(i) = redo_stack(i+1)
+        redo_stack_len(i) = redo_stack_len(i+1)
+        redo_stack_cur(i) = redo_stack_cur(i+1)
+      end do
+      redo_n = UNDO_STACK_MAX - 1
+    end if
+    redo_n = redo_n + 1
+    redo_stack(redo_n) = buf
+    redo_stack_len(redo_n) = blen
+    redo_stack_cur(redo_n) = bcur
+  end subroutine redo_stack_push
+
+  ! After dispatch: if the buffer changed and this wasn't a coalesced insert
+  ! continuation, push the pre-edit snapshot. A new edit clears the redo branch.
+  subroutine undo_commit_if_changed(state)
+    type(input_state_t), intent(in) :: state
+    logical :: changed
+    integer :: j
+    if (undo_navigate_this_key) return    ! undo/redo itself is not a new edit
+
+    changed = (state%length /= undo_pre_len)
+    if (.not. changed) then
+      do j = 1, state%length
+        if (state_buffer_get_char(state, j) /= undo_pre_buf(j:j)) then
+          changed = .true.
+          exit
+        end if
+      end do
+    end if
+    if (.not. changed) return
+
+    ! Coalesce a run of single-char inserts into one undo group.
+    if (undo_op_was_insert .and. undo_prev_was_insert .and. undo_n > 0) return
+
+    call undo_stack_push(undo_pre_buf, undo_pre_len, undo_pre_cursor)
+    redo_n = 0
+  end subroutine undo_commit_if_changed
+
+  ! Restore a snapshot into the live buffer.
+  subroutine state_restore_snapshot(state, buf, blen, bcur)
+    type(input_state_t), intent(inout) :: state
+    character(len=*), intent(in) :: buf
+    integer, intent(in) :: blen, bcur
+    integer :: j
+    do j = 1, blen
+      call state_buffer_set_char(state, j, buf(j:j))
+    end do
+    state%length = blen
+    if (bcur > blen) then
+      state%cursor_pos = blen
+    else if (bcur < 0) then
+      state%cursor_pos = 0
+    else
+      state%cursor_pos = bcur
+    end if
+    state%suggestion = ''
+    state%suggestion_length = 0
+    if (state%selection_active) call collapse_selection(state)
+    state%dirty = .true.
+    ! Buffer can shrink/diverge sharply; force a clean full repaint.
+    prev_diff_valid = .false.
+    prev_render_valid = .false.
+  end subroutine state_restore_snapshot
+
+  ! Ctrl-/ (or Ctrl-_): undo the last edit group.
+  subroutine handle_undo(state)
+    type(input_state_t), intent(inout) :: state
+    character(len=MAX_LINE_LEN) :: cur
+    integer :: j
+    if (undo_n == 0) return
+    ! Push the current state onto the redo stack so redo can return to it.
+    cur = ''
+    do j = 1, state%length
+      cur(j:j) = state_buffer_get_char(state, j)
+    end do
+    call redo_stack_push(cur, state%length, state%cursor_pos)
+    ! Restore the most recent pre-edit snapshot.
+    call state_restore_snapshot(state, undo_stack(undo_n), undo_stack_len(undo_n), &
+                                undo_stack_cur(undo_n))
+    undo_n = undo_n - 1
+    undo_navigate_this_key = .true.
+    call update_autosuggestion(state)
+  end subroutine handle_undo
+
+  ! Alt-/ : redo the last undone edit.
+  subroutine handle_redo(state)
+    type(input_state_t), intent(inout) :: state
+    character(len=MAX_LINE_LEN) :: cur
+    integer :: j
+    if (redo_n == 0) return
+    cur = ''
+    do j = 1, state%length
+      cur(j:j) = state_buffer_get_char(state, j)
+    end do
+    call undo_stack_push(cur, state%length, state%cursor_pos)
+    call state_restore_snapshot(state, redo_stack(redo_n), redo_stack_len(redo_n), &
+                                redo_stack_cur(redo_n))
+    redo_n = redo_n - 1
+    undo_navigate_this_key = .true.
+    call update_autosuggestion(state)
+  end subroutine handle_redo
 
   ! Ctrl+V paste handler (Sprint 5). Reads from the system clipboard;
   ! if the clipboard is empty or no tool is available, falls back to
