@@ -309,8 +309,32 @@ module readline
   logical, save :: module_input_state_initialized = .false.
 
   ! Kill ring content (see state_kill_buffer_set): session-lifetime, so
-  ! it survives the per-command string-pool invalidation and re-init
+  ! it survives the per-command string-pool invalidation and re-init.
+  ! session_kill_buffer mirrors the ring head (slot 1) for direct readers.
   character(len=MAX_LINE_LEN), save :: session_kill_buffer = ''
+
+  ! Multi-slot kill ring (AR-05 DIV-2), emacs/fish-style. Slot 1 is newest.
+  ! All kill ops (Ctrl-K/U/W, Alt-d, Alt-Backspace, selection cut) push_front
+  ! via state_kill_buffer_set; consecutive kills accumulate into slot 1
+  ! (forward kills append, backward kills prepend). Ctrl-Y yanks slot 1; Alt-y
+  ! (yank-pop) rotates through older slots, replacing the just-yanked span.
+  ! Module-scoped so it survives the per-command pool re-init, like the kill
+  ! buffer above — see [[fortsh-yank-registers-session-scoped]].
+  integer, parameter :: KILL_RING_SLOTS = 16
+  character(len=MAX_LINE_LEN), save :: kill_ring(KILL_RING_SLOTS) = ''
+  integer, save :: kill_ring_len(KILL_RING_SLOTS) = 0
+  integer, save :: kill_ring_count = 0   ! filled slots (0..KILL_RING_SLOTS)
+  ! Consecutive-kill accumulation: rotated each keystroke (prev <- this; this
+  ! <- false), so a kill op can tell whether the immediately preceding key was
+  ! also a kill and merge into slot 1 instead of pushing a new slot.
+  logical, save :: kill_op_prev_key = .false.
+  logical, save :: kill_op_this_key = .false.
+  ! Yank-pop chain: Alt-y only acts when the previous key was a yank/yank-pop.
+  logical, save :: yank_op_prev_key = .false.
+  logical, save :: yank_op_this_key = .false.
+  integer, save :: kill_yank_index = 0   ! ring slot the last yank came from
+  integer, save :: last_yank_start = 0   ! buffer offset where the last yank landed
+  integer, save :: last_yank_len = 0     ! length of the last-yanked span
 
   ! Vi yank register: also session-lifetime. Fixed-length module storage,
   ! NOT the per-state vi_yank_buffer allocatable — under USE_MEMORY_POOL
@@ -663,12 +687,57 @@ contains
     session_kill_buffer = ''
   end subroutine state_kill_buffer_clear
 
-  ! Set kill buffer from string
-  subroutine state_kill_buffer_set(state, str)
+  ! Push killed text onto the kill ring (DIV-2). On a kill that immediately
+  ! follows another kill (kill_op_prev_key), the text MERGES into slot 1 —
+  ! forward kills append, backward kills prepend — so e.g. two Alt-d kills
+  ! yank back together. Otherwise a new slot is pushed to the front. `forward`
+  ! selects the merge side (default .true.).
+  subroutine state_kill_buffer_set(state, str, forward)
     type(input_state_t), intent(inout) :: state
     character(len=*), intent(in) :: str
-    if (.false.) print *, state%kill_length  ! Silence unused-dummy warning
-    session_kill_buffer = str
+    logical, intent(in), optional :: forward
+    logical :: fwd
+    integer :: i, slen, hlen, newlen
+    character(len=MAX_LINE_LEN) :: tmp
+
+    fwd = .true.
+    if (present(forward)) fwd = forward
+    slen = len(str)
+    if (slen <= 0) return
+    if (slen > MAX_LINE_LEN) slen = MAX_LINE_LEN
+
+    if (kill_op_prev_key .and. kill_ring_count > 0) then
+      ! Merge into the head entry.
+      hlen = kill_ring_len(1)
+      newlen = min(hlen + slen, MAX_LINE_LEN)
+      if (fwd) then
+        if (hlen < MAX_LINE_LEN) kill_ring(1)(hlen+1:newlen) = str(1:newlen-hlen)
+      else
+        tmp = ''
+        tmp(1:slen) = str(1:slen)
+        if (hlen > 0 .and. slen < MAX_LINE_LEN) tmp(slen+1:newlen) = kill_ring(1)(1:newlen-slen)
+        kill_ring(1) = tmp
+      end if
+      kill_ring_len(1) = newlen
+    else
+      ! Push a new slot to the front.
+      do i = min(kill_ring_count, KILL_RING_SLOTS - 1), 1, -1
+        kill_ring(i+1) = kill_ring(i)
+        kill_ring_len(i+1) = kill_ring_len(i)
+      end do
+      kill_ring(1) = ''
+      kill_ring(1)(1:slen) = str(1:slen)
+      kill_ring_len(1) = slen
+      kill_ring_count = min(kill_ring_count + 1, KILL_RING_SLOTS)
+    end if
+
+    kill_op_this_key = .true.
+    kill_yank_index = 1
+    ! Mirror the head for direct readers (handle_yank reads the ring directly,
+    ! but other code and tests still consult session_kill_buffer).
+    session_kill_buffer = ''
+    session_kill_buffer(1:kill_ring_len(1)) = kill_ring(1)(1:kill_ring_len(1))
+    state%kill_length = kill_ring_len(1)
   end subroutine state_kill_buffer_set
 
   ! Get kill buffer as string
@@ -1658,6 +1727,15 @@ contains
           end if
           cycle
         end if
+
+        ! Rotate the kill/yank "was the previous key a kill/yank?" flags once
+        ! per real keystroke (DIV-2): prev <- this, then this <- false. A kill
+        ! op consults *_prev_key to merge consecutive kills; Alt-y (yank-pop)
+        ! consults yank_op_prev_key so it only fires right after a yank.
+        kill_op_prev_key = kill_op_this_key
+        kill_op_this_key = .false.
+        yank_op_prev_key = yank_op_this_key
+        yank_op_this_key = .false.
 
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
         ! handler re-arms it after inserting, so clearing here (before dispatch)
@@ -7177,8 +7255,13 @@ contains
             input_state%suggestion_length > 0) then
           call accept_autosuggestion_word(input_state)
         end if
+      case('y')
+        ! Alt+y — yank-pop (DIV-2): replace the just-yanked text with the
+        ! next-older kill-ring entry. No-op unless the previous key was a yank.
+        call handle_yank_pop(input_state)
       case(char(127))
-        ! Alt+Backspace - Delete word backward (same as Ctrl+W)
+        ! Alt+Backspace - backward-kill-word (punctuation-aware small word;
+        ! distinct from Ctrl+W = backward-kill-path-component, DIV-3).
         call handle_kill_word(input_state)
       case(char(27))
         ! Alt+ESC sequence — could be Alt+Delete (ESC ESC [ 3 ~)
@@ -8390,7 +8473,7 @@ contains
       call state_buffer_get(input_state, temp_buf)
 
       ! Save killed text (before cursor) in kill buffer
-      call state_kill_buffer_set(input_state, temp_buf(:input_state%cursor_pos))
+      call state_kill_buffer_set(input_state, temp_buf(:input_state%cursor_pos), forward=.false.)
       input_state%kill_length = input_state%cursor_pos
 
       ! Shift remaining text (after cursor) to beginning of buffer. Copy via a
@@ -8464,7 +8547,7 @@ contains
     if (word_start < input_state%cursor_pos) then
       ! Save killed text
       call state_buffer_get(input_state, temp_buf)
-      call state_kill_buffer_set(input_state, temp_buf(word_start+1:input_state%cursor_pos))
+      call state_kill_buffer_set(input_state, temp_buf(word_start+1:input_state%cursor_pos), forward=.false.)
       input_state%kill_length = input_state%cursor_pos - word_start
 
       ! Shift remaining text left
@@ -8532,7 +8615,7 @@ contains
 
     if (word_start < input_state%cursor_pos) then
       call state_buffer_get(input_state, temp_buf)
-      call state_kill_buffer_set(input_state, temp_buf(word_start+1:input_state%cursor_pos))
+      call state_kill_buffer_set(input_state, temp_buf(word_start+1:input_state%cursor_pos), forward=.false.)
       input_state%kill_length = input_state%cursor_pos - word_start
 
       do i = word_start + 1, input_state%length - input_state%cursor_pos + word_start
@@ -8557,6 +8640,7 @@ contains
   subroutine handle_kill_word_forward(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: word_end, i, chars_to_delete, cls
+    character(len=MAX_LINE_LEN) :: temp_buf
 
     if (input_state%cursor_pos >= input_state%length) return
 
@@ -8578,6 +8662,12 @@ contains
 
     chars_to_delete = word_end - input_state%cursor_pos - 1
     if (chars_to_delete <= 0) return
+
+    ! Feed the kill ring (DIV-2 / PROBE-3: Alt-d previously discarded the text,
+    ! so Ctrl-Y after Alt-d yanked a stale kill). Forward kill -> append.
+    call state_buffer_get(input_state, temp_buf)
+    call state_kill_buffer_set(input_state, &
+      temp_buf(input_state%cursor_pos+1:input_state%cursor_pos+chars_to_delete), forward=.true.)
 
     ! Shift remaining text left
     do i = input_state%cursor_pos + 1, input_state%length - chars_to_delete
@@ -8602,11 +8692,12 @@ contains
     ! by delete_selection before the existing yank logic runs.
     if (input_state%selection_active) call delete_selection(input_state)
 
-    if (input_state%kill_length == 0) return
-    
-    insert_len = min(input_state%kill_length, MAX_LINE_LEN - input_state%length)
-    if (insert_len == 0) return
-    
+    ! Yank the ring head (slot 1).
+    if (kill_ring_count == 0 .or. kill_ring_len(1) == 0) return
+
+    insert_len = min(kill_ring_len(1), MAX_LINE_LEN - input_state%length)
+    if (insert_len <= 0) return
+
     ! Shift existing text right to make room
     do i = input_state%length, input_state%cursor_pos + 1, -1
       if (i + insert_len <= MAX_LINE_LEN) then
@@ -8614,16 +8705,65 @@ contains
       end if
     end do
 
-    ! Insert killed text at cursor position (session_kill_buffer is the
-    ! kill ring's single source of truth — see state_kill_buffer_set)
     do i = 1, insert_len
-      call state_buffer_set_char(input_state, input_state%cursor_pos + i, session_kill_buffer(i:i))
+      call state_buffer_set_char(input_state, input_state%cursor_pos + i, kill_ring(1)(i:i))
     end do
-    
-    ! Update length and cursor position
+
+    ! Record the inserted span so a following Alt-y (yank-pop) can replace it.
+    last_yank_start = input_state%cursor_pos
+    last_yank_len = insert_len
+    kill_yank_index = 1
+    yank_op_this_key = .true.
+
     input_state%length = input_state%length + insert_len
     input_state%cursor_pos = input_state%cursor_pos + insert_len
     input_state%dirty = .true.
+  end subroutine
+
+  ! Alt-y — yank-pop (DIV-2): only valid immediately after a yank/yank-pop.
+  ! Removes the just-yanked span and replaces it with the next-older ring slot,
+  ! cycling through the ring on repeated presses.
+  subroutine handle_yank_pop(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i, insert_len, src
+
+    if (.not. yank_op_prev_key) return       ! must follow a yank
+    if (kill_ring_count <= 1) return          ! nothing else to rotate to
+    if (last_yank_len <= 0) return
+
+    ! Delete the previously yanked span [last_yank_start+1 .. +last_yank_len].
+    do i = last_yank_start + 1, input_state%length - last_yank_len
+      call state_buffer_set_char(input_state, i, &
+        state_buffer_get_char(input_state, i + last_yank_len))
+    end do
+    do i = input_state%length - last_yank_len + 1, input_state%length
+      call state_buffer_set_char(input_state, i, ' ')
+    end do
+    input_state%length = input_state%length - last_yank_len
+    input_state%cursor_pos = last_yank_start
+
+    ! Rotate to the next-older slot (wrap around).
+    kill_yank_index = kill_yank_index + 1
+    if (kill_yank_index > kill_ring_count) kill_yank_index = 1
+    src = kill_yank_index
+
+    insert_len = min(kill_ring_len(src), MAX_LINE_LEN - input_state%length)
+    if (insert_len < 0) insert_len = 0
+
+    do i = input_state%length, input_state%cursor_pos + 1, -1
+      if (i + insert_len <= MAX_LINE_LEN) then
+        call state_buffer_set_char(input_state, i + insert_len, state_buffer_get_char(input_state, i))
+      end if
+    end do
+    do i = 1, insert_len
+      call state_buffer_set_char(input_state, input_state%cursor_pos + i, kill_ring(src)(i:i))
+    end do
+
+    input_state%length = input_state%length + insert_len
+    last_yank_len = insert_len
+    input_state%cursor_pos = input_state%cursor_pos + insert_len
+    input_state%dirty = .true.
+    yank_op_this_key = .true.
   end subroutine
 
   ! Ctrl+V paste handler (Sprint 5). Reads from the system clipboard;
