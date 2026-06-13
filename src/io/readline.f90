@@ -3936,13 +3936,14 @@ contains
           else
             call complete_files_enhanced(last_word, completions, num_completions)
           end if
-          ! Only filter to directories when pattern is empty (path ends with /)
-          ! i.e., cd-less navigation. When there's a filename pattern (./bin/fort),
-          ! keep all matches so executables can be completed.
-          if (len_trim(last_word) > 0 .and. &
-              last_word(len_trim(last_word):len_trim(last_word)) == '/') then
-            call filter_directories_only(completions, num_completions)
-          end if
+          ! Command position: a command must be runnable, so keep only
+          ! executables (to run) and directories (to descend) — fish's two-pass
+          ! EXECUTABLES_ONLY + DIRECTORIES_ONLY. This replaces the old behavior
+          ! that filtered to dirs-only on a trailing-slash path (dropping
+          ! executables on `./`+Tab) and applied NO filter when a pattern was
+          ! present (offering plain data files like `./readme.txt`). (AR-02
+          ! cand-2/3)
+          call filter_executables_and_dirs_only(completions, num_completions)
         else
           ! Complete commands (builtins + PATH executables)
           call complete_commands_enhanced(last_word, completions, num_completions)
@@ -4021,6 +4022,74 @@ contains
 
     ! The directory-only count of matches beyond the stored cap is
     ! unknowable, so the "more items" indicator must not claim one
+    completion_total_matches = 0
+  end subroutine
+
+  ! True if a completion string is something runnable as a command: a directory
+  ! (trailing '/', to descend into) or an executable file (access X_OK).
+  ! Handles a leading ~ for the access test.
+  function is_exec_or_dir_completion(path) result(keep)
+    character(len=*), intent(in) :: path
+    logical :: keep
+    character(len=MAX_LINE_LEN) :: resolved
+    character(len=:), allocatable :: home
+    integer :: plen
+
+    keep = .false.
+    plen = len_trim(path)
+    if (plen == 0) return
+    if (path(plen:plen) == '/') then
+      keep = .true.            ! directory — keep to allow descending
+      return
+    end if
+    resolved = path(1:plen)
+    if (path(1:1) == '~' .and. plen >= 2) then
+      if (path(2:2) == '/') then
+        home = get_environment_var('HOME')
+        if (allocated(home)) then
+          if (len(home) > 0) resolved = trim(home) // path(2:plen)
+        end if
+      end if
+    end if
+    keep = file_is_executable(trim(resolved))
+  end function is_exec_or_dir_completion
+
+  ! Filter completions to executables-or-directories (command position). A
+  ! command must be runnable, so plain data files are dropped. Mirrors
+  ! filter_directories_only: filters both the completion array AND the pager
+  ! store so the menu shows the same set. (AR-02 cand-2/3)
+  subroutine filter_executables_and_dirs_only(completions, num_completions)
+    character(len=MAX_LINE_LEN), intent(inout) :: completions(MAX_LOCAL_COMPLETIONS)
+    integer, intent(inout) :: num_completions
+
+    character(len=MAX_LINE_LEN) :: temp_completions(MAX_LOCAL_COMPLETIONS)
+    integer :: i, new_count
+
+    new_count = 0
+    do i = 1, num_completions
+      if (is_exec_or_dir_completion(completions(i))) then
+        new_count = new_count + 1
+        temp_completions(new_count) = completions(i)
+      end if
+    end do
+    do i = 1, new_count
+      completions(i) = temp_completions(i)
+    end do
+    num_completions = new_count
+
+    if (pager_item_count > 0) then
+      new_count = 0
+      do i = 1, pager_item_count
+        if (is_exec_or_dir_completion(pager_items(i))) then
+          new_count = new_count + 1
+          pager_items(new_count) = pager_items(i)
+        end if
+      end do
+      pager_item_count = new_count
+    end if
+
+    ! filtered count beyond the stored cap is unknowable; suppress the
+    ! "more items" indicator rather than claim a wrong total
     completion_total_matches = 0
   end subroutine
 
