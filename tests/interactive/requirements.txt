@@ -8,3 +8,6 @@ pytest-html>=4.0
 
 # Optional: colored output
 colorama>=0.4
+
+# Terminal screen emulation for layout assertions (paste/redraw tests)
+pyte>=0.8

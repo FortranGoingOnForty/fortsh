@@ -2019,8 +2019,14 @@ contains
         ! INLINE redraw to avoid gfortran bug on macOS with large derived types
         ! Skip redraw when in menu selection mode - menu handles its own display
         ! In test mode, skip full redraw to avoid polluting PTY output
+        ! Skip when submitting (done): the Enter handler already emitted the
+        ! newline, so a redraw here repaints the command line BELOW it, on top
+        ! of the command's output. This bit the paste path specifically: a
+        ! paste defers its redraw while Enter is queued (input_pending), so
+        ! dirty is still set on the Enter iteration; typed input doesn't defer,
+        ! so its dirty was already cleared before Enter and it never hit this.
         if (.not. test_mode_initialized) call init_test_mode()
-        if (module_input_state%dirty .and. .not. defer_redraw .and. &
+        if (module_input_state%dirty .and. .not. defer_redraw .and. .not. done .and. &
             .not. module_input_state%in_menu_select .and. .not. test_mode_enabled) then
           ! Search mode: delegate to two-line search display instead of normal redraw
           if (module_input_state%in_search) then
