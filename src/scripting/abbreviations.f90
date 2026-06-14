@@ -140,4 +140,61 @@ contains
     end if
   end function try_expand_abbreviation
 
+  ! AR-07 ABBR-PERSIST. Abbreviations are saved to ~/.fortsh_abbreviations as
+  ! one `short<TAB>expansion` line each — a flat format loaded directly (not
+  ! sourced through the executor), so there is no quote-escaping to get wrong
+  ! and no save-while-loading race. A short form never contains a tab.
+  function abbr_file_path() result(path)
+    character(len=:), allocatable :: path
+    character(len=512) :: home
+    integer :: hlen
+    path = ''
+    call get_environment_variable('HOME', home, length=hlen)
+    if (hlen <= 0) return
+    path = trim(home) // '/.fortsh_abbreviations'
+  end function abbr_file_path
+
+  ! Write the whole abbreviation table to the state file (call after a change).
+  subroutine persist_abbreviations()
+    character(len=:), allocatable :: path
+    integer :: u, i, ios
+
+    path = abbr_file_path()
+    if (len(path) == 0) return
+    open(newunit=u, file=path, status='replace', action='write', iostat=ios)
+    if (ios /= 0) return
+    do i = 1, MAX_ABBREVIATIONS
+      if (len_trim(abbr_table(i)%short_form) > 0) then
+        write(u, '(a)') trim(abbr_table(i)%short_form) // char(9) // &
+                        trim(abbr_table(i)%expanded_form)
+      end if
+    end do
+    close(u)
+  end subroutine persist_abbreviations
+
+  ! Load abbreviations from the state file at startup. Reads directly into the
+  ! table via set_abbreviation (no executor, so no re-save is triggered).
+  subroutine restore_abbreviations()
+    character(len=:), allocatable :: path
+    character(len=1024) :: line
+    integer :: u, ios, tab
+    logical :: ex
+
+    path = abbr_file_path()
+    if (len(path) == 0) return
+    inquire(file=path, exist=ex)
+    if (.not. ex) return
+    open(newunit=u, file=path, status='old', action='read', iostat=ios)
+    if (ios /= 0) return
+    do
+      read(u, '(a)', iostat=ios) line
+      if (ios /= 0) exit
+      tab = index(line, char(9))
+      if (tab > 1) then
+        call set_abbreviation(line(1:tab-1), trim(line(tab+1:)))
+      end if
+    end do
+    close(u)
+  end subroutine restore_abbreviations
+
 end module abbreviations

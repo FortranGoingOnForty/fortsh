@@ -91,3 +91,55 @@ def test_add_joins_bare_words(fortsh_path, tmp_path):
     out = _run(fortsh_path, tmp_path, [b"abbr -a ge echo BAREWORDS\r"],
                [b"ge", b"\r"])
     assert any(l == b"BAREWORDS" for l in out), out
+
+
+def _isolated_session(fortsh_path, home, cmds, keys):
+    """A session with HOME pinned to `home` (so ~/.fortsh_abbreviations is the
+    isolated file) and the first-run prompt suppressed."""
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["HOME"] = str(home)
+    env["FORTSH_TEST_MODE"] = "1"
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(home), env=env,
+                          encoding=None, timeout=8, dimensions=(24, 90))
+    raw = bytearray()
+
+    def drain(secs):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                raw.extend(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    for cmd in cmds:
+        child.send(cmd)
+        drain(0.5)
+    mark = len(raw)
+    for k in keys:
+        child.send(k)
+        drain(0.35)
+    drain(0.4)
+    out = _ANSI.sub(b"", bytes(raw[mark:]))
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close()
+    except Exception:
+        pass
+    return [l.strip() for l in out.split(b"\r\n")
+            if l.strip() and b">" not in l and b"::" not in l]
+
+
+def test_abbreviations_persist_across_restart(fortsh_path, tmp_path):
+    """An abbreviation defined in one session is restored in the next process
+    (ABBR-PERSIST): define + exit, then a fresh shell expands it."""
+    _isolated_session(fortsh_path, tmp_path,
+                      [b"abbr -a gco 'echo PERSISTED'\r"], [])
+    assert (tmp_path / ".fortsh_abbreviations").exists()
+    out = _isolated_session(fortsh_path, tmp_path, [], [b"gco", b"\r"])
+    assert any(l == b"PERSISTED" for l in out), out

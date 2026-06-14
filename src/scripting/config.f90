@@ -6,6 +6,7 @@ module shell_config
   use shell_types
   use system_interface
   use variables
+  use abbreviations, only: restore_abbreviations
   use iso_fortran_env, only: input_unit, output_unit, error_unit
   implicit none
 
@@ -29,6 +30,12 @@ contains
     ! Check if this is first run and prompt for config creation
     if (shell%is_interactive) then
       call check_first_run_and_prompt(shell)
+    end if
+
+    ! AR-07 ABBR-PERSIST: load saved abbreviations before sourcing rc, so an
+    ! rc `abbr -a` can still override a persisted one.
+    if (shell%is_interactive .or. shell%is_login_shell) then
+      call restore_abbreviations()
     end if
 
     if (shell%is_login_shell) then

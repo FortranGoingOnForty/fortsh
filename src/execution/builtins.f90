@@ -2014,6 +2014,7 @@ contains
         if (cmd%num_tokens >= 3) then
           abbr_short = trim(cmd%tokens(3))
           call unset_abbreviation(abbr_short)
+          call persist_abbreviations()  ! AR-07 ABBR-PERSIST
         else
           write(error_unit, '(a)') 'abbr: --erase requires an abbreviation name'
           shell%last_exit_status = 1
@@ -2034,6 +2035,7 @@ contains
             abbr_expanded = trim(abbr_expanded) // ' ' // trim(cmd%tokens(i))
           end do
           call set_abbreviation(abbr_short, abbr_expanded)
+          call persist_abbreviations()  ! AR-07 ABBR-PERSIST
         else
           write(error_unit, '(a)') 'abbr: --add requires a name and an expansion'
           shell%last_exit_status = 1
@@ -2056,6 +2058,7 @@ contains
           abbr_short = trim(short_form)
           abbr_expanded = trim(expanded_form)
           call set_abbreviation(abbr_short, abbr_expanded)
+          call persist_abbreviations()  ! AR-07 ABBR-PERSIST
         else
           ! Show specific abbreviation
           abbr_short = trim(cmd%tokens(2))
