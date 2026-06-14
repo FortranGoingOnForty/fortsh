@@ -26,11 +26,11 @@ def _make_files(tmp_path, count):
         (tmp_path / f"cand_{i:02d}.txt").write_text("")
 
 
-def _spawn(fortsh_path, tmp_path, cols):
+def _spawn(fortsh_path, tmp_path, cols, rows=ROWS):
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
     return pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
-                         encoding=None, timeout=8, dimensions=(ROWS, cols))
+                         encoding=None, timeout=8, dimensions=(rows, cols))
 
 
 def _drain(child, raw, secs):
@@ -159,3 +159,70 @@ def test_right_moves_across_columns(fortsh_path, tmp_path):
     assert got == internal[num_rows], (
         f"Right landed on {got!r}, expected internal item #{num_rows} "
         f"{internal[num_rows]!r} (top of column 2, column-major)")
+
+
+# --- menu-overflow: a set taller than the visible window scrolls (AR-03b) ---
+
+PROGRESS = re.compile(rb"(?:\.\.\.and \d+ more rows|rows \d+ to \d+ of \d+|"
+                      rb"\d+ more items)")
+
+
+def _progress_line(frame):
+    clean = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", frame)
+    for ln in clean.split(b"\r\n"):
+        m = PROGRESS.search(ln)
+        if m:
+            return ln.strip().decode()
+    return None
+
+
+def _make_long_files(tmp_path, count):
+    # ~16-char names force one item per row in a 30-column terminal.
+    for i in range(1, count + 1):
+        (tmp_path / f"overflow_item_{i:02d}").write_text("")
+
+
+def test_overflow_shows_disclosure_hint(fortsh_path, tmp_path):
+    """A menu taller than the (undisclosed) window shows fish's disclosure hint
+    `...and N more rows` rather than silently clipping the list."""
+    _make_long_files(tmp_path, 30)
+    child = _spawn(fortsh_path, tmp_path, 30, rows=24)  # narrow+short -> overflow
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.0)
+    mark = len(raw)
+    child.send(b"cat overflow_item_\t")   # draw, undisclosed
+    _drain(child, raw, 1.0)
+    line = _progress_line(bytes(raw[mark:]))
+    _cleanup(child)
+    assert line and "more rows" in line, f"no disclosure hint on overflow: {line!r}"
+    n = int(re.search(r"\d+", line).group())
+    assert n > 0
+
+
+def test_overflow_scroll_advances_window(fortsh_path, tmp_path):
+    """Holding Down past the disclosed window scrolls it: a `rows X to Y of Z`
+    line appears with X > 1 (the top moved) and Z constant (no items lost)."""
+    _make_long_files(tmp_path, 30)
+    child = _spawn(fortsh_path, tmp_path, 30, rows=24)  # disclosed window < list
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.0)
+    child.send(b"cat overflow_item_\t")   # draw
+    _drain(child, raw, 0.8)
+    child.send(b"\t")                      # enter menu-select
+    _drain(child, raw, 0.7)
+    seen = []
+    for _ in range(28):
+        mark = len(raw)
+        child.send(KEY_DOWN)
+        _drain(child, raw, 0.3)
+        line = _progress_line(bytes(raw[mark:]))
+        if line and line.startswith("rows "):
+            seen.append(line)
+    _cleanup(child)
+    assert seen, "no scroll-position line ever appeared while scrolling down"
+    totals = {int(re.search(r"of (\d+)", s).group(1)) for s in seen}
+    assert len(totals) == 1, f"row total changed while scrolling: {seen!r}"
+    starts = [int(re.search(r"rows (\d+)", s).group(1)) for s in seen]
+    assert max(starts) > 1, f"window never scrolled past the top: {seen!r}"
