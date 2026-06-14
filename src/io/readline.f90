@@ -1997,24 +1997,30 @@ contains
 
         case(KEY_CTRL_C)
           ! Ctrl+C - cancel and clear line (bash-compatible)
-          if (module_input_state%in_search) then
-            ! Clean up the search status line first
-            call cleanup_search_status_line()
-            module_input_state%in_search = .false.
-            call clear_search_string(module_input_state)
-            module_input_state%search_length = 0
-            module_input_state%search_match_index = 0
+          if (.not. module_input_state%in_search .and. module_input_state%length == 0) then
+            ! fish: Ctrl-C on an empty line does nothing — no `^C`, no newline,
+            ! the same prompt is reused (NICE-CTRLC, AR-08). Stay in the loop.
+            module_input_state%dirty = .false.
+          else
+            if (module_input_state%in_search) then
+              ! Clean up the search status line first
+              call cleanup_search_status_line()
+              module_input_state%in_search = .false.
+              call clear_search_string(module_input_state)
+              module_input_state%search_length = 0
+              module_input_state%search_match_index = 0
+            end if
+
+            ! Move to beginning, clear line, print ^C on new line
+            write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
+            write(output_unit, '(a)') '^C'
+
+            ! Clear buffer and return empty line
+            module_input_state%length = 0
+            module_input_state%cursor_pos = 0
+            module_input_state%dirty = .false.  ! Prevent redraw with empty buffer
+            done = .true.
           end if
-
-          ! Move to beginning, clear line, print ^C on new line
-          write(output_unit, '(a)', advance='no') ESC_MOVE_BOL // ESC_CLEAR_LINE
-          write(output_unit, '(a)') '^C'
-
-          ! Clear buffer and return empty line
-          module_input_state%length = 0
-          module_input_state%cursor_pos = 0
-          module_input_state%dirty = .false.  ! Prevent redraw with empty buffer
-          done = .true.
 
         case(KEY_CTRL_X)
           ! Ctrl+X — dual-mode (Sprint 5):
@@ -8135,16 +8141,21 @@ contains
 
       select case(ch2)
       case('A')  ! Up arrow
-        ! In search mode, cancel search and restore buffer
         if (input_state%in_search) then
-          call cancel_search(input_state)
+          ! NICE-ISEARCH (AR-08): step to the next OLDER match instead of
+          ! cancelling — fish/bash navigate matches with the arrows.
+          input_state%search_forward = .false.
+          call search_next_match(input_state)
+          call update_search_display(input_state, prompt)
         else
           call handle_history_up(input_state)
         end if
       case('B')  ! Down arrow
-        ! In search mode, cancel search and restore buffer
         if (input_state%in_search) then
-          call cancel_search(input_state)
+          ! NICE-ISEARCH (AR-08): step to the next NEWER match.
+          input_state%search_forward = .true.
+          call search_next_match(input_state)
+          call update_search_display(input_state, prompt)
         else
           call handle_history_down(input_state)
         end if
