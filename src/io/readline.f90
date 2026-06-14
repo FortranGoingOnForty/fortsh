@@ -1727,8 +1727,7 @@ contains
           prev_render_valid = .false.
 
           block
-            integer :: old_cols, reflow_rows, up_i
-            old_cols = term_cols
+            integer :: reflow_rows, up_i
 
             success = get_terminal_size(term_rows, term_cols)
             if (.not. success) then
@@ -1745,8 +1744,14 @@ contains
               success = set_environment_var('LINES', trim(rows_s))
             end block
 
-            reflow_rows = (old_cols + term_cols - 1) / term_cols &
-                          + prompt_line_count
+            ! Move the cursor up to the prompt origin, then clear from there
+            ! down, so the dirty redraw below repaints the whole line at the new
+            ! width. The number of rows up is the cursor's ACTUAL physical row
+            ! from the prompt origin at the OLD width, tracked in
+            ! module_cursor_screen_row (full terminal row, prompt wrap rows
+            ! included). The old (old_cols+term_cols-1)/term_cols heuristic used
+            ! the terminal WIDTH as a content-height proxy and over-scrolled.
+            reflow_rows = module_cursor_screen_row
             do up_i = 1, reflow_rows
               write(output_unit, '(a)', advance='no') char(27) // '[A'
             end do
@@ -2300,29 +2305,14 @@ contains
               prompt_visual_len = 0
             end if
 
-            ! Cursor-up count: how many terminal rows from the cursor
-            ! position back to the start of the prompt. For multi-line
-            ! prompts, count only the last line's visual width for cursor
-            ! math (earlier lines contribute prompt_line_count rows).
-            ! The redraw strips ESC[nG RPROMPT content, so the visible
-            ! prompt is just the base text — use last-line width only.
-            block
-              integer :: last_nl_pos, last_line_vis
-              last_nl_pos = 0
-              do i_redraw = 1, len_trim(prompt)
-                if (prompt(i_redraw:i_redraw) == char(10)) last_nl_pos = i_redraw
-              end do
-              if (last_nl_pos > 0 .and. last_nl_pos < len_trim(prompt)) then
-                last_line_vis = visual_length(prompt(last_nl_pos+1:len_trim(prompt)))
-              else
-                last_line_vis = prompt_visual_len
-              end if
-              if (last_line_vis < 0) last_line_vis = 0
-              cursor_visual_pos = last_line_vis + 1 + module_input_state%cursor_pos
-              current_row = prompt_line_count + cursor_visual_pos / term_cols
-              if (rprompt_displayed) current_row = current_row + 1
-            end block
-            current_col = mod(cursor_visual_pos, term_cols)
+            ! Cursor row/col via the shared rendering model — handles wrapped
+            ! and multi-line prompts correctly and matches content_byte_to_row_col
+            ! (the diff positioner), so the nav-up and diff-down cancel instead
+            ! of drifting (the resize "staircase"). The RPROMPT, when shown, sits
+            ! one row above the input on its own line, so add a row for it.
+            call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
+                                    term_cols, current_row, current_col)
+            if (rprompt_displayed) current_row = current_row + 1
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! === Buffered redraw: accumulate entire frame, write once ===
             ! This prevents ESC[J clear from rendering as a blank frame before
@@ -2339,19 +2329,18 @@ contains
             ! different row than current_row implies — using current_row then
             ! under/over-moves and repaints from the wrong origin (line
             ! duplication on wrapped input).
-            ! Move up by the cursor's PHYSICAL row, not current_row. current_row
-            ! is prompt_line_count + the NEW cursor_pos's wrap row; the physical
-            ! cursor is at prompt_line_count + the OLD wrap row, tracked in
-            ! module_cursor_screen_row (which counts wrap rows only, excluding
-            ! prompt lines — same convention as cursor_get_row_col). They match
-            ! for an edit at the cursor, but a cursor JUMP that forces a full
-            ! redraw (Home after a paste: clearing the paste highlight
-            ! invalidates the Phase-1 cursor-only path) leaves the physical
-            ! cursor on a different wrap row than current_row implies, so using
-            ! current_row repaints from the wrong origin (wrapped-line dup).
+            ! Move up by the cursor's PHYSICAL row, tracked in
+            ! module_cursor_screen_row (now the full terminal row from the prompt
+            ! origin, prompt wrap rows included — cursor_get_row_col convention).
+            ! Use the physical row, NOT current_row (the NEW cursor_pos's row):
+            ! a cursor JUMP that forces a full redraw (e.g. Home after a paste,
+            ! where clearing the paste highlight invalidates the Phase-1 cursor-
+            ! only path) leaves the physical cursor on a different row than
+            ! current_row implies, so current_row would repaint from the wrong
+            ! origin (wrapped-line duplication).
             ! (move_up_rows declared at subroutine scope — a 'block' construct
             ! here crashes flang-new on macOS ARM64; see other workarounds.)
-            move_up_rows = prompt_line_count + module_cursor_screen_row
+            move_up_rows = module_cursor_screen_row
             if (.not. module_input_state%skip_cursor_up_on_redraw) then
               do i_redraw = 1, move_up_rows
                 call rdraw_append(char(27) // '[A')
@@ -11869,77 +11858,116 @@ contains
 
   ! Calculate cursor row and column given prompt and cursor position
   ! Returns (row, col) where row 0 = first line, col 0 = first column
+  ! Cursor terminal row/col (0-based, relative to the prompt origin), computed
+  ! by modeling the actual rendering: walk the prompt (skip ANSI SGR, strip the
+  ! ESC[nG cursor-column escape and the RPROMPT text after it, treat \n as a new
+  ! row, wrap at term_cols, count DISPLAY width), then the space after the
+  ! prompt, then the buffer up to cursor_pos. This is the same model as
+  ! content_byte_to_row_col (which drives the redraw's diff positioning), so a
+  ! prompt that wraps — or has a wide/multibyte glyph like a checkmark — no
+  ! longer makes the two disagree (the bug behind the resize "staircase").
   subroutine cursor_get_row_col(prompt, cursor_pos, term_cols, cursor_row, cursor_col)
-    use iso_fortran_env, only: output_unit, error_unit
     character(len=*), intent(in) :: prompt
     integer, intent(in) :: cursor_pos, term_cols
     integer, intent(out) :: cursor_row, cursor_col
-    integer :: prompt_visual_len, total_pos, visual_width
-    integer :: i, byte_val
+    integer :: i, plen, byte_val, w, k
     character :: ch
-    logical :: debug_utf8
 
-    ! Check if debug mode is enabled
-    call get_environment_variable('FORTSH_DEBUG_UTF8', status=byte_val)
-    debug_utf8 = (byte_val == 0)
+    cursor_row = 0
+    cursor_col = 0
+    if (term_cols <= 0) return
 
-    if (term_cols <= 0) then
-      cursor_row = 0
-      cursor_col = 0
-      return
-    end if
-
-    ! Calculate visual length of prompt (excluding ANSI codes)
-    prompt_visual_len = visual_length(prompt)
-    if (prompt_visual_len < 0) prompt_visual_len = 0
-
-    ! Calculate visual width of buffer from position 1 to cursor_pos
-    ! This accounts for multi-byte UTF-8 characters and their display width
-    visual_width = 0
+    ! --- walk the prompt ---
+    plen = len_trim(prompt)
     i = 1
-    do while (i <= cursor_pos)
-      ch = state_buffer_get_char(module_input_state, i)
-      byte_val = iand(iachar(ch), 255)
-
-      if (debug_utf8) then
-        write(error_unit, '(a,i0,a,z2.2,a,i0)') '[VISUAL] pos=', i, ' byte=0x', byte_val, ' visual_width=', visual_width
+    do while (i <= plen)
+      ch = prompt(i:i)
+      if (ch == char(27)) then
+        if (i + 1 <= plen .and. prompt(i+1:i+1) == '[') then
+          ! CSI: scan to the final byte (64..126)
+          k = i + 2
+          do while (k <= plen)
+            byte_val = iachar(prompt(k:k))
+            if (byte_val >= 64 .and. byte_val <= 126) exit
+            k = k + 1
+          end do
+          if (k <= plen .and. prompt(k:k) == 'G') then
+            ! ESC[nG is RPROMPT placement; skip it AND the RPROMPT text that
+            ! follows, up to the next newline (the redraw strips the same).
+            i = k + 1
+            do while (i <= plen .and. prompt(i:i) /= char(10))
+              i = i + 1
+            end do
+          else
+            i = k + 1
+          end if
+        else
+          ! ESC 7 / ESC 8 (save/restore) or other 2-byte escape: skip both.
+          i = i + 2
+        end if
+        cycle
+      else if (ch == char(10)) then
+        cursor_row = cursor_row + 1
+        cursor_col = 0
+        i = i + 1
+        cycle
+      else if (ch == char(13)) then
+        cursor_col = 0
+        i = i + 1
+        cycle
+      else if (ch == char(0)) then
+        i = i + 1
+        cycle
       end if
-
-      ! Check if this is a UTF-8 lead byte
+      ! visible prompt char (display width, skip UTF-8 continuation bytes)
+      byte_val = iand(iachar(ch), 255)
       if (byte_val < 128) then
-        ! ASCII - 1 byte, 1 column
-        visual_width = visual_width + 1
-        i = i + 1
+        w = 1; i = i + 1
       else if (iand(byte_val, 224) == 192) then
-        ! 2-byte UTF-8 - usually 1 column, but could be 2
-        visual_width = visual_width + utf8_char_width(ch)
-        i = i + 2
+        w = utf8_char_width(ch); i = i + 2
       else if (iand(byte_val, 240) == 224) then
-        ! 3-byte UTF-8 (CJK) - 2 columns
-        visual_width = visual_width + 2
-        i = i + 3
+        w = 2; i = i + 3
       else if (iand(byte_val, 248) == 240) then
-        ! 4-byte UTF-8 (emoji) - 2 columns
-        visual_width = visual_width + 2
-        i = i + 4
+        w = 2; i = i + 4
       else
-        ! Continuation byte or invalid - skip
-        i = i + 1
+        w = 0; i = i + 1
+      end if
+      cursor_col = cursor_col + w
+      if (cursor_col >= term_cols) then
+        cursor_row = cursor_row + 1
+        cursor_col = 0
       end if
     end do
 
-    if (debug_utf8) then
-      write(error_unit, '(a,i0,a,i0,a,i0,a,i0)') '[VISUAL] cursor_pos=', cursor_pos, &
-        ' prompt_len=', prompt_visual_len, ' visual_width=', visual_width, &
-        ' total=', prompt_visual_len + 1 + visual_width
+    ! --- the space after the prompt ---
+    cursor_col = cursor_col + 1
+    if (cursor_col >= term_cols) then
+      cursor_row = cursor_row + 1
+      cursor_col = 0
     end if
 
-    ! Total position = prompt + space + visual width of buffer content
-    total_pos = prompt_visual_len + 1 + visual_width
-
-    ! Calculate row and column (0-based)
-    cursor_row = total_pos / term_cols
-    cursor_col = mod(total_pos, term_cols)
+    ! --- the buffer, up to cursor_pos (display width per char) ---
+    k = 1
+    do while (k <= cursor_pos)
+      ch = state_buffer_get_char(module_input_state, k)
+      byte_val = iand(iachar(ch), 255)
+      if (byte_val < 128) then
+        w = 1; k = k + 1
+      else if (iand(byte_val, 224) == 192) then
+        w = utf8_char_width(ch); k = k + 2
+      else if (iand(byte_val, 240) == 224) then
+        w = 2; k = k + 3
+      else if (iand(byte_val, 248) == 240) then
+        w = 2; k = k + 4
+      else
+        w = 0; k = k + 1
+      end if
+      cursor_col = cursor_col + w
+      if (cursor_col >= term_cols) then
+        cursor_row = cursor_row + 1
+        cursor_col = 0
+      end if
+    end do
   end subroutine
 
   ! Walk a rendered content buffer (with ANSI codes) and return the visual
@@ -11948,7 +11976,7 @@ contains
     integer, intent(in) :: buf_len, byte_pos, term_cols
     character(len=*), intent(in) :: buf
     integer, intent(out) :: row, col_out
-    integer :: pos, col
+    integer :: pos, col, bv, w
 
     row = 0
     col = 0
@@ -11979,12 +12007,27 @@ contains
         pos = pos + 2
         cycle
       end if
-      col = col + 1
+      ! Visible character: advance by DISPLAY width and skip UTF-8 continuation
+      ! bytes, so the row/col matches what the terminal actually renders (a 3-
+      ! byte char like a checkmark is 1-2 columns, not 3). Must stay consistent
+      ! with cursor_get_row_col so the redraw's diff-down cancels the nav-up.
+      bv = iand(iachar(buf(pos:pos)), 255)
+      if (bv < 128) then
+        w = 1; pos = pos + 1
+      else if (iand(bv, 224) == 192) then
+        w = utf8_char_width(buf(pos:pos)); pos = pos + 2
+      else if (iand(bv, 240) == 224) then
+        w = 2; pos = pos + 3
+      else if (iand(bv, 248) == 240) then
+        w = 2; pos = pos + 4
+      else
+        w = 0; pos = pos + 1   ! stray continuation byte
+      end if
+      col = col + w
       if (col >= term_cols) then
         row = row + 1
         col = 0
       end if
-      pos = pos + 1
     end do
     col_out = col
   end subroutine
