@@ -100,6 +100,7 @@ module readline
   integer, parameter :: EDITING_MODE_VI = 2
   integer, parameter :: VI_MODE_INSERT = 1
   integer, parameter :: VI_MODE_COMMAND = 2
+  integer, parameter :: VI_MODE_VISUAL = 3  ! AR-05b: charwise/linewise visual
 
   ! Reduced buffer sizes to prevent static storage issues
   ! Was causing 204KB allocation (50*4096), now only 25KB (40*256)
@@ -190,6 +191,7 @@ module readline
     character(len=:), allocatable :: vi_command_buffer
     integer :: vi_command_count = 0
     logical :: vi_repeat_pending = .false.
+    logical :: vi_visual_linewise = .false.  ! AR-05b: V vs v in visual mode
 
     ! Advanced vi mode features
     character(len=:), allocatable :: vi_yank_buffer  ! Vi-style yank buffer
@@ -2158,6 +2160,10 @@ contains
           else if (module_input_state%in_search) then
             call search_add_char(module_input_state, ch, prompt)
           else if (module_input_state%editing_mode == EDITING_MODE_VI .and. &
+                   module_input_state%vi_mode == VI_MODE_VISUAL) then
+            ! In Vi visual mode - route to visual handler (AR-05b)
+            call handle_vi_visual_mode(module_input_state, char_code)
+          else if (module_input_state%editing_mode == EDITING_MODE_VI .and. &
                    module_input_state%vi_mode == VI_MODE_COMMAND) then
             ! In Vi command mode - route to command handler
             call handle_vi_command_mode(module_input_state, char_code)
@@ -3399,6 +3405,23 @@ contains
         call move_to_word_end(input_state)
       end do
 
+    ! Visual mode (AR-05b)
+    case (ichar('v'))
+      ! Charwise visual: anchor at the cursor, then motions extend the region.
+      input_state%selection_anchor = input_state%cursor_pos
+      input_state%selection_active = .true.
+      input_state%vi_visual_linewise = .false.
+      input_state%vi_mode = VI_MODE_VISUAL
+      input_state%dirty = .true.
+    case (ichar('V'))
+      ! Linewise visual: select the whole line (single-line prompt).
+      input_state%selection_anchor = 0
+      input_state%cursor_pos = max(input_state%length - 1, 0)
+      input_state%selection_active = .true.
+      input_state%vi_visual_linewise = .true.
+      input_state%vi_mode = VI_MODE_VISUAL
+      input_state%dirty = .true.
+
     ! Deletion (with repeat)
     case (ichar('x'))
       ! Delete character at cursor
@@ -3554,6 +3577,105 @@ contains
       input_state%cursor_pos = 0
       input_state%vi_mode = VI_MODE_INSERT
     end select
+  end subroutine
+
+  ! Vi visual mode (AR-05b): motions extend the selection anchored by v/V;
+  ! d/x/c/s/y operate on the inclusive selection then leave visual mode. The
+  ! shared selection_active/anchor machinery drives the highlight; the operative
+  ! range is made inclusive of the char under the cursor to match vi.
+  subroutine handle_vi_visual_mode(input_state, key)
+    type(input_state_t), intent(inout) :: input_state
+    integer, intent(in) :: key
+    integer :: vs, start_pos, end_pos
+
+    if (input_state%editing_mode /= EDITING_MODE_VI .or. &
+        input_state%vi_mode /= VI_MODE_VISUAL) return
+
+    select case (key)
+    ! Motions — move the cursor; the selection follows (anchor stays fixed).
+    case (ichar('h'))
+      if (input_state%cursor_pos > 0) input_state%cursor_pos = input_state%cursor_pos - 1
+      input_state%dirty = .true.
+    case (ichar('l'))
+      if (input_state%cursor_pos < input_state%length - 1) &
+        input_state%cursor_pos = input_state%cursor_pos + 1
+      input_state%dirty = .true.
+    case (ichar('w'))
+      call move_to_next_word(input_state)
+    case (ichar('b'))
+      call move_to_previous_word(input_state)
+    case (ichar('e'))
+      call move_to_word_end(input_state)
+    case (ichar('0'))
+      input_state%cursor_pos = 0
+      input_state%dirty = .true.
+    case (ichar('$'))
+      input_state%cursor_pos = max(input_state%length - 1, 0)
+      input_state%dirty = .true.
+
+    ! Operators — act on the inclusive selection, then leave visual mode.
+    case (ichar('d'), ichar('x'))
+      call vi_visual_range(input_state, start_pos, end_pos)
+      if (end_pos > start_pos) then
+        call yank_range(input_state, start_pos, end_pos)
+        call delete_range(input_state, start_pos, end_pos)
+      end if
+      call collapse_selection(input_state)
+      input_state%vi_mode = VI_MODE_COMMAND
+      if (input_state%cursor_pos > input_state%length - 1) &
+        input_state%cursor_pos = max(input_state%length - 1, 0)
+      input_state%dirty = .true.
+    case (ichar('c'), ichar('s'))
+      call vi_visual_range(input_state, start_pos, end_pos)
+      if (end_pos > start_pos) then
+        call yank_range(input_state, start_pos, end_pos)
+        call delete_range(input_state, start_pos, end_pos)
+      end if
+      call collapse_selection(input_state)
+      input_state%vi_mode = VI_MODE_INSERT
+      input_state%dirty = .true.
+    case (ichar('y'))
+      call vi_visual_range(input_state, start_pos, end_pos)
+      if (end_pos > start_pos) call yank_range(input_state, start_pos, end_pos)
+      vs = start_pos - 1
+      call collapse_selection(input_state)
+      input_state%cursor_pos = max(0, min(vs, max(input_state%length - 1, 0)))
+      input_state%vi_mode = VI_MODE_COMMAND
+      input_state%dirty = .true.
+
+    ! Leave visual mode with no change.
+    case (KEY_ESC, ichar('v'))
+      call collapse_selection(input_state)
+      input_state%vi_mode = VI_MODE_COMMAND
+      input_state%dirty = .true.
+    end select
+  end subroutine
+
+  ! 1-based [start_pos, end_pos) range of the current visual selection,
+  ! INCLUSIVE of the character under the cursor (vi semantics). Empty range
+  ! (start_pos == end_pos) when the buffer is empty.
+  subroutine vi_visual_range(input_state, start_pos, end_pos)
+    type(input_state_t), intent(in) :: input_state
+    integer, intent(out) :: start_pos, end_pos
+    integer :: vs, ve
+
+    start_pos = 1
+    end_pos = 1
+    if (input_state%length == 0) return
+
+    if (input_state%vi_visual_linewise) then
+      start_pos = 1
+      end_pos = input_state%length + 1
+      return
+    end if
+
+    vs = min(input_state%selection_anchor, input_state%cursor_pos)
+    ve = max(input_state%selection_anchor, input_state%cursor_pos)
+    if (vs < 0) vs = 0
+    if (ve > input_state%length - 1) ve = input_state%length - 1
+    if (vs > ve) return
+    start_pos = vs + 1
+    end_pos = ve + 2
   end subroutine
 
   ! Motion-based delete command
@@ -7383,6 +7505,37 @@ contains
     if (input_state%editing_mode == EDITING_MODE_VI .and. &
         input_state%vi_mode == VI_MODE_INSERT) then
       call handle_vi_mode_switch(input_state, KEY_ESC)
+      return
+    end if
+
+    ! Vi visual mode (AR-05b): a bare ESC cancels the selection; arrow keys act
+    ! as visual motions. Peek (short timeout) to tell a lone ESC from a sequence
+    ! so a bare ESC neither blocks nor swallows the following key (same pattern
+    ! as the menu ESC handling above).
+    if (input_state%editing_mode == EDITING_MODE_VI .and. &
+        input_state%vi_mode == VI_MODE_VISUAL) then
+      if (.not. input_ready_within(MENU_ESC_TIMEOUT_MS)) then
+        call handle_vi_visual_mode(input_state, KEY_ESC)
+        return
+      end if
+      success = read_single_char(ch1)
+      if (.not. success) then
+        call handle_vi_visual_mode(input_state, KEY_ESC)
+        return
+      end if
+      if (ch1 == '[') then
+        success = read_single_char(ch2)
+        if (.not. success) return
+        select case (ch2)
+        case ('C')  ! Right arrow -> extend right
+          call handle_vi_visual_mode(input_state, ichar('l'))
+        case ('D')  ! Left arrow -> extend left
+          call handle_vi_visual_mode(input_state, ichar('h'))
+        case default
+          ! Up/Down or other: no horizontal motion on a single line; consume.
+          continue
+        end select
+      end if
       return
     end if
 
