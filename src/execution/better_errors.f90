@@ -4,7 +4,7 @@
 ! ==============================================================================
 module better_errors
   use iso_fortran_env, only: error_unit
-  use system_interface, only: get_environment_var, c_isatty
+  use system_interface, only: get_environment_var, c_isatty, list_directory
   use io_helpers, only: write_stderr
   use iso_c_binding, only: c_int
   implicit none
@@ -162,13 +162,15 @@ contains
     integer, intent(out) :: num_candidates
 
     character(len=256), allocatable :: temp_candidates(:)
+    character(len=256), allocatable :: dir_names(:)
+    logical, allocatable :: dir_isdir(:)
     character(len=:), allocatable :: path_env
     character(len=1024) :: dir
-    integer :: max_candidates, path_start, path_end, colon_pos
-    logical :: dir_exists
+    integer :: max_candidates, path_start, path_end, colon_pos, dir_count, k
 
-    max_candidates = 1000
+    max_candidates = 2000
     allocate(temp_candidates(max_candidates))
+    allocate(dir_names(2048), dir_isdir(2048))
     num_candidates = 0
 
     ! Add common builtins
@@ -198,16 +200,21 @@ contains
       ! Extract directory
       dir = path_env(path_start:path_end)
 
-      ! Check if directory exists (simple check)
-      inquire(file=trim(dir), exist=dir_exists)
-      if (dir_exists) then
-        ! Try to list files in directory using ls
-        ! This is a simplified version - in production, use directory listing
-        ! For now, just add a few common commands
-        if (num_candidates < max_candidates) then
-          ! Just add some known commands for demonstration
-          ! In full implementation, would scan directory
-        end if
+      ! Scan the directory for command names via the native readdir wrapper
+      ! (NICE-DYM, AR-08): the old body was an empty stub, so suggestions came
+      ! only from the 50 hardcoded names. No shell-out (campaign rule); skip
+      ! subdirectories and the . / .. entries. list_directory returns count 0
+      ! if the directory can't be opened, so no separate existence check.
+      if (len_trim(dir) > 0) then
+        call list_directory(trim(dir), dir_names, dir_isdir, dir_count)
+        do k = 1, dir_count
+          if (num_candidates >= max_candidates) exit
+          if (dir_isdir(k)) cycle
+          if (len_trim(dir_names(k)) == 0) cycle
+          if (trim(dir_names(k)) == '.' .or. trim(dir_names(k)) == '..') cycle
+          num_candidates = num_candidates + 1
+          temp_candidates(num_candidates) = trim(dir_names(k))
+        end do
       end if
 
       ! Move to next directory
@@ -333,7 +340,10 @@ contains
     if (color == COLOR_RESET) then
       code = char(27) // '[0m'
     else
-      write(code, '(a,i15,a)') char(27) // '[', color, 'm'
+      ! i0 (minimal width) — i15 padded the SGR parameter with spaces, producing
+      ! an invalid "ESC[             31m" that terminals ignore (so the error and
+      ! did-you-mean text never actually got colored). (AR-08 NICE-DYM)
+      write(code, '(a,i0,a)') char(27) // '[', color, 'm'
     end if
   end function
 

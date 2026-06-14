@@ -156,3 +156,32 @@ def test_ctrld_no_jobs_exits(fortsh_path, tmp_path):
     except Exception:
         pass
     assert not alive, "Ctrl-D with no jobs did not exit"
+
+
+def test_did_you_mean_suggests_real_path_command(fortsh_path, tmp_path):
+    """NICE-DYM: a typo of a real PATH executable that is NOT in the hardcoded
+    list is suggested (the PATH scan was previously an empty stub). Isolated via
+    a private PATH dir + HOME + test mode (so the user's rc/aliases don't run)."""
+    binsdir = tmp_path / "mybin"
+    binsdir.mkdir()
+    tool = binsdir / "zztoolxyz"
+    tool.write_text("#!/bin/sh\necho hi\n")
+    tool.chmod(0o755)
+
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["HOME"] = str(tmp_path)
+    env["FORTSH_TEST_MODE"] = "1"
+    env["PATH"] = str(binsdir) + ":" + env.get("PATH", "/usr/bin:/bin")
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(24, 90))
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.0)
+    mark = len(raw)
+    child.send(b"zztoolxz\r")          # typo of zztoolxyz (edit distance 1)
+    _drain(child, raw, 1.0)
+    tail = _ANSI.sub(b"", bytes(raw[mark:]))
+    _cleanup(child)
+    assert b"command not found" in tail, f"no command-not-found message: {tail!r}"
+    assert b"zztoolxyz" in tail, f"PATH executable not suggested: {tail!r}"
