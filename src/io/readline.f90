@@ -1571,6 +1571,9 @@ contains
     ! Variables for RPROMPT (right-side prompt)
     integer :: rprompt_visual_len, padding_needed
     logical :: rprompt_displayed
+    ! NICE-RPROMPT1 (AR-08): re-emit layer geometry
+    integer :: rp_input_row, rp_input_col, rp_end_row, rp_end_col, rp_start_col
+    character(len=16) :: rp_col_buf
     ! Variables for multiline prompt support
     integer :: prompt_line_count
 
@@ -2682,6 +2685,41 @@ contains
                 do current_line = 1, i_redraw - current_col
                   call rdraw_append(char(27) // '[C')
                 end do
+              end if
+            end if
+
+            ! NICE-RPROMPT1 (AR-08): re-emit the single-line right prompt. The
+            ! ESC[J above wipes it on the first keystroke; fish keeps it visible
+            ! through typing. Re-paint it right-aligned on the input row via
+            ! ESC7/ESC[nG/ESC8 (save, absolute-column, restore) so the input
+            ! cursor and the wrap-row math (cursor_get_row_col) are untouched,
+            ! and recompute the column from the CURRENT term_cols each redraw so
+            ! it can't go stale after a resize. Suppress when the input reaches
+            ! the rprompt zone (matches fish and the initial-paint padding>=4
+            ! gate). Multi-line prompts embed rprompt in fortsh.f90 (no rprompt
+            ! arg here) and stay deferred to the RPROMPT-resize re-audit (#87).
+            if (present(rprompt)) then
+              if (len_trim(rprompt) > 0) then
+                rprompt_visual_len = visual_length(rprompt)
+                if (rprompt_visual_len < 0) rprompt_visual_len = 0
+                call cursor_get_row_col(prompt, 0, term_cols, rp_input_row, rp_input_col)
+                call cursor_get_row_col(prompt, module_input_state%length, &
+                                        term_cols, rp_end_row, rp_end_col)
+                rp_start_col = term_cols - rprompt_visual_len
+                ! Room: input must not have wrapped past the input row, and its
+                ! end column must clear the rprompt start by >= 4 (the gap the
+                ! initial paint enforces). When this holds the cursor is on the
+                ! input row, so ESC7 saves a position there and ESC[nG only
+                ! shifts the column — no vertical move needed.
+                if (rprompt_visual_len > 0 .and. rp_end_row == rp_input_row .and. &
+                    rp_end_col + 4 <= rp_start_col) then
+                  write(rp_col_buf, '(I0)') rp_start_col + 1
+                  call rdraw_append(char(27) // '7')
+                  call rdraw_append(char(27) // '[' // trim(rp_col_buf) // 'G')
+                  call rdraw_append(trim(rprompt))
+                  call rdraw_append(char(27) // '[0m')
+                  call rdraw_append(char(27) // '8')
+                end if
               end if
             end if
 

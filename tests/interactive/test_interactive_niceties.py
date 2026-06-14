@@ -185,3 +185,33 @@ def test_did_you_mean_suggests_real_path_command(fortsh_path, tmp_path):
     _cleanup(child)
     assert b"command not found" in tail, f"no command-not-found message: {tail!r}"
     assert b"zztoolxyz" in tail, f"PATH executable not suggested: {tail!r}"
+
+
+def test_rprompt_survives_keystroke(fortsh_path, tmp_path):
+    """NICE-RPROMPT1: a single-line right prompt stays visible after typing.
+
+    The redraw's ESC[J wipes it on the first keystroke; the re-emit layer
+    repaints it right-aligned. Needs the REAL redraw path, so NOT test mode
+    (test mode echoes chars and skips the dirty redraw); an rc file is created
+    so the first-run prompt is skipped, and PS1 is single-line so readline gets
+    rprompt as an argument (a multi-line PS1 embeds it via ESC[nG instead).
+    Raw bytes — pyte mistracks the ESC7/ESC[nG/ESC8 reposition."""
+    (tmp_path / ".fortshrc").write_text("PS1='rp> '\nRPROMPT='RPMARKER'\n")
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["HOME"] = str(tmp_path)
+    env.pop("FORTSH_TEST_MODE", None)
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(24, 90))
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.2)
+    assert b"RPMARKER" in bytes(raw), "rprompt not shown at initial paint"
+    mark = len(raw)
+    child.send(b"a")                       # one keystroke -> full redraw (ESC[J)
+    _drain(child, raw, 0.6)
+    frame = bytes(raw[mark:])
+    _cleanup(child)
+    # The keystroke's frame wipes (ESC[J) then must re-emit the right prompt.
+    assert b"\x1b[J" in frame, f"expected a full redraw (ESC[J): {frame!r}"
+    assert b"RPMARKER" in frame, f"rprompt not re-emitted after keystroke: {frame!r}"
