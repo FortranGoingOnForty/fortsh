@@ -6268,10 +6268,13 @@ contains
 
     call rdraw_append(char(27) // '[?25l')  ! Hide cursor during the frame
 
-    ! Draw visible rows, overwriting in place
+    ! Draw visible rows, overwriting in place. Column-major (fish): the cell
+    ! at (display row, col) holds item (col-1)*num_rows + row, so consecutive
+    ! items fill down each column. For a fixed row, item_idx grows with col,
+    ! so the first overflow ends the row.
     do row = input_state%menu_row_start, row_stop
       do col = 1, items_per_row
-        item_idx = (row - 1) * items_per_row + col
+        item_idx = (col - 1) * input_state%menu_num_rows + row
         if (item_idx > input_state%menu_num_items) exit
 
         ! Sanitize control/escape bytes for DISPLAY only (insertion uses
@@ -6287,8 +6290,11 @@ contains
           call rdraw_append(char(27) // '[0m')  ! Reset
         end if
 
-        ! Pad to column width for alignment (except after the row's last item)
-        if (col < items_per_row .and. item_idx < input_state%menu_num_items) then
+        ! Pad to column width for alignment, but only when a real next-column
+        ! cell exists in this same display row (column-major: that cell is
+        ! col*num_rows + row).
+        if (col < items_per_row .and. &
+            (col * input_state%menu_num_rows + row) <= input_state%menu_num_items) then
           do j = item_len + 1, cols_per_item
             call rdraw_append(' ')
           end do
@@ -6333,8 +6339,7 @@ contains
     integer, intent(in) :: key
     logical, intent(inout) :: done
     integer :: old_selection, new_selection
-    integer :: items_per_row
-    integer :: current_row, current_col, target_row, last_row
+    integer :: num_rows, current_row
 
     if (.false.) print *, done  ! Silence unused warning (set by caller)
 
@@ -6344,19 +6349,17 @@ contains
 
     select case (key)
     case (KEY_UP, KEY_DOWN)
-      ! 2D navigation: move up/down by one row in the grid, STOPPING at the
-      ! top/bottom (no infinite wrap). When already at the edge, the next
-      ! same-direction press jumps to the opposite edge. (AR-03 NEW-2)
-      items_per_row = input_state%menu_items_per_row
-
-      current_row = (input_state%menu_selection - 1) / items_per_row + 1
-      current_col = mod(input_state%menu_selection - 1, items_per_row) + 1
-      last_row = (input_state%menu_num_items - 1) / items_per_row + 1
+      ! Column-major grid (fish): consecutive items run DOWN a column, so
+      ! Up/Down move within a column by +/-1, STOPPING at the column top/
+      ! bottom (no wrap). At the edge, a repeat same-direction press jumps to
+      ! the opposite end of the whole grid. (AR-03 NEW-2, AR-03b column-major)
+      num_rows = input_state%menu_num_rows
+      if (num_rows < 1) num_rows = 1
+      current_row = mod(input_state%menu_selection - 1, num_rows) + 1
 
       if (key == KEY_UP) then
         if (current_row <= 1) then
-          ! At the top. First press: stop (no move) and arm. Repeat: jump
-          ! to the last item.
+          ! Top of the column. First press: stop and arm. Repeat: jump to last.
           if (menu_edge_armed == 1) then
             input_state%menu_selection = input_state%menu_num_items
             menu_edge_armed = 0
@@ -6364,18 +6367,15 @@ contains
             menu_edge_armed = 1
           end if
         else
-          target_row = current_row - 1
-          new_selection = (target_row - 1) * items_per_row + current_col
-          if (new_selection < 1) new_selection = 1
-          if (new_selection > input_state%menu_num_items) &
-            new_selection = input_state%menu_num_items
-          input_state%menu_selection = new_selection
+          input_state%menu_selection = input_state%menu_selection - 1
           menu_edge_armed = 0
         end if
       else  ! KEY_DOWN
-        ! "At the bottom" = the cell one row down (same column) does not exist.
-        if (current_row >= last_row .or. &
-            current_row * items_per_row + current_col > input_state%menu_num_items) then
+        ! "At the bottom" = no cell directly below in this column: either the
+        ! column is full (current_row == num_rows) or the next index spills
+        ! past the last item (a partial last column).
+        if (current_row >= num_rows .or. &
+            input_state%menu_selection + 1 > input_state%menu_num_items) then
           if (menu_edge_armed == 2) then
             input_state%menu_selection = 1
             menu_edge_armed = 0
@@ -6383,30 +6383,38 @@ contains
             menu_edge_armed = 2
           end if
         else
-          target_row = current_row + 1
-          new_selection = (target_row - 1) * items_per_row + current_col
-          if (new_selection > input_state%menu_num_items) &
-            new_selection = input_state%menu_num_items
-          input_state%menu_selection = new_selection
+          input_state%menu_selection = input_state%menu_selection + 1
           menu_edge_armed = 0
         end if
       end if
 
     case (KEY_LEFT)
-      ! Move left one item (same row)
+      ! Move one column left, same row. Wrap from the first column to the same
+      ! row of the last column (back up one column if that row lies past the
+      ! end of a partial last column).
       menu_edge_armed = 0
-      input_state%menu_selection = input_state%menu_selection - 1
-      if (input_state%menu_selection < 1) then
-        input_state%menu_selection = input_state%menu_num_items  ! Wrap to end
+      num_rows = input_state%menu_num_rows
+      if (num_rows < 1) num_rows = 1
+      new_selection = input_state%menu_selection - num_rows
+      if (new_selection < 1) then
+        current_row = mod(input_state%menu_selection - 1, num_rows) + 1
+        new_selection = current_row + ((input_state%menu_num_items - 1) / num_rows) * num_rows
+        if (new_selection > input_state%menu_num_items) new_selection = new_selection - num_rows
+        if (new_selection < 1) new_selection = input_state%menu_selection
       end if
+      input_state%menu_selection = new_selection
 
     case (KEY_RIGHT)
-      ! Move right one item (same row)
+      ! Move one column right, same row. Wrap from the last column to the same
+      ! row of the first column (which is always full).
       menu_edge_armed = 0
-      input_state%menu_selection = input_state%menu_selection + 1
-      if (input_state%menu_selection > input_state%menu_num_items) then
-        input_state%menu_selection = 1  ! Wrap to beginning
+      num_rows = input_state%menu_num_rows
+      if (num_rows < 1) num_rows = 1
+      new_selection = input_state%menu_selection + num_rows
+      if (new_selection > input_state%menu_num_items) then
+        new_selection = mod(input_state%menu_selection - 1, num_rows) + 1
       end if
+      input_state%menu_selection = new_selection
 
     case (KEY_TAB)
       ! Tab continues to cycle sequentially through all items (wrap is fine —
@@ -6636,7 +6644,8 @@ contains
     ! Window adjustment (fish): selection above the window pulls it up;
     ! selection below it discloses first, then scrolls
     call menu_window_metrics(input_state, total_rows, visible_rows)
-    sel_row = (input_state%menu_selection - 1) / input_state%menu_items_per_row + 1
+    ! Column-major: an item's display row is its position within its column.
+    sel_row = mod(input_state%menu_selection - 1, max(input_state%menu_num_rows, 1)) + 1
     scrolled = .false.
     if (sel_row < input_state%menu_row_start) then
       input_state%menu_row_start = sel_row
@@ -6683,11 +6692,12 @@ contains
     character(len=16) :: numbuf
 
     if (item_idx < 1 .or. item_idx > input_state%menu_num_items) return
-    if (input_state%menu_items_per_row <= 0) return
-    row = (item_idx - 1) / input_state%menu_items_per_row + 1
+    if (input_state%menu_num_rows <= 0) return
+    ! Column-major: row within the column, col is the column index.
+    row = mod(item_idx - 1, input_state%menu_num_rows) + 1
     if (row < input_state%menu_row_start .or. &
         row > input_state%menu_row_start + input_state%menu_visible_rows - 1) return
-    col = mod(item_idx - 1, input_state%menu_items_per_row) + 1
+    col = (item_idx - 1) / input_state%menu_num_rows + 1
     vrow = row - input_state%menu_row_start + 1
     up = input_state%menu_drawn_lines - vrow + 1
     left = (col - 1) * input_state%menu_cols_per_item
