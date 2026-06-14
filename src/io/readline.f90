@@ -1967,6 +1967,11 @@ contains
             flush(output_unit)
             done = .true.
           else
+            ! AR-07 ABBR-ENTER: expand a pending command-position abbreviation
+            ! before submitting (fish binds execute to expand-abbr first), so
+            ! `gco<Enter>` runs the expansion. dirty (set by the expansion) makes
+            ! the deferred-newline redraw repaint the expanded line in place.
+            call try_expand_abbreviation_at_cursor(module_input_state)
             ! Normal submit. Clear shadow text (suggestion) from cursor to end
             ! of line, then DEFER the newline: if the line is still dirty (a
             ! paste whose reverse-video highlight must be cleared), the redraw
@@ -6104,8 +6109,11 @@ contains
     ! Reset completion state when buffer changes
     input_state%completions_shown = .false.
 
-    ! Check for abbreviation expansion BEFORE inserting space
-    if (ch == ' ') then
+    ! Check for abbreviation expansion BEFORE inserting the separator. fish
+    ! expands on space and the command separators ; | & > < ) (AR-07
+    ! ABBR-TRIGGERS); the command-position gate inside keeps it correct.
+    if (ch == ' ' .or. ch == ';' .or. ch == '|' .or. ch == '&' .or. &
+        ch == '>' .or. ch == '<' .or. ch == ')') then
       call try_expand_abbreviation_at_cursor(input_state)
     end if
 
@@ -11206,6 +11214,33 @@ contains
       if (allocated(word_before_cursor)) deallocate(word_before_cursor)
       return  ! No word to expand
     end if
+
+    ! AR-07 ABBR-POSITION: expand only at command position — the word is the
+    ! command (start of line, or the first word after a command separator).
+    ! An abbreviation in argument position (e.g. `echo gco`) stays literal,
+    ! matching fish's default Position::Command.
+    block
+      integer :: p
+      character :: pc
+      logical :: cmd_pos
+      p = word_start - 1
+      do while (p > 0)
+        pc = state_buffer_get_char(input_state, p)
+        if (pc /= ' ' .and. pc /= char(9)) exit
+        p = p - 1
+      end do
+      if (p <= 0) then
+        cmd_pos = .true.
+      else
+        pc = state_buffer_get_char(input_state, p)
+        cmd_pos = (pc == ';' .or. pc == '|' .or. pc == '&' .or. &
+                   pc == '(' .or. pc == '{' .or. pc == char(10))
+      end if
+      if (.not. cmd_pos) then
+        if (allocated(word_before_cursor)) deallocate(word_before_cursor)
+        return
+      end if
+    end block
 
     ! Check if it's an abbreviation
     expanded_form = try_expand_abbreviation(trim(word_before_cursor))

@@ -2000,7 +2000,7 @@ contains
     use abbreviations
     type(command_t), intent(in) :: cmd
     type(shell_state_t), intent(inout) :: shell
-    integer :: eq_pos
+    integer :: eq_pos, i
     character(len=256) :: short_form, expanded_form
     character(len=64) :: abbr_short
     character(len=256) :: abbr_expanded
@@ -2022,6 +2022,23 @@ contains
       else if (trim(cmd%tokens(2)) == '--show' .or. trim(cmd%tokens(2)) == '-s') then
         ! Show abbreviations (same as no args)
         call show_abbreviations()
+      else if (trim(cmd%tokens(2)) == '--add' .or. trim(cmd%tokens(2)) == '-a') then
+        ! fish syntax: abbr -a NAME EXPANSION... (AR-07 ABBR-CLI). The
+        ! expansion is the remaining tokens joined — handles both a quoted
+        ! single token ('git checkout') and bare words (git checkout).
+        if (cmd%num_tokens >= 4) then
+          abbr_short = trim(cmd%tokens(3))
+          abbr_expanded = trim(cmd%tokens(4))
+          do i = 5, cmd%num_tokens
+            if (len_trim(abbr_expanded) + 1 + len_trim(cmd%tokens(i)) > len(abbr_expanded)) exit
+            abbr_expanded = trim(abbr_expanded) // ' ' // trim(cmd%tokens(i))
+          end do
+          call set_abbreviation(abbr_short, abbr_expanded)
+        else
+          write(error_unit, '(a)') 'abbr: --add requires a name and an expansion'
+          shell%last_exit_status = 1
+          return
+        end if
       else
         ! Check for short=expanded format
         eq_pos = index(cmd%tokens(2), '=')
