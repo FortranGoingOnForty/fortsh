@@ -383,12 +383,16 @@ module readline
   integer, parameter :: DOTK_MOTION = 2   ! operator+motion: d<motion> (dd/dw/...)
   integer, parameter :: DOTK_REPLACE = 3  ! r<char>
   integer, parameter :: DOTK_INSERT = 4   ! insert/change + typed text (i/a/c<m>/...)
+  integer, parameter :: DOTK_TEXTOBJ = 5  ! d/c/y on a text object (diw, ci", ...)
   integer, save :: dot_kind = DOTK_NONE
   integer, save :: dot_count = 1
   character, save :: dot_key = ' '       ! the key for DOTK_SIMPLE
   character, save :: dot_motion = ' '    ! the motion for DOTK_MOTION / change-motion
   character, save :: dot_char = ' '      ! the replacement char for DOTK_REPLACE
   character, save :: dot_entry = ' '     ! insert-entry cmd for DOTK_INSERT (i a A I o O C c)
+  character, save :: dot_to_op = ' '     ! operator for DOTK_TEXTOBJ (d c y)
+  character, save :: dot_to_ia = ' '     ! 'i' or 'a' for DOTK_TEXTOBJ
+  character, save :: dot_to_obj = ' '    ! object char for DOTK_TEXTOBJ (w " ' ( { [ ...)
   character(len=MAX_LINE_LEN), save :: dot_insert_buf = ''  ! text typed during the insert
   integer, save :: dot_insert_len = 0
   logical, save :: dot_recording_insert = .false.  ! capturing typed insert text
@@ -3308,27 +3312,65 @@ contains
     end select
   end subroutine
 
+  ! Read / set the pending vi command buffer through the storage-variant ifdefs
+  ! in one place (USE_C_STRINGS / USE_MEMORY_POOL / plain).
+  function vi_get_cmd_buffer(input_state) result(s)
+    type(input_state_t), intent(in) :: input_state
+    character(len=8) :: s
+#ifdef USE_C_STRINGS
+    s = input_state%vi_command_buffer
+#elif defined(USE_MEMORY_POOL)
+    s = input_state%vi_command_buffer_ref%data
+#else
+    s = input_state%vi_command_buffer
+#endif
+  end function
+
+  subroutine vi_set_cmd_buffer(input_state, s)
+    type(input_state_t), intent(inout) :: input_state
+    character(len=*), intent(in) :: s
+#ifdef USE_C_STRINGS
+    input_state%vi_command_buffer = s
+#elif defined(USE_MEMORY_POOL)
+    input_state%vi_command_buffer_ref%data = s
+#else
+    input_state%vi_command_buffer = s
+#endif
+  end subroutine
+
   subroutine handle_vi_command_mode(input_state, key)
     type(input_state_t), intent(inout) :: input_state
     integer, intent(in) :: key
     character :: key_char
-    integer :: repeat_count, i
+    integer :: repeat_count, i, vlen
+    character(len=8) :: vbuf
 
     if (input_state%editing_mode /= EDITING_MODE_VI .or. input_state%vi_mode /= VI_MODE_COMMAND) return
 
     key_char = char(key)
+    vbuf = vi_get_cmd_buffer(input_state)
+    vlen = len_trim(vbuf)
+
+    ! Text object pending (operator + i/a already buffered): this key is the
+    ! object type — resolve and apply (AR-05b stage 3).
+    if (vlen >= 2 .and. (vbuf(2:2) == 'i' .or. vbuf(2:2) == 'a')) then
+      call vi_apply_text_object(input_state, vbuf(1:1), vbuf(2:2), key_char)
+      call vi_set_cmd_buffer(input_state, '')
+      input_state%vi_command_count = 0
+      return
+    end if
+
+    ! Operator pending and this key is a text-object prefix (i/a, which are not
+    ! motions): buffer "<op>i" / "<op>a" and wait for the object char.
+    if (vlen == 1 .and. (key_char == 'i' .or. key_char == 'a') .and. &
+        (vbuf(1:1) == 'd' .or. vbuf(1:1) == 'c' .or. vbuf(1:1) == 'y')) then
+      call vi_set_cmd_buffer(input_state, vbuf(1:1) // key_char)
+      return
+    end if
 
     ! Handle pending two-character commands first
-#ifdef USE_C_STRINGS
-    if (len_trim(input_state%vi_command_buffer) > 0) then
-      select case (input_state%vi_command_buffer(1:1))
-#elif defined(USE_MEMORY_POOL)
-    if (len_trim(input_state%vi_command_buffer_ref%data) > 0) then
-      select case (input_state%vi_command_buffer_ref%data(1:1))
-#else
-    if (len_trim(input_state%vi_command_buffer) > 0) then
-      select case (input_state%vi_command_buffer(1:1))
-#endif
+    if (vlen > 0) then
+      select case (vbuf(1:1))
       case ('m')
         ! Setting a mark
         call handle_vi_mark_set(input_state, key_char)
@@ -3813,10 +3855,168 @@ contains
       end do
       input_state%vi_mode = VI_MODE_COMMAND
       if (input_state%cursor_pos > 0) input_state%cursor_pos = input_state%cursor_pos - 1
+    case (DOTK_TEXTOBJ)
+      ! Re-resolve the object at the current cursor, apply the operator; for a
+      ! change, re-type the captured text and return to command mode.
+      call vi_apply_text_object(input_state, dot_to_op, dot_to_ia, dot_to_obj)
+      if (dot_to_op == 'c') then
+        do i = 1, dot_insert_len
+          call insert_char_impl(input_state, dot_insert_buf(i:i))
+        end do
+        input_state%vi_mode = VI_MODE_COMMAND
+        if (input_state%cursor_pos > 0) input_state%cursor_pos = input_state%cursor_pos - 1
+      end if
     end select
 
     input_state%dirty = .true.
     dot_replaying = .false.
+  end subroutine
+
+  ! Apply a vi operator (d/c/y) to a text object (AR-05b stage 3). `ia` is 'i'
+  ! (inner) or 'a' (around); `obj` selects the object (w " ' ` ( ) b { } B [ ]).
+  subroutine vi_apply_text_object(input_state, op, ia, obj)
+    type(input_state_t), intent(inout) :: input_state
+    character, intent(in) :: op, ia, obj
+    integer :: sp, ep
+    logical :: ok
+
+    call vi_text_object_range(input_state, ia == 'a', obj, sp, ep, ok)
+    if (.not. ok) return
+
+    select case (op)
+    case ('y')
+      call yank_range(input_state, sp, ep)
+      input_state%cursor_pos = max(0, sp - 1)
+    case ('d')
+      call yank_range(input_state, sp, ep)
+      call delete_range(input_state, sp, ep)
+      if (.not. dot_replaying) then
+        dot_kind = DOTK_TEXTOBJ; dot_to_op = 'd'; dot_to_ia = ia; dot_to_obj = obj
+      end if
+    case ('c')
+      call yank_range(input_state, sp, ep)
+      call delete_range(input_state, sp, ep)
+      input_state%vi_mode = VI_MODE_INSERT
+      if (.not. dot_replaying) then
+        dot_kind = DOTK_TEXTOBJ; dot_to_op = 'c'; dot_to_ia = ia; dot_to_obj = obj
+        dot_insert_len = 0; dot_recording_insert = .true.
+      end if
+    end select
+    input_state%dirty = .true.
+  end subroutine
+
+  ! Resolve a text object to a 1-based [start_pos, end_pos) span around the
+  ! cursor. `around` includes the delimiters (a") or trailing whitespace (aw).
+  ! ok is .false. when no object is found or the inner span is empty.
+  subroutine vi_text_object_range(input_state, around, obj, start_pos, end_pos, ok)
+    type(input_state_t), intent(in) :: input_state
+    logical, intent(in) :: around
+    character, intent(in) :: obj
+    integer, intent(out) :: start_pos, end_pos
+    logical, intent(out) :: ok
+    character(len=MAX_LINE_LEN) :: buf
+    integer :: n, cur, s, e, cls, depth
+    character :: oc, cc
+
+    ok = .false.; start_pos = 1; end_pos = 1
+    n = input_state%length
+    if (n == 0) return
+    call state_buffer_get(input_state, buf)
+    cur = input_state%cursor_pos + 1
+    if (cur < 1) cur = 1
+    if (cur > n) cur = n
+
+    select case (obj)
+    case ('w')
+      ! Span of the same character class around the cursor; aw adds trailing ws.
+      cls = char_class(buf(cur:cur))
+      s = cur
+      do while (s > 1)
+        if (char_class(buf(s-1:s-1)) /= cls) exit
+        s = s - 1
+      end do
+      e = cur
+      do while (e < n)
+        if (char_class(buf(e+1:e+1)) /= cls) exit
+        e = e + 1
+      end do
+      if (around) then
+        do while (e < n)
+          if (char_class(buf(e+1:e+1)) /= 0) exit
+          e = e + 1
+        end do
+      end if
+      start_pos = s; end_pos = e + 1; ok = .true.
+
+    case ('"', "'", '`')
+      ! Nearest matching pair of the same quote containing the cursor.
+      if (buf(cur:cur) == obj) then
+        s = cur
+      else
+        s = cur
+        do while (s >= 1)
+          if (buf(s:s) == obj) exit
+          s = s - 1
+        end do
+      end if
+      if (s < 1) return
+      e = s + 1
+      do while (e <= n)
+        if (buf(e:e) == obj) exit
+        e = e + 1
+      end do
+      if (e > n) return
+      if (around) then
+        start_pos = s; end_pos = e + 1
+      else
+        start_pos = s + 1; end_pos = e
+      end if
+      ok = .true.
+
+    case ('(', ')', 'b', '{', '}', 'B', '[', ']')
+      select case (obj)
+      case ('(', ')', 'b'); oc = '('; cc = ')'
+      case ('{', '}', 'B'); oc = '{'; cc = '}'
+      case default;         oc = '['; cc = ']'
+      end select
+      ! Enclosing open bracket: scan left, balancing nested closers.
+      depth = 0; s = cur
+      do
+        if (buf(s:s) == cc .and. s /= cur) then
+          depth = depth + 1
+        else if (buf(s:s) == oc) then
+          if (depth == 0) exit
+          depth = depth - 1
+        end if
+        s = s - 1
+        if (s < 1) return
+      end do
+      ! Matching close: scan right, balancing nested openers.
+      depth = 0; e = s + 1
+      do
+        if (e > n) return
+        if (buf(e:e) == oc) then
+          depth = depth + 1
+        else if (buf(e:e) == cc) then
+          if (depth == 0) exit
+          depth = depth - 1
+        end if
+        e = e + 1
+      end do
+      if (around) then
+        start_pos = s; end_pos = e + 1
+      else
+        start_pos = s + 1; end_pos = e
+      end if
+      ok = .true.
+
+    case default
+      return
+    end select
+
+    if (start_pos < 1) start_pos = 1
+    if (end_pos > n + 1) end_pos = n + 1
+    if (end_pos <= start_pos) ok = .false.
   end subroutine
 
   ! Motion-based delete command
