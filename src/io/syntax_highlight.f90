@@ -58,6 +58,9 @@ module syntax_highlight
   integer, parameter, public :: HTOK_GLOB            = 14
   integer, parameter, public :: HTOK_ASSIGNMENT      = 15
   integer, parameter, public :: HTOK_DEFAULT         = 16
+  ! AR-09: statement terminators | ; & (fish_color_end=green), distinct from
+  ! the operator color used for && || (HL-06).
+  integer, parameter, public :: HTOK_TERMINATOR      = 17
 
   ! v2 token structure — references positions in input buffer, no string copying
   type :: hl_token_t
@@ -72,7 +75,9 @@ module syntax_highlight
   integer, parameter :: COLOR_KEYWORD = COLOR_BRIGHT_MAGENTA
   integer, parameter :: COLOR_OPTION = COLOR_BLUE
   integer, parameter :: COLOR_STRING = COLOR_YELLOW
-  integer, parameter :: COLOR_VARIABLE = COLOR_MAGENTA
+  ! AR-09 HL-07: fish colors $name with the operator role (bright cyan), not a
+  ! dedicated variable color.
+  integer, parameter :: COLOR_VARIABLE = COLOR_BRIGHT_CYAN
   integer, parameter :: COLOR_COMMENT = COLOR_BRIGHT_BLACK
   integer, parameter :: COLOR_OPERATOR = COLOR_CYAN
   integer, parameter :: COLOR_NUMBER = COLOR_CYAN
@@ -514,6 +519,7 @@ contains
     case(HTOK_VARIABLE);       color = COLOR_VARIABLE
     case(HTOK_COMMENT);        color = COLOR_COMMENT
     case(HTOK_OPERATOR);       color = COLOR_OPERATOR
+    case(HTOK_TERMINATOR);     color = COLOR_GREEN
     case(HTOK_REDIRECT);       color = COLOR_OPERATOR
     case(HTOK_NUMBER);         color = COLOR_NUMBER
     case(HTOK_PATH);           color = COLOR_PATH
@@ -742,15 +748,16 @@ contains
 
         select case(ch)
         case('|')
-          if (next_ch == '|') then
-            i = i + 2  ! ||
-          else
-            i = i + 1  ! |
-          end if
           num_tokens = num_tokens + 1
           tokens(num_tokens)%start_pos = tok_start
+          if (next_ch == '|') then
+            i = i + 2  ! || — operator (brcyan in fish)
+            tokens(num_tokens)%token_type = HTOK_OPERATOR
+          else
+            i = i + 1  ! | — statement terminator (green in fish)
+            tokens(num_tokens)%token_type = HTOK_TERMINATOR
+          end if
           tokens(num_tokens)%end_pos = i - 1
-          tokens(num_tokens)%token_type = HTOK_OPERATOR
           in_cmd_pos = .true.
 
         case('&')
@@ -768,24 +775,24 @@ contains
             tokens(num_tokens)%end_pos = i - 1
             tokens(num_tokens)%token_type = HTOK_REDIRECT
           else
-            i = i + 1  ! & (background)
+            i = i + 1  ! & (background) — statement terminator (green)
             num_tokens = num_tokens + 1
             tokens(num_tokens)%start_pos = tok_start
             tokens(num_tokens)%end_pos = i - 1
-            tokens(num_tokens)%token_type = HTOK_OPERATOR
+            tokens(num_tokens)%token_type = HTOK_TERMINATOR
             in_cmd_pos = .true.
           end if
 
         case(';')
           if (next_ch == ';') then
-            i = i + 2  ! ;;
+            i = i + 2  ! ;; (case-item terminator)
           else
             i = i + 1  ! ;
           end if
           num_tokens = num_tokens + 1
           tokens(num_tokens)%start_pos = tok_start
           tokens(num_tokens)%end_pos = i - 1
-          tokens(num_tokens)%token_type = HTOK_OPERATOR
+          tokens(num_tokens)%token_type = HTOK_TERMINATOR  ! green (fish_color_end)
           in_cmd_pos = .true.
 
         case('>')

@@ -135,7 +135,7 @@ contains
     ! Expected: if=KEYWORD, true=CMD, ;=OP, then=KEYWORD, echo=BUILTIN, hi=DEFAULT, ;=OP, fi=KEYWORD
     call assert_eq('if_then_fi: count', 8, n)
     call assert_token('if_then_fi/if', tokens(1), 1, 2, HTOK_KEYWORD)
-    call assert_token('if_then_fi/;', tokens(3), 8, 8, HTOK_OPERATOR)
+    call assert_token('if_then_fi/;', tokens(3), 8, 8, HTOK_TERMINATOR)
     call assert_token('if_then_fi/then', tokens(4), 10, 13, HTOK_KEYWORD)
     call assert_token('if_then_fi/echo', tokens(5), 15, 18, HTOK_BUILTIN)
     call assert_token('if_then_fi/hi', tokens(6), 20, 21, HTOK_DEFAULT)
@@ -149,7 +149,7 @@ contains
     input = 'cat file | wc -l'
     call tokenize_v2(input, 16, tokens, n)
     call assert_eq('pipe: count', 5, n)
-    call assert_token('pipe/|', tokens(3), 10, 10, HTOK_OPERATOR)
+    call assert_token('pipe/|', tokens(3), 10, 10, HTOK_TERMINATOR)
     call assert_token('pipe/wc', tokens(4), 12, 13, HTOK_COMMAND_VALID)
     call assert_token('pipe/-l', tokens(5), 15, 16, HTOK_OPTION)
   end subroutine
@@ -172,7 +172,7 @@ contains
     input = 'echo a; echo b'
     call tokenize_v2(input, 14, tokens, n)
     call assert_eq('semicolon: count', 5, n)
-    call assert_token('semicolon/;', tokens(3), 7, 7, HTOK_OPERATOR)
+    call assert_token('semicolon/;', tokens(3), 7, 7, HTOK_TERMINATOR)
     call assert_token('semicolon/echo2', tokens(4), 9, 12, HTOK_BUILTIN)
   end subroutine
 
@@ -306,7 +306,7 @@ contains
     input = 'sleep 10 &'
     call tokenize_v2(input, 10, tokens, n)
     call assert_eq('bg: count', 3, n)
-    call assert_token('bg/&', tokens(3), 10, 10, HTOK_OPERATOR)
+    call assert_token('bg/&', tokens(3), 10, 10, HTOK_TERMINATOR)
   end subroutine
 
   subroutine test_operator_parens()
@@ -400,10 +400,10 @@ contains
     call assert_eq('pipeline: count', 8, n)
     call assert_eq('pipeline/ls type', HTOK_COMMAND_VALID, tokens(1)%token_type)
     call assert_eq('pipeline/-la type', HTOK_OPTION, tokens(2)%token_type)
-    call assert_eq('pipeline/|1 type', HTOK_OPERATOR, tokens(3)%token_type)
+    call assert_eq('pipeline/|1 type', HTOK_TERMINATOR, tokens(3)%token_type)
     call assert_eq('pipeline/grep type', HTOK_COMMAND_VALID, tokens(4)%token_type)
     call assert_eq('pipeline/foo type', HTOK_DEFAULT, tokens(5)%token_type)
-    call assert_eq('pipeline/|2 type', HTOK_OPERATOR, tokens(6)%token_type)
+    call assert_eq('pipeline/|2 type', HTOK_TERMINATOR, tokens(6)%token_type)
     call assert_eq('pipeline/wc type', HTOK_COMMAND_VALID, tokens(7)%token_type)
     call assert_eq('pipeline/-l type', HTOK_OPTION, tokens(8)%token_type)
   end subroutine
@@ -446,13 +446,13 @@ contains
     input = 'for ((i=0; i<3; i++)) do echo $i; done'
     call tokenize_v2(input, 38, tokens, n)
     ! for = KEYWORD, ((...)) = NUMBER (arithmetic), do = KEYWORD,
-    ! echo = BUILTIN, $i = VARIABLE, ; = OPERATOR, done = KEYWORD
+    ! echo = BUILTIN, $i = VARIABLE, ; = TERMINATOR, done = KEYWORD
     call assert_eq('cfor: for', HTOK_KEYWORD, tokens(1)%token_type)
     call assert_eq('cfor: (())', HTOK_NUMBER, tokens(2)%token_type)
     call assert_eq('cfor: do', HTOK_KEYWORD, tokens(3)%token_type)
     call assert_eq('cfor: echo', HTOK_BUILTIN, tokens(4)%token_type)
     call assert_eq('cfor: $i', HTOK_VARIABLE, tokens(5)%token_type)
-    call assert_eq('cfor: ;', HTOK_OPERATOR, tokens(6)%token_type)
+    call assert_eq('cfor: ;', HTOK_TERMINATOR, tokens(6)%token_type)
     call assert_eq('cfor: done', HTOK_KEYWORD, tokens(7)%token_type)
   end subroutine
 
