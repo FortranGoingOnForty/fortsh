@@ -204,6 +204,12 @@ module readline
     ! CRITICAL: Must use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN) :: suggestion  ! Current suggestion from history (fixed-length to avoid flang-new bug)
     integer :: suggestion_length = 0  ! Length of suggestion
+    ! AR-04b: icase path suggestion. When >0, accepting the suggestion first
+    ! rewrites the last suggestion_replace_len chars of the buffer to
+    ! suggestion_replace_text (the candidate's real case) so the result is a
+    ! valid path. 0 for exact-case and history suggestions (plain append).
+    integer :: suggestion_replace_len = 0
+    character(len=MAX_LINE_LEN) :: suggestion_replace_text
 
     ! Prefix history search (fish-style up/down arrow with typed prefix)
     logical :: in_prefix_search = .false.     ! Currently in prefix search mode
@@ -10541,6 +10547,7 @@ contains
     ! Clear any existing suggestion
     input_state%suggestion = ''
     input_state%suggestion_length = 0
+    input_state%suggestion_replace_len = 0
 
     ! SAFETY (AR-01): a trailing space means the user FINISHED the current
     ! token. We must NOT keep suggesting a path completion for the PREVIOUS
@@ -10601,6 +10608,14 @@ contains
         input_state%suggestion(i:i) = path_result%text(i:i)
       end do
       input_state%suggestion_length = path_result%length
+      ! AR-04b: carry the corrected typed prefix for an icase match.
+      input_state%suggestion_replace_len = path_result%replace_len
+      if (path_result%replace_len > 0) then
+        input_state%suggestion_replace_text = ''
+        do i = 1, min(path_result%replace_len, MAX_LINE_LEN)
+          input_state%suggestion_replace_text(i:i) = path_result%replace_text(i:i)
+        end do
+      end if
     end if
   end subroutine try_path_suggestion
 
@@ -10610,6 +10625,10 @@ contains
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
     type(suggestion_result_t) :: hist_result
+
+    ! AR-04b: default to plain-append accept; only the icase path branch in
+    ! try_path_suggestion sets a recase. History suggestions never recase.
+    input_state%suggestion_replace_len = 0
 
     ! Disable autosuggestion in test mode - prevents output pollution
     if (.not. test_mode_initialized) call init_test_mode()
@@ -10753,6 +10772,21 @@ contains
     if (.not. file_is_directory(trim(expanded))) history_suggestion_valid = .false.
   end function history_suggestion_valid
 
+  ! AR-04b: rewrite the last suggestion_replace_len chars of the buffer to the
+  ! candidate's real case (idempotent) so an icase suggestion accepts to a valid
+  ! path. No-op for exact-case / history suggestions (replace_len == 0).
+  subroutine apply_suggestion_recase(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: j, base
+    if (input_state%suggestion_replace_len <= 0) return
+    if (input_state%suggestion_replace_len > input_state%length) return
+    base = input_state%length - input_state%suggestion_replace_len
+    do j = 1, input_state%suggestion_replace_len
+      call state_buffer_set_char(input_state, base + j, &
+        input_state%suggestion_replace_text(j:j))
+    end do
+  end subroutine
+
   ! Accept the current autosuggestion
   subroutine accept_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
@@ -10762,6 +10796,8 @@ contains
 
     ! Buffer is about to be extended — any lingering selection is stale (#27).
     if (input_state%selection_active) call collapse_selection(input_state)
+
+    call apply_suggestion_recase(input_state)
 
     ! Safety check: ensure we won't overflow
     new_length = input_state%length + input_state%suggestion_length
@@ -10780,6 +10816,7 @@ contains
     input_state%cursor_pos = input_state%length
     input_state%suggestion = ''
     input_state%suggestion_length = 0
+    input_state%suggestion_replace_len = 0
     input_state%dirty = .true.
   end subroutine
 
@@ -10792,6 +10829,10 @@ contains
 
     ! Buffer is about to be extended — any lingering selection is stale (#27).
     if (input_state%selection_active) call collapse_selection(input_state)
+
+    ! AR-04b: correct the typed token's case before extending it (the prefix is
+    ! already typed, so recasing is right regardless of how much suffix we take).
+    call apply_suggestion_recase(input_state)
 
     ! Find the end of the first word in the suggestion
     word_end = 0

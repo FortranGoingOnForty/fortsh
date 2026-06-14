@@ -21,6 +21,11 @@ module suggestions
     integer :: length = 0
     integer :: source = 0  ! SUGGEST_NONE, SUGGEST_PATH, SUGGEST_HISTORY
     integer :: matched_index = 0  ! history slot the match came from (1-based)
+    ! AR-04b: when the ghost matched the typed token only case-insensitively,
+    ! replace_len chars of that token are rewritten to replace_text (the real
+    ! case) on accept, so accepting `read` -> README (not readME).
+    integer :: replace_len = 0
+    character(len=SUGGEST_BUF_LEN) :: replace_text = ''
   end type suggestion_result_t
 
   public :: compute_path_suggestion, compute_history_suggestion
@@ -48,10 +53,13 @@ contains
     res%text = ''
     res%length = 0
     res%source = SUGGEST_NONE
+    res%replace_len = 0
+    res%replace_text = ''
 
     if (last_word_len == 0 .or. num_completions == 0) return
 
-    ! Find the first completion that is a strict prefix extension of last_word
+    ! Find the first completion that is a strict (exact-case) prefix extension
+    ! of last_word. Exact case is always preferred when it exists.
     do i = 1, num_completions
       comp_len = len_trim(completions(i))
       if (comp_len <= last_word_len) cycle
@@ -74,7 +82,50 @@ contains
         return
       end if
     end do
+
+    ! No exact-case match: fall back to a case-INSENSITIVE prefix match (AR-04b,
+    ! fish behavior). complete_files_enhanced already matched icase, so the
+    ! candidate is in the list; suggest its remainder AND carry the corrected
+    ! typed prefix so accept yields the real path (read -> README, not readME).
+    do i = 1, num_completions
+      comp_len = len_trim(completions(i))
+      if (comp_len <= last_word_len) cycle
+
+      is_prefix = .true.
+      do j = 1, last_word_len
+        if (to_lower(completions(i)(j:j)) /= to_lower(last_word(j:j))) then
+          is_prefix = .false.
+          exit
+        end if
+      end do
+
+      if (is_prefix) then
+        res%length = min(comp_len - last_word_len, SUGGEST_BUF_LEN)
+        do j = 1, res%length
+          res%text(j:j) = completions(i)(last_word_len + j : last_word_len + j)
+        end do
+        res%source = SUGGEST_PATH
+        res%replace_len = last_word_len
+        do j = 1, min(last_word_len, SUGGEST_BUF_LEN)
+          res%replace_text(j:j) = completions(i)(j:j)
+        end do
+        return
+      end if
+    end do
   end function compute_path_suggestion
+
+  ! ASCII lowercase of a single character (module is I/O-free by design).
+  pure function to_lower(c) result(lc)
+    character(len=1), intent(in) :: c
+    character(len=1) :: lc
+    integer :: code
+    code = iachar(c)
+    if (code >= iachar('A') .and. code <= iachar('Z')) then
+      lc = achar(code + 32)
+    else
+      lc = c
+    end if
+  end function to_lower
 
   ! --------------------------------------------------------------------------
   ! Compute a history-based suggestion.
