@@ -1727,7 +1727,7 @@ contains
           prev_render_valid = .false.
 
           block
-            integer :: reflow_rows, up_i
+            integer :: reflow_rows, reflow_col, up_i
 
             success = get_terminal_size(term_rows, term_cols)
             if (.not. success) then
@@ -1745,13 +1745,16 @@ contains
             end block
 
             ! Move the cursor up to the prompt origin, then clear from there
-            ! down, so the dirty redraw below repaints the whole line at the new
-            ! width. The number of rows up is the cursor's ACTUAL physical row
-            ! from the prompt origin at the OLD width, tracked in
-            ! module_cursor_screen_row (full terminal row, prompt wrap rows
-            ! included). The old (old_cols+term_cols-1)/term_cols heuristic used
-            ! the terminal WIDTH as a content-height proxy and over-scrolled.
-            reflow_rows = module_cursor_screen_row
+            ! down, so the dirty redraw below repaints the whole line at the NEW
+            ! width with nothing stale left behind. A reflowing terminal has
+            ! already rewrapped the old content to the new width, putting the
+            ! cursor at its offset-from-origin AT THE NEW WIDTH — which is
+            ! exactly cursor_get_row_col(new term_cols). Moving up that many
+            ! reaches the origin. (The old module_cursor_screen_row was the
+            ! OLD-width row, so it under-moved after a narrow resize and left a
+            ! duplicated prompt line above the repaint.)
+            call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
+                                    term_cols, reflow_rows, reflow_col)
             do up_i = 1, reflow_rows
               write(output_unit, '(a)', advance='no') char(27) // '[A'
             end do
