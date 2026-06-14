@@ -382,11 +382,16 @@ module readline
   integer, parameter :: DOTK_SIMPLE = 1   ! a direct key change: x X p P
   integer, parameter :: DOTK_MOTION = 2   ! operator+motion: d<motion> (dd/dw/...)
   integer, parameter :: DOTK_REPLACE = 3  ! r<char>
+  integer, parameter :: DOTK_INSERT = 4   ! insert/change + typed text (i/a/c<m>/...)
   integer, save :: dot_kind = DOTK_NONE
   integer, save :: dot_count = 1
   character, save :: dot_key = ' '       ! the key for DOTK_SIMPLE
-  character, save :: dot_motion = ' '    ! the motion for DOTK_MOTION
+  character, save :: dot_motion = ' '    ! the motion for DOTK_MOTION / change-motion
   character, save :: dot_char = ' '      ! the replacement char for DOTK_REPLACE
+  character, save :: dot_entry = ' '     ! insert-entry cmd for DOTK_INSERT (i a A I o O C c)
+  character(len=MAX_LINE_LEN), save :: dot_insert_buf = ''  ! text typed during the insert
+  integer, save :: dot_insert_len = 0
+  logical, save :: dot_recording_insert = .false.  ! capturing typed insert text
   logical, save :: dot_replaying = .false.  ! suppress recording during replay
 
   ! Module-level syntax highlighting buffer (fixed-length to avoid flang-new allocatable bugs)
@@ -1309,6 +1314,7 @@ contains
     state%vi_mode = VI_MODE_INSERT
     state%vi_command_count = 0
     state%vi_yank_length = 0
+    dot_recording_insert = .false.  ! AR-05b 2b: never start a line mid-capture
     state%vi_marks = 0
     state%vi_search_length = 0
     state%suggestion_length = 0
@@ -3262,6 +3268,7 @@ contains
     case (VI_MODE_INSERT)
       if (key == KEY_ESC) then
         input_state%vi_mode = VI_MODE_COMMAND
+        dot_recording_insert = .false.   ! AR-05b 2b: finalize captured insert
         ! Move cursor back one position in command mode
         if (input_state%cursor_pos > 0) then
           input_state%cursor_pos = input_state%cursor_pos - 1
@@ -3344,6 +3351,7 @@ contains
         return
       case ('c')
         ! Change with motion
+        call dot_begin_insert('c', key_char, max(1, input_state%vi_command_count))
         call handle_vi_change_with_motion(input_state, key_char)
         return
       case ('r')
@@ -3493,6 +3501,7 @@ contains
       input_state%vi_command_count = repeat_count
     case (ichar('C'))
       ! Change to end of line
+      call dot_begin_insert('C', ' ', 1)
       call handle_vi_change_to_eol(input_state)
 
     ! Undo
@@ -3589,32 +3598,39 @@ contains
       ! Previous search match
       call handle_vi_search_next(input_state, .false.)
 
-    ! Mode switches (with proper cursor positioning)
+    ! Mode switches (with proper cursor positioning). Each begins recording the
+    ! typed insert for dot-repeat (AR-05b 2b).
     case (ichar('i'))
       ! Insert at cursor
       input_state%vi_mode = VI_MODE_INSERT
+      call dot_begin_insert('i', ' ', 1)
     case (ichar('a'))
       ! Insert after cursor
       if (input_state%cursor_pos < input_state%length) then
         input_state%cursor_pos = input_state%cursor_pos + 1
       end if
       input_state%vi_mode = VI_MODE_INSERT
+      call dot_begin_insert('a', ' ', 1)
     case (ichar('I'))
       ! Insert at beginning of line
       input_state%cursor_pos = 0
       input_state%vi_mode = VI_MODE_INSERT
+      call dot_begin_insert('I', ' ', 1)
     case (ichar('A'))
       ! Insert at end of line
       input_state%cursor_pos = input_state%length
       input_state%vi_mode = VI_MODE_INSERT
+      call dot_begin_insert('A', ' ', 1)
     case (ichar('o'))
       ! Open line below (simplified - just go to end)
       input_state%cursor_pos = input_state%length
       input_state%vi_mode = VI_MODE_INSERT
+      call dot_begin_insert('o', ' ', 1)
     case (ichar('O'))
       ! Open line above (simplified - just go to beginning)
       input_state%cursor_pos = 0
       input_state%vi_mode = VI_MODE_INSERT
+      call dot_begin_insert('O', ' ', 1)
     end select
   end subroutine
 
@@ -3717,8 +3733,23 @@ contains
     end_pos = ve + 2
   end subroutine
 
+  ! Begin recording an insert/change for dot-repeat (AR-05b 2b). `entry` is the
+  ! command that entered insert (i/a/A/I/o/O/C/c); `motion` is the change motion
+  ! for entry=='c'. No-op while replaying.
+  subroutine dot_begin_insert(entry, motion, count)
+    character, intent(in) :: entry, motion
+    integer, intent(in) :: count
+    if (dot_replaying) return
+    dot_kind = DOTK_INSERT
+    dot_entry = entry
+    dot_motion = motion
+    dot_count = max(1, count)
+    dot_insert_len = 0
+    dot_recording_insert = .true.
+  end subroutine
+
   ! Replay the last buffer-changing command (vi `.`). Sets dot_replaying so the
-  ! replayed handlers don't re-record. (AR-05b stage 2a: non-insert family.)
+  ! replayed handlers don't re-record. (AR-05b stage 2.)
   subroutine vi_dot_repeat(input_state)
     type(input_state_t), intent(inout) :: input_state
     integer :: i
@@ -3755,6 +3786,33 @@ contains
     case (DOTK_REPLACE)
       input_state%vi_command_count = dot_count
       call handle_vi_replace_char(input_state, dot_char)
+    case (DOTK_INSERT)
+      ! Re-establish the insert position / deletion, then re-type the captured
+      ! text, then return to command mode (mimic ESC). Uses insert_char_impl so
+      ! the replay isn't itself recorded.
+      select case (dot_entry)
+      case ('c')   ! c<motion>: delete the motion span (also sets INSERT)
+        input_state%vi_command_count = dot_count
+        call handle_vi_change_with_motion(input_state, dot_motion)
+      case ('C')
+        call handle_vi_change_to_eol(input_state)
+      case ('a')
+        if (input_state%cursor_pos < input_state%length) &
+          input_state%cursor_pos = input_state%cursor_pos + 1
+      case ('I')
+        input_state%cursor_pos = 0
+      case ('A', 'o')
+        input_state%cursor_pos = input_state%length
+      case ('O')
+        input_state%cursor_pos = 0
+      case default
+        continue  ! 'i': insert at the current cursor
+      end select
+      do i = 1, dot_insert_len
+        call insert_char_impl(input_state, dot_insert_buf(i:i))
+      end do
+      input_state%vi_mode = VI_MODE_COMMAND
+      if (input_state%cursor_pos > 0) input_state%cursor_pos = input_state%cursor_pos - 1
     end select
 
     input_state%dirty = .true.
@@ -3937,6 +3995,18 @@ contains
       ! For other motions, use standard delete + insert
       call handle_vi_delete_with_motion(input_state, motion)
     end if
+
+    ! Clear the pending operator (cc/cw don't go through delete_with_motion,
+    ! which is the only branch that cleared it) so the next command-mode key
+    ! after the change isn't mis-read as another change motion.
+#ifdef USE_C_STRINGS
+    input_state%vi_command_buffer = ''
+#elif defined(USE_MEMORY_POOL)
+    input_state%vi_command_buffer_ref%data = ''
+#else
+    input_state%vi_command_buffer = ''
+#endif
+    input_state%vi_command_count = 0
 
     input_state%vi_mode = VI_MODE_INSERT
   end subroutine
@@ -5687,6 +5757,11 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character, intent(in) :: ch
     undo_op_was_insert = .true.   ! DIV-1: mark a self-insert so a run coalesces
+    ! AR-05b 2b: capture text typed during a vi insert/change for dot-repeat.
+    if (dot_recording_insert .and. dot_insert_len < MAX_LINE_LEN) then
+      dot_insert_len = dot_insert_len + 1
+      dot_insert_buf(dot_insert_len:dot_insert_len) = ch
+    end if
     call insert_char_impl(input_state, ch)
   end subroutine
 
@@ -5702,6 +5777,15 @@ contains
     integer :: debug_stat
 
     undo_op_was_insert = .true.   ! DIV-1: multi-byte self-insert coalesces too
+
+    ! AR-05b 2b: capture typed bytes during a vi insert/change for dot-repeat.
+    if (dot_recording_insert) then
+      do i = 1, num_bytes
+        if (dot_insert_len >= MAX_LINE_LEN) exit
+        dot_insert_len = dot_insert_len + 1
+        dot_insert_buf(dot_insert_len:dot_insert_len) = utf8_bytes(i:i)
+      end do
+    end if
 
     ! Shift-phase type-over (Sprint 3): replace active selection before
     ! inserting a new multi-byte character.

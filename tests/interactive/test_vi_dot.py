@@ -78,3 +78,34 @@ def test_dot_noop_without_prior_change(fortsh_path, tmp_path):
     """`.` with no recorded change is a safe no-op."""
     out = _vi(fortsh_path, tmp_path, [b"echo hi", ESC, b"."])
     assert out == "hi", out
+
+
+# --- stage 2b: insert/change with captured text ---
+
+def test_dot_repeats_change_word(fortsh_path, tmp_path):
+    """`.` replays cw + the typed replacement on the next word (DOTK_INSERT)."""
+    out = _vi(fortsh_path, tmp_path,
+              [b"echo aa bb cc", ESC, b"0", b"w", b"c", b"w", b"XX", ESC, b"w", b"."])
+    assert out == "XX XX cc", out
+
+
+def test_dot_repeats_insert(fortsh_path, tmp_path):
+    """`.` replays an i<text> insert at the cursor."""
+    out = _vi(fortsh_path, tmp_path,
+              [b"echo abc", ESC, b"0", b"w", b"i", b"Z", ESC, b"."])
+    assert out == "ZZabc", out
+
+
+def test_dot_repeats_append(fortsh_path, tmp_path):
+    """`.` replays an A<text> append at end of line."""
+    out = _vi(fortsh_path, tmp_path, [b"echo ab", ESC, b"A", b"Z", ESC, b"."])
+    assert out == "abZZ", out
+
+
+def test_command_works_after_change_word(fortsh_path, tmp_path):
+    """Regression: after cw<text><esc>, a following command-mode key acts as a
+    command (the pending operator is cleared), not as another change motion."""
+    out = _vi(fortsh_path, tmp_path,
+              [b"echo aa bb cc", ESC, b"0", b"w", b"c", b"w", b"ZZ", ESC,
+               b"w", b"d", b"w"])
+    assert out == "ZZ cc", out
