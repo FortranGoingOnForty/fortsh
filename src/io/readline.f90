@@ -4142,30 +4142,40 @@ contains
           completions(i) = trim(completions(i))
         end do
       else
-        ! Check if completing a variable name ($VAR)
-        if (len_trim(last_word) >= 1 .and. last_word(1:1) == '$') then
-          ! Variable completion (AR-06b: >=1 so a lone `$` lists all vars, like
-          ! fish; complete_variable_names with an empty prefix matches all).
-          ! Passing shell adds unexported locals (absent => environ only).
-          call complete_variable_names(last_word, completions, num_completions, shell)
-        else if (len_trim(last_word) >= 1 .and. last_word(1:1) == '~' .and. &
-                 index(trim(last_word), '/') == 0) then
-          ! ~user completion (AR-06b): no slash yet, so complete the username
-          ! (e.g. ~ro -> ~root/). ~/path and ~user/path go through file completion.
-          call complete_user_names(last_word, completions, num_completions)
-        else if (has_glob_chars(last_word)) then
-          ! Expand glob pattern instead of regular file completion
-          call expand_glob_for_completion(last_word, completions, num_completions)
-        else
-          ! Complete files and directories normally
-          call complete_files_enhanced(last_word, completions, num_completions)
+        ! Option/flag completion (AR-02b CR-3): a '-'-leading argument
+        ! completes from the command's bundled option table. Falls through to
+        ! file completion when the command has no table or none of its options
+        ! match (e.g. `cmd -xyz`), so `-`-words without a spec still behave.
+        if (len_trim(last_word) >= 1 .and. last_word(1:1) == '-') then
+          call complete_command_options(command_name, last_word, completions, num_completions)
         end if
 
-        ! Filter completions based on command type
-        ! cd, pushd, popd should only show directories
-        if (trim(command_name) == 'cd' .or. trim(command_name) == 'pushd' .or. &
-            trim(command_name) == 'popd') then
-          call filter_directories_only(completions, num_completions)
+        if (num_completions == 0) then
+          ! Check if completing a variable name ($VAR)
+          if (len_trim(last_word) >= 1 .and. last_word(1:1) == '$') then
+            ! Variable completion (AR-06b: >=1 so a lone `$` lists all vars, like
+            ! fish; complete_variable_names with an empty prefix matches all).
+            ! Passing shell adds unexported locals (absent => environ only).
+            call complete_variable_names(last_word, completions, num_completions, shell)
+          else if (len_trim(last_word) >= 1 .and. last_word(1:1) == '~' .and. &
+                   index(trim(last_word), '/') == 0) then
+            ! ~user completion (AR-06b): no slash yet, so complete the username
+            ! (e.g. ~ro -> ~root/). ~/path and ~user/path go through file completion.
+            call complete_user_names(last_word, completions, num_completions)
+          else if (has_glob_chars(last_word)) then
+            ! Expand glob pattern instead of regular file completion
+            call expand_glob_for_completion(last_word, completions, num_completions)
+          else
+            ! Complete files and directories normally
+            call complete_files_enhanced(last_word, completions, num_completions)
+          end if
+
+          ! Filter completions based on command type
+          ! cd, pushd, popd should only show directories
+          if (trim(command_name) == 'cd' .or. trim(command_name) == 'pushd' .or. &
+              trim(command_name) == 'popd') then
+            call filter_directories_only(completions, num_completions)
+          end if
         end if
 
         ! Don't add prefix to completions - they are for display only
@@ -4551,6 +4561,129 @@ contains
       if (len_trim(matches(i)) == 0) cycle
       num_completions = num_completions + 1
       completions(num_completions) = '~' // trim(matches(i)) // '/'
+    end do
+  end subroutine
+
+  ! Complete a command's options when the current argument starts with '-'
+  ! (AR-02b CR-3). Driven by bundled static option tables for common commands;
+  ! an unknown command yields nothing and the caller falls back to files.
+  subroutine complete_command_options(command, prefix, completions, num_completions)
+    character(len=*), intent(in) :: command, prefix
+    character(len=MAX_LINE_LEN), intent(out) :: completions(MAX_LOCAL_COMPLETIONS)
+    integer, intent(out) :: num_completions
+
+    character(len=32) :: opts(64)
+    integer :: nopts, i, plen
+
+    num_completions = 0
+    call command_option_table(trim(command), opts, nopts)
+    if (nopts == 0) return
+
+    plen = len_trim(prefix)
+    do i = 1, nopts
+      if (num_completions >= MAX_LOCAL_COMPLETIONS) exit
+      if (plen == 0) then
+        num_completions = num_completions + 1
+        completions(num_completions) = trim(opts(i))
+      else if (len_trim(opts(i)) >= plen) then
+        if (opts(i)(1:plen) == prefix(1:plen)) then
+          num_completions = num_completions + 1
+          completions(num_completions) = trim(opts(i))
+        end if
+      end if
+    end do
+  end subroutine
+
+  ! Static option tables (long options + common short flags) for a handful of
+  ! common commands. The MVP data set (AR-02b); user-defined option specs are a
+  ! later AR. find/ps/git use single-dash primaries/options by convention.
+  subroutine command_option_table(command, opts, nopts)
+    character(len=*), intent(in) :: command
+    character(len=32), intent(out) :: opts(:)
+    integer, intent(out) :: nopts
+
+    nopts = 0
+    select case (command)
+    case ('ls')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-a', '--all', '-A', '--almost-all', '-l', '-h', '--human-readable', &
+        '-R', '--recursive', '-r', '--reverse', '-S', '-t', '--sort', &
+        '-d', '--directory', '-i', '--inode', '--color', &
+        '--group-directories-first', '--help', '--version'])
+    case ('grep')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-E', '--extended-regexp', '-F', '--fixed-strings', '-i', '--ignore-case', &
+        '-v', '--invert-match', '-w', '--word-regexp', '-c', '--count', &
+        '-l', '--files-with-matches', '-n', '--line-number', '-r', '--recursive', &
+        '-o', '--only-matching', '--color', '-A', '--after-context', &
+        '-B', '--before-context', '-C', '--context', '--help', '--version'])
+    case ('cp')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-a', '--archive', '-b', '--backup', '-f', '--force', '-i', '--interactive', &
+        '-l', '--link', '-n', '--no-clobber', '-r', '-R', '--recursive', &
+        '-s', '--symbolic-link', '-u', '--update', '-v', '--verbose', &
+        '-p', '--preserve', '--help', '--version'])
+    case ('mv')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-b', '--backup', '-f', '--force', '-i', '--interactive', &
+        '-n', '--no-clobber', '-u', '--update', '-v', '--verbose', &
+        '--help', '--version'])
+    case ('rm')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-f', '--force', '-i', '--interactive', '-r', '-R', '--recursive', &
+        '-d', '--dir', '-v', '--verbose', '--help', '--version'])
+    case ('mkdir')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-m', '--mode', '-p', '--parents', '-v', '--verbose', '--help', '--version'])
+    case ('cat')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-A', '--show-all', '-b', '--number-nonblank', '-E', '--show-ends', &
+        '-n', '--number', '-s', '--squeeze-blank', '-T', '--show-tabs', &
+        '-v', '--show-nonprinting', '--help', '--version'])
+    case ('sort')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-b', '--ignore-leading-blanks', '-f', '--ignore-case', &
+        '-n', '--numeric-sort', '-h', '--human-numeric-sort', '-r', '--reverse', &
+        '-u', '--unique', '-k', '--key', '-t', '--field-separator', &
+        '-o', '--output', '-c', '--check', '--help', '--version'])
+    case ('head', 'tail')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-c', '--bytes', '-n', '--lines', '-q', '--quiet', '-v', '--verbose', &
+        '-f', '--follow', '--help', '--version'])
+    case ('wc')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-c', '--bytes', '-m', '--chars', '-l', '--lines', '-w', '--words', &
+        '-L', '--max-line-length', '--help', '--version'])
+    case ('find')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-name', '-iname', '-type', '-size', '-mtime', '-newer', '-maxdepth', &
+        '-mindepth', '-path', '-regex', '-prune', '-print', '-print0', &
+        '-delete', '-exec', '-empty', '-perm', '-user', '-group'])
+    case ('ps')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-e', '-f', '-l', '-u', '-x', '-a', '-A', '-w', '-o', '--help', '--version'])
+    case ('tar')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '-c', '--create', '-x', '--extract', '-t', '--list', '-f', '--file', &
+        '-v', '--verbose', '-z', '--gzip', '-j', '--bzip2', '-J', '--xz', &
+        '-C', '--directory', '--help', '--version'])
+    case ('git')
+      call set_opts(opts, nopts, [character(len=32) :: &
+        '--version', '--help', '--bare', '--git-dir', '--work-tree', &
+        '--paginate', '--no-pager', '--exec-path', '--html-path', &
+        '--man-path', '--info-path', '-C', '-c'])
+    end select
+  end subroutine
+
+  ! Copy an array-constructor option list into the output buffer.
+  subroutine set_opts(opts, nopts, vals)
+    character(len=32), intent(out) :: opts(:)
+    integer, intent(out) :: nopts
+    character(len=*), intent(in) :: vals(:)
+    integer :: i
+    nopts = min(size(vals), size(opts))
+    do i = 1, nopts
+      opts(i) = vals(i)
     end do
   end subroutine
 

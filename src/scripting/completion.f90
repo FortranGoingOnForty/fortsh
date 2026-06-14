@@ -56,6 +56,11 @@ module completion
   type(completion_spec_t), save :: completion_specs(MAX_COMPLETION_SPECS)
   integer, save :: num_completion_specs = 0
 
+  ! Bundled default subcommand specs are registered lazily on first lookup
+  ! (AR-02b CR-2). Loaded once; commands the user already defined via the
+  ! `complete` builtin are left untouched so user specs win.
+  logical, save :: default_specs_loaded = .false.
+
   ! Current completion context (set during completion)
   type :: completion_context_t
     character(len=:), allocatable :: comp_line              ! Full command line
@@ -174,6 +179,8 @@ contains
     type(completion_spec_t) :: spec
     integer :: i
 
+    if (.not. default_specs_loaded) call ensure_default_specs()
+
     ! Initialize result
     spec%is_active = .false.
     spec%command = ''
@@ -188,6 +195,88 @@ contains
       end if
     end do
   end function get_completion_spec
+
+  ! Zero a spec so every field has a defined value before it is filled in
+  ! (a bare local has undefined components). Mirrors init_completion_system.
+  subroutine clear_spec(spec)
+    type(completion_spec_t), intent(out) :: spec
+    spec%command = ''
+    spec%word_list = ''
+    spec%word_list_count = 0
+    spec%function_name = ''
+    spec%filter_pattern = ''
+    spec%prefix = ''
+    spec%suffix = ''
+    spec%use_default = .false.
+    spec%use_dirnames = .false.
+    spec%use_filenames = .false.
+    spec%nospace = .false.
+    spec%plusdirs = .false.
+    spec%nosort = .false.
+    spec%builtin_alias = .false.
+    spec%builtin_command = .false.
+    spec%builtin_directory = .false.
+    spec%builtin_file = .false.
+    spec%builtin_function = .false.
+    spec%builtin_hostname = .false.
+    spec%builtin_variable = .false.
+    spec%builtin_user = .false.
+    spec%builtin_group = .false.
+    spec%builtin_service = .false.
+    spec%builtin_export = .false.
+    spec%builtin_keyword = .false.
+    spec%builtin_builtin = .false.
+    spec%is_active = .false.
+  end subroutine clear_spec
+
+  ! Is a spec already registered (and active) for this command?
+  logical function spec_registered(command)
+    character(len=*), intent(in) :: command
+    integer :: i
+    spec_registered = .false.
+    do i = 1, num_completion_specs
+      if (completion_specs(i)%is_active .and. &
+          trim(completion_specs(i)%command) == trim(command)) then
+        spec_registered = .true.
+        return
+      end if
+    end do
+  end function spec_registered
+
+  ! Register a word-list (subcommand) spec for `command` unless the user has
+  ! already defined one. Words are the subcommands offered as the first arg.
+  subroutine register_subcommand_spec(command, words)
+    character(len=*), intent(in) :: command
+    character(len=*), intent(in) :: words(:)
+    type(completion_spec_t) :: spec
+    integer :: i, n
+    logical :: ok
+
+    if (spec_registered(command)) return
+    call clear_spec(spec)
+    spec%command = command
+    n = min(size(words), MAX_WORD_LIST)
+    do i = 1, n
+      spec%word_list(i) = words(i)
+    end do
+    spec%word_list_count = n
+    ok = register_completion_spec(spec)
+  end subroutine register_subcommand_spec
+
+  ! Register the bundled default subcommand specs (AR-02b CR-2). Data-driven:
+  ! these go through the same spec path as user `complete` definitions, so a
+  ! user `complete -c git ...` (run before the first Tab) overrides the default.
+  subroutine ensure_default_specs()
+    default_specs_loaded = .true.   ! set first: register_* must not re-enter
+
+    call register_subcommand_spec('git', [character(len=32) :: &
+      'add', 'am', 'apply', 'archive', 'bisect', 'blame', 'branch', &
+      'checkout', 'cherry-pick', 'clean', 'clone', 'commit', 'config', &
+      'describe', 'diff', 'fetch', 'fsck', 'gc', 'grep', 'init', 'log', &
+      'merge', 'mv', 'pull', 'push', 'rebase', 'reflog', 'remote', &
+      'reset', 'restore', 'revert', 'rm', 'show', 'stash', 'status', &
+      'switch', 'tag', 'worktree'])
+  end subroutine ensure_default_specs
 
   ! Remove completion spec for a command
   function remove_completion_spec(command) result(success)
