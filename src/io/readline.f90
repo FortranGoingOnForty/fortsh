@@ -374,6 +374,21 @@ module readline
   ! the per-command re-init, matching vim's session-scoped register.
   character(len=MAX_LINE_LEN), save :: session_vi_yank = ''
 
+  ! Vi dot-repeat (AR-05b stage 2). The last buffer-changing command, replayed
+  ! by `.`. Session-scoped module state (like the yank register) so it survives
+  ! the per-command input_state re-init. Stage 2a covers the non-insert family;
+  ! DOT_INSERT (captured text for c/i/a) lands in 2b.
+  integer, parameter :: DOTK_NONE = 0
+  integer, parameter :: DOTK_SIMPLE = 1   ! a direct key change: x X p P
+  integer, parameter :: DOTK_MOTION = 2   ! operator+motion: d<motion> (dd/dw/...)
+  integer, parameter :: DOTK_REPLACE = 3  ! r<char>
+  integer, save :: dot_kind = DOTK_NONE
+  integer, save :: dot_count = 1
+  character, save :: dot_key = ' '       ! the key for DOTK_SIMPLE
+  character, save :: dot_motion = ' '    ! the motion for DOTK_MOTION
+  character, save :: dot_char = ' '      ! the replacement char for DOTK_REPLACE
+  logical, save :: dot_replaying = .false.  ! suppress recording during replay
+
   ! Module-level syntax highlighting buffer (fixed-length to avoid flang-new allocatable bugs)
   character(len=4096), save :: module_highlighted_buffer
   integer, save :: module_highlighted_len
@@ -3317,6 +3332,10 @@ contains
         return
       case ('d')
         ! Delete with motion
+        if (.not. dot_replaying) then
+          dot_kind = DOTK_MOTION; dot_key = 'd'; dot_motion = key_char
+          dot_count = max(1, input_state%vi_command_count)
+        end if
         call handle_vi_delete_with_motion(input_state, key_char)
         return
       case ('y')
@@ -3329,6 +3348,10 @@ contains
         return
       case ('r')
         ! Replace character
+        if (.not. dot_replaying) then
+          dot_kind = DOTK_REPLACE; dot_char = key_char
+          dot_count = max(1, input_state%vi_command_count)
+        end if
         call handle_vi_replace_char(input_state, key_char)
         return
       end select
@@ -3422,12 +3445,19 @@ contains
       input_state%vi_mode = VI_MODE_VISUAL
       input_state%dirty = .true.
 
+    ! Dot-repeat: replay the last buffer-changing command (AR-05b)
+    case (ichar('.'))
+      call vi_dot_repeat(input_state)
+
     ! Deletion (with repeat)
     case (ichar('x'))
       ! Delete character at cursor
       do i = 1, repeat_count
         call delete_char_at_cursor(input_state)
       end do
+      if (.not. dot_replaying) then
+        dot_kind = DOTK_SIMPLE; dot_key = 'x'; dot_count = repeat_count
+      end if
     case (ichar('X'))
       ! Delete character before cursor
       do i = 1, repeat_count
@@ -3436,6 +3466,9 @@ contains
           call delete_char_at_cursor(input_state)
         end if
       end do
+      if (.not. dot_replaying) then
+        dot_kind = DOTK_SIMPLE; dot_key = 'X'; dot_count = repeat_count
+      end if
     case (ichar('d'))
       ! Delete with motion - set up for next character
 #ifdef USE_C_STRINGS
@@ -3492,11 +3525,17 @@ contains
       do i = 1, repeat_count
         call handle_vi_put(input_state, .false.)
       end do
+      if (.not. dot_replaying) then
+        dot_kind = DOTK_SIMPLE; dot_key = 'p'; dot_count = repeat_count
+      end if
     case (ichar('P'))
       ! Put (paste) before cursor
       do i = 1, repeat_count
         call handle_vi_put(input_state, .true.)
       end do
+      if (.not. dot_replaying) then
+        dot_kind = DOTK_SIMPLE; dot_key = 'P'; dot_count = repeat_count
+      end if
 
     ! Replace
     case (ichar('r'))
@@ -3676,6 +3715,50 @@ contains
     if (vs > ve) return
     start_pos = vs + 1
     end_pos = ve + 2
+  end subroutine
+
+  ! Replay the last buffer-changing command (vi `.`). Sets dot_replaying so the
+  ! replayed handlers don't re-record. (AR-05b stage 2a: non-insert family.)
+  subroutine vi_dot_repeat(input_state)
+    type(input_state_t), intent(inout) :: input_state
+    integer :: i
+
+    if (dot_kind == DOTK_NONE) return
+    dot_replaying = .true.
+
+    select case (dot_kind)
+    case (DOTK_SIMPLE)
+      select case (dot_key)
+      case ('x')
+        do i = 1, dot_count
+          call delete_char_at_cursor(input_state)
+        end do
+      case ('X')
+        do i = 1, dot_count
+          if (input_state%cursor_pos > 0) then
+            input_state%cursor_pos = input_state%cursor_pos - 1
+            call delete_char_at_cursor(input_state)
+          end if
+        end do
+      case ('p')
+        do i = 1, dot_count
+          call handle_vi_put(input_state, .false.)
+        end do
+      case ('P')
+        do i = 1, dot_count
+          call handle_vi_put(input_state, .true.)
+        end do
+      end select
+    case (DOTK_MOTION)
+      input_state%vi_command_count = dot_count
+      call handle_vi_delete_with_motion(input_state, dot_motion)
+    case (DOTK_REPLACE)
+      input_state%vi_command_count = dot_count
+      call handle_vi_replace_char(input_state, dot_char)
+    end select
+
+    input_state%dirty = .true.
+    dot_replaying = .false.
   end subroutine
 
   ! Motion-based delete command
