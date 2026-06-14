@@ -118,6 +118,16 @@ module readline
   character(len=MAX_MENU_ITEM_LEN), save :: pager_items(PAGER_STORE_MAX)
   integer, save :: pager_item_count = 0
   logical, save :: pager_active = .false.
+
+  ! AR-03c: completion menu description column (fish-style). Descriptions are
+  ! computed at menu build from the completion kind + the item + shell state
+  ! (variable value, builtin summary); rendered dim to the right of the name.
+  ! Parallel to pager_items / menu_items so menu_desc_get mirrors menu_item_get.
+  integer, parameter :: MAX_MENU_DESC_LEN = 64
+  character(len=MAX_MENU_DESC_LEN), save :: pager_descs(PAGER_STORE_MAX)
+  integer, parameter :: MDESC_NONE = 0   ! file/dir/unknown: no description
+  integer, parameter :: MDESC_VAR  = 1   ! $var: show its value
+  integer, parameter :: MDESC_CMD  = 2   ! command position: builtin summary
   logical, save :: pager_collect = .false.
 
   ! Menu vertical-scroll edge state (AR-03 NEW-2): Up/Down STOP at the top/
@@ -223,6 +233,7 @@ module readline
     ! Menu selection support (zsh/fish-style interactive completion)
     logical :: in_menu_select = .false.  ! Currently in menu selection mode
     character(len=MAX_MENU_ITEM_LEN) :: menu_items(MAX_MENU_ITEMS)  ! Completion items for menu (fixed-length to avoid flang-new bug)
+    character(len=MAX_MENU_DESC_LEN) :: menu_descs(MAX_MENU_ITEMS)  ! AR-03c: per-item description (parallel to menu_items)
     integer :: menu_num_items = 0  ! Number of items in menu
     integer :: menu_total_items = 0  ! Total number of completions available (before truncation)
     integer :: menu_selection = 1  ! Currently selected item (1-based)
@@ -234,6 +245,8 @@ module readline
     integer :: menu_cols_per_item = 0
     integer :: menu_items_per_row = 0
     integer :: menu_num_rows = 0
+    integer :: menu_name_col = 0  ! AR-03c: name column width when descs shown
+    logical :: menu_has_descs = .false.  ! AR-03c: a description column is rendered
     ! Pager window (fish-style disclosure + row scrolling)
     integer :: menu_row_start = 1      ! First visible grid row (1-based)
     logical :: menu_disclosed = .false. ! Expanded to full available height
@@ -6478,7 +6491,7 @@ contains
         else
           if (.not. input_state%completions_shown .or. tab_buffer_changed) then
             ! First tab - store completions and draw grid menu
-            call menu_setup_items(input_state, tab_completions, tab_num_completions)
+            call menu_setup_items(input_state, tab_completions, tab_num_completions, shell)
             write(output_unit, '()')  ! Blank line before menu
             call draw_completion_menu(input_state, .true.)
             call state_last_completion_buffer_set_from_buffer(input_state)
@@ -6545,7 +6558,7 @@ contains
       ! Show the available options
       if (.not. input_state%completions_shown .or. tab_buffer_changed) then
         ! First tab - store completions and draw grid menu
-        call menu_setup_items(input_state, tab_completions, tab_num_completions)
+        call menu_setup_items(input_state, tab_completions, tab_num_completions, shell)
         write(output_unit, '()')  ! Blank line before menu
         call draw_completion_menu(input_state, .true.)
         call state_last_completion_buffer_set_from_buffer(input_state)
@@ -6703,10 +6716,11 @@ contains
   ! menu. The pager store backs the menu when it covers the completion
   ! set (making it scrollable past MAX_MENU_ITEMS); otherwise fall back
   ! to copying into the fixed menu_items array.
-  subroutine menu_setup_items(input_state, completions, num_completions)
+  subroutine menu_setup_items(input_state, completions, num_completions, shell)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: completions(:)
     integer, intent(in) :: num_completions
+    type(shell_state_t), intent(in), optional :: shell
     character(len=MAX_MENU_ITEM_LEN) :: temp_buffer
     integer :: i, j, copy_len
 
@@ -6730,6 +6744,8 @@ contains
     input_state%menu_row_start = 1
     input_state%menu_disclosed = .false.
     menu_edge_armed = 0
+    ! AR-03c: fish-style descriptions (var values, builtin summaries).
+    call compute_menu_descs(input_state, shell)
   end subroutine
 
   ! Menu item accessor: pager-backed menus read from the module store,
@@ -6744,6 +6760,156 @@ contains
     else
       item = input_state%menu_items(idx)
     end if
+  end function
+
+  ! Description accessor, parallel to menu_item_get (AR-03c).
+  function menu_desc_get(input_state, idx) result(desc)
+    type(input_state_t), intent(in) :: input_state
+    integer, intent(in) :: idx
+    character(len=MAX_MENU_DESC_LEN) :: desc
+
+    if (pager_active) then
+      desc = pager_descs(idx)
+    else
+      desc = input_state%menu_descs(idx)
+    end if
+  end function
+
+  ! Fill the description store for the current menu (AR-03c). The kind is
+  ! derived from the line's last word: a `$`-word means variable completion
+  ! (describe each with its value); a first-word means command completion
+  ! (describe builtins with a one-line summary). Everything else (files, dirs,
+  ! options for now) gets a blank description, which renders as the plain
+  ! name-only grid — so file menus are untouched.
+  subroutine compute_menu_descs(input_state, shell)
+    type(input_state_t), intent(inout) :: input_state
+    type(shell_state_t), intent(in), optional :: shell
+    character(len=MAX_LINE_LEN) :: buf, last_word
+    character(len=MAX_MENU_ITEM_LEN) :: item
+    character(len=MAX_MENU_DESC_LEN) :: desc
+    integer :: i, n, last_space, kind
+
+    ! Determine the completion kind from the line up to the cursor.
+    n = input_state%cursor_pos
+    if (n > input_state%length) n = input_state%length
+    call state_buffer_get(input_state, buf)
+    last_space = 0
+    do i = 1, n
+      if (buf(i:i) == ' ') last_space = i
+    end do
+    if (last_space > 0) then
+      last_word = buf(last_space+1:n)
+    else
+      last_word = buf(1:n)
+    end if
+
+    if (len_trim(last_word) >= 1 .and. last_word(1:1) == '$') then
+      kind = MDESC_VAR
+    else if (last_space == 0) then
+      kind = MDESC_CMD
+    else
+      kind = MDESC_NONE
+    end if
+
+    do i = 1, input_state%menu_num_items
+      desc = ' '
+      if (kind == MDESC_VAR) then
+        item = menu_item_get(input_state, i)
+        desc = describe_variable(trim(item), shell)
+      else if (kind == MDESC_CMD) then
+        item = menu_item_get(input_state, i)
+        desc = builtin_summary(trim(item))
+      end if
+      if (pager_active) then
+        pager_descs(i) = desc
+      else
+        input_state%menu_descs(i) = desc
+      end if
+    end do
+  end subroutine
+
+  ! Value of a `$NAME` completion item, for the description column (AR-03c).
+  ! Prefer a shell variable (covers unexported locals), fall back to environ.
+  function describe_variable(item, shell) result(desc)
+    character(len=*), intent(in) :: item
+    type(shell_state_t), intent(in), optional :: shell
+    character(len=MAX_MENU_DESC_LEN) :: desc
+    character(len=MAX_LINE_LEN) :: val
+    character(len=MAX_VAR_NAME_LEN) :: name
+    integer :: i, vlen
+
+    desc = ' '
+    if (len_trim(item) < 1) return
+    if (item(1:1) == '$') then
+      name = adjustl(item(2:))
+    else
+      name = adjustl(item)
+    end if
+    if (len_trim(name) == 0) return
+
+    val = ' '
+    vlen = 0
+    if (present(shell)) then
+      do i = 1, shell%num_variables
+        if (trim(shell%variables(i)%name) == trim(name)) then
+          if (allocated(shell%variables(i)%value)) then
+            vlen = len_trim(shell%variables(i)%value)
+            if (vlen > 0) val = shell%variables(i)%value(1:min(vlen, MAX_LINE_LEN))
+          end if
+          exit
+        end if
+      end do
+    end if
+    if (vlen == 0) then
+      val = get_environment_var(trim(name))
+      vlen = len_trim(val)
+    end if
+    if (vlen > 0) desc = val(1:min(vlen, MAX_MENU_DESC_LEN))
+  end function
+
+  ! One-line summary for a builtin command, for the description column (AR-03c).
+  ! Blank for non-builtins (external commands get no description here).
+  function builtin_summary(name) result(desc)
+    character(len=*), intent(in) :: name
+    character(len=MAX_MENU_DESC_LEN) :: desc
+    desc = ' '
+    select case (trim(name))
+    case ('cd');      desc = 'change the working directory'
+    case ('pwd');     desc = 'print the working directory'
+    case ('echo');    desc = 'write arguments to standard output'
+    case ('printf');  desc = 'format and print arguments'
+    case ('export');  desc = 'set an environment variable'
+    case ('unset');   desc = 'remove a variable'
+    case ('alias');   desc = 'define or show command aliases'
+    case ('unalias'); desc = 'remove an alias'
+    case ('source', '.'); desc = 'run a script in the current shell'
+    case ('exit');    desc = 'exit the shell'
+    case ('exec');    desc = 'replace the shell with a command'
+    case ('read');    desc = 'read a line into variables'
+    case ('test', '['); desc = 'evaluate a conditional expression'
+    case ('jobs');    desc = 'list background jobs'
+    case ('fg');      desc = 'resume a job in the foreground'
+    case ('bg');      desc = 'resume a job in the background'
+    case ('kill');    desc = 'send a signal to a job or process'
+    case ('wait');    desc = 'wait for a job to finish'
+    case ('history'); desc = 'show the command history'
+    case ('type');    desc = 'describe how a name would be run'
+    case ('hash');    desc = 'remember command locations'
+    case ('umask');   desc = 'set the file-creation mask'
+    case ('set');     desc = 'set shell options and parameters'
+    case ('unsetopt', 'setopt'); desc = 'change a shell option'
+    case ('local');   desc = 'declare a function-local variable'
+    case ('return');  desc = 'return from a function'
+    case ('shift');   desc = 'shift positional parameters'
+    case ('eval');    desc = 'evaluate arguments as a command'
+    case ('trap');    desc = 'run a command on a signal'
+    case ('getopts'); desc = 'parse positional option arguments'
+    case ('pushd');   desc = 'push a directory onto the stack'
+    case ('popd');    desc = 'pop a directory from the stack'
+    case ('dirs');    desc = 'show the directory stack'
+    case ('complete'); desc = 'define completion behavior'
+    case ('help');    desc = 'show help for builtins'
+    end select
   end function
 
   subroutine enter_menu_select_mode(input_state, completions, num_completions, current_input)
@@ -6848,7 +7014,10 @@ contains
     integer :: i, j, cols_per_item, items_per_row, col, item_idx
     integer :: term_rows, term_cols, item_len
     integer :: total_rows, visible_rows, row, row_stop
+    integer :: name_col, desc_col, max_desc, dlen
+    logical :: desc_present
     character(len=MAX_MENU_ITEM_LEN) :: current_item
+    character(len=MAX_MENU_DESC_LEN) :: current_desc
     character(len=128) :: progress
     character(len=32) :: numbuf
     logical :: success
@@ -6863,14 +7032,33 @@ contains
 
     ! Calculate layout (ALWAYS recalculate to ensure correctness)
     ! Note: Caller is responsible for outputting initial newline before calling with initial_draw=true
-    cols_per_item = 0
+    name_col = 0
+    max_desc = 0
+    desc_present = .false.
     do i = 1, input_state%menu_num_items
-      current_item = menu_item_get(input_state, i)
-      item_len = len_trim(current_item)
-      cols_per_item = max(cols_per_item, item_len)
+      name_col = max(name_col, len_trim(menu_item_get(input_state, i)))
+      dlen = len_trim(menu_desc_get(input_state, i))
+      if (dlen > 0) then
+        desc_present = .true.
+        max_desc = max(max_desc, dlen)
+      end if
     end do
-    cols_per_item = cols_per_item + 2  ! Add spacing
-    items_per_row = max(1, term_cols / cols_per_item)
+
+    ! AR-03c: with descriptions, render one item per row as `name<pad>desc`
+    ! (fish-style); without, keep the column-major name-only grid (AR-03b).
+    if (desc_present) then
+      if (name_col > 40) name_col = 40
+      desc_col = min(max_desc, 48)
+      if (name_col + 3 + desc_col > term_cols) desc_col = max(term_cols - name_col - 3, 0)
+      cols_per_item = name_col + 2 + desc_col
+      items_per_row = 1
+    else
+      cols_per_item = name_col + 2
+      items_per_row = max(1, term_cols / cols_per_item)
+      desc_col = 0
+    end if
+    input_state%menu_has_descs = desc_present
+    input_state%menu_name_col = name_col
 
     ! Cache the layout (always update cache for use by update_live_preview and navigation)
     input_state%menu_cols_per_item = cols_per_item
@@ -6898,26 +7086,46 @@ contains
         if (item_idx > input_state%menu_num_items) exit
 
         ! Sanitize control/escape bytes for DISPLAY only (insertion uses
-        ! the real item value) so a malicious filename can't inject ANSI
+        ! the real item value) so a malicious filename — or variable value in
+        ! the description — can't inject ANSI.
         current_item = sanitize_for_display(menu_item_get(input_state, item_idx))
         item_len = len_trim(current_item)
 
-        if (item_idx == input_state%menu_selection) then
-          call rdraw_append(char(27) // '[7m')  ! Reverse video
-        end if
-        call rdraw_append(current_item(1:item_len))
-        if (item_idx == input_state%menu_selection) then
-          call rdraw_append(char(27) // '[0m')  ! Reset
-        end if
-
-        ! Pad to column width for alignment, but only when a real next-column
-        ! cell exists in this same display row (column-major: that cell is
-        ! col*num_rows + row).
-        if (col < items_per_row .and. &
-            (col * input_state%menu_num_rows + row) <= input_state%menu_num_items) then
-          do j = item_len + 1, cols_per_item
+        if (desc_present) then
+          ! Single column: name padded to name_col, then a dim description.
+          if (item_len > name_col) item_len = name_col
+          if (item_idx == input_state%menu_selection) call rdraw_append(char(27) // '[7m')
+          call rdraw_append(current_item(1:item_len))
+          do j = item_len + 1, name_col
             call rdraw_append(' ')
           end do
+          call rdraw_append('  ')
+          current_desc = sanitize_for_display(menu_desc_get(input_state, item_idx))
+          dlen = min(len_trim(current_desc), desc_col)
+          if (dlen > 0) then
+            if (item_idx /= input_state%menu_selection) call rdraw_append(char(27) // '[90m')
+            call rdraw_append(current_desc(1:dlen))
+            if (item_idx /= input_state%menu_selection) call rdraw_append(char(27) // '[0m')
+          end if
+          if (item_idx == input_state%menu_selection) call rdraw_append(char(27) // '[0m')
+        else
+          if (item_idx == input_state%menu_selection) then
+            call rdraw_append(char(27) // '[7m')  ! Reverse video
+          end if
+          call rdraw_append(current_item(1:item_len))
+          if (item_idx == input_state%menu_selection) then
+            call rdraw_append(char(27) // '[0m')  ! Reset
+          end if
+
+          ! Pad to column width for alignment, but only when a real next-column
+          ! cell exists in this same display row (column-major: that cell is
+          ! col*num_rows + row).
+          if (col < items_per_row .and. &
+              (col * input_state%menu_num_rows + row) <= input_state%menu_num_items) then
+            do j = item_len + 1, cols_per_item
+              call rdraw_append(' ')
+            end do
+          end if
         end if
       end do
       call rdraw_append(char(27) // '[K' // char(13) // char(10))  ! Clear tail, next line
@@ -7281,10 +7489,12 @@ contains
       scrolled = .true.
     end if
 
-    if (scrolled) then
+    if (scrolled .or. input_state%menu_has_descs) then
       ! Window moved or grew: reposition to the menu top and repaint the
       ! whole window in one buffered frame (overwrite in place, no
-      ! blank-then-redraw, so no flicker)
+      ! blank-then-redraw, so no flicker). AR-03c: a description menu also
+      ! repaints fully — menu_redraw_cell only knows the name-only cell, so
+      ! the in-place two-cell highlight swap can't touch the desc column.
       old_drawn = input_state%menu_drawn_lines
       call rdraw_append(char(13))
       do i = 1, old_drawn
