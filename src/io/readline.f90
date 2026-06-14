@@ -151,6 +151,9 @@ module readline
   ! the next press accepts as usual (fish forward-char semantics). Reset each
   ! real keystroke.
   logical, save :: module_paste_hl_cleared_this_key = .false.
+  ! AR-08 NICE-CTRLD: latched after the first empty-line Ctrl-D warned about
+  ! running jobs; a second consecutive Ctrl-D then exits. Reset by any other key.
+  logical, save :: ctrld_warned = .false.
 
   ! True number of matches found by the most recent completion scan, before
   ! MAX_SCORED_ITEMS / MAX_LOCAL_COMPLETIONS truncation. Feeds the menu's
@@ -1925,6 +1928,11 @@ contains
           end if
         end if
 
+        ! NICE-CTRLD (AR-08): the empty-line Ctrl-D running-jobs warning is a
+        ! two-step (warn once, exit on a second consecutive Ctrl-D). Any other
+        ! key resets the latch so a later Ctrl-D warns fresh.
+        if (char_code /= KEY_CTRL_D) ctrld_warned = .false.
+
         select case(char_code)
         case(KEY_ENTER)
           ! Enter - accept menu selection, finish input, or accept search
@@ -1989,8 +1997,26 @@ contains
         case(KEY_CTRL_D)
           ! Ctrl+D - EOF on empty line, forward delete on non-empty (bash behavior)
           if (.not. module_input_state%in_search .and. module_input_state%length == 0) then
-            iostat = -1
-            done = .true.
+            ! NICE-CTRLD (AR-08): if jobs are still running, warn once and don't
+            ! exit; a second consecutive Ctrl-D exits (mirrors fish/bash). No
+            ! jobs (or no shell state) -> exit immediately as before.
+            if (present(shell) .and. .not. ctrld_warned) then
+              if (has_active_jobs(shell)) then
+                write(output_unit, '(a)') char(13) // char(10) // &
+                  'There are still jobs active.'
+                ctrld_warned = .true.
+                module_input_state%length = 0
+                module_input_state%cursor_pos = 0
+                module_input_state%dirty = .false.
+                done = .true.   ! return an empty line; the REPL re-prompts
+              else
+                iostat = -1
+                done = .true.
+              end if
+            else
+              iostat = -1
+              done = .true.
+            end if
           else if (.not. module_input_state%in_search) then
             call handle_forward_delete_char(module_input_state)
           end if
@@ -11187,6 +11213,22 @@ contains
   end subroutine
 
   ! ============================================================================
+  ! Any running or stopped jobs? (AR-08 NICE-CTRLD job warning.) JOB_RUNNING /
+  ! JOB_STOPPED come from shell_types, so no dependency on the job module.
+  logical function has_active_jobs(shell)
+    type(shell_state_t), intent(in) :: shell
+    integer :: i
+    has_active_jobs = .false.
+    do i = 1, size(shell%jobs)
+      if (shell%jobs(i)%job_id /= 0 .and. &
+          (shell%jobs(i)%state == JOB_RUNNING .or. &
+           shell%jobs(i)%state == JOB_STOPPED)) then
+        has_active_jobs = .true.
+        return
+      end if
+    end do
+  end function has_active_jobs
+
   ! Abbreviation Expansion (Fish-style)
   ! ============================================================================
 

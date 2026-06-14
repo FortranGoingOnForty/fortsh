@@ -97,3 +97,62 @@ def test_isearch_arrows_step_matches(fortsh_path, tmp_path):
     assert b"MATCHAAA" in up_frame, f"Up did not step to older match: {up_frame!r}"
     # Down moved back to the newer match
     assert b"MATCHBBB" in down_frame, f"Down did not step to newer match: {down_frame!r}"
+
+
+def test_ctrld_warns_with_active_job(fortsh_path, tmp_path):
+    """Ctrl-D on an empty line with a running job warns and does NOT exit."""
+    child = _spawn(fortsh_path, tmp_path)
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.0)
+    child.send(b"sleep 30 &\r")
+    _drain(child, raw, 0.6)
+    mark = len(raw)
+    child.send(b"\x04")            # Ctrl-D
+    _drain(child, raw, 0.6)
+    tail = _ANSI.sub(b"", bytes(raw[mark:]))
+    alive_after_warn = child.isalive()
+    # confirm the shell still runs commands
+    mark = len(raw)
+    child.send(b"echo STILLHERE\r")
+    _drain(child, raw, 0.6)
+    ran = b"STILLHERE" in _ANSI.sub(b"", bytes(raw[mark:]))
+    _cleanup(child)
+    assert b"jobs active" in tail, f"no jobs warning on Ctrl-D: {tail!r}"
+    assert alive_after_warn and ran, "shell exited despite active job"
+
+
+def test_ctrld_second_press_exits(fortsh_path, tmp_path):
+    """A second consecutive Ctrl-D exits even with an active job."""
+    child = _spawn(fortsh_path, tmp_path)
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.0)
+    child.send(b"sleep 30 &\r")
+    _drain(child, raw, 0.6)
+    child.send(b"\x04")            # warns
+    _drain(child, raw, 0.6)
+    child.send(b"\x04")            # exits
+    _drain(child, raw, 1.0)
+    alive = child.isalive()
+    try:
+        child.close()
+    except Exception:
+        pass
+    assert not alive, "second Ctrl-D did not exit"
+
+
+def test_ctrld_no_jobs_exits(fortsh_path, tmp_path):
+    """With no jobs, Ctrl-D on an empty line exits immediately (unchanged)."""
+    child = _spawn(fortsh_path, tmp_path)
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.0)
+    child.send(b"\x04")
+    _drain(child, raw, 1.0)
+    alive = child.isalive()
+    try:
+        child.close()
+    except Exception:
+        pass
+    assert not alive, "Ctrl-D with no jobs did not exit"
