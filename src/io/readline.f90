@@ -1571,6 +1571,10 @@ contains
     ! RPROMPT (right-side prompt) re-emit layer — AR-08 NICE-RPROMPT1 + AR-87.
     integer :: rp_cur_row, rp_blen
     character(len=1024) :: rp_buf
+    ! One-shot: the repaint triggered by a terminal resize skips the rprompt
+    ! re-emit (its row-0 navigation is terminal-reflow-dependent and unreliable
+    ! across a resize). rprompt comes back on the next normal redraw. (#87)
+    logical :: resize_repaint
     ! Variables for multiline prompt support
     integer :: prompt_line_count
 
@@ -1707,6 +1711,7 @@ contains
     ! Log readline state
     if (raw_enabled) then
       ! Enhanced input processing
+      resize_repaint = .false.
       do while (.not. done)
         ! Handle terminal resize BEFORE reading input. read_utf8_char
         ! returns every 100ms on poll timeout, so this fires promptly.
@@ -1716,7 +1721,7 @@ contains
           prev_render_valid = .false.
 
           block
-            integer :: reflow_rows, reflow_col, up_i
+            integer :: reflow_rows, up_i, reflow_new, reflow_col
 
             success = get_terminal_size(term_rows, term_cols)
             if (.not. success) then
@@ -1735,15 +1740,22 @@ contains
 
             ! Move the cursor up to the prompt origin, then clear from there
             ! down, so the dirty redraw below repaints the whole line at the NEW
-            ! width with nothing stale left behind. A reflowing terminal has
-            ! already rewrapped the old content to the new width, putting the
-            ! cursor at its offset-from-origin AT THE NEW WIDTH — which is
-            ! exactly cursor_get_row_col(new term_cols). Moving up that many
-            ! reaches the origin. (The old module_cursor_screen_row was the
-            ! OLD-width row, so it under-moved after a narrow resize and left a
-            ! duplicated prompt line above the repaint.)
+            ! width with nothing stale left behind.
+            !
+            ! Safety net (#87): the cursor's true row offset from the prompt
+            ! origin after a resize is terminal-dependent — a terminal that
+            ! rewraps existing lines leaves it at cursor_get_row_col(NEW width);
+            ! one that doesn't leaves it at the tracked OLD-width physical row
+            ! (module_cursor_screen_row). We can't know which, and the rprompt's
+            ! wide first line only adds rows on top. Move up by the MINIMUM of the
+            ! two: that is <= the real offset in every case, so the ESC[J can
+            ! never reach ABOVE the origin and eat real output. Worst case is an
+            ! under-move, whose artifact is a harmless duplicate line, not data
+            ! loss. (DSR-based exact positioning layers on top of this.)
             call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
-                                    term_cols, reflow_rows, reflow_col)
+                                    term_cols, reflow_new, reflow_col)
+            reflow_rows = min(module_cursor_screen_row, reflow_new)
+            if (reflow_rows < 0) reflow_rows = 0
             do up_i = 1, reflow_rows
               write(output_unit, '(a)', advance='no') char(27) // '[A'
             end do
@@ -1766,6 +1778,7 @@ contains
           module_cursor_screen_col = 0
           module_input_state%skip_cursor_up_on_redraw = .true.
           module_input_state%dirty = .true.
+          resize_repaint = .true.   ! skip the rprompt re-emit for THIS repaint
           cycle  ! repaint via the dirty-redraw block below
         end if
 
@@ -2665,7 +2678,7 @@ contains
             ! input cursor and the wrap-row math untouched. Single-line: row 0 is
             ! the input row. Multi-line: row 0 is the first prompt line (stable as
             ! you type). Suppressed when row-0 content reaches the rprompt zone.
-            if (present(rprompt)) then
+            if (present(rprompt) .and. .not. resize_repaint) then
               ! Recompute the cursor's row here: the physical cursor now sits at
               ! cursor_pos (the reposition block ran, or it's at end-of-input).
               ! current_row may have been reused by the autosuggestion block.
@@ -2675,6 +2688,8 @@ contains
                                        rp_buf, rp_blen)
               if (rp_blen > 0) call rdraw_append(rp_buf(1:rp_blen))
             end if
+            ! Clear the one-shot: the next (non-resize) redraw re-emits rprompt.
+            resize_repaint = .false.
 
             ! Show cursor, then flush entire buffer in one write
             call rdraw_append(ESC_SHOW_CURSOR)
