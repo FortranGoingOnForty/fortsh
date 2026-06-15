@@ -215,3 +215,29 @@ def test_rprompt_survives_keystroke(fortsh_path, tmp_path):
     # The keystroke's frame wipes (ESC[J) then must re-emit the right prompt.
     assert b"\x1b[J" in frame, f"expected a full redraw (ESC[J): {frame!r}"
     assert b"RPMARKER" in frame, f"rprompt not re-emitted after keystroke: {frame!r}"
+
+
+def test_rprompt_multiline_survives_keystroke(fortsh_path, tmp_path):
+    """NICE-RPROMPT2 (#87): a right prompt with a MULTI-line PS1 stays visible
+    after typing. It used to be embedded via ESC[nG in the first prompt line and
+    stripped by the redraw; now it's re-emitted on row 0 (the first prompt line,
+    above the input) via the same layer. Raw bytes."""
+    (tmp_path / ".fortshrc").write_text("PS1='AAAA\\nBB> '\nRPROMPT='RPMARKER'\n")
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["HOME"] = str(tmp_path)
+    env.pop("FORTSH_TEST_MODE", None)
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(24, 90))
+    raw = bytearray()
+    time.sleep(1.0)
+    _drain(child, raw, 1.2)
+    assert b"RPMARKER" in bytes(raw), "rprompt not shown at initial paint (multi-line)"
+    mark = len(raw)
+    child.send(b"x")
+    _drain(child, raw, 0.6)
+    frame = bytes(raw[mark:])
+    _cleanup(child)
+    assert b"\x1b[J" in frame, f"expected a full redraw (ESC[J): {frame!r}"
+    # Re-emitted on row 0: the layer moves up (ESC[A) before placing it.
+    assert b"RPMARKER" in frame, f"multi-line rprompt not re-emitted: {frame!r}"

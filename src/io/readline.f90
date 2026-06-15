@@ -1568,12 +1568,9 @@ contains
     integer :: utf8_num_bytes, utf8_i
     logical :: debug_utf8
     integer :: debug_stat
-    ! Variables for RPROMPT (right-side prompt)
-    integer :: rprompt_visual_len, padding_needed
-    logical :: rprompt_displayed
-    ! NICE-RPROMPT1 (AR-08): re-emit layer geometry
-    integer :: rp_input_row, rp_input_col, rp_end_row, rp_end_col, rp_start_col
-    character(len=16) :: rp_col_buf
+    ! RPROMPT (right-side prompt) re-emit layer — AR-08 NICE-RPROMPT1 + AR-87.
+    integer :: rp_cur_row, rp_blen
+    character(len=1024) :: rp_buf
     ! Variables for multiline prompt support
     integer :: prompt_line_count
 
@@ -1669,53 +1666,27 @@ contains
     success = get_terminal_size(term_rows, term_cols)
     if (.not. success) term_cols = 80  ! Default fallback
 
-    ! Check if we have RPROMPT and enough space
-    ! Note: multi-line prompt RPROMPT is handled in fortsh.f90 by embedding into the prompt string
-    rprompt_displayed = .false.
-    if (present(rprompt) .and. len_trim(rprompt) > 0) then
-      rprompt_visual_len = visual_length(rprompt)
-      if (rprompt_visual_len < 0) rprompt_visual_len = 0
+    ! Print the prompt (raw mode: bare LF -> CR+LF for multi-line prompts), the
+    ! trailing space, then the right prompt as a separate layer (AR-87). One path
+    ! for every prompt shape — the redraw re-emits the SAME layer each frame.
+    block
+      integer :: pr_i
+      do pr_i = 1, len_trim(prompt)
+        if (prompt(pr_i:pr_i) == char(10)) then
+          write(output_unit, '(a)', advance='no') char(13) // char(10)  ! CR+LF
+        else
+          write(output_unit, '(a)', advance='no') prompt(pr_i:pr_i)
+        end if
+      end do
+    end block
+    write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
 
-      ! Single-line prompt: place RPROMPT on same line
-      padding_needed = term_cols - prompt_visual_len - 1 - rprompt_visual_len
-
-      if (padding_needed >= 4) then  ! Minimum 4 chars gap
-        rprompt_displayed = .true.
-        write(output_unit, '(a)', advance='no') prompt
-        write(output_unit, '(a)', advance='no') ' '
-
-        ! Save cursor position before printing RPROMPT
-        write(output_unit, '(a)', advance='no') char(27) // '7'
-
-        ! Print padding to right-align RPROMPT
-        do i_redraw = 1, padding_needed - 1
-          write(output_unit, '(a)', advance='no') ' '
-        end do
-
-        ! Print RPROMPT
-        write(output_unit, '(a)', advance='no') trim(rprompt)
-
-        ! Restore cursor position (back to after prompt + space)
-        write(output_unit, '(a)', advance='no') char(27) // '8'
-      else
-        ! Not enough space - just print prompt normally
-        write(output_unit, '(a)', advance='no') prompt
-        write(output_unit, '(a)', advance='no') ' '
-      end if
-    else
-      ! No RPROMPT - just print prompt
-      ! In raw mode, bare LF doesn't CR — replace with CR+LF for multi-line prompts
-      block
-        integer :: pr_i
-        do pr_i = 1, len_trim(prompt)
-          if (prompt(pr_i:pr_i) == char(10)) then
-            write(output_unit, '(a)', advance='no') char(13) // char(10)  ! CR+LF
-          else
-            write(output_unit, '(a)', advance='no') prompt(pr_i:pr_i)
-          end if
-        end do
-      end block
-      write(output_unit, '(a)', advance='no') ' '  ! Space after prompt
+    if (present(rprompt)) then
+      ! Cursor is at the input start (the prompt's last row); rp_cur_row tells
+      ! the layer how far up row 0 is.
+      call cursor_get_row_col(prompt, 0, term_cols, rp_cur_row, i_redraw)
+      call build_rprompt_layer(prompt, rprompt, term_cols, rp_cur_row, rp_buf, rp_blen)
+      if (rp_blen > 0) write(output_unit, '(a)', advance='no') rp_buf(1:rp_blen)
     end if
 
     flush(output_unit)
@@ -1741,7 +1712,6 @@ contains
         ! returns every 100ms on poll timeout, so this fires promptly.
         if (g_terminal_resized) then
           g_terminal_resized = .false.
-          rprompt_displayed = .false.
           prev_diff_valid = .false.
           prev_render_valid = .false.
 
@@ -2364,11 +2334,10 @@ contains
             ! Cursor row/col via the shared rendering model — handles wrapped
             ! and multi-line prompts correctly and matches content_byte_to_row_col
             ! (the diff positioner), so the nav-up and diff-down cancel instead
-            ! of drifting (the resize "staircase"). The RPROMPT, when shown, sits
-            ! one row above the input on its own line, so add a row for it.
+            ! of drifting (the resize "staircase"). The right prompt is a separate
+            ! ESC7/ESC8 layer (re-emitted below), so it does NOT shift this row.
             call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
                                     term_cols, current_row, current_col)
-            if (rprompt_displayed) current_row = current_row + 1
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! === Buffered redraw: accumulate entire frame, write once ===
             ! This prevents ESC[J clear from rendering as a blank frame before
@@ -2688,48 +2657,28 @@ contains
               end if
             end if
 
-            ! NICE-RPROMPT1 (AR-08): re-emit the single-line right prompt. The
-            ! ESC[J above wipes it on the first keystroke; fish keeps it visible
-            ! through typing. Re-paint it right-aligned on the input row via
-            ! ESC7/ESC[nG/ESC8 (save, absolute-column, restore) so the input
-            ! cursor and the wrap-row math (cursor_get_row_col) are untouched,
-            ! and recompute the column from the CURRENT term_cols each redraw so
-            ! it can't go stale after a resize. Suppress when the input reaches
-            ! the rprompt zone (matches fish and the initial-paint padding>=4
-            ! gate). Multi-line prompts embed rprompt in fortsh.f90 (no rprompt
-            ! arg here) and stay deferred to the RPROMPT-resize re-audit (#87).
+            ! Right prompt (AR-08 NICE-RPROMPT1 + AR-87): the ESC[J above wiped
+            ! it; re-emit it as a separate layer right-aligned on ROW 0 via
+            ! ESC7/ESC[A/ESC[nG/ESC8 (save, up-to-row-0, absolute-column,
+            ! restore). The column is recomputed from the CURRENT term_cols each
+            ! redraw so it can't go stale after a resize, and the layer leaves the
+            ! input cursor and the wrap-row math untouched. Single-line: row 0 is
+            ! the input row. Multi-line: row 0 is the first prompt line (stable as
+            ! you type). Suppressed when row-0 content reaches the rprompt zone.
             if (present(rprompt)) then
-              if (len_trim(rprompt) > 0) then
-                rprompt_visual_len = visual_length(rprompt)
-                if (rprompt_visual_len < 0) rprompt_visual_len = 0
-                call cursor_get_row_col(prompt, 0, term_cols, rp_input_row, rp_input_col)
-                call cursor_get_row_col(prompt, module_input_state%length, &
-                                        term_cols, rp_end_row, rp_end_col)
-                rp_start_col = term_cols - rprompt_visual_len
-                ! Room: input must not have wrapped past the input row, and its
-                ! end column must clear the rprompt start by >= 4 (the gap the
-                ! initial paint enforces). When this holds the cursor is on the
-                ! input row, so ESC7 saves a position there and ESC[nG only
-                ! shifts the column — no vertical move needed.
-                if (rprompt_visual_len > 0 .and. rp_end_row == rp_input_row .and. &
-                    rp_end_col + 4 <= rp_start_col) then
-                  write(rp_col_buf, '(I0)') rp_start_col + 1
-                  call rdraw_append(char(27) // '7')
-                  call rdraw_append(char(27) // '[' // trim(rp_col_buf) // 'G')
-                  call rdraw_append(trim(rprompt))
-                  call rdraw_append(char(27) // '[0m')
-                  call rdraw_append(char(27) // '8')
-                end if
-              end if
+              ! Recompute the cursor's row here: the physical cursor now sits at
+              ! cursor_pos (the reposition block ran, or it's at end-of-input).
+              ! current_row may have been reused by the autosuggestion block.
+              call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
+                                      term_cols, rp_cur_row, i_redraw)
+              call build_rprompt_layer(prompt, rprompt, term_cols, rp_cur_row, &
+                                       rp_buf, rp_blen)
+              if (rp_blen > 0) call rdraw_append(rp_buf(1:rp_blen))
             end if
 
             ! Show cursor, then flush entire buffer in one write
             call rdraw_append(ESC_SHOW_CURSOR)
             call rdraw_flush()
-
-            ! RPROMPT was cleared by ESC[J above; subsequent redraws
-            ! don't need the extra cursor-up compensation.
-            rprompt_displayed = .false.
 
             ! Debug: show state before recalculating cursor position
             if (debug_utf8) then
@@ -12308,6 +12257,87 @@ contains
       end if
     end do
   end subroutine
+
+  ! AR-87: rightmost display column occupied on ROW 0 (the first prompt row) by
+  ! the rendered prompt + space + input. For a multi-line prompt that is just the
+  ! first prompt line (the input is on a lower row); for a single-line prompt it
+  ! includes the input. Returns term_cols when row 0 is wrapped full. Drives the
+  ! right-prompt room check.
+  function rprompt_row0_end(prompt, term_cols) result(end_col)
+    character(len=*), intent(in) :: prompt
+    integer, intent(in) :: term_cols
+    integer :: end_col
+    integer :: nl, w, er, ec
+
+    end_col = 0
+    if (term_cols <= 0) return
+    nl = index(prompt(1:len_trim(prompt)), char(10))
+    if (nl > 0) then
+      ! Multi-line prompt: row 0 is the first prompt line only.
+      w = visual_length(prompt(1:nl-1))
+      if (w < 0) w = 0
+      if (w >= term_cols) then
+        end_col = term_cols
+      else
+        end_col = w
+      end if
+    else
+      ! Single-line prompt: row 0 holds prompt + space + the whole input.
+      call cursor_get_row_col(prompt, module_input_state%length, term_cols, er, ec)
+      if (er == 0) then
+        end_col = ec
+      else
+        end_col = term_cols
+      end if
+    end if
+  end function rprompt_row0_end
+
+  ! AR-87: build the right-prompt re-emit layer — a self-contained byte sequence
+  ! that paints rprompt right-aligned on ROW 0 and returns the cursor where it
+  ! was. cur_row is how many physical rows the cursor currently sits below the
+  ! prompt origin (so ESC[A reaches row 0). Returns blen=0 (paints nothing) when
+  ! there is no room (row-0 content + a 4-col gap would overlap the rprompt).
+  ! Used by both the initial paint and the redraw so placement stays identical.
+  subroutine build_rprompt_layer(prompt, rprompt, term_cols, cur_row, buf, blen)
+    character(len=*), intent(in) :: prompt, rprompt
+    integer, intent(in) :: term_cols, cur_row
+    character(len=*), intent(out) :: buf
+    integer, intent(out) :: blen
+    integer :: rp_vlen, start_col, used, up, rp_len
+    character(len=16) :: colbuf
+
+    blen = 0
+    buf = ''
+    rp_len = len_trim(rprompt)
+    if (rp_len == 0) return
+    rp_vlen = visual_length(rprompt)
+    if (rp_vlen <= 0) return
+    start_col = term_cols - rp_vlen
+    if (start_col < 0) return
+    used = rprompt_row0_end(prompt, term_cols)
+    if (used + 4 > start_col) return                 ! no room (keep a 4-col gap)
+    if (rp_len + 3*max(cur_row,0) + 32 > len(buf)) return
+
+    buf(blen+1:blen+2) = char(27) // '7'             ! save cursor (real input pos)
+    blen = blen + 2
+    do up = 1, cur_row                               ! up to row 0
+      buf(blen+1:blen+3) = char(27) // '[A'
+      blen = blen + 3
+    end do
+    write(colbuf, '(I0)') start_col + 1              ! absolute column (1-based)
+    buf(blen+1:blen+2) = char(27) // '['
+    blen = blen + 2
+    buf(blen+1:blen+len_trim(colbuf)) = trim(colbuf)
+    blen = blen + len_trim(colbuf)
+    buf(blen+1:blen+1) = 'G'
+    blen = blen + 1
+    buf(blen+1:blen+rp_len) = rprompt(1:rp_len)       ! the right prompt
+    blen = blen + rp_len
+    buf(blen+1:blen+4) = char(27) // '[0m'           ! clear attrs
+    blen = blen + 4
+    buf(blen+1:blen+2) = char(27) // '8'             ! restore cursor
+    blen = blen + 2
+  end subroutine build_rprompt_layer
 
   ! Walk a rendered content buffer (with ANSI codes) and return the visual
   ! row that byte_pos falls on (0-based, wrapping at term_cols).

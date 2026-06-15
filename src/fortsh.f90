@@ -51,10 +51,6 @@ program fortran_shell
   ! Terminal resize support
   character(len=16) :: cols_str, rows_str
   logical :: success
-  ! RPROMPT embedding for multi-line prompts
-  integer :: newline_pos, first_line_vlen, rprompt_vlen, rprompt_col
-  character(len=16) :: col_str_buf
-  character(len=2048) :: embedded_prompt
 
   ! macOS: set S_CTTYREF on controlling terminal to prevent PTY output loss
   ! (macOS kernel discards slave PTY buffer on child exit without this flag)
@@ -317,33 +313,14 @@ program fortran_shell
       ! Use safe_expand_prompt to avoid LLVM Flang heap corruption
       call safe_expand_prompt(shell%ps1, shell, shell%ps1_len, prompt_str)
 
-      ! Get RPROMPT if set (zsh-style right prompt)
+      ! Get RPROMPT if set (zsh-style right prompt). Always pass it as the
+      ! readline argument — readline owns placement as a separate re-emit layer
+      ! for every prompt shape (AR-87). The old multi-line ESC[nG embedding went
+      ! stale on resize and was stripped by the redraw (NICE-RPROMPT2).
       rprompt_value = get_shell_variable(shell, 'RPROMPT')
       if (len_trim(rprompt_value) > 0) then
         call safe_expand_prompt(rprompt_value, shell, len(rprompt_value), rprompt_str)
-
-        ! Check if prompt is multi-line
-        newline_pos = index(trim(prompt_str), char(10))
-        if (newline_pos > 0) then
-          ! Multi-line prompt with RPROMPT: embed RPROMPT in first line
-          first_line_vlen = visual_length(prompt_str(1:newline_pos-1))
-          rprompt_vlen = visual_length(trim(rprompt_str))
-          rprompt_col = shell%term_cols - rprompt_vlen + 1
-
-          if (rprompt_col > first_line_vlen + 4) then
-            write(col_str_buf, '(I0)') rprompt_col
-            embedded_prompt = prompt_str(1:newline_pos-1) // &
-              char(27) // '[' // trim(col_str_buf) // 'G' // &
-              trim(rprompt_str) // &
-              prompt_str(newline_pos:len_trim(prompt_str))
-            call readline_enhanced(trim(embedded_prompt), input_line, iostat, keep_raw=.true., shell=shell)
-          else
-            call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true., shell=shell)
-          end if
-        else
-          ! Single-line prompt: pass RPROMPT to readline for its handling
-          call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true., shell=shell)
-        end if
+        call readline_enhanced(trim(prompt_str), input_line, iostat, trim(rprompt_str), keep_raw=.true., shell=shell)
       else
         call readline_enhanced(trim(prompt_str), input_line, iostat, keep_raw=.true., shell=shell)
       end if
