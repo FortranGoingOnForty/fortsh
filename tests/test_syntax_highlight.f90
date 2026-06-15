@@ -51,6 +51,12 @@ program test_syntax_highlight
   call test_case_esac()
   call test_c_style_for_loop()
   call test_keyword_outside_cmd_pos()
+  call test_unclosed_single_quote()
+  call test_unclosed_double_quote()
+  call test_bare_dollar_error()
+  call test_special_param_not_error()
+  call test_unterminated_brace_var()
+  call test_assignment_prefixing_command()
 
   write(*, '(a)') ''
   write(*, '(a)') '=========================================='
@@ -327,11 +333,10 @@ contains
     character(len=16) :: input
     input = 'FOO=bar'
     call tokenize_v2(input, 7, tokens, n)
-    ! Assignment in command position — tokenizer checks keyword first, then builtin,
-    ! then valid command, then invalid command. Assignment with = is detected in
-    ! non-command position. In command position, FOO=bar is treated as a command.
-    ! Let's just check it produces something reasonable.
+    ! HL-03: a leading VAR=value is a variable assignment, not an invalid
+    ! command — classified as HTOK_ASSIGNMENT even in command position.
     call assert_eq('assign: count', 1, n)
+    call assert_token('assign/FOO=bar', tokens(1), 1, 7, HTOK_ASSIGNMENT)
   end subroutine
 
   subroutine test_glob_star()
@@ -467,6 +472,80 @@ contains
     call tokenize_v2(input, 9, tokens, n)
     call assert_eq('kw_nonpos: echo', HTOK_BUILTIN, tokens(1)%token_type)
     call assert_eq('kw_nonpos: done', HTOK_KEYWORD, tokens(2)%token_type)
+  end subroutine
+
+  ! HL-04: unterminated single quote — opening quote is a red error token,
+  ! the body keeps the string color.
+  subroutine test_unclosed_single_quote()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+    input = "echo 'ab"
+    call tokenize_v2(input, 8, tokens, n)
+    call assert_eq('unclosed_sq: count', 3, n)
+    call assert_token('unclosed_sq/quote', tokens(2), 6, 6, HTOK_ERROR)
+    call assert_token('unclosed_sq/body', tokens(3), 7, 8, HTOK_STRING_SINGLE)
+  end subroutine
+
+  ! HL-04: unterminated double quote.
+  subroutine test_unclosed_double_quote()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+    input = 'echo "ab'
+    call tokenize_v2(input, 8, tokens, n)
+    call assert_eq('unclosed_dq: count', 3, n)
+    call assert_token('unclosed_dq/quote', tokens(2), 6, 6, HTOK_ERROR)
+    call assert_token('unclosed_dq/body', tokens(3), 7, 8, HTOK_STRING_DOUBLE)
+  end subroutine
+
+  ! HL-07: a bare `$` (followed by whitespace or end) is a red error.
+  subroutine test_bare_dollar_error()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+    input = 'echo $'
+    call tokenize_v2(input, 6, tokens, n)
+    call assert_eq('bare_dollar: count', 2, n)
+    call assert_token('bare_dollar/$', tokens(2), 6, 6, HTOK_ERROR)
+  end subroutine
+
+  ! HL-07: POSIX special params ($?, $@, $$) are valid, NOT errors (deliberate
+  ! deviation from fish, which reds $@).
+  subroutine test_special_param_not_error()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+    input = 'echo $? $@ $$'
+    call tokenize_v2(input, 13, tokens, n)
+    call assert_eq('special_param: count', 4, n)
+    call assert_token('special_param/$?', tokens(2), 6, 7, HTOK_VARIABLE)
+    call assert_token('special_param/$@', tokens(3), 9, 10, HTOK_VARIABLE)
+    call assert_token('special_param/$$', tokens(4), 12, 13, HTOK_VARIABLE)
+  end subroutine
+
+  ! HL-07: an unterminated ${ is a red error.
+  subroutine test_unterminated_brace_var()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+    input = 'echo ${FOO'
+    call tokenize_v2(input, 10, tokens, n)
+    call assert_eq('unterm_brace: count', 2, n)
+    call assert_token('unterm_brace/${FOO', tokens(2), 6, 10, HTOK_ERROR)
+  end subroutine
+
+  ! HL-03: an assignment prefixing a command keeps command position so the
+  ! command after it classifies correctly.
+  subroutine test_assignment_prefixing_command()
+    character(len=256) :: input
+    type(hl_token_t) :: tokens(MT)
+    integer :: n
+    input = 'FOO=bar ls'
+    call tokenize_v2(input, 10, tokens, n)
+    call assert_eq('assign_prefix: count', 2, n)
+    call assert_token('assign_prefix/FOO=bar', tokens(1), 1, 7, HTOK_ASSIGNMENT)
+    call assert_token('assign_prefix/ls', tokens(2), 9, 10, HTOK_COMMAND_VALID)
   end subroutine
 
 end program test_syntax_highlight

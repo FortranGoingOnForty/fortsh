@@ -82,3 +82,31 @@ def test_valid_command_stays_green(fortsh_path, tmp_path):
     """Kept palette (HL-01 opted out): a valid command stays green."""
     frame = _type_line(fortsh_path, tmp_path, "echo hi")
     assert b"\x1b[32mecho\x1b[0m" in frame, f"command no longer green: {frame!r}"
+
+
+def test_unclosed_single_quote_red(fortsh_path, tmp_path):
+    """HL-04: the opening quote of an unterminated string is red; body yellow."""
+    frame = _type_line(fortsh_path, tmp_path, "echo 'ab")
+    assert b"\x1b[31m'\x1b[0m" in frame, f"unclosed quote not red: {frame!r}"
+    assert b"\x1b[33mab\x1b[0m" in frame, f"quote body not yellow: {frame!r}"
+
+
+def test_bare_dollar_red(fortsh_path, tmp_path):
+    """HL-07: a bare `$` is a red error."""
+    frame = _type_line(fortsh_path, tmp_path, "echo $")
+    assert b"\x1b[31m$\x1b[0m" in frame, f"bare $ not red: {frame!r}"
+
+
+def test_special_param_not_red(fortsh_path, tmp_path):
+    """HL-07: POSIX special params $? $@ are valid bright-cyan, not red."""
+    frame = _type_line(fortsh_path, tmp_path, "echo $? $@")
+    assert b"\x1b[96m$?\x1b[0m" in frame, f"$? not bright-cyan: {frame!r}"
+    assert b"\x1b[96m$@\x1b[0m" in frame, f"$@ not bright-cyan: {frame!r}"
+
+
+def test_assignment_not_red(fortsh_path, tmp_path):
+    """HL-03: a leading VAR=value is an assignment (not a red invalid command),
+    and the command after it still highlights as a valid command."""
+    frame = _type_line(fortsh_path, tmp_path, "FOO=bar ls")
+    assert b"\x1b[31mFOO=bar" not in frame, f"assignment colored red: {frame!r}"
+    assert b"\x1b[32mls\x1b[0m" in frame, f"command after assignment not green: {frame!r}"

@@ -61,6 +61,9 @@ module syntax_highlight
   ! AR-09: statement terminators | ; & (fish_color_end=green), distinct from
   ! the operator color used for && || (HL-06).
   integer, parameter, public :: HTOK_TERMINATOR      = 17
+  ! AR-09: error state (red) — unclosed quote opener (HL-04), malformed `$`
+  ! (HL-07), bad redirect target (HL-08).
+  integer, parameter, public :: HTOK_ERROR           = 18
 
   ! v2 token structure — references positions in input buffer, no string copying
   type :: hl_token_t
@@ -525,6 +528,7 @@ contains
     case(HTOK_PATH);           color = COLOR_PATH
     case(HTOK_GLOB);           color = COLOR_GLOB
     case(HTOK_ASSIGNMENT);     color = COLOR_ASSIGNMENT
+    case(HTOK_ERROR);          color = COLOR_RED
     case default;              color = COLOR_RESET
     end select
   end function hl_token_color
@@ -622,7 +626,7 @@ contains
     integer, intent(out) :: num_tokens
 
     integer :: i, tok_start, wlen
-    logical :: in_cmd_pos, has_slash, has_glob, has_equals
+    logical :: in_cmd_pos, has_slash, has_glob, has_equals, closed, var_bad
     character(len=1) :: ch, next_ch
 
     num_tokens = 0
@@ -653,17 +657,25 @@ contains
       if (ch == "'") then
         tok_start = i
         i = i + 1
+        closed = .false.
         do while (i <= input_len)
           if (input(i:i) == "'") then
             i = i + 1
+            closed = .true.
             exit
           end if
           i = i + 1
         end do
-        num_tokens = num_tokens + 1
-        tokens(num_tokens)%start_pos = tok_start
-        tokens(num_tokens)%end_pos = i - 1
-        tokens(num_tokens)%token_type = HTOK_STRING_SINGLE
+        if (closed) then
+          num_tokens = num_tokens + 1
+          tokens(num_tokens)%start_pos = tok_start
+          tokens(num_tokens)%end_pos = i - 1
+          tokens(num_tokens)%token_type = HTOK_STRING_SINGLE
+        else
+          ! HL-04: unterminated — red the opening quote, body stays string color.
+          call emit_unclosed_quote(tokens, num_tokens, tok_start, i - 1, &
+                                   HTOK_STRING_SINGLE)
+        end if
         in_cmd_pos = .false.
         cycle
       end if
@@ -672,6 +684,7 @@ contains
       if (ch == '"') then
         tok_start = i
         i = i + 1
+        closed = .false.
         do while (i <= input_len)
           if (input(i:i) == '\' .and. i + 1 <= input_len) then
             i = i + 2  ! skip escaped char
@@ -679,14 +692,21 @@ contains
           end if
           if (input(i:i) == '"') then
             i = i + 1
+            closed = .true.
             exit
           end if
           i = i + 1
         end do
-        num_tokens = num_tokens + 1
-        tokens(num_tokens)%start_pos = tok_start
-        tokens(num_tokens)%end_pos = i - 1
-        tokens(num_tokens)%token_type = HTOK_STRING_DOUBLE
+        if (closed) then
+          num_tokens = num_tokens + 1
+          tokens(num_tokens)%start_pos = tok_start
+          tokens(num_tokens)%end_pos = i - 1
+          tokens(num_tokens)%token_type = HTOK_STRING_DOUBLE
+        else
+          ! HL-04: unterminated — red the opening quote, body stays string color.
+          call emit_unclosed_quote(tokens, num_tokens, tok_start, i - 1, &
+                                   HTOK_STRING_DOUBLE)
+        end if
         in_cmd_pos = .false.
         cycle
       end if
@@ -695,46 +715,69 @@ contains
       if (ch == '$') then
         tok_start = i
         i = i + 1
-        if (i <= input_len) then
-          if (input(i:i) == '{') then
-            ! ${...} expansion
-            i = i + 1
-            do while (i <= input_len .and. input(i:i) /= '}')
-              i = i + 1
-            end do
-            if (i <= input_len) i = i + 1  ! skip }
-          else if (input(i:i) == '(') then
-            ! $() or $(()) command/arithmetic substitution
-            i = i + 1
-            if (i <= input_len .and. input(i:i) == '(') then
-              ! $(( ... ))
-              i = i + 1
-              do while (i <= input_len)
-                if (i + 1 <= input_len .and. input(i:i) == ')' .and. input(i+1:i+1) == ')') then
-                  i = i + 2
-                  exit
-                end if
-                i = i + 1
-              end do
-            else
-              ! $( ... ) — find matching paren (simple, no nesting)
-              do while (i <= input_len .and. input(i:i) /= ')')
-                i = i + 1
-              end do
-              if (i <= input_len) i = i + 1  ! skip )
+        var_bad = .false.
+        if (i > input_len) then
+          ! HL-07: a bare `$` at end of input is malformed.
+          var_bad = .true.
+        else if (input(i:i) == '{') then
+          ! ${...} expansion
+          i = i + 1
+          closed = .false.
+          do while (i <= input_len)
+            if (input(i:i) == '}') then
+              i = i + 1; closed = .true.; exit
             end if
-          else
-            ! Simple $VAR
+            i = i + 1
+          end do
+          if (.not. closed) var_bad = .true.  ! HL-07: unterminated ${
+        else if (input(i:i) == '(') then
+          ! $() or $(()) command/arithmetic substitution
+          i = i + 1
+          if (i <= input_len .and. input(i:i) == '(') then
+            ! $(( ... ))
+            i = i + 1
+            closed = .false.
             do while (i <= input_len)
-              if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
+              if (i + 1 <= input_len .and. input(i:i) == ')' .and. input(i+1:i+1) == ')') then
+                i = i + 2; closed = .true.; exit
+              end if
               i = i + 1
             end do
+            if (.not. closed) var_bad = .true.
+          else
+            ! $( ... ) — find matching paren (simple, no nesting)
+            closed = .false.
+            do while (i <= input_len)
+              if (input(i:i) == ')') then
+                i = i + 1; closed = .true.; exit
+              end if
+              i = i + 1
+            end do
+            if (.not. closed) var_bad = .true.  ! HL-07: unterminated $(
           end if
+        else if (is_alnum(input(i:i)) .or. input(i:i) == '_') then
+          ! Simple $VAR (name)
+          do while (i <= input_len)
+            if (.not. (is_alnum(input(i:i)) .or. input(i:i) == '_')) exit
+            i = i + 1
+          end do
+        else if (is_special_param_char(input(i:i))) then
+          ! POSIX special parameter ($@ $* $# $? $- $$ $!) — a single char.
+          ! fish reds $@, but those are fish-array syntax; in a POSIX shell they
+          ! are valid parameters, so we do NOT flag them (deliberate deviation).
+          i = i + 1
+        else
+          ! HL-07: `$` followed by whitespace/operator/other — malformed.
+          var_bad = .true.
         end if
         num_tokens = num_tokens + 1
         tokens(num_tokens)%start_pos = tok_start
         tokens(num_tokens)%end_pos = i - 1
-        tokens(num_tokens)%token_type = HTOK_VARIABLE
+        if (var_bad) then
+          tokens(num_tokens)%token_type = HTOK_ERROR
+        else
+          tokens(num_tokens)%token_type = HTOK_VARIABLE
+        end if
         in_cmd_pos = .false.
         cycle
       end if
@@ -929,7 +972,13 @@ contains
           in_cmd_pos = .false.
         end if
       else if (in_cmd_pos) then
-        if (is_builtin_v2(input(tok_start:), wlen)) then
+        ! HL-03: a leading `VAR=value` is a variable assignment, not an invalid
+        ! command. Classify as assignment and STAY in command position — an
+        ! assignment can prefix a command (e.g. `FOO=bar cmd`).
+        if (has_equals .and. is_valid_identifier(input(tok_start:), tok_start, i - 1)) then
+          tokens(num_tokens)%token_type = HTOK_ASSIGNMENT
+          ! in_cmd_pos stays .true.
+        else if (is_builtin_v2(input(tok_start:), wlen)) then
           tokens(num_tokens)%token_type = HTOK_BUILTIN
           in_cmd_pos = .false.
         else if (is_valid_command(input(tok_start:tok_start+wlen-1))) then
@@ -966,6 +1015,28 @@ contains
     end do
   end subroutine tokenize_v2
 
+  ! HL-04: emit an unterminated quoted run as two tokens — a 1-char red error
+  ! over the opening quote, then the body in its normal string color. Matches
+  ! fish, which recolors only the offending opening quote to Error.
+  subroutine emit_unclosed_quote(tokens, num_tokens, q_start, q_end, body_type)
+    type(hl_token_t), intent(inout) :: tokens(MAX_TOKENS)
+    integer, intent(inout) :: num_tokens
+    integer, intent(in) :: q_start, q_end, body_type
+
+    if (num_tokens >= MAX_TOKENS) return
+    num_tokens = num_tokens + 1
+    tokens(num_tokens)%start_pos = q_start
+    tokens(num_tokens)%end_pos = q_start
+    tokens(num_tokens)%token_type = HTOK_ERROR
+    ! Body after the opening quote (may be empty if the line ends at the quote).
+    if (q_end > q_start .and. num_tokens < MAX_TOKENS) then
+      num_tokens = num_tokens + 1
+      tokens(num_tokens)%start_pos = q_start + 1
+      tokens(num_tokens)%end_pos = q_end
+      tokens(num_tokens)%token_type = body_type
+    end if
+  end subroutine emit_unclosed_quote
+
   ! Check if character is alphanumeric or underscore
   pure function is_alnum(ch) result(res)
     character(len=1), intent(in) :: ch
@@ -973,6 +1044,15 @@ contains
     res = (ch >= 'a' .and. ch <= 'z') .or. (ch >= 'A' .and. ch <= 'Z') .or. &
           (ch >= '0' .and. ch <= '9') .or. ch == '_'
   end function is_alnum
+
+  ! POSIX special parameter char that forms a complete `$x` expansion:
+  ! $@ $* $# $? $- $$ $! (digits are handled by the name scan). HL-07.
+  pure function is_special_param_char(ch) result(res)
+    character(len=1), intent(in) :: ch
+    logical :: res
+    res = ch == '@' .or. ch == '*' .or. ch == '#' .or. ch == '?' .or. &
+          ch == '-' .or. ch == '$' .or. ch == '!'
+  end function is_special_param_char
 
   ! Check if string is all digits
   pure function is_all_digits(str, slen) result(res)
