@@ -81,3 +81,21 @@ def test_file_menu_has_no_descriptions(fortsh_path, tmp_path):
     tail = _menu_raw(fortsh_path, tmp_path, [], b"cat ap\t")
     assert b"apple.txt" in tail and b"apricot.txt" in tail
     assert DIM not in tail, "file menu should have no description column"
+
+
+def test_option_menu_shows_help(fortsh_path, tmp_path):
+    """`ls -`+Tab describes each option flag (MDESC_OPT, #88)."""
+    tail = _menu_raw(fortsh_path, tmp_path, [], b"ls -\t")
+    assert b"-l" in tail
+    assert b"long listing format" in tail
+    assert b"reverse sort order" in tail   # -r: command-specific (not 'recursive')
+    assert DIM in tail
+
+
+def test_git_subcommand_menu_shows_help(fortsh_path, tmp_path):
+    """`git `+Tab describes each subcommand (MDESC_SUB, #88). The full list
+    pages, so assert on entries in the first visible page (add..clean)."""
+    tail = _menu_raw(fortsh_path, tmp_path, [], b"git \t")
+    assert b"add file contents to the index" in tail
+    assert b"list, create, or delete branches" in tail   # branch
+    assert DIM in tail

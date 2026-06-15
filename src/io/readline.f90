@@ -128,6 +128,8 @@ module readline
   integer, parameter :: MDESC_NONE = 0   ! file/dir/unknown: no description
   integer, parameter :: MDESC_VAR  = 1   ! $var: show its value
   integer, parameter :: MDESC_CMD  = 2   ! command position: builtin summary
+  integer, parameter :: MDESC_OPT  = 3   ! -flag: per-command option help (#88)
+  integer, parameter :: MDESC_SUB  = 4   ! git <subcommand>: subcommand help (#88)
   logical, save :: pager_collect = .false.
 
   ! Menu vertical-scroll edge state (AR-03 NEW-2): Up/Down STOP at the top/
@@ -6826,10 +6828,11 @@ contains
   subroutine compute_menu_descs(input_state, shell)
     type(input_state_t), intent(inout) :: input_state
     type(shell_state_t), intent(in), optional :: shell
-    character(len=MAX_LINE_LEN) :: buf, last_word
+    character(len=MAX_LINE_LEN) :: buf, last_word, first_word
     character(len=MAX_MENU_ITEM_LEN) :: item
     character(len=MAX_MENU_DESC_LEN) :: desc
-    integer :: i, n, last_space, kind
+    integer :: i, n, last_space, first_space, kind, word_count
+    logical :: in_word
 
     ! Determine the completion kind from the line up to the cursor.
     n = input_state%cursor_pos
@@ -6845,10 +6848,39 @@ contains
       last_word = buf(1:n)
     end if
 
+    ! First word = the command; word_count = how many words are present up to the
+    ! cursor (so word 2 of `git ` is the subcommand position). (#88)
+    first_space = 0
+    do i = 1, n
+      if (buf(i:i) == ' ') then
+        first_space = i
+        exit
+      end if
+    end do
+    if (first_space > 0) then
+      first_word = buf(1:first_space-1)
+    else
+      first_word = buf(1:n)
+    end if
+    word_count = 0
+    in_word = .false.
+    do i = 1, n
+      if (buf(i:i) == ' ') then
+        in_word = .false.
+      else if (.not. in_word) then
+        in_word = .true.
+        word_count = word_count + 1
+      end if
+    end do
+
     if (len_trim(last_word) >= 1 .and. last_word(1:1) == '$') then
       kind = MDESC_VAR
     else if (last_space == 0) then
       kind = MDESC_CMD
+    else if (len_trim(last_word) >= 1 .and. last_word(1:1) == '-') then
+      kind = MDESC_OPT          ! -flag after a command (#88)
+    else if (trim(first_word) == 'git' .and. word_count <= 2) then
+      kind = MDESC_SUB          ! `git <subcommand>` position (#88)
     else
       kind = MDESC_NONE
     end if
@@ -6861,6 +6893,12 @@ contains
       else if (kind == MDESC_CMD) then
         item = menu_item_get(input_state, i)
         desc = builtin_summary(trim(item))
+      else if (kind == MDESC_OPT) then
+        item = menu_item_get(input_state, i)
+        desc = option_summary(trim(first_word), trim(item))
+      else if (kind == MDESC_SUB) then
+        item = menu_item_get(input_state, i)
+        desc = git_subcommand_summary(trim(item))
       end if
       if (pager_active) then
         pager_descs(i) = desc
@@ -6951,6 +6989,243 @@ contains
     case ('dirs');    desc = 'show the directory stack'
     case ('complete'); desc = 'define completion behavior'
     case ('help');    desc = 'show help for builtins'
+    end select
+  end function
+
+  ! Per-command help for an option flag, for the description column (#88).
+  ! Mirrors the curated set in command_option_table. Universal --help/--version
+  ! fall through to a shared tail; everything else is command-specific because a
+  ! short flag means different things per command (-r is reverse in ls, recursive
+  ! in cp). Blank for an unknown (command, option) pair.
+  function option_summary(command, option) result(desc)
+    character(len=*), intent(in) :: command, option
+    character(len=MAX_MENU_DESC_LEN) :: desc
+    desc = ' '
+    select case (command)
+    case ('ls')
+      select case (option)
+      case ('-a', '--all');            desc = 'include entries starting with .'
+      case ('-A', '--almost-all');     desc = 'all except . and ..'
+      case ('-l');                     desc = 'long listing format'
+      case ('-h', '--human-readable'); desc = 'human-readable sizes (1K 234M)'
+      case ('-R', '--recursive');      desc = 'list subdirectories recursively'
+      case ('-r', '--reverse');        desc = 'reverse sort order'
+      case ('-S');                     desc = 'sort by file size, largest first'
+      case ('-t');                     desc = 'sort by modification time, newest first'
+      case ('--sort');                 desc = 'sort by WORD: size, time, version...'
+      case ('-d', '--directory');      desc = 'list directories themselves, not contents'
+      case ('-i', '--inode');          desc = 'print each file''s inode number'
+      case ('--color');                desc = 'colorize the output'
+      case ('--group-directories-first'); desc = 'group directories before files'
+      end select
+    case ('grep')
+      select case (option)
+      case ('-E', '--extended-regexp'); desc = 'pattern is an extended regexp'
+      case ('-F', '--fixed-strings');   desc = 'pattern is a literal string'
+      case ('-i', '--ignore-case');     desc = 'case-insensitive matching'
+      case ('-v', '--invert-match');    desc = 'select non-matching lines'
+      case ('-w', '--word-regexp');     desc = 'match whole words only'
+      case ('-c', '--count');           desc = 'print only a count of matches'
+      case ('-l', '--files-with-matches'); desc = 'print only names of matching files'
+      case ('-n', '--line-number');     desc = 'prefix each line with its number'
+      case ('-r', '--recursive');       desc = 'search directories recursively'
+      case ('-o', '--only-matching');   desc = 'show only the matched part'
+      case ('--color');                 desc = 'highlight matches in color'
+      case ('-A', '--after-context');   desc = 'print N lines after a match'
+      case ('-B', '--before-context');  desc = 'print N lines before a match'
+      case ('-C', '--context');         desc = 'print N lines around a match'
+      end select
+    case ('cp')
+      select case (option)
+      case ('-a', '--archive');     desc = 'preserve attributes, recurse, no deref'
+      case ('-b', '--backup');      desc = 'back up each existing destination file'
+      case ('-f', '--force');       desc = 'overwrite without prompting'
+      case ('-i', '--interactive'); desc = 'prompt before overwrite'
+      case ('-l', '--link');        desc = 'hard-link files instead of copying'
+      case ('-n', '--no-clobber');  desc = 'never overwrite an existing file'
+      case ('-r', '-R', '--recursive'); desc = 'copy directories recursively'
+      case ('-s', '--symbolic-link'); desc = 'make symbolic links instead of copies'
+      case ('-u', '--update');      desc = 'copy only when the source is newer'
+      case ('-v', '--verbose');     desc = 'explain what is being done'
+      case ('-p', '--preserve');    desc = 'preserve mode, ownership, timestamps'
+      end select
+    case ('mv')
+      select case (option)
+      case ('-b', '--backup');      desc = 'back up each existing destination file'
+      case ('-f', '--force');       desc = 'overwrite without prompting'
+      case ('-i', '--interactive'); desc = 'prompt before overwrite'
+      case ('-n', '--no-clobber');  desc = 'never overwrite an existing file'
+      case ('-u', '--update');      desc = 'move only when the source is newer'
+      case ('-v', '--verbose');     desc = 'explain what is being done'
+      end select
+    case ('rm')
+      select case (option)
+      case ('-f', '--force');       desc = 'ignore nonexistent files, never prompt'
+      case ('-i', '--interactive'); desc = 'prompt before every removal'
+      case ('-r', '-R', '--recursive'); desc = 'remove directories and contents'
+      case ('-d', '--dir');         desc = 'remove empty directories'
+      case ('-v', '--verbose');     desc = 'explain what is being done'
+      end select
+    case ('mkdir')
+      select case (option)
+      case ('-m', '--mode');    desc = 'set permission mode (as in chmod)'
+      case ('-p', '--parents'); desc = 'make parent directories as needed'
+      case ('-v', '--verbose'); desc = 'print a message per created directory'
+      end select
+    case ('cat')
+      select case (option)
+      case ('-A', '--show-all');        desc = 'equivalent to -vET'
+      case ('-b', '--number-nonblank'); desc = 'number nonempty output lines'
+      case ('-E', '--show-ends');       desc = 'display $ at end of each line'
+      case ('-n', '--number');          desc = 'number all output lines'
+      case ('-s', '--squeeze-blank');   desc = 'collapse repeated blank lines'
+      case ('-T', '--show-tabs');       desc = 'display TAB as ^I'
+      case ('-v', '--show-nonprinting'); desc = 'show nonprinting characters'
+      end select
+    case ('sort')
+      select case (option)
+      case ('-b', '--ignore-leading-blanks'); desc = 'ignore leading blanks'
+      case ('-f', '--ignore-case');     desc = 'fold lower case to upper case'
+      case ('-n', '--numeric-sort');    desc = 'compare by numeric value'
+      case ('-h', '--human-numeric-sort'); desc = 'compare human-readable numbers'
+      case ('-r', '--reverse');         desc = 'reverse the comparison result'
+      case ('-u', '--unique');          desc = 'output only the first of equal lines'
+      case ('-k', '--key');             desc = 'sort via a key; KEYDEF gives location'
+      case ('-t', '--field-separator'); desc = 'use SEP as the field separator'
+      case ('-o', '--output');          desc = 'write result to FILE, not stdout'
+      case ('-c', '--check');           desc = 'check whether input is sorted'
+      end select
+    case ('head', 'tail')
+      select case (option)
+      case ('-c', '--bytes');   desc = 'print the first/last N bytes'
+      case ('-n', '--lines');   desc = 'print the first/last N lines'
+      case ('-q', '--quiet');   desc = 'never print file-name headers'
+      case ('-v', '--verbose'); desc = 'always print file-name headers'
+      case ('-f', '--follow');  desc = 'output appended data as the file grows'
+      end select
+    case ('wc')
+      select case (option)
+      case ('-c', '--bytes');           desc = 'print the byte count'
+      case ('-m', '--chars');           desc = 'print the character count'
+      case ('-l', '--lines');           desc = 'print the newline count'
+      case ('-w', '--words');           desc = 'print the word count'
+      case ('-L', '--max-line-length'); desc = 'print the longest line length'
+      end select
+    case ('find')
+      select case (option)
+      case ('-name');     desc = 'file name matches a shell pattern'
+      case ('-iname');    desc = 'like -name, case-insensitive'
+      case ('-type');     desc = 'file is of TYPE (f, d, l, ...)'
+      case ('-size');     desc = 'file uses N units of space'
+      case ('-mtime');    desc = 'data last modified N*24 hours ago'
+      case ('-newer');    desc = 'modified more recently than FILE'
+      case ('-maxdepth'); desc = 'descend at most N directory levels'
+      case ('-mindepth'); desc = 'apply tests at depth N or below'
+      case ('-path');     desc = 'path matches a shell pattern'
+      case ('-regex');    desc = 'path matches a regular expression'
+      case ('-prune');    desc = 'do not descend into this directory'
+      case ('-print');    desc = 'print the full file name, then newline'
+      case ('-print0');   desc = 'print the file name, then a null byte'
+      case ('-delete');   desc = 'delete matched files'
+      case ('-exec');     desc = 'run a command on each matched file'
+      case ('-empty');    desc = 'file is empty'
+      case ('-perm');     desc = 'file permission bits match MODE'
+      case ('-user');     desc = 'file is owned by USER'
+      case ('-group');    desc = 'file belongs to GROUP'
+      end select
+    case ('ps')
+      select case (option)
+      case ('-e', '-A'); desc = 'select every process'
+      case ('-f');       desc = 'full-format listing'
+      case ('-l');       desc = 'long format'
+      case ('-u');       desc = 'select by effective user'
+      case ('-x');       desc = 'include processes without a tty'
+      case ('-a');       desc = 'all processes with a tty except leaders'
+      case ('-w');       desc = 'wide output'
+      case ('-o');       desc = 'user-defined output format'
+      end select
+    case ('tar')
+      select case (option)
+      case ('-c', '--create');    desc = 'create a new archive'
+      case ('-x', '--extract');   desc = 'extract files from an archive'
+      case ('-t', '--list');      desc = 'list the contents of an archive'
+      case ('-f', '--file');      desc = 'use the given archive file'
+      case ('-v', '--verbose');   desc = 'list files as they are processed'
+      case ('-z', '--gzip');      desc = 'filter the archive through gzip'
+      case ('-j', '--bzip2');     desc = 'filter the archive through bzip2'
+      case ('-J', '--xz');        desc = 'filter the archive through xz'
+      case ('-C', '--directory'); desc = 'change to DIR before operating'
+      end select
+    case ('git')
+      select case (option)
+      case ('--bare');      desc = 'treat the repository as bare'
+      case ('--git-dir');   desc = 'set the path to the repository'
+      case ('--work-tree'); desc = 'set the path to the working tree'
+      case ('--paginate');  desc = 'pipe output into a pager'
+      case ('--no-pager');  desc = 'do not pipe output into a pager'
+      case ('--exec-path');  desc = 'path to git core programs'
+      case ('--html-path');  desc = 'path to git''s HTML documentation'
+      case ('--man-path');   desc = 'manpath for git''s man pages'
+      case ('--info-path');  desc = 'path to git''s info files'
+      case ('-C');          desc = 'run as if git was started in PATH'
+      case ('-c');          desc = 'pass a config parameter'
+      end select
+    end select
+
+    ! Universal tail (consistent across commands).
+    if (len_trim(desc) == 0) then
+      select case (option)
+      case ('--help');    desc = 'display help and exit'
+      case ('--version'); desc = 'output version information and exit'
+      end select
+    end if
+  end function
+
+  ! One-line help for a git subcommand, for the description column (#88).
+  ! Covers the set fortsh completes for `git <tab>`.
+  function git_subcommand_summary(name) result(desc)
+    character(len=*), intent(in) :: name
+    character(len=MAX_MENU_DESC_LEN) :: desc
+    desc = ' '
+    select case (name)
+    case ('add');        desc = 'add file contents to the index'
+    case ('am');         desc = 'apply patches from a mailbox'
+    case ('apply');      desc = 'apply a patch to files and/or the index'
+    case ('archive');    desc = 'create an archive of files from a tree'
+    case ('bisect');     desc = 'binary-search for the commit that broke'
+    case ('blame');      desc = 'show what revision last changed each line'
+    case ('branch');     desc = 'list, create, or delete branches'
+    case ('checkout');   desc = 'switch branches or restore files'
+    case ('cherry-pick'); desc = 'apply the changes of existing commits'
+    case ('clean');      desc = 'remove untracked files from the tree'
+    case ('clone');      desc = 'clone a repository into a new directory'
+    case ('commit');     desc = 'record changes to the repository'
+    case ('config');     desc = 'get and set repository or global options'
+    case ('describe');   desc = 'name a commit from a nearby tag'
+    case ('diff');       desc = 'show changes between commits, trees, etc.'
+    case ('fetch');      desc = 'download objects and refs from a remote'
+    case ('fsck');       desc = 'verify connectivity and validity of objects'
+    case ('gc');         desc = 'clean up and optimize the repository'
+    case ('grep');       desc = 'print lines matching a pattern'
+    case ('init');       desc = 'create an empty repository'
+    case ('log');        desc = 'show the commit logs'
+    case ('merge');      desc = 'join two or more development histories'
+    case ('mv');         desc = 'move or rename a file, dir, or symlink'
+    case ('pull');       desc = 'fetch from and integrate with a remote'
+    case ('push');       desc = 'update remote refs and their objects'
+    case ('rebase');     desc = 'reapply commits on top of another base'
+    case ('reflog');     desc = 'manage the reflog information'
+    case ('remote');     desc = 'manage the set of tracked repositories'
+    case ('reset');      desc = 'reset current HEAD to a given state'
+    case ('restore');    desc = 'restore working-tree files'
+    case ('revert');     desc = 'revert existing commits'
+    case ('rm');         desc = 'remove files from the tree and the index'
+    case ('show');       desc = 'show various types of objects'
+    case ('stash');      desc = 'stash changes in a dirty working directory'
+    case ('status');     desc = 'show the working-tree status'
+    case ('switch');     desc = 'switch branches'
+    case ('tag');        desc = 'create, list, or delete tags'
+    case ('worktree');   desc = 'manage multiple working trees'
     end select
   end function
 
