@@ -110,3 +110,25 @@ def test_assignment_not_red(fortsh_path, tmp_path):
     frame = _type_line(fortsh_path, tmp_path, "FOO=bar ls")
     assert b"\x1b[31mFOO=bar" not in frame, f"assignment colored red: {frame!r}"
     assert b"\x1b[32mls\x1b[0m" in frame, f"command after assignment not green: {frame!r}"
+
+
+def test_existing_path_arg_underlined(fortsh_path, tmp_path):
+    """HL-02: an argument naming an existing file is underlined; a nonexistent
+    one is not (works for plain names, no slash needed)."""
+    (tmp_path / "realfile").write_text("x")
+    frame = _type_line(fortsh_path, tmp_path, "cat realfile")
+    assert b"\x1b[4mrealfile\x1b[0m" in frame, f"existing path not underlined: {frame!r}"
+    frame2 = _type_line(fortsh_path, tmp_path, "cat nofilexyz")
+    assert b"\x1b[4mnofilexyz" not in frame2, f"nonexistent path underlined: {frame2!r}"
+
+
+def test_redirect_operator_bold(fortsh_path, tmp_path):
+    """HL-08: the redirect operator is bold cyan (fish_color_redirection)."""
+    frame = _type_line(fortsh_path, tmp_path, "echo a > out.txt")
+    assert b"\x1b[1m\x1b[36m>\x1b[0m" in frame, f"redirect op not bold-cyan: {frame!r}"
+
+
+def test_redirect_target_missing_dir_red(fortsh_path, tmp_path):
+    """HL-08: a redirect target whose parent directory does not exist is red."""
+    frame = _type_line(fortsh_path, tmp_path, "echo a > /nope/x")
+    assert b"\x1b[31m/nope/x\x1b[0m" in frame, f"impossible target not red: {frame!r}"

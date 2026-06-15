@@ -66,11 +66,17 @@ module syntax_highlight
   integer, parameter, public :: HTOK_ERROR           = 18
 
   ! v2 token structure — references positions in input buffer, no string copying
+  ! attr carries a data-dependent SGR modifier on top of the type's color
+  ! (AR-09): 0 = none, ATTR_UNDERLINE = existing path, ATTR_BOLD = redirect op.
   type :: hl_token_t
     integer :: start_pos = 0
     integer :: end_pos = 0
     integer :: token_type = HTOK_DEFAULT
+    integer :: attr = 0
   end type hl_token_t
+
+  integer, parameter, public :: ATTR_UNDERLINE = 1
+  integer, parameter, public :: ATTR_BOLD      = 2
 
   ! Color scheme for different token types
   integer, parameter :: COLOR_COMMAND_VALID = COLOR_GREEN
@@ -425,6 +431,69 @@ contains
     is_exec = file_is_executable(trim(path))
   end function is_path_executable
 
+  ! Tilde-expand a (path) token to an absolute-ish string for stat'ing. Returns
+  ! the trimmed input unchanged when there's no leading ~ or no $HOME.
+  function expand_tilde(path) result(expanded)
+    use system_interface, only: get_environment_var
+    character(len=*), intent(in) :: path
+    character(len=:), allocatable :: expanded, home_dir
+
+    if (len_trim(path) > 0 .and. path(1:1) == '~') then
+      home_dir = get_environment_var('HOME')
+      if (allocated(home_dir) .and. len(home_dir) > 0) then
+        if (len_trim(path) == 1) then
+          expanded = home_dir
+        else
+          expanded = trim(home_dir) // path(2:len_trim(path))
+        end if
+        return
+      end if
+    end if
+    expanded = trim(path)
+  end function expand_tilde
+
+  ! HL-02: does an argument token name an existing path (file or dir)? Used to
+  ! add fish's valid_path underline. Literal token text (tilde-expanded); tokens
+  ! with $/quotes are split out by the tokenizer so they never reach here.
+  function path_arg_exists(path) result(exists)
+    use system_interface, only: file_exists
+    character(len=*), intent(in) :: path
+    logical :: exists
+
+    exists = .false.
+    if (len_trim(path) == 0 .or. len_trim(path) > MAX_PATH_LEN) return
+    exists = file_exists(expand_tilde(path))
+  end function path_arg_exists
+
+  ! HL-08: is the parent directory of a redirect target missing? `> /nope/x` is
+  ! impossible because /nope doesn't exist. No slash => parent is the cwd (never
+  ! missing). A leading-slash-only parent ("/x") => root, never missing.
+  function redirect_dir_missing(path) result(missing)
+    use system_interface, only: file_is_directory
+    character(len=*), intent(in) :: path
+    logical :: missing
+    character(len=:), allocatable :: dir
+    integer :: slash, k, n
+
+    missing = .false.
+    n = len_trim(path)
+    if (n == 0 .or. n > MAX_PATH_LEN) return
+
+    ! Last '/' position
+    slash = 0
+    do k = n, 1, -1
+      if (path(k:k) == '/') then
+        slash = k
+        exit
+      end if
+    end do
+    if (slash == 0) return        ! cwd
+    if (slash == 1) return        ! "/file" -> root
+
+    dir = expand_tilde(path(1:slash-1))
+    missing = .not. file_is_directory(dir)
+  end function redirect_dir_missing
+
   ! Generate ANSI color code
   function color_code(color) result(code)
     integer, intent(in) :: color
@@ -627,6 +696,7 @@ contains
 
     integer :: i, tok_start, wlen
     logical :: in_cmd_pos, has_slash, has_glob, has_equals, closed, var_bad
+    logical :: prev_redirect
     character(len=1) :: ch, next_ch
 
     num_tokens = 0
@@ -1012,6 +1082,23 @@ contains
           tokens(num_tokens)%token_type = HTOK_DEFAULT
         end if
       end if
+
+      ! HL-02 (underline existing path args) + HL-08 (redirect target into a
+      ! missing directory -> red). Only argument-ish words (DEFAULT/PATH/NUMBER);
+      ! the command, keywords, options, globs and assignments are skipped.
+      if (tokens(num_tokens)%token_type == HTOK_DEFAULT .or. &
+          tokens(num_tokens)%token_type == HTOK_PATH .or. &
+          tokens(num_tokens)%token_type == HTOK_NUMBER) then
+        prev_redirect = .false.
+        if (num_tokens >= 2) then
+          if (tokens(num_tokens-1)%token_type == HTOK_REDIRECT) prev_redirect = .true.
+        end if
+        if (prev_redirect .and. redirect_dir_missing(input(tok_start:i-1))) then
+          tokens(num_tokens)%token_type = HTOK_ERROR
+        else if (path_arg_exists(input(tok_start:i-1))) then
+          tokens(num_tokens)%attr = ATTR_UNDERLINE
+        end if
+      end if
     end do
   end subroutine tokenize_v2
 
@@ -1105,8 +1192,10 @@ contains
     character(len=MAX_HIGHLIGHT_LEN), intent(out) :: highlighted
     integer, intent(out) :: actual_len
 
-    integer :: pos, ipos, tidx, color, color_len, reset_len, j
+    integer :: pos, ipos, tidx, color, color_len, reset_len, j, attr
     character(len=32) :: color_str, reset_str
+    character(len=8) :: attr_str
+    logical :: styled
 
     highlighted = ' '
     pos = 1
@@ -1119,17 +1208,38 @@ contains
     do while (ipos <= input_len .and. pos < MAX_HIGHLIGHT_LEN - 20)
       ! Check if we're at the start of the next token
       if (tidx <= num_tokens .and. ipos == tokens(tidx)%start_pos) then
-        ! Emit color code
         color = hl_token_color(tokens(tidx)%token_type)
-        if (color /= COLOR_RESET) then
-          color_str = trim(color_code(color))
-          color_len = len_trim(color_str)
-          do j = 1, color_len
+        ! Data-dependent modifier; redirect operators are always bold (HL-08).
+        attr = tokens(tidx)%attr
+        if (tokens(tidx)%token_type == HTOK_REDIRECT) attr = ATTR_BOLD
+        ! Emit styling if there's a color OR an attribute (an underlined plain
+        ! arg has color RESET but still needs the ESC[4m prefix).
+        styled = (color /= COLOR_RESET) .or. (attr /= 0)
+        if (styled) then
+          ! Attribute prefix (ESC[4m underline / ESC[1m bold), then color.
+          if (attr == ATTR_UNDERLINE) then
+            attr_str = char(27) // '[4m'
+          else if (attr == ATTR_BOLD) then
+            attr_str = char(27) // '[1m'
+          else
+            attr_str = ''
+          end if
+          do j = 1, len_trim(attr_str)
             if (pos <= MAX_HIGHLIGHT_LEN) then
-              highlighted(pos:pos) = color_str(j:j)
+              highlighted(pos:pos) = attr_str(j:j)
               pos = pos + 1
             end if
           end do
+          if (color /= COLOR_RESET) then
+            color_str = trim(color_code(color))
+            color_len = len_trim(color_str)
+            do j = 1, color_len
+              if (pos <= MAX_HIGHLIGHT_LEN) then
+                highlighted(pos:pos) = color_str(j:j)
+                pos = pos + 1
+              end if
+            end do
+          end if
         end if
 
         ! Emit token characters
@@ -1140,8 +1250,8 @@ contains
           end if
         end do
 
-        ! Emit reset
-        if (color /= COLOR_RESET) then
+        ! Emit reset (clears color + attribute)
+        if (styled) then
           do j = 1, reset_len
             if (pos <= MAX_HIGHLIGHT_LEN) then
               highlighted(pos:pos) = reset_str(j:j)
