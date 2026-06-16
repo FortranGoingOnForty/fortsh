@@ -6862,7 +6862,7 @@ contains
     character(len=MAX_LINE_LEN) :: buf, last_word, first_word
     character(len=MAX_MENU_ITEM_LEN) :: item
     character(len=MAX_MENU_DESC_LEN) :: desc
-    integer :: i, n, last_space, first_space, kind, word_count
+    integer :: i, n, last_space, first_space, kind, word_count, words_before
     logical :: in_word
 
     ! Determine the completion kind from the line up to the cursor.
@@ -6903,6 +6903,11 @@ contains
         word_count = word_count + 1
       end if
     end do
+    ! Complete words BEFORE the word being completed: if the cursor is mid-word
+    ! (last_word non-empty) the last counted word is that partial; otherwise the
+    ! cursor is after a space and every counted word is complete.
+    words_before = word_count
+    if (len_trim(last_word) > 0) words_before = word_count - 1
 
     if (len_trim(last_word) >= 1 .and. last_word(1:1) == '$') then
       kind = MDESC_VAR
@@ -6910,8 +6915,11 @@ contains
       kind = MDESC_CMD
     else if (len_trim(last_word) >= 1 .and. last_word(1:1) == '-') then
       kind = MDESC_OPT          ! -flag after a command (#88)
-    else if (trim(first_word) == 'git' .and. word_count <= 2) then
-      kind = MDESC_SUB          ! `git <subcommand>` position (#88)
+    else if (trim(first_word) == 'git' .and. words_before == 1) then
+      ! `git <subcommand>` position ONLY: exactly one complete word (git)
+      ! precedes the word being completed. `git log <arg>` (words_before == 2)
+      ! is NOT the subcommand position, so its items aren't labelled subcommands.
+      kind = MDESC_SUB          ! (#88)
     else
       kind = MDESC_NONE
     end if

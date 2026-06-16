@@ -99,3 +99,11 @@ def test_git_subcommand_menu_shows_help(fortsh_path, tmp_path):
     assert b"add file contents to the index" in tail
     assert b"list, create, or delete branches" in tail   # branch
     assert DIM in tail
+
+
+def test_git_arg_position_not_described_as_subcommand(fortsh_path, tmp_path):
+    """`git log `+Tab is the ARG position (word 3), not the subcommand position,
+    so its items must NOT get subcommand descriptions (#88 gate fix)."""
+    tail = _menu_raw(fortsh_path, tmp_path, [], b"git log \t")
+    assert b"add file contents to the index" not in tail
+    assert DIM not in tail
