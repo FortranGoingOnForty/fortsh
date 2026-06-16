@@ -516,6 +516,22 @@ contains
     rdraw_buf(rdraw_pos:rdraw_pos) = ch
   end subroutine
 
+  ! Append buffer content, converting each embedded newline to CR+LF so a
+  ! multi-line buffer's logical lines each start at column 0 in raw mode (AR-10).
+  ! Mirrors via the per-piece calls, so content_frame sees the rendered \r\n and
+  ! content_byte_to_row_col rows it correctly.
+  subroutine rdraw_append_nl(s)
+    character(len=*), intent(in) :: s
+    integer :: i
+    do i = 1, len(s)
+      if (s(i:i) == char(10)) then
+        call rdraw_append(char(13) // char(10))
+      else
+        call rdraw_append_char(s(i:i))
+      end if
+    end do
+  end subroutine
+
   subroutine rdraw_flush()
     if (rdraw_pos > 0) then
       write(output_unit, '(a)', advance='no') rdraw_buf(1:rdraw_pos)
@@ -2460,8 +2476,23 @@ contains
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
 
+              ! Multi-line buffer (AR-10, e.g. a pasted snippet): render with
+              ! \n -> \r\n so each logical line starts at column 0. Highlight
+              ! still applies (tokenize_v2 treats \n as a separator). This path
+              ! only runs when the buffer actually has a newline, so every
+              ! single-line case below is unchanged.
+              if (index(temp_buf(:module_input_state%length), char(10)) > 0) then
+                call highlight_command_line(temp_buf(:module_input_state%length), &
+                                            module_highlighted_buffer, module_highlighted_len, &
+                                            module_input_state%length)
+                if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
+                  call rdraw_append_nl(module_highlighted_buffer(:module_highlighted_len))
+                else
+                  call rdraw_append_nl(temp_buf(:module_input_state%length))
+                end if
+
               ! Selection rendering: three segments — plain, reverse-video, plain
-              if (module_input_state%selection_active) then
+              else if (module_input_state%selection_active) then
                 sel_start = min(module_input_state%selection_anchor, module_input_state%cursor_pos)
                 sel_end   = max(module_input_state%selection_anchor, module_input_state%cursor_pos)
                 if (sel_start < 0) sel_start = 0
@@ -8450,7 +8481,9 @@ contains
           input_state%search_forward = .false.
           call search_next_match(input_state)
           call update_search_display(input_state, prompt)
-        else
+        else if (.not. move_cursor_logical_line(input_state, .true.)) then
+          ! AR-10: in a multi-line buffer Up moves a line; at the top edge (or a
+          ! single-line buffer) it browses history.
           call handle_history_up(input_state)
         end if
       case('B')  ! Down arrow
@@ -8459,7 +8492,8 @@ contains
           input_state%search_forward = .true.
           call search_next_match(input_state)
           call update_search_display(input_state, prompt)
-        else
+        else if (.not. move_cursor_logical_line(input_state, .false.)) then
+          ! AR-10: Down moves a line; at the bottom edge it browses history.
           call handle_history_down(input_state)
         end if
       case('C')  ! Right arrow
@@ -8695,6 +8729,14 @@ contains
                           end if
                         end block
 
+                        ! Strip trailing newline(s): a copied "cmd\n" pastes as
+                        ! a ready-to-run "cmd", not a command plus a blank line
+                        ! (and still no auto-execute). (AR-10)
+                        do while (paste_len > 0 .and. &
+                                  iachar(paste_buffer(paste_len:paste_len)) == 10)
+                          paste_len = paste_len - 1
+                        end do
+
                         ! Insert the whole sanitized paste in one operation so
                         ! it lands in a single redraw, and light the just-pasted
                         ! span in reverse video until the next keystroke.
@@ -8718,16 +8760,16 @@ contains
             else
               ! Regular pasted byte: sanitize before buffering.
               !   tab (9)            -> keep
-              !   newline (10)       -> single space (keeps the line single, so a
-              !                         multi-line paste can't split into commands)
-              !   CR/DEL/NUL/other   -> drop (terminal-escape / control guard)
+              !   newline (10)       -> keep as a newline: a multi-line paste
+              !                         becomes a real multi-line buffer (AR-10).
+              !                         It is buffer content, not the Enter key,
+              !                         so it never auto-executes.
+              !   CR (13)            -> drop (so CR+LF collapses to one newline)
+              !   DEL/NUL/other      -> drop (terminal-escape / control guard)
               !   printable + UTF-8  -> keep
               ! ESC (27) never reaches here — handled by the branch above.
               ic = iachar(ch_paste)
-              if (ic == 10) then
-                paste_len = paste_len + 1
-                paste_buffer(paste_len:paste_len) = ' '
-              else if (ic == 9 .or. (ic >= 32 .and. ic /= 127)) then
+              if (ic == 10 .or. ic == 9 .or. (ic >= 32 .and. ic /= 127)) then
                 paste_len = paste_len + 1
                 paste_buffer(paste_len:paste_len) = ch_paste
               end if
@@ -9017,6 +9059,73 @@ contains
       call update_selection_on_shift_motion(input_state, old_cursor_pos)
     end if
   end subroutine
+
+  ! AR-10: move the cursor one logical line up/down within a multi-line buffer,
+  ! keeping the target column (clamped to the destination line's length). Returns
+  ! .false. — so the caller falls back to history navigation — for a single-line
+  ! buffer or when already at the top (up) / bottom (down) edge, matching fish.
+  ! Column math is byte-based (fine for ASCII pastes; slightly off for wide UTF-8).
+  function move_cursor_logical_line(input_state, go_up) result(moved)
+    type(input_state_t), intent(inout) :: input_state
+    logical, intent(in) :: go_up
+    logical :: moved
+    character(len=MAX_LINE_LEN) :: buf
+    integer :: ln, cur, i, cur_ls, col, prev_ls, nl_end, plen, target
+
+    moved = .false.
+    ln = input_state%length
+    if (ln <= 0) return
+    call state_buffer_get(input_state, buf)
+    if (index(buf(1:ln), char(10)) == 0) return   ! single line -> history
+
+    cur = input_state%cursor_pos
+    if (cur < 0) cur = 0
+    if (cur > ln) cur = ln
+
+    ! Column 0 of the current line = position just after the preceding newline.
+    cur_ls = 0
+    do i = cur, 1, -1
+      if (buf(i:i) == char(10)) then
+        cur_ls = i
+        exit
+      end if
+    end do
+    col = cur - cur_ls
+
+    if (go_up) then
+      if (cur_ls == 0) return                      ! first line -> history
+      prev_ls = 0
+      do i = cur_ls - 1, 1, -1
+        if (buf(i:i) == char(10)) then
+          prev_ls = i
+          exit
+        end if
+      end do
+      plen = (cur_ls - 1) - prev_ls                ! previous line length (bytes)
+      target = prev_ls + min(col, plen)
+    else
+      nl_end = 0                                   ! newline ending the current line
+      do i = cur + 1, ln
+        if (buf(i:i) == char(10)) then
+          nl_end = i
+          exit
+        end if
+      end do
+      if (nl_end == 0) return                      ! last line -> history
+      plen = 0
+      do i = nl_end + 1, ln
+        if (buf(i:i) == char(10)) exit
+        plen = plen + 1
+      end do
+      target = nl_end + min(col, plen)
+    end if
+
+    if (target < 0) target = 0
+    if (target > ln) target = ln
+    input_state%cursor_pos = target
+    input_state%dirty = .true.
+    moved = .true.
+  end function move_cursor_logical_line
 
   subroutine handle_history_up(input_state)
     type(input_state_t), intent(inout) :: input_state
@@ -10805,8 +10914,19 @@ contains
 
     ! Test mode skips the dirty redraw, so echo the inserted bytes directly —
     ! this replaces the per-char echo the old char-by-char paste loop relied on.
+    ! Convert embedded newlines to CR+LF (AR-10) so a multi-line paste doesn't
+    ! staircase in test mode.
     if (test_mode_enabled) then
-      write(output_unit, '(a)', advance='no') bytes(1:insert_len)
+      block
+        integer :: bi
+        do bi = 1, insert_len
+          if (bytes(bi:bi) == char(10)) then
+            write(output_unit, '(a)', advance='no') char(13) // char(10)
+          else
+            write(output_unit, '(a)', advance='no') bytes(bi:bi)
+          end if
+        end do
+      end block
       flush(output_unit)
     end if
 
@@ -12528,6 +12648,14 @@ contains
     k = 1
     do while (k <= cursor_pos)
       ch = state_buffer_get_char(module_input_state, k)
+      ! Embedded newline (AR-10 multi-line buffer): the redraw emits CR+LF, so
+      ! the next logical line begins at column 0 on the next row.
+      if (ch == char(10)) then
+        cursor_row = cursor_row + 1
+        cursor_col = 0
+        k = k + 1
+        cycle
+      end if
       byte_val = iand(iachar(ch), 255)
       if (byte_val < 128) then
         w = 1; k = k + 1

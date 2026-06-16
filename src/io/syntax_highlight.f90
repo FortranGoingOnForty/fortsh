@@ -694,7 +694,7 @@ contains
     type(hl_token_t), intent(out) :: tokens(MAX_TOKENS)
     integer, intent(out) :: num_tokens
 
-    integer :: i, tok_start, wlen
+    integer :: i, tok_start, wlen, nl_scan
     logical :: in_cmd_pos, has_slash, has_glob, has_equals, closed, var_bad
     logical :: prev_redirect
     character(len=1) :: ch, next_ch
@@ -714,13 +714,29 @@ contains
         cycle
       end if
 
-      ! Comment — rest of line
+      ! Newline (AR-10 multi-line buffer): a logical line break. Reset to command
+      ! position so the first word of the next line highlights as a command, and
+      ! render it verbatim (it belongs to no token).
+      if (ch == char(10)) then
+        in_cmd_pos = .true.
+        i = i + 1
+        cycle
+      end if
+
+      ! Comment — to end of line. Bound it at the next newline so a comment on
+      ! one line of a multi-line buffer doesn't swallow the following lines.
       if (ch == '#') then
+        nl_scan = i
+        do while (nl_scan <= input_len)
+          if (input(nl_scan:nl_scan) == char(10)) exit
+          nl_scan = nl_scan + 1
+        end do
         num_tokens = num_tokens + 1
         tokens(num_tokens)%start_pos = i
-        tokens(num_tokens)%end_pos = input_len
+        tokens(num_tokens)%end_pos = nl_scan - 1
         tokens(num_tokens)%token_type = HTOK_COMMENT
-        return  ! nothing after comment
+        i = nl_scan         ! resume at the newline (handled next iteration)
+        cycle
       end if
 
       ! Single-quoted string
@@ -989,8 +1005,8 @@ contains
           i = i + 2
           cycle
         end if
-        ! Word terminators
-        if (ch == ' ' .or. ch == char(9) .or. ch == ';' .or. ch == '|' .or. &
+        ! Word terminators (char(10) = newline ends a word in a multi-line buffer)
+        if (ch == ' ' .or. ch == char(9) .or. ch == char(10) .or. ch == ';' .or. ch == '|' .or. &
             ch == '&' .or. ch == '>' .or. ch == '<' .or. ch == '(' .or. &
             ch == ')' .or. ch == '#' .or. ch == '"' .or. ch == "'" .or. &
             ch == '$') exit
