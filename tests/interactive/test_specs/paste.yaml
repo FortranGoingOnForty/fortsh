@@ -1,5 +1,5 @@
 # Bracketed Paste Tests for fortsh
-# Instant-render paste, multi-line collapse, and ANSI-injection sanitization.
+# Instant-render paste, multi-line buffer (AR-10), and ANSI-injection sanitization.
 
 metadata:
   category: "Paste"
@@ -26,14 +26,19 @@ tests:
     match_type: "contains"
 
   # =============================================================
-  # MULTI-LINE PASTE — newlines collapse to spaces, ONE command runs
-  # (a pasted newline must NOT split into multiple commands)
+  # MULTI-LINE PASTE (AR-10) — newlines are preserved as a real multi-line
+  # buffer; Enter runs the lines as separate, sequential commands. (A pasted
+  # newline is buffer content, not the Enter key, so it never auto-executes.)
+  # Discriminator: the assignment on line 1 must take effect for line 2, which
+  # only happens if they run as two commands — collapsed, ${ZZ} would expand
+  # empty in the current shell and "hello-world" would never appear. The
+  # marker is not contiguous in the pasted text, so it can't match the echo.
   # =============================================================
-  - name: "Multi-line paste collapses to single command"
+  - name: "Multi-line paste runs lines as separate commands"
     steps:
-      - send_paste: "echo first\necho second"
+      - send_paste: "ZZ=hello\necho ${ZZ}-world"
       - send_key: "Enter"
-    expect_output: "first echo second"
+    expect_output: "hello-world"
     match_type: "contains"
 
   # =============================================================
