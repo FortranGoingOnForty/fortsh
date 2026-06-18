@@ -115,6 +115,25 @@ def test_trailing_newline_stripped(fortsh_path, tmp_path):
     assert cy == prompt_row, f"cursor on a trailing blank line: cy={cy} prompt_row={prompt_row}"
 
 
+def test_submit_from_interior_line_no_corruption(fortsh_path, tmp_path):
+    """Submitting with the cursor on an INTERIOR line of a multi-line buffer
+    must run output BELOW the whole block, not overwrite the lines beneath the
+    cursor (AR-10 regression: 'echo CC' became 'echo CCAA')."""
+    child, screen, drain = _session(tmp_path)
+    child.send(_paste(b"echo AA\necho BB\necho CC"))
+    drain(0.7)
+    child.send(b"\x1b[A")        # cursor onto the middle line (echo BB)
+    drain(0.5)
+    child.send(b"\r")
+    drain(1.0)
+    rows = _rows(screen)
+    _cleanup(child)
+    # The last command line stays an intact row (the bug fused output into it,
+    # e.g. "echo CCAA"), and each output is its own clean line.
+    assert "echo CC" in rows, f"command line corrupted by output: {rows}"
+    assert "AA" in rows and "BB" in rows and "CC" in rows, rows
+
+
 def test_up_arrow_moves_between_lines(fortsh_path, tmp_path):
     """Up in a multi-line buffer moves the cursor up a logical line (not history)."""
     child, screen, drain = _session(tmp_path)

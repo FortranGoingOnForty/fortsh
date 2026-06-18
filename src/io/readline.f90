@@ -2762,6 +2762,20 @@ contains
         ! before we move past it. The cursor is left at the input position
         ! (end of line for a paste); \r\n moves cleanly to the next row.
         if (submit_pending) then
+          ! AR-10: in a MULTI-LINE buffer the cursor may sit on an interior line
+          ! (e.g. after editing line 2 of a pasted block). Step down to the LAST
+          ! line first, so the newline — and the command output below it — lands
+          ! beneath the whole buffer instead of overwriting the lines under the
+          ! cursor. The physical cursor is at cursor_get_row_col(cursor_pos).
+          call cursor_get_row_col(prompt, module_input_state%length, term_cols, &
+                                  current_row, current_col)
+          call cursor_get_row_col(prompt, module_input_state%cursor_pos, term_cols, &
+                                  cursor_visual_pos, available_space)
+          if (current_row > cursor_visual_pos) then
+            do current_line = 1, current_row - cursor_visual_pos
+              write(output_unit, '(a)', advance='no') char(27) // '[B'
+            end do
+          end if
           write(output_unit, '(a)', advance='no') char(13) // char(10)
           flush(output_unit)
           submit_pending = .false.
