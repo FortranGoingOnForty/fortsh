@@ -134,6 +134,47 @@ def test_submit_from_interior_line_no_corruption(fortsh_path, tmp_path):
     assert "AA" in rows and "BB" in rows and "CC" in rows, rows
 
 
+def test_wrapped_input_under_multiline_prompt_no_dup(fortsh_path, tmp_path):
+    """Editing a WRAPPING line under a MULTI-LINE prompt must not duplicate a
+    wrapped segment (the Phase 2/3 diff mis-navigated rows; forced full rebuild).
+    Single logical line (no newline) — exercises the pre-existing diff bug."""
+    (tmp_path / ".fortshrc").write_text("PS1='topline-here\\n> '\n")
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["HOME"] = str(tmp_path)
+    env.pop("FORTSH_TEST_MODE", None)
+    child = pexpect.spawn(_bin(), [], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(24, 52))
+    screen = pyte.Screen(52, 24)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs=0.6):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(0.9)
+    drain(1.0)
+    child.send(_paste(b"echo aaaa bbbb cccc dddd eeee ffff gggg hhhh "
+                      b"iiii jjjj kkkk llll mmmm"))
+    drain(0.7)
+    for _ in range(20):
+        child.send(b"\x1b[D")
+    drain(0.5)
+    child.send(b"\x7f\x7f\x7f")
+    drain(0.5)
+    rows = _rows(screen)
+    _cleanup(child)
+    # The unique tail token must appear exactly once (the bug duplicated it).
+    n = sum(r.count("mmmm") for r in rows)
+    assert n == 1, f"wrapped segment duplicated ({n}x 'mmmm'): {rows}"
+
+
 def test_up_arrow_moves_between_lines(fortsh_path, tmp_path):
     """Up in a multi-line buffer moves the cursor up a logical line (not history)."""
     child, screen, drain = _session(tmp_path)

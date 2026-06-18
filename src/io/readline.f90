@@ -1593,6 +1593,10 @@ contains
     ! re-emit (its row-0 navigation is terminal-reflow-dependent and unreliable
     ! across a resize). rprompt comes back on the next normal redraw. (#87)
     logical :: resize_repaint
+    ! Force the robust full-rebuild redraw (skip the Phase 2/3 diff) for the case
+    ! the diff mis-navigates rows: a multi-line prompt + wrapping input.
+    logical :: force_full_redraw
+    integer :: fr_start_row, fr_end_row, fr_dummy
     ! Variables for multiline prompt support
     integer :: prompt_line_count
 
@@ -2369,6 +2373,18 @@ contains
             ! ESC7/ESC8 layer (re-emitted below), so it does NOT shift this row.
             call cursor_get_row_col(prompt, module_input_state%cursor_pos, &
                                     term_cols, current_row, current_col)
+            ! The Phase 2/3 content diff mis-navigates rows when a MULTI-LINE
+            ! prompt is combined with WRAPPING input (editing across a wrap
+            ! boundary duplicates a wrapped segment). Force the robust full
+            ! rebuild for that case; the fast diff still serves single-line
+            ! prompts and non-wrapping input.
+            force_full_redraw = .false.
+            if (index(prompt(1:len_trim(prompt)), char(10)) > 0) then
+              call cursor_get_row_col(prompt, 0, term_cols, fr_start_row, fr_dummy)
+              call cursor_get_row_col(prompt, module_input_state%length, &
+                                      term_cols, fr_end_row, fr_dummy)
+              if (fr_end_row > fr_start_row) force_full_redraw = .true.
+            end if
             ! Calculate where start of prompt is (always row 0, col 0 of prompt line)
             ! === Buffered redraw: accumulate entire frame, write once ===
             ! This prevents ESC[J clear from rendering as a blank frame before
@@ -2599,7 +2615,8 @@ contains
 
             ! Phase 2+3: find first differing byte, skip matching prefix
             first_diff_byte = 0
-            if (prev_render_valid .and. cframe_pos > 0 .and. prev_render_len > 0) then
+            if (prev_render_valid .and. .not. force_full_redraw .and. &
+                cframe_pos > 0 .and. prev_render_len > 0) then
               do i_redraw = 1, min(cframe_pos, prev_render_len)
                 if (content_frame(i_redraw:i_redraw) /= prev_render_frame(i_redraw:i_redraw)) then
                   first_diff_byte = i_redraw
