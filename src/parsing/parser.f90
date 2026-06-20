@@ -2712,7 +2712,7 @@ contains
     logical :: needs_more
     type(token_t), allocatable :: tokens(:)
     integer :: num_tokens, i
-    integer :: if_depth, do_depth, case_depth, brace_depth
+    integer :: if_depth, do_depth, case_depth, brace_depth, loop_pending
 
     needs_more = .false.
 
@@ -2724,6 +2724,7 @@ contains
     do_depth = 0
     case_depth = 0
     brace_depth = 0
+    loop_pending = 0   ! for/while/until headers not yet closed by their `do`
 
     do i = 1, num_tokens
       if (tokens(i)%token_type /= TOKEN_KEYWORD) cycle
@@ -2732,7 +2733,13 @@ contains
         if_depth = if_depth + 1
       case ('fi')
         if_depth = if_depth - 1
+      case ('for', 'while', 'until', 'select')
+        ! A loop header needs a `do` (and then `done`) — without this, the
+        ! header line reads as a complete command, the rest is orphaned, and a
+        ! `for i in 1 2 3` typed/pasted line-by-line never continues.
+        loop_pending = loop_pending + 1
       case ('do')
+        if (loop_pending > 0) loop_pending = loop_pending - 1  ! satisfies a header
         do_depth = do_depth + 1
       case ('done')
         do_depth = do_depth - 1
@@ -2747,7 +2754,8 @@ contains
       end select
     end do
 
-    needs_more = (if_depth > 0 .or. do_depth > 0 .or. case_depth > 0 .or. brace_depth > 0)
+    needs_more = (if_depth > 0 .or. do_depth > 0 .or. case_depth > 0 .or. &
+                  brace_depth > 0 .or. loop_pending > 0)
   end function
 
   function remove_line_continuations(input) result(output)

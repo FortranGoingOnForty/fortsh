@@ -112,6 +112,38 @@ tests:
     expect_output: "1"
     match_type: "contains"
 
+  - name: "PS2 continues a for header on its own line"
+    # The `for ... in ...` header alone (no `do` yet) must continue, not run as
+    # a complete command leaving an orphaned `do` (needs_compound_continuation
+    # tracks for/while/until). Matches a paste delivered line-by-line.
+    steps:
+      - send: "for i in 1 2 3"
+      - send_key: "Enter"
+      - send: "do"
+      - send_key: "Enter"
+      - send: "echo \"v$i\""
+      - send_key: "Enter"
+      - send: "done"
+      - send_key: "Enter"
+    expect_output: "v3"
+    match_type: "contains"
+
+  - name: "PS2 continues a while header on its own line"
+    steps:
+      - send_line: "n=0"
+      - send: "while [ $n -lt 2 ]"
+      - send_key: "Enter"
+      - send: "do"
+      - send_key: "Enter"
+      - send: "echo \"n$n\""
+      - send_key: "Enter"
+      - send: "n=$((n+1))"
+      - send_key: "Enter"
+      - send: "done"
+      - send_key: "Enter"
+    expect_output: "n1"
+    match_type: "contains"
+
   - name: "Incomplete quote shows continuation"
     steps:
       - send: "echo 'hello"
