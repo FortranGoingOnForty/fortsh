@@ -124,6 +124,11 @@ program fortran_shell
   ! Initialize shell (reads execute_command_string/execute_script_file to set is_interactive)
   call initialize_shell(shell)
 
+  ! Interactive syntax errors should read "fortsh: ..." (it's fortsh's own
+  ! parser), not "sh: -c: line 1: ..." which looks like a shell-out; the -c /
+  ! script path keeps the bash-compatible prefix for the POSIX output tests.
+  call set_parser_interactive(shell%is_interactive)
+
   ! Set option_noexec if -n flag was used
   if (syntax_check_only) then
     shell%option_noexec = .true.

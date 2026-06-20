@@ -15,9 +15,16 @@ module grammar_parser
   implicit none
   private
   public :: parse_with_grammar, parse_command_line, last_parse_had_error
+  public :: set_parser_interactive
 
   ! Module-level variable to track if last parse had an error
   logical :: last_parse_had_error = .false.
+
+  ! Whether the shell is interactive — only affects the syntax-error message
+  ! prefix. Non-interactive keeps bash's "sh: -c: line 1:" so the POSIX output
+  ! tests still diff equal against the reference `sh -c`; interactive uses the
+  ! shell's own name so a syntax error doesn't look like a shell-out.
+  logical, save :: g_parser_interactive = .false.
 
   integer, parameter :: MAX_PARSE_DEPTH = 128
 
@@ -33,6 +40,24 @@ module grammar_parser
   end type parser_state_t
 
 contains
+
+  ! Set by the shell at startup; selects the syntax-error message prefix.
+  subroutine set_parser_interactive(flag)
+    logical, intent(in) :: flag
+    g_parser_interactive = flag
+  end subroutine
+
+  ! Prefix for a parser syntax-error diagnostic. Interactive: the shell's own
+  ! name ("fortsh: ") — a syntax error is fortsh's, not an external sh. Non-
+  ! interactive: bash's "-c" format, which the POSIX output tests diff against.
+  function parser_err_prefix() result(p)
+    character(len=:), allocatable :: p
+    if (g_parser_interactive) then
+      p = 'fortsh: '
+    else
+      p = 'sh: -c: line 1: '
+    end if
+  end function
 
   function parse_command_line(input) result(root)
     character(len=*), intent(in) :: input
@@ -117,7 +142,7 @@ contains
     ! error — without this, the leading fragment ran and the rest was silently
     ! dropped while the shell reported success (bash returns 2 here).
     if (tok%token_type /= TOKEN_EOF .and. .not. state%has_error) then
-      call write_stderr('sh: -c: line 1: syntax error near unexpected token `' &
+      call write_stderr(parser_err_prefix() // 'syntax error near unexpected token `' &
                         // trim(tok%value) // "'")
       state%has_error = .true.
       state%error_msg = 'syntax error near unexpected token ' // trim(tok%value)
@@ -135,9 +160,9 @@ contains
       tok = current_token(state)
       if (tok%token_type == TOKEN_OPERATOR .and. &
           (trim(tok%value) == ';' .or. trim(tok%value) == ';;' .or. trim(tok%value) == '&')) then
-        call write_stderr('sh: -c: line 1: syntax error near unexpected token `' // trim(tok%value) // "'")
+        call write_stderr(parser_err_prefix() // 'syntax error near unexpected token `' // trim(tok%value) // "'")
         if (allocated(state%raw_input)) then
-          call write_stderr("sh: -c: line 1: `" // trim(state%raw_input) // "'")
+          call write_stderr(parser_err_prefix() // "`" // trim(state%raw_input) // "'")
         end if
         state%has_error = .true.
         state%error_msg = 'syntax error near unexpected token ' // trim(tok%value)
@@ -160,9 +185,9 @@ contains
           call skip_newlines(state)
         else if (trim(tok%value) == ';;') then
           ! ;; is only valid in case statements, not here
-          call write_stderr('sh: -c: line 1: syntax error near unexpected token `;;''')
+          call write_stderr(parser_err_prefix() // 'syntax error near unexpected token `;;''')
           if (allocated(state%raw_input)) then
-            call write_stderr("sh: -c: line 1: `" // trim(state%raw_input) // "'")
+            call write_stderr(parser_err_prefix() // "`" // trim(state%raw_input) // "'")
           end if
           ! Set error and return null
           state%has_error = .true.
@@ -259,7 +284,7 @@ contains
         temp_node => parse_command_node(state)
         if (.not. associated(temp_node)) then
           ! Incomplete pipeline - set error, print message, and exit
-          call write_stderr('sh: -c: line 1: syntax error: unexpected end of file')
+          call write_stderr(parser_err_prefix() // 'syntax error: unexpected end of file')
           state%has_error = .true.
           exit
         end if
@@ -1299,7 +1324,7 @@ contains
     call skip_newlines(state)
     ! POSIX: Empty subshell () is a syntax error
     if (.not. associated(commands)) then
-      call write_stderr("sh: -c: line 1: syntax error near unexpected token `)'")
+      call write_stderr(parser_err_prefix() // "syntax error near unexpected token `)'")
       if (allocated(state%raw_input)) then
         call write_stderr("sh: -c: `" // trim(state%raw_input) // "'")
       end if
