@@ -8090,7 +8090,7 @@ contains
   end subroutine
 
   subroutine get_process_list(processes, pids, num_processes)
-    use system_interface, only: execute_and_capture
+    use system_interface, only: execute_argv_and_capture
     character(len=MAX_LINE_LEN), intent(out) :: processes(MAX_MENU_ITEMS)
     integer, intent(out) :: pids(MAX_MENU_ITEMS)
     integer, intent(out) :: num_processes
@@ -8105,18 +8105,23 @@ contains
     call get_environment_variable('USER', username, status=stat)
     if (stat /= 0) username = ''
 
-    ! Capture ps output via pipe+fork (no temp file, no world-readable leak)
+    ! Run ps with an argv vector and no shell, so $USER can never inject
+    ! commands (SEC-1). Each element below is a single argv entry.
 #if defined(__APPLE__) || defined(__FreeBSD__)
     if (len_trim(username) > 0) then
-      ps_output = execute_and_capture('ps -u ' // trim(username) // ' -o pid= -o comm=')
+      ps_output = execute_argv_and_capture( &
+        [character(len=64) :: 'ps', '-u', trim(username), '-o', 'pid=', '-o', 'comm='])
     else
-      ps_output = execute_and_capture('ps -ax -o pid= -o comm=')
+      ps_output = execute_argv_and_capture( &
+        [character(len=64) :: 'ps', '-ax', '-o', 'pid=', '-o', 'comm='])
     end if
 #else
     if (len_trim(username) > 0) then
-      ps_output = execute_and_capture('ps -u ' // trim(username) // ' -o pid,comm --no-headers')
+      ps_output = execute_argv_and_capture( &
+        [character(len=64) :: 'ps', '-u', trim(username), '-o', 'pid,comm', '--no-headers'])
     else
-      ps_output = execute_and_capture('ps -eo pid,comm --no-headers')
+      ps_output = execute_argv_and_capture( &
+        [character(len=64) :: 'ps', '-eo', 'pid,comm', '--no-headers'])
     end if
 #endif
 
