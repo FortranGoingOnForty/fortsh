@@ -24,6 +24,26 @@ jobs:
       - name: Smoke-test binary
         run: test -x bin_par/fortsh && echo 'echo ok' | ./bin_par/fortsh
 
+  repo-hygiene:
+    # No generated files in the index (QUAL-5 / QUAL-3): object files,
+    # patch rejects, bytecode, virtualenvs, or compiled (ELF/Mach-O) binaries.
+    name: Repo Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No tracked build artifacts
+        run: |
+          bad=$(git ls-files | grep -E '(\.(o|a|rej|pyc|mod)$|(^|/)(\.venv|__pycache__)/)' || true)
+          if [ -n "$bad" ]; then
+            echo "Tracked build artifacts found:"; echo "$bad"; exit 1
+          fi
+      - name: No tracked compiled binaries
+        run: |
+          bad=$(git ls-files -z | xargs -0 file --mime-type | grep -E 'application/x-(executable|sharedlib|pie-executable|mach-binary)' || true)
+          if [ -n "$bad" ]; then
+            echo "Tracked compiled binaries found:"; echo "$bad"; exit 1
+          fi
+
   posix-tests:
     name: POSIX Tests
     runs-on: ubuntu-latest
