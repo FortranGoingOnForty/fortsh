@@ -23,6 +23,12 @@ tests/test_parser_simple
 tests/test_readline_pooling
 tests/test_variables_simple
 
+# Python: virtualenvs and bytecode (recreate via tests/interactive/requirements.txt)
+.venv/
+venv/
+__pycache__/
+*.pyc
+
 # Backup files
 *.bak
 *.tmp
