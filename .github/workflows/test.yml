@@ -43,6 +43,17 @@ jobs:
           if [ -n "$bad" ]; then
             echo "Tracked compiled binaries found:"; echo "$bad"; exit 1
           fi
+      - name: Packaging versions match version.f90
+        # fortsh.spec, PKGBUILD, and .SRCINFO drift silently because stale
+        # tags still resolve (QUAL-9); version.f90 is the single source.
+        run: |
+          ver=$(grep -oP 'FORTSH_VERSION = "\K[0-9.]+' src/common/version.f90)
+          echo "version.f90: $ver"
+          fail=0
+          grep -q "^Version:[[:space:]]*$ver\$" fortsh.spec  || { echo "fortsh.spec Version mismatch"; fail=1; }
+          grep -q "^pkgver=$ver\$" PKGBUILD                  || { echo "PKGBUILD pkgver mismatch"; fail=1; }
+          grep -q "pkgver = $ver\$" .SRCINFO                 || { echo ".SRCINFO pkgver mismatch"; fail=1; }
+          exit $fail
 
   posix-tests:
     name: POSIX Tests
