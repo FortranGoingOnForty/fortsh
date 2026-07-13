@@ -12189,6 +12189,26 @@ contains
   ! FZF Integration (Ctrl-F fuzzy file finder)
   ! ===========================================================================
 
+  ! Create a private 0600 temp file (mkstemp: O_EXCL, no symlink follow) for an
+  ! fzf browser's output. Replaces the fixed /tmp/fortsh_fzf_*.tmp names that a
+  ! pre-planted symlink could hijack to truncate a victim file, and that leaked
+  ! selections world-readable under umask 022 (SEC-2). ok=.false. → abort browse.
+  subroutine fzf_open_tempfile(tmpfile, ok)
+    character(len=*), intent(out) :: tmpfile
+    logical, intent(out) :: ok
+    ok = make_temp_file('fortsh_fzf_', tmpfile)
+  end subroutine
+
+  ! Delete an fzf temp file on any exit path (fzf cancel included). Uses a
+  ! Fortran open+close(delete) so no shell is involved.
+  subroutine fzf_remove_tempfile(tmpfile)
+    character(len=*), intent(in) :: tmpfile
+    integer :: u, ios
+    if (len_trim(tmpfile) == 0) return
+    open(newunit=u, file=trim(tmpfile), status='old', iostat=ios)
+    if (ios == 0) close(u, status='delete')
+  end subroutine
+
   subroutine launch_fzf_file_browser(input_state, prompt)
     type(input_state_t), intent(inout) :: input_state
     character(len=*), intent(in) :: prompt
@@ -12197,6 +12217,8 @@ contains
     integer :: unit, iostat, exit_status
     logical :: file_exists
     character(len=256) :: bat_path
+    character(len=1024) :: tmpfile
+    logical :: temp_ok
     ! Variables for block construct workaround (flang-new compatibility)
     character(len=1024) :: line, combined_selection
     logical :: first_line
@@ -12238,13 +12260,22 @@ contains
       preview_cmd = 'head -n 500 "{}"'
     end if
 
+    ! Secure temp file for fzf's output (SEC-2)
+    call fzf_open_tempfile(tmpfile, temp_ok)
+    if (.not. temp_ok) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: could not create a temporary file.'
+      input_state%dirty = .true.
+      return
+    end if
+
     ! Build fzf command with options (including multi-select)
     write(fzf_cmd, '(a)') 'fzf --multi --height=40% --reverse --border ' // &
           '--preview=''' // trim(preview_cmd) // ''' ' // &
           '--preview-window=right:60%:wrap ' // &
           '--bind=''ctrl-/:toggle-preview'' ' // &
           '--header=''TAB: Multi-select | Ctrl-/: Toggle Preview | ESC: Cancel'' ' // &
-          '> /tmp/fortsh_fzf_selection.tmp 2>/dev/null'
+          '> ' // trim(tmpfile) // ' 2>/dev/null'
 
     ! Clear screen and show fzf
     write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
@@ -12256,9 +12287,9 @@ contains
 
     ! Read selection(s) if fzf exited successfully (supports multi-select)
     if (exit_status == 0) then
-      inquire(file='/tmp/fortsh_fzf_selection.tmp', exist=file_exists)
+      inquire(file=trim(tmpfile), exist=file_exists)
       if (file_exists) then
-        open(newunit=unit, file='/tmp/fortsh_fzf_selection.tmp', &
+        open(newunit=unit, file=trim(tmpfile), &
              status='old', action='read', iostat=iostat)
         if (iostat == 0) then
           ! WORKAROUND: Removed block construct for flang-new compatibility
@@ -12288,10 +12319,9 @@ contains
             call insert_string_at_cursor(input_state, trim(combined_selection))
           end if
         end if
-        ! Clean up temp file
-        call safe_execute_command('rm -f /tmp/fortsh_fzf_selection.tmp 2>/dev/null')
       end if
     end if
+    call fzf_remove_tempfile(tmpfile)  ! remove on all paths, incl. ESC cancel
 
     ! Restore terminal and redraw prompt
     write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
@@ -12324,6 +12354,8 @@ contains
     character(len=1024) :: fzf_cmd, selected_cmd, history_file
     integer :: unit, iostat, exit_status
     logical :: file_exists
+    character(len=1024) :: tmpfile
+    logical :: temp_ok
     character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Check if fzf is installed
@@ -12348,6 +12380,15 @@ contains
       return
     end if
 
+    ! Secure temp file for fzf's output (SEC-2)
+    call fzf_open_tempfile(tmpfile, temp_ok)
+    if (.not. temp_ok) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: could not create a temporary file.'
+      input_state%dirty = .true.
+      return
+    end if
+
     ! Build fzf command for history
     ! tac reverses the file so recent commands appear first
     ! Use exact match for consistency
@@ -12356,7 +12397,7 @@ contains
           '--no-sort ' // &
           '--tiebreak=index ' // &
           '--header=''Ctrl-H: History Browser | Select: Replace Line | ESC: Cancel'' ' // &
-          '> /tmp/fortsh_fzf_history.tmp 2>/dev/null'
+          '> ' // trim(tmpfile) // ' 2>/dev/null'
 
     ! Clear screen and show fzf
     write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
@@ -12368,9 +12409,9 @@ contains
 
     ! Read selection if fzf exited successfully
     if (exit_status == 0) then
-      inquire(file='/tmp/fortsh_fzf_history.tmp', exist=file_exists)
+      inquire(file=trim(tmpfile), exist=file_exists)
       if (file_exists) then
-        open(newunit=unit, file='/tmp/fortsh_fzf_history.tmp', &
+        open(newunit=unit, file=trim(tmpfile), &
              status='old', action='read', iostat=iostat)
         if (iostat == 0) then
           read(unit, '(a)', iostat=iostat) selected_cmd
@@ -12383,10 +12424,9 @@ contains
             input_state%cursor_pos = input_state%length
           end if
         end if
-        ! Clean up temp file
-        call safe_execute_command('rm -f /tmp/fortsh_fzf_history.tmp 2>/dev/null')
       end if
     end if
+    call fzf_remove_tempfile(tmpfile)
 
     ! Restore terminal and redraw prompt
     write(output_unit, '(a)', advance='no') char(27) // '[2J'  ! Clear screen
@@ -12408,6 +12448,8 @@ contains
     character(len=1024) :: fzf_cmd, selected_dir
     integer :: unit, iostat, exit_status
     logical :: file_exists
+    character(len=1024) :: tmpfile
+    logical :: temp_ok
     character(len=MAX_LINE_LEN) :: temp_buf
 
     ! Check if fzf is installed
@@ -12415,6 +12457,15 @@ contains
     if (exit_status /= 0) then
       write(output_unit, '()')
       write(output_unit, '(a)') 'Error: fzf is not installed.'
+      input_state%dirty = .true.
+      return
+    end if
+
+    ! Secure temp file for fzf's output (SEC-2)
+    call fzf_open_tempfile(tmpfile, temp_ok)
+    if (.not. temp_ok) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: could not create a temporary file.'
       input_state%dirty = .true.
       return
     end if
@@ -12428,7 +12479,7 @@ contains
           '--preview=''ls -lah "{}"'' ' // &
           '--preview-window=right:60%:wrap ' // &
           '--header=''Alt-J: Jump to Directory | Select: CD into dir | ESC: Cancel'' ' // &
-          '> /tmp/fortsh_fzf_dir.tmp 2>/dev/null'
+          '> ' // trim(tmpfile) // ' 2>/dev/null'
 
     ! Clear screen and show fzf
     write(output_unit, '(a)', advance='no') char(27) // '[2J'
@@ -12440,9 +12491,9 @@ contains
 
     ! Read selection and cd into it
     if (exit_status == 0) then
-      inquire(file='/tmp/fortsh_fzf_dir.tmp', exist=file_exists)
+      inquire(file=trim(tmpfile), exist=file_exists)
       if (file_exists) then
-        open(newunit=unit, file='/tmp/fortsh_fzf_dir.tmp', &
+        open(newunit=unit, file=trim(tmpfile), &
              status='old', action='read', iostat=iostat)
         if (iostat == 0) then
           read(unit, '(a)', iostat=iostat) selected_dir
@@ -12463,9 +12514,9 @@ contains
             input_state%cursor_pos = input_state%length
           end if
         end if
-        call safe_execute_command('rm -f /tmp/fortsh_fzf_dir.tmp 2>/dev/null')
       end if
     end if
+    call fzf_remove_tempfile(tmpfile)
 
     ! Restore terminal
     write(output_unit, '(a)', advance='no') char(27) // '[2J'
@@ -12485,6 +12536,8 @@ contains
     character(len=1024) :: fzf_cmd, selected_item, git_cmd
     character(len=512) :: preview_cmd
     character(len=MAX_LINE_LEN) :: temp_buf
+    character(len=1024) :: tmpfile
+    logical :: temp_ok
     integer :: unit, iostat, exit_status
     logical :: file_exists, in_git_repo
     ! Variables for block construct workaround (flang-new compatibility)
@@ -12521,12 +12574,21 @@ contains
           'elif git show "{}" >/dev/null 2>&1; then git show --stat "{}"; ' // &
           'else git diff "{}"; fi'
 
+    ! Secure temp file for fzf's output (SEC-2)
+    call fzf_open_tempfile(tmpfile, temp_ok)
+    if (.not. temp_ok) then
+      write(output_unit, '()')
+      write(output_unit, '(a)') 'Error: could not create a temporary file.'
+      input_state%dirty = .true.
+      return
+    end if
+
     write(fzf_cmd, '(a)') trim(git_cmd) // ' | ' // &
           'fzf --height=40% --reverse --border --ansi ' // &
           '--preview=''' // trim(preview_cmd) // ''' ' // &
           '--preview-window=right:60%:wrap ' // &
           '--header=''Alt-G: Git Browser | Select file or branch | ESC: Cancel'' ' // &
-          '> /tmp/fortsh_fzf_git.tmp 2>/dev/null'
+          '> ' // trim(tmpfile) // ' 2>/dev/null'
 
     ! Clear screen and show fzf
     write(output_unit, '(a)', advance='no') char(27) // '[2J'
@@ -12538,9 +12600,9 @@ contains
 
     ! Read selection
     if (exit_status == 0) then
-      inquire(file='/tmp/fortsh_fzf_git.tmp', exist=file_exists)
+      inquire(file=trim(tmpfile), exist=file_exists)
       if (file_exists) then
-        open(newunit=unit, file='/tmp/fortsh_fzf_git.tmp', &
+        open(newunit=unit, file=trim(tmpfile), &
              status='old', action='read', iostat=iostat)
         if (iostat == 0) then
           read(unit, '(a)', iostat=iostat) selected_item
@@ -12551,9 +12613,9 @@ contains
             call insert_string_at_cursor(input_state, trim(selected_item))
           end if
         end if
-        call safe_execute_command('rm -f /tmp/fortsh_fzf_git.tmp 2>/dev/null')
       end if
     end if
+    call fzf_remove_tempfile(tmpfile)
 
     ! Restore terminal
     write(output_unit, '(a)', advance='no') char(27) // '[2J'
