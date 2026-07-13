@@ -39,4 +39,15 @@ compare_output "cat <(echo) contents" 'cat <(echo hello world)'
 compare_output "diff <(a) <(b)" 'diff <(printf "a\nb\n") <(printf "a\nc\n")'
 compare_output "while read < <(cmd)" 'while read l; do echo "got:$l"; done < <(printf "x\ny\n")'
 
+section "5. No predictable /tmp FIFO files (SEC-3 dead path removed)"
+# The live path uses pipe + /dev/fd; the old predictable /tmp/fortsh_fifo_*
+# helpers were deleted. Nothing should ever create such a file.
+fifo_dir=$(mktemp -d)
+TMPDIR="$fifo_dir" run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c \
+    'for i in $(seq 1 10); do cat <(echo x) >/dev/null; done' >/dev/null 2>&1
+n=$(find /tmp "$fifo_dir" -maxdepth 1 -name 'fortsh_fifo_*' 2>/dev/null | wc -l)
+rm -rf "$fifo_dir"
+if [ "$n" -eq 0 ]; then pass "no fortsh_fifo_* temp files created"
+else fail "no fortsh_fifo_* temp files created" "0" "$n"; fi
+
 print_summary

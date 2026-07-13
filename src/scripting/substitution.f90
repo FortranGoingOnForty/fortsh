@@ -189,55 +189,6 @@ contains
   end subroutine
 
 
-  ! Process substitution: <(command) and >(command)
-  function create_process_substitution(command, is_input) result(proc_subst)
-    character(len=*), intent(in) :: command
-    logical, intent(in) :: is_input
-    type(proc_subst_t) :: proc_subst
-
-    character(len=256) :: fifo_name
-    character(len=:), allocatable :: full_cmd
-    
-    proc_subst%is_input = is_input
-    proc_subst%active = .false.
-    
-    ! Generate FIFO name
-    fifo_name = '/tmp/fortsh_fifo_' // generate_temp_suffix()
-    proc_subst%filename = fifo_name
-    
-    ! Create named pipe (FIFO) - placeholder
-    
-    if (is_input) then
-      ! <(command) - command writes to FIFO, shell reads from it
-      full_cmd = '(' // trim(command) // ') > ' // trim(fifo_name) // ' &'
-    else
-      ! >(command) - shell writes to FIFO, command reads from it  
-      full_cmd = '(' // trim(command) // ') < ' // trim(fifo_name) // ' &'
-    end if
-    
-    ! Start background process - placeholder
-    proc_subst%active = .true.
-  end function
-
-  subroutine cleanup_process_substitution(proc_subst)
-    type(proc_subst_t), intent(inout) :: proc_subst
-    
-    if (proc_subst%active) then
-      ! Remove FIFO - placeholder
-      proc_subst%active = .false.
-      proc_subst%filename = ''
-      proc_subst%fd = -1
-    end if
-  end subroutine
-
-  function generate_temp_suffix() result(suffix)
-    character(len=16) :: suffix
-    integer :: values(8)
-    
-    call date_and_time(values=values)
-    write(suffix, '(I4.4,I2.2,I2.2,I2.2,I2.2,I2.2)') values(1), values(2), values(3), values(5), values(6), values(7)
-  end function
-
   ! Brace expansion implementation
   subroutine expand_braces(input, expanded_list, count)
     character(len=*), intent(in) :: input
@@ -416,50 +367,6 @@ contains
   ! ===========================================================================
   ! Process Substitution FIFO Management
   ! ===========================================================================
-
-  ! Generate a unique FIFO path in /tmp
-  function generate_fifo_path(shell) result(fifo_path)
-    type(shell_state_t), intent(in) :: shell
-    character(len=MAX_PATH_LEN) :: fifo_path
-    character(len=32) :: suffix
-
-    ! Create unique suffix based on PID, timestamp, and counter
-    suffix = generate_temp_suffix()
-    write(fifo_path, '(A,I0,A,A,A,I0)') '/tmp/fortsh_fifo_', shell%shell_pid, '_', &
-                                         trim(suffix), '_', shell%num_proc_subst_fifos
-  end function
-
-  ! Create a FIFO and track it in shell state
-  function create_fifo_for_subst(shell, is_input) result(fifo_path)
-    type(shell_state_t), intent(inout) :: shell
-    logical, intent(in) :: is_input
-    character(len=MAX_PATH_LEN) :: fifo_path
-    logical :: success
-    integer :: idx
-
-    ! Generate unique FIFO path
-    fifo_path = generate_fifo_path(shell)
-
-    ! Create the FIFO with mode 0600 (owner read/write)
-    success = create_fifo(trim(fifo_path))
-
-    if (.not. success) then
-      write(error_unit, '(A)') 'fortsh: failed to create FIFO: ' // trim(fifo_path)
-      fifo_path = ''
-      return
-    end if
-
-    ! Track the FIFO in shell state (grow dynamically)
-    if (shell%num_proc_subst_fifos >= shell%proc_subst_fifos_cap) then
-      call grow_fifo_array(shell)
-    end if
-    idx = shell%num_proc_subst_fifos + 1
-    shell%proc_subst_fifos(idx)%fifo_path = fifo_path
-    shell%proc_subst_fifos(idx)%is_input = is_input
-    shell%proc_subst_fifos(idx)%active = .true.
-    shell%proc_subst_fifos(idx)%pid = 0
-    shell%num_proc_subst_fifos = idx
-  end function
 
   ! Register a native (pipe + /dev/fd/N) process substitution for later cleanup.
   ! Unlike the FIFO path there is no temp file; we track the child pid and the
