@@ -1,7 +1,7 @@
 # Maintainer: mfw <espadonne@outlook.com>
 
 pkgname=fortsh
-pkgver=1.7.0
+pkgver=1.8.0
 pkgrel=1
 pkgdesc='Fortran Shell - A modern shell implementation with AST-based parsing'
 arch=('x86_64' 'aarch64')
@@ -25,8 +25,8 @@ check() {
 package() {
     cd fortsh
 
-    # Install main binary
-    install -Dm755 bin/fortsh "$pkgdir/usr/bin/fortsh"
+    # Install main binary via the Makefile so there is one install path
+    make DESTDIR="$pkgdir" PREFIX=/usr install
 
     # Install documentation
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"

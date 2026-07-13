@@ -5,6 +5,10 @@ Automated testing framework for fortsh's interactive features using Python and p
 ## Quick Start
 
 ```bash
+# Create the virtual environment (first time only; .venv is not tracked)
+python3 -m venv tests/interactive/.venv
+tests/interactive/.venv/bin/pip install -r tests/interactive/requirements.txt
+
 # Activate the virtual environment
 source tests/interactive/.venv/bin/activate
 

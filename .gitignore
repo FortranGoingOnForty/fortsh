@@ -7,6 +7,27 @@ CLAUDE.md
 *.mod
 *.o
 *.a
+*.rej
+*.menu_workaround
+Archive/
+/*.csv
+
+# Compiled test binaries (built into $(BUILDDIR) by make; never commit)
+tests/test_ast_simple
+tests/test_dashboard
+tests/test_executor_simple
+tests/test_expansion_simple
+tests/test_lexer_simple
+tests/test_memory_pool
+tests/test_parser_simple
+tests/test_readline_pooling
+tests/test_variables_simple
+
+# Python: virtualenvs and bytecode (recreate via tests/interactive/requirements.txt)
+.venv/
+venv/
+__pycache__/
+*.pyc
 
 # Backup files
 *.bak

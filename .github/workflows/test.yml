@@ -10,6 +10,57 @@ jobs:
   # ============================================================================
   # x86_64 Linux (gfortran)
   # ============================================================================
+  parallel-build:
+    # Guards the per-rule module prerequisites in the Makefile (QUAL-1).
+    # A missing prerequisite only fails under -jN, never under -j1.
+    name: Parallel Build (-j)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build with make -j$(nproc)
+        run: make -j$(nproc)
+      - name: Smoke-test binary
+        run: test -x bin/fortsh && echo 'echo ok' | ./bin/fortsh
+      - name: Staged install honors DESTDIR/PREFIX (as non-root)
+        run: |
+          dest=$(mktemp -d)
+          make DESTDIR="$dest" install
+          test -x "$dest/usr/local/bin/fortsh"
+          [ "$(stat -c %a "$dest/usr/local/bin/fortsh")" = "755" ]
+
+  repo-hygiene:
+    # No generated files in the index (QUAL-5 / QUAL-3): object files,
+    # patch rejects, bytecode, virtualenvs, or compiled (ELF/Mach-O) binaries.
+    name: Repo Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No tracked build artifacts
+        run: |
+          bad=$(git ls-files | grep -E '(\.(o|a|rej|pyc|mod)$|(^|/)(\.venv|__pycache__)/)' || true)
+          if [ -n "$bad" ]; then
+            echo "Tracked build artifacts found:"; echo "$bad"; exit 1
+          fi
+      - name: No tracked compiled binaries
+        run: |
+          bad=$(git ls-files -z | xargs -0 file --mime-type | grep -E 'application/x-(executable|sharedlib|pie-executable|mach-binary)' || true)
+          if [ -n "$bad" ]; then
+            echo "Tracked compiled binaries found:"; echo "$bad"; exit 1
+          fi
+      - name: Packaging versions match version.f90
+        # fortsh.spec, PKGBUILD, and .SRCINFO drift silently because stale
+        # tags still resolve (QUAL-9); version.f90 is the single source.
+        run: |
+          ver=$(grep -oP 'FORTSH_VERSION = "\K[0-9.]+' src/common/version.f90)
+          echo "version.f90: $ver"
+          fail=0
+          grep -q "^Version:[[:space:]]*$ver\$" fortsh.spec  || { echo "fortsh.spec Version mismatch"; fail=1; }
+          grep -q "^pkgver=$ver\$" PKGBUILD                  || { echo "PKGBUILD pkgver mismatch"; fail=1; }
+          grep -q "pkgver = $ver\$" .SRCINFO                 || { echo ".SRCINFO pkgver mismatch"; fail=1; }
+          exit $fail
+
   posix-tests:
     name: POSIX Tests
     runs-on: ubuntu-latest

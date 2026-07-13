@@ -37,9 +37,10 @@ program fortran_shell
   character(len=MAX_VAR_VALUE_LEN) :: prompt_str  ! Fixed-length to avoid LLVM Flang heap corruption
   character(len=MAX_VAR_VALUE_LEN) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
   character(len=:), allocatable :: rprompt_value  ! RPROMPT variable value
-  integer :: iostat, num_args
+  integer :: iostat, num_args, arg_idx, cmd_string_idx
   character(len=MAX_PATH_LEN) :: arg1, command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
+  logical :: no_rc_file
   character(len=:), allocatable :: script_file
   ! Command duration tracking
   integer :: cmd_start_time, cmd_end_time, cmd_duration_ms, clock_rate
@@ -73,53 +74,77 @@ program fortran_shell
   execute_command_string = .false.
   execute_script_file = .false.
   syntax_check_only = .false.
+  no_rc_file = .false.
+  cmd_string_idx = 0
 
   ! Check for command-line arguments FIRST to detect non-interactive modes
   num_args = command_argument_count()
 
-  ! Handle command-line arguments for script execution
-  if (num_args > 0) then
-    call get_command_argument(1, arg1)
+  ! Scan leading options; the first non-option argument is a script file.
+  ! Unknown dash-prefixed arguments are an error (exit 2), matching bash —
+  ! silently ignoring them ran nothing and exited 0 (e.g. --norc -c cmd).
+  arg_idx = 1
+  do while (arg_idx <= num_args)
+    call get_command_argument(arg_idx, arg1)
 
-    ! Check for --version or -v flag
-    if (trim(arg1) == '--version' .or. trim(arg1) == '-v') then
+    select case (trim(arg1))
+    case ('--version', '-v')
       call print_version()
       call c_exit(0_c_int)
-    end if
 
-    ! Check for --help or -h flag
-    if (trim(arg1) == '--help' .or. trim(arg1) == '-h') then
+    case ('--help', '-h')
       call print_help()
       call c_exit(0_c_int)
-    end if
 
-    ! Check for -n flag (syntax check only, no execution)
-    if (trim(arg1) == '-n') then
+    case ('--norc')
+      ! Skip all startup files (rc/profile); used by the PTY test harness
+      no_rc_file = .true.
+      arg_idx = arg_idx + 1
+
+    case ('--login', '-l')
+      ! Detected again in initialize_shell (which scans all arguments)
+      arg_idx = arg_idx + 1
+
+    case ('-n')
+      ! Syntax check only, no execution; a following argument is the script
       syntax_check_only = .true.
       execute_script_file = .true.
-      ! If there's a script file after -n, use it
-      if (num_args >= 2) then
-        if (.not. allocated(script_file)) allocate(character(len=MAX_PATH_LEN) :: script_file)
-        call get_command_argument(2, script_file)
-        execute_script_file = .true.
-      end if
-    ! Check for -c flag (execute command string)
-    else if (trim(arg1) == '-c') then
-      if (num_args >= 2) then
-        call get_command_argument(2, command_string)
+      arg_idx = arg_idx + 1
+
+    case ('-c')
+      if (arg_idx + 1 <= num_args) then
+        call get_command_argument(arg_idx + 1, command_string)
+        cmd_string_idx = arg_idx + 1
         execute_command_string = .true.
-        ! Note: Additional arguments after command string will be processed
-        ! after shell initialization (to set $0 and positional params)
+        ! Arguments after the command string become $0 and positional
+        ! params, processed after shell initialization
       else
         write(error_unit, '(a)') 'fortsh: -c: option requires an argument'
-        stop 2
+        call c_exit(2_c_int)
       end if
-    ! Check if it's not a flag (assume it's a script file)
-    else if (arg1(1:1) /= '-') then
+      exit
+
+    case ('--')
+      ! End of options: next argument (if any) is the script file
+      if (arg_idx + 1 <= num_args) then
+        call get_command_argument(arg_idx + 1, arg1)
+        script_file = trim(arg1)
+        execute_script_file = .true.
+      end if
+      exit
+
+    case default
+      if (len_trim(arg1) > 0 .and. arg1(1:1) == '-') then
+        write(error_unit, '(a)') 'fortsh: ' // trim(arg1) // ': invalid option'
+        write(error_unit, '(a)') 'Usage: fortsh [OPTIONS] [SCRIPT [ARGS...]] | fortsh [OPTIONS] -c COMMAND [ARGS...]'
+        call c_exit(2_c_int)
+      end if
+      ! Not an option: it's a script file
       script_file = trim(arg1)
       execute_script_file = .true.
-    end if
-  end if
+      exit
+    end select
+  end do
 
   ! Initialize shell (reads execute_command_string/execute_script_file to set is_interactive)
   call initialize_shell(shell)
@@ -164,8 +189,10 @@ program fortran_shell
     write(output_unit, '(a)') 'Type "help" for available commands or "exit" to quit.'
     write(output_unit, '(a)') ''
 
-    ! Load configuration file
-    call load_config_file(shell)
+    ! Load configuration file (skipped entirely under --norc)
+    if (.not. no_rc_file) then
+      call load_config_file(shell)
+    end if
 
     ! Set HISTCONTROL for history management
     call set_histcontrol(shell%histcontrol)
@@ -194,16 +221,18 @@ program fortran_shell
 
     ! POSIX: Handle additional arguments after -c 'command'
     ! For -c 'command' arg0 arg1 arg2: arg0 becomes $0, arg1 arg2 become $1 $2
-    if (num_args >= 3) then
+    ! (positions are relative to the command string, which need not be argv[2]
+    ! now that options like --norc may precede -c)
+    if (num_args >= cmd_string_idx + 1) then
       block
         character(len=MAX_PATH_LEN) :: c_arg
         integer :: c_idx
-        ! Third argument becomes $0
-        call get_command_argument(3, c_arg)
+        ! Argument after the command string becomes $0
+        call get_command_argument(cmd_string_idx + 1, c_arg)
         shell%shell_name = trim(c_arg)
         ! Remaining arguments become positional parameters $1, $2, ...
-        if (num_args >= 4) then
-          shell%num_positional = num_args - 3
+        if (num_args >= cmd_string_idx + 2) then
+          shell%num_positional = num_args - (cmd_string_idx + 1)
           if (.not. allocated(shell%positional_params)) then
             allocate(shell%positional_params(shell%num_positional))
             shell%positional_params_capacity = shell%num_positional
@@ -212,9 +241,9 @@ program fortran_shell
             allocate(shell%positional_params(shell%num_positional))
             shell%positional_params_capacity = shell%num_positional
           end if
-          do c_idx = 4, num_args
+          do c_idx = cmd_string_idx + 2, num_args
             call get_command_argument(c_idx, c_arg)
-            shell%positional_params(c_idx - 3)%str = trim(c_arg)
+            shell%positional_params(c_idx - (cmd_string_idx + 1))%str = trim(c_arg)
           end do
         end if
       end block
