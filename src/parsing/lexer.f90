@@ -1186,9 +1186,23 @@ contains
             end if
           case(';')
             if (ch == ';') then
-              current_token(2:2) = ch
+              ! ;;& (retest remaining patterns) vs ;; (end case item)
+              if (pos + 1 <= input_len .and. input(pos+1:pos+1) == '&') then
+                token_len = 3
+                call add_token(tokens, num_tokens, TOKEN_OPERATOR, ';;&', token_start, pos+1, .false.)
+                state = LEX_NORMAL
+                pos = pos + 2
+              else
+                current_token(2:2) = ch
+                token_len = 2
+                call add_token(tokens, num_tokens, TOKEN_OPERATOR, ';;', token_start, pos, .false.)
+                state = LEX_NORMAL
+                pos = pos + 1
+              end if
+            else if (ch == '&') then
+              ! ;& — fall through into the next case item's body
               token_len = 2
-              call add_token(tokens, num_tokens, TOKEN_OPERATOR, ';;', token_start, pos, .false.)
+              call add_token(tokens, num_tokens, TOKEN_OPERATOR, ';&', token_start, pos, .false.)
               state = LEX_NORMAL
               pos = pos + 1
             else

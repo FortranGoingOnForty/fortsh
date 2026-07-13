@@ -11,7 +11,8 @@ module grammar_parser
                           create_brace_group, create_function_def, create_coproc, &
                           destroy_command_node, &
                           print_command_tree, case_item_t, LIST_SEP_SEQUENTIAL, &
-                          LIST_SEP_AND, LIST_SEP_OR, LIST_SEP_BACKGROUND
+                          LIST_SEP_AND, LIST_SEP_OR, LIST_SEP_BACKGROUND, &
+                          CASE_TERM_BREAK, CASE_TERM_FALLTHROUGH, CASE_TERM_RETEST
   implicit none
   private
   public :: parse_with_grammar, parse_command_line, last_parse_had_error
@@ -1175,7 +1176,7 @@ contains
     character(len=MAX_TOKEN_LEN) :: word
     character(len=MAX_TOKEN_LEN), allocatable :: patterns(:)
     type(case_item_t), allocatable :: items(:)
-    integer :: num_items, num_patterns, i, word_len
+    integer :: num_items, num_patterns, i, word_len, item_terminator
     type(token_t) :: tok
     nullify(node)
     num_items = 0
@@ -1240,7 +1241,7 @@ contains
       call skip_newlines(state)
 
       ! Parse commands for this case item
-      case_cmds => parse_case_item_commands(state)
+      case_cmds => parse_case_item_commands(state, item_terminator)
 
       ! Store case item with patterns and commands
       if (num_patterns > 0) then
@@ -1259,6 +1260,7 @@ contains
           items(num_items)%patterns(i) = patterns(i)
         end do
         items(num_items)%commands => case_cmds
+        items(num_items)%terminator = item_terminator
       end if
 
       call skip_newlines(state)
@@ -1269,21 +1271,24 @@ contains
     node => create_case_statement(word, word_len, items, num_items)
   end function
 
-  ! Parse commands in a case item until ;; or esac
-  recursive function parse_case_item_commands(state) result(node)
+  ! Parse commands in a case item until ;;, ;&, ;;&, or esac.
+  ! `terminator` reports which one ended the item (CASE_TERM_* from command_tree).
+  recursive function parse_case_item_commands(state, terminator) result(node)
     type(parser_state_t), intent(inout) :: state
+    integer, intent(out) :: terminator
     type(command_node_t), pointer :: node, right_node
     type(token_t) :: tok
     integer :: sep_type
 
+    terminator = CASE_TERM_BREAK
     node => parse_and_or(state)
     if (.not. associated(node)) return
 
     do while (.true.)
       tok = current_token(state)
 
-      ! Stop at ;; or esac
-      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ';;') then
+      ! Stop at a case-item terminator or esac
+      if (is_case_terminator(tok, terminator)) then
         call advance(state)
         exit
       end if
@@ -1302,7 +1307,7 @@ contains
 
       ! Check again for terminators
       tok = current_token(state)
-      if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == ';;') then
+      if (is_case_terminator(tok, terminator)) then
         call advance(state)
         exit
       end if
@@ -1312,6 +1317,28 @@ contains
       if (.not. associated(right_node)) exit
       node => create_list(node, right_node, sep_type)
     end do
+  end function
+
+  ! Map a token to a case-item terminator kind; .false. if it isn't one.
+  logical function is_case_terminator(tok, terminator) result(is_term)
+    type(token_t), intent(in) :: tok
+    integer, intent(out) :: terminator
+    is_term = .true.
+    terminator = CASE_TERM_BREAK
+    if (tok%token_type /= TOKEN_OPERATOR) then
+      is_term = .false.
+      return
+    end if
+    select case (trim(tok%value))
+    case (';;')
+      terminator = CASE_TERM_BREAK
+    case (';&')
+      terminator = CASE_TERM_FALLTHROUGH
+    case (';;&')
+      terminator = CASE_TERM_RETEST
+    case default
+      is_term = .false.
+    end select
   end function
 
   recursive function parse_subshell(state) result(node)
