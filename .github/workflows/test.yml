@@ -10,6 +10,20 @@ jobs:
   # ============================================================================
   # x86_64 Linux (gfortran)
   # ============================================================================
+  parallel-build:
+    # Guards the per-rule module prerequisites in the Makefile (QUAL-1).
+    # A missing prerequisite only fails under -jN, never under -j1.
+    name: Parallel Build (-j)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build with make -j$(nproc)
+        run: make -j$(nproc) BUILDDIR=build_par BINDIR=bin_par
+      - name: Smoke-test binary
+        run: test -x bin_par/fortsh && echo 'echo ok' | ./bin_par/fortsh
+
   posix-tests:
     name: POSIX Tests
     runs-on: ubuntu-latest

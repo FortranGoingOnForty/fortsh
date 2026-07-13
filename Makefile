@@ -120,9 +120,10 @@ else
     POOL_OBJECTS = $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o
 endif
 
-# Object files with explicit dependencies
-# All module dependencies are properly declared in the rules below,
-# so parallel builds work correctly
+# Object files. Link order only; compile order comes from the per-rule module
+# prerequisites below. Each rule must list one .o per module its source `use`s
+# (the .o is a proxy for the .mod gfortran emits alongside it) or parallel
+# builds race on missing .mod files.
 OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/common/version.o \
           $(BUILDDIR)/common/error_handling.o \
@@ -224,7 +225,7 @@ $(BUILDDIR)/system/interface.o: src/system/interface.f90 $(BUILDDIR)/common/type
 $(BUILDDIR)/common/io_helpers.o: src/common/io_helpers.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/common
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/system/signals.o: src/system/signals.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/system
+$(BUILDDIR)/system/signals.o: src/system/signals.f90 $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/types.o | $(BUILDDIR)/system
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/system/signal_handling.o: src/system/signal_handling.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/system
@@ -233,7 +234,7 @@ $(BUILDDIR)/system/signal_handling.o: src/system/signal_handling.f90 $(BUILDDIR)
 $(BUILDDIR)/parsing/glob.o: src/parsing/glob.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/parsing/lexer.o $(BUILDDIR)/execution/trap_dispatch.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/parsing
+$(BUILDDIR)/parsing/parser.o: src/parsing/parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/parsing/lexer.o $(BUILDDIR)/execution/trap_dispatch.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/execution/command_capture.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/parsing/lexer.o: src/parsing/lexer.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/parsing
@@ -242,13 +243,13 @@ $(BUILDDIR)/parsing/lexer.o: src/parsing/lexer.f90 $(BUILDDIR)/common/types.o | 
 $(BUILDDIR)/parsing/command_tree.o: src/parsing/command_tree.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/parsing/grammar_parser.o: src/parsing/grammar_parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/parsing/lexer.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/parsing
+$(BUILDDIR)/parsing/grammar_parser.o: src/parsing/grammar_parser.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/parsing/lexer.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/parsing/command_tree.o | $(BUILDDIR)/parsing
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/jobs.o: src/execution/jobs.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/control_flow.o: src/scripting/control_flow.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/advanced_test.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/scripting/substitution.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/control_flow.o: src/scripting/control_flow.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/advanced_test.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/parsing/glob.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/builtin_help_texts.o: src/execution/builtin_help_texts.f90 | $(BUILDDIR)/execution
@@ -257,7 +258,7 @@ $(BUILDDIR)/execution/builtin_help_texts.o: src/execution/builtin_help_texts.f90
 $(BUILDDIR)/execution/builtin_interface.o: src/execution/builtin_interface.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/builtins.o: src/execution/builtins.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/execution/coprocess.o $(BUILDDIR)/scripting/command_builtin.o $(BUILDDIR)/scripting/directory_builtin.o $(BUILDDIR)/scripting/getopts_builtin.o $(BUILDDIR)/scripting/printf_builtin.o $(BUILDDIR)/scripting/read_builtin.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/builtin_interface.o $(BUILDDIR)/execution/builtin_help_texts.o $(BUILDDIR)/execution/eval_builtin.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/system/signal_handling.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/builtins.o: src/execution/builtins.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/test_builtin.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/execution/coprocess.o $(BUILDDIR)/scripting/command_builtin.o $(BUILDDIR)/scripting/directory_builtin.o $(BUILDDIR)/scripting/getopts_builtin.o $(BUILDDIR)/scripting/printf_builtin.o $(BUILDDIR)/scripting/read_builtin.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/builtin_interface.o $(BUILDDIR)/execution/builtin_help_texts.o $(BUILDDIR)/execution/eval_builtin.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/trap_dispatch.o $(BUILDDIR)/io/fd_redirection.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/substitution.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/trap_dispatch.o: src/execution/trap_dispatch.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/execution
@@ -266,13 +267,13 @@ $(BUILDDIR)/execution/trap_dispatch.o: src/execution/trap_dispatch.f90 $(BUILDDI
 $(BUILDDIR)/execution/pipeline_helpers.o: src/execution/pipeline_helpers.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/expansion.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/executor.o: src/execution/executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/control_flow.o $(BUILDDIR)/execution/builtin_interface.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/trap_dispatch.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/execution/better_errors.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/execution/pipeline_helpers.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/executor.o: src/execution/executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/error_handling.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/control_flow.o $(BUILDDIR)/execution/builtin_interface.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/trap_dispatch.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/execution/better_errors.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/execution/pipeline_helpers.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/test_builtin.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/ast_executor.o: src/execution/ast_executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/pipeline_helpers.o $(BUILDDIR)/execution/trap_dispatch.o $(BUILDDIR)/io/fd_redirection.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/execution/coprocess.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/ast_executor.o: src/execution/ast_executor.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/pipeline_helpers.o $(BUILDDIR)/execution/trap_dispatch.o $(BUILDDIR)/io/fd_redirection.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/execution/coprocess.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/scripting/control_flow.o $(BUILDDIR)/scripting/expansion.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/system/signal_handling.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/eval_builtin.o: src/execution/eval_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/ast_executor.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/eval_builtin.o: src/execution/eval_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/scripting/aliases.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/command_capture.o: src/execution/command_capture.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
@@ -290,37 +291,37 @@ $(BUILDDIR)/scripting/advanced_test.o: src/scripting/advanced_test.f90 $(BUILDDI
 $(BUILDDIR)/scripting/printf_builtin.o: src/scripting/printf_builtin.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/read_builtin.o: src/scripting/read_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/read_builtin.o: src/scripting/read_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/getopts_builtin.o: src/scripting/getopts_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/directory_builtin.o: src/scripting/directory_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/directory_builtin.o: src/scripting/directory_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/command_builtin.o: src/scripting/command_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/ast_executor.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/command_builtin.o: src/scripting/command_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/variables.o: src/scripting/variables.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/prompt_formatting.o: src/scripting/prompt_formatting.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/substitution.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/prompt_formatting.o: src/scripting/prompt_formatting.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/expansion.o: src/scripting/expansion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/command_capture.o $(BUILDDIR)/parsing/glob.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/expansion.o: src/scripting/expansion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/execution/command_capture.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/substitution.o: src/scripting/substitution.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/command_capture.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/execution/coprocess.o: src/execution/coprocess.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/execution
+$(BUILDDIR)/execution/coprocess.o: src/execution/coprocess.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/execution/trap_dispatch.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/execution/better_errors.o: src/execution/better_errors.f90 $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/execution
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/config.o: src/scripting/config.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/config.o: src/scripting/config.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/scripting/abbreviations.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/aliases.o: src/scripting/aliases.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/scripting
@@ -329,28 +330,28 @@ $(BUILDDIR)/scripting/aliases.o: src/scripting/aliases.f90 $(BUILDDIR)/common/ty
 $(BUILDDIR)/scripting/abbreviations.o: src/scripting/abbreviations.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/shell_options.o: src/scripting/shell_options.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/prompt_formatting.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/shell_options.o: src/scripting/shell_options.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/completion.o: src/scripting/completion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/parser.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/completion.o: src/scripting/completion.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/syntax_highlight.o: src/io/syntax_highlight.f90 $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
+$(BUILDDIR)/io/syntax_highlight.o: src/io/syntax_highlight.f90 $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/suggestions.o: src/io/suggestions.f90 | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) | $(BUILDDIR)/io
+$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/system/signals.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
+$(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/io
+$(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/version.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/lexer.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/execution/command_capture_callback.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/common/performance.o | $(BUILDDIR)
+$(BUILDDIR)/fortsh.o: src/fortsh.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/version.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/system/signal_handling.o $(BUILDDIR)/parsing/parser.o $(BUILDDIR)/parsing/lexer.o $(BUILDDIR)/parsing/grammar_parser.o $(BUILDDIR)/parsing/command_tree.o $(BUILDDIR)/execution/executor.o $(BUILDDIR)/execution/ast_executor.o $(BUILDDIR)/execution/jobs.o $(BUILDDIR)/io/readline.o $(BUILDDIR)/scripting/config.o $(BUILDDIR)/scripting/aliases.o $(BUILDDIR)/scripting/shell_options.o $(BUILDDIR)/scripting/prompt_formatting.o $(BUILDDIR)/execution/command_capture_callback.o $(BUILDDIR)/execution/builtins.o $(BUILDDIR)/common/performance.o $(BUILDDIR)/execution/coprocess.o $(BUILDDIR)/scripting/substitution.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 # ============================================================================
@@ -412,9 +413,12 @@ debug: FCFLAGS += -g -fbacktrace -fcheck=bounds
 endif
 debug: $(TARGET)
 
-release: FCFLAGS = $(FCFLAGS_RELEASE)
-release: clean $(TARGET)
+# clean must finish before the build starts, so run them as sequential
+# sub-makes; `release: clean $(TARGET)` would let -jN run them concurrently.
+release:
 	@echo "Building release version..."
+	$(MAKE) clean
+	$(MAKE) FCFLAGS="$(FCFLAGS_RELEASE)" $(TARGET)
 	strip $(TARGET)
 	@echo "Release build complete! Binary size: $$(du -h $(TARGET) | cut -f1)"
 
