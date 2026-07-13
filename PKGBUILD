@@ -25,8 +25,8 @@ check() {
 package() {
     cd fortsh
 
-    # Install main binary
-    install -Dm755 bin/fortsh "$pkgdir/usr/bin/fortsh"
+    # Install main binary via the Makefile so there is one install path
+    make DESTDIR="$pkgdir" PREFIX=/usr install
 
     # Install documentation
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"

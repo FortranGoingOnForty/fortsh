@@ -396,10 +396,15 @@ clean:
 distclean: clean
 	rm -f *.mod
 
-# Install target (optional)
+# Install target. Honors PREFIX and DESTDIR so packaging (PKGBUILD, rpm) can
+# stage into a package root: make DESTDIR="$pkgdir" PREFIX=/usr install
+# (bindir is lowercase because BINDIR is already the build output directory)
+PREFIX ?= /usr/local
+bindir ?= $(PREFIX)/bin
+
 install: $(TARGET)
-	cp $(TARGET) /usr/local/bin/
-	@echo "Fortsh installed to /usr/local/bin/"
+	install -Dm755 $(TARGET) $(DESTDIR)$(bindir)/fortsh
+	@echo "Fortsh installed to $(DESTDIR)$(bindir)/fortsh"
 
 # Development targets
 test: test-posix-full test-bench
@@ -501,7 +506,8 @@ help:
 	@echo "  check           - Run comprehensive checks"
 	@echo ""
 	@echo "Installation targets:"
-	@echo "  install       - Install fortsh to /usr/local/bin"
+	@echo "  install       - Install fortsh to \$$(PREFIX)/bin (default /usr/local/bin;"
+	@echo "                  honors DESTDIR for staged/package installs)"
 	@echo "  dev-install   - Install fortsh to ~/.local/bin"
 	@echo "  uninstall     - Remove fortsh from system"
 	@echo ""
@@ -549,7 +555,7 @@ dev-install: $(TARGET)
 uninstall:
 	@echo "Uninstalling fortsh..."
 	@rm -f ~/.local/bin/fortsh 2>/dev/null || true
-	@rm -f /usr/local/bin/fortsh 2>/dev/null || sudo rm -f /usr/local/bin/fortsh 2>/dev/null || true
+	@rm -f $(DESTDIR)$(bindir)/fortsh 2>/dev/null || true
 	@echo "Uninstall complete!"
 
 check: $(TARGET)
