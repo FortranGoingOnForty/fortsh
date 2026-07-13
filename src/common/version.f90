@@ -27,6 +27,7 @@ contains
     write(output_unit, '(a)') '  -c COMMAND    Execute COMMAND and exit'
     write(output_unit, '(a)') '  -l, --login   Start as a login shell'
     write(output_unit, '(a)') '  -n            Check syntax only, do not execute'
+    write(output_unit, '(a)') '  --norc        Do not read startup files (rc/profile)'
     write(output_unit, '(a)') '  -v, --version Print version information and exit'
     write(output_unit, '(a)') '  -h, --help    Print this help message and exit'
     write(output_unit, '(a)') ''
