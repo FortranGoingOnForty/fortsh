@@ -461,6 +461,29 @@ contains
     shell%num_proc_subst_fifos = idx
   end function
 
+  ! Register a native (pipe + /dev/fd/N) process substitution for later cleanup.
+  ! Unlike the FIFO path there is no temp file; we track the child pid and the
+  ! parent's kept fd so wait_and_cleanup_proc_substs can close the fd (RES-1) and
+  ! reap the child (RES-2) after the consuming command has run.
+  subroutine register_proc_subst_native(shell, pid, fd, is_input)
+    type(shell_state_t), intent(inout) :: shell
+    integer(c_pid_t), intent(in) :: pid
+    integer(c_int), intent(in) :: fd
+    logical, intent(in) :: is_input
+    integer :: idx
+
+    if (shell%num_proc_subst_fifos >= shell%proc_subst_fifos_cap) then
+      call grow_fifo_array(shell)
+    end if
+    idx = shell%num_proc_subst_fifos + 1
+    shell%proc_subst_fifos(idx)%fifo_path = ''
+    shell%proc_subst_fifos(idx)%pid = pid
+    shell%proc_subst_fifos(idx)%fd = fd
+    shell%proc_subst_fifos(idx)%is_input = is_input
+    shell%proc_subst_fifos(idx)%active = .true.
+    shell%num_proc_subst_fifos = idx
+  end subroutine
+
   ! Update FIFO with background process PID
   subroutine set_fifo_pid(shell, fifo_path, pid)
     type(shell_state_t), intent(inout) :: shell
@@ -547,10 +570,45 @@ contains
     shell%proc_subst_fifos_cap = new_cap
   end subroutine
 
+  ! Close/reap only the process substitutions registered since `mark` (the value
+  ! of num_proc_subst_fifos captured before a command's word/redirection
+  ! expansion). This scopes cleanup to the command that created them, so
+  ! `cat <(echo x)` in a loop stays flat while `while ...; done < <(cmd)` keeps
+  ! its fd for the whole loop (that one is reaped by the enclosing command).
+  subroutine cleanup_proc_substs_from(shell, mark)
+    type(shell_state_t), intent(inout) :: shell
+    integer, intent(in) :: mark
+    integer :: i
+    integer(c_int), target :: status
+    integer(c_int) :: cret
+    integer(c_pid_t) :: ret_pid
+    logical :: success
+
+    if (.not. allocated(shell%proc_subst_fifos)) return
+
+    do i = mark + 1, shell%num_proc_subst_fifos
+      if (shell%proc_subst_fifos(i)%active) then
+        if (shell%proc_subst_fifos(i)%fd >= 0) then
+          cret = close(shell%proc_subst_fifos(i)%fd)
+          shell%proc_subst_fifos(i)%fd = -1
+        end if
+        status = 0
+        ret_pid = c_waitpid(shell%proc_subst_fifos(i)%pid, c_loc(status), 0_c_int)
+        if (len_trim(shell%proc_subst_fifos(i)%fifo_path) > 0) then
+          success = remove_file(trim(shell%proc_subst_fifos(i)%fifo_path))
+        end if
+        shell%proc_subst_fifos(i)%active = .false.
+      end if
+    end do
+    ! Reclaim the slots — nothing else registers in this range.
+    if (shell%num_proc_subst_fifos > mark) shell%num_proc_subst_fifos = mark
+  end subroutine
+
   subroutine wait_and_cleanup_proc_substs(shell)
     type(shell_state_t), intent(inout) :: shell
     integer :: i
     integer(c_int), target :: status
+    integer(c_int) :: cret
     integer(c_pid_t) :: ret_pid
     logical :: success
 
@@ -559,12 +617,21 @@ contains
     i = 1
     do while (i <= shell%num_proc_subst_fifos)
       if (shell%proc_subst_fifos(i)%active) then
+        ! Native pipe path: close the parent's kept fd first (RES-1). For >()
+        ! this delivers EOF to the child so the blocking wait below can't hang.
+        if (shell%proc_subst_fifos(i)%fd >= 0) then
+          cret = close(shell%proc_subst_fifos(i)%fd)
+          shell%proc_subst_fifos(i)%fd = -1
+        end if
         status = 0
         ! Blocking wait — the child is short-lived (already finished
         ! writing/reading by the time the parent command completes).
         ret_pid = c_waitpid(shell%proc_subst_fifos(i)%pid, c_loc(status), 0_c_int)
         if (ret_pid > 0) then
-          success = remove_file(trim(shell%proc_subst_fifos(i)%fifo_path))
+          ! Only the FIFO path has a temp file to unlink.
+          if (len_trim(shell%proc_subst_fifos(i)%fifo_path) > 0) then
+            success = remove_file(trim(shell%proc_subst_fifos(i)%fifo_path))
+          end if
           shell%proc_subst_fifos(i)%active = .false.
         end if
       end if

@@ -1735,6 +1735,7 @@ contains
         block
           use trap_dispatch, only: eval_trap_string
           use io_helpers, only: write_stderr
+          use substitution, only: register_proc_subst_native
           character(len=MAX_PATH_LEN) :: ps_command
           character(len=32) :: devfd_path
           logical :: ps_is_input, pipe_ok
@@ -1787,6 +1788,10 @@ contains
                 call ensure_result_cap(j + len_trim(devfd_path))
                 result(j:j+len_trim(devfd_path)-1) = trim(devfd_path)
                 j = j + len_trim(devfd_path)
+                ! Track the kept fd + child pid so the post-command cleanup
+                ! closes the fd (RES-1) and reaps the child (RES-2). Without
+                ! this each <(…)/>(…) leaks one fd and one zombie.
+                call register_proc_subst_native(shell, ps_pid, parent_fd, ps_is_input)
               end if
             end if
           else

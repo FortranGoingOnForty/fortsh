@@ -286,6 +286,7 @@ module shell_types
     integer(c_pid_t) :: pid = 0
     logical :: active = .false.
     logical :: is_input = .false.  ! True for <(), False for >()
+    integer(c_int) :: fd = -1      ! native pipe+/dev/fd path: parent fd to close (RES-1)
   end type proc_subst_fifo_t
 
   type :: shell_state_t

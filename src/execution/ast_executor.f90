@@ -108,7 +108,15 @@ contains
 
     select case(node%node_type)
     case(CMD_SIMPLE)
-      exit_status = execute_simple_command(node, shell)
+      ! Scope proc-subst cleanup to this command: reap the fds/children its own
+      ! <(…)/>(…) opened once it returns, so a loop of them stays flat (RES-1/2).
+      block
+        use substitution, only: cleanup_proc_substs_from
+        integer :: ps_mark
+        ps_mark = shell%num_proc_subst_fifos
+        exit_status = execute_simple_command(node, shell)
+        call cleanup_proc_substs_from(shell, ps_mark)
+      end block
     case(CMD_PIPELINE)
       exit_status = execute_pipeline_node(node, shell)
     case(CMD_LIST)

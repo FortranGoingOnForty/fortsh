@@ -1,0 +1,42 @@
+#!/bin/sh
+# Process substitution must not leak a file descriptor or a zombie per <(…)/>(…)
+# (RES-1, RES-2). Before the fix a loop of substitutions grew /proc/$$/fd
+# monotonically and left one <defunct> child each. These checks run fortsh
+# directly (not against bash) because they assert fortsh's own fd/zombie
+# bookkeeping; a Linux /proc is required, so they skip elsewhere.
+TEST_PREFIX="[proc-subst-leaks]"
+. "$(cd "$(dirname "$0")" && pwd)/test_harness.sh"
+
+if [ ! -d /proc/self/fd ]; then
+    section "0. Environment"
+    skip "process substitution leak checks" "no /proc (Linux only)"
+    print_summary
+    exit 0
+fi
+
+# Assert a fortsh -c snippet prints "OK".
+expect_ok() {
+    name="$1"; snippet="$2"
+    out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "$snippet" 2>&1)
+    if [ "$out" = "OK" ]; then pass "$name"; else fail "$name" "OK" "$out"; fi
+}
+
+section "1. Input <(…) does not leak fds"
+# Compare the fd count before and after 30 substitutions in the same shell.
+expect_ok "30x <(echo) holds fd count flat" \
+    'b=$(ls /proc/$$/fd | wc -l); for i in $(seq 1 30); do cat <(echo x) >/dev/null; done; a=$(ls /proc/$$/fd | wc -l); [ "$a" -le "$b" ] && echo OK || echo "leaked $b->$a"'
+
+section "2. Input <(…) leaves no zombies"
+expect_ok "30x <(echo) reaps every child" \
+    'for i in $(seq 1 30); do cat <(echo x) >/dev/null; done; z=$(ps --ppid $$ -o stat= 2>/dev/null | grep -c Z); [ "$z" -eq 0 ] && echo OK || echo "$z zombies"'
+
+section "3. Output >(…) does not leak or hang"
+expect_ok "10x >(cat) holds fd count flat" \
+    'b=$(ls /proc/$$/fd | wc -l); for i in $(seq 1 10); do echo hi > >(cat >/dev/null); done; a=$(ls /proc/$$/fd | wc -l); [ "$a" -le "$b" ] && echo OK || echo "leaked $b->$a"'
+
+section "4. Substitution still delivers data (no regression)"
+compare_output "cat <(echo) contents" 'cat <(echo hello world)'
+compare_output "diff <(a) <(b)" 'diff <(printf "a\nb\n") <(printf "a\nc\n")'
+compare_output "while read < <(cmd)" 'while read l; do echo "got:$l"; done < <(printf "x\ny\n")'
+
+print_summary
