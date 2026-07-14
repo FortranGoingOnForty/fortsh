@@ -314,13 +314,26 @@ contains
   ! Release a string back to the pool
   subroutine pool_release_string(ref)
     type(string_ref), intent(inout) :: ref
-    integer :: bucket_idx, slot_idx
+    integer :: bucket_idx, slot_idx, interned_idx
 
     if (ref%pool_index == 0) then
       ! Never allocated
       return
     else if (ref%pool_index == -1) then
       ! Direct allocation
+      if (associated(ref%data)) deallocate(ref%data)
+      stats%total_deallocations = stats%total_deallocations + 1
+      stats%current_strings = stats%current_strings - 1
+    else if (ref%pool_index <= -10000) then
+      ! Interned ref: pool_index is encoded as -10000 - i and its data is a
+      ! standalone allocation (see pool_intern_string), not pool-backed. The
+      ! pooled branch below would derive a bogus bucket/slot from this large
+      ! negative index, match no case, and return without freeing ref%data —
+      ! leaking it while still decrementing the counters (MEM-4).
+      interned_idx = -10000 - ref%pool_index
+      if (interned_idx >= 1 .and. interned_idx <= num_interned) then
+        interned_refs(interned_idx) = interned_refs(interned_idx) - 1
+      end if
       if (associated(ref%data)) deallocate(ref%data)
       stats%total_deallocations = stats%total_deallocations + 1
       stats%current_strings = stats%current_strings - 1
@@ -448,9 +461,16 @@ contains
         ref%pool_index = -10000 - i
         ref%ref_count = interned_refs(i)
         ref%str_len = str_len
+        ref%generation = pool_generation
         allocate(character(len=str_len) :: ref%data)
         ref%data = trim(str)
         stats%cache_hits = stats%cache_hits + 1
+        ! Each intern hands back its own allocation; count it so a matching
+        ! release balances the books (MEM-4).
+        stats%total_allocations = stats%total_allocations + 1
+        stats%current_strings = stats%current_strings + 1
+        if (stats%current_strings > stats%peak_strings) &
+          stats%peak_strings = stats%current_strings
         return
       end if
     end do
@@ -467,10 +487,15 @@ contains
     ref%pool_index = -10000 - num_interned
     ref%ref_count = 1
     ref%str_len = str_len
+    ref%generation = pool_generation
     allocate(character(len=str_len) :: ref%data)
     ref%data = trim(str)
 
     stats%cache_misses = stats%cache_misses + 1
+    stats%total_allocations = stats%total_allocations + 1
+    stats%current_strings = stats%current_strings + 1
+    if (stats%current_strings > stats%peak_strings) &
+      stats%peak_strings = stats%current_strings
 
   end function pool_intern_string
 
