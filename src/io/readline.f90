@@ -2431,8 +2431,17 @@ contains
             ! Clear from cursor to end of screen
             call rdraw_append(char(27) // '[J')
 
-            ! Save cursor-up row count before content overwrites it
-            nav_cursor_row = current_row
+            ! Save cursor-up row count before content overwrites it. Use the
+            ! PHYSICAL row the old render left the cursor on
+            ! (module_cursor_screen_row), NOT current_row (the row the NEW,
+            ! possibly shorter, content's cursor lands on). When the old render
+            ! was taller than the new content (e.g. recalling a short line over a
+            ! wrapped one, or Ctrl-U on a wrapped recall), current_row
+            ! under-counts the physical rows, so the differential move-up below
+            ! stops short and ESC[J clears from a stale wrapped row — splicing
+            ! the new tail onto old content. This mirrors the full-rebuild path
+            ! at move_up_rows = module_cursor_screen_row above. (RL-2)
+            nav_cursor_row = module_cursor_screen_row
 
             ! Phase 2: mirror rendered content for line-level diff
             cframe_pos = 0
