@@ -14,11 +14,19 @@ compare_both "command subst in :+"        'v=set; echo ${v:+$(echo alt)}'
 compare_both "quoted ) inside operand"    'echo ${u:-$(echo "a)b")}'
 compare_both "multi-line capture joins"   'echo ${u:-$(echo one; echo two)}'
 
-section "2. Operand not evaluated when branch not taken"
+section "2. := stores the expanded value (EXPAND-8)"
+
+compare_both "var default stored expanded"  'a=hi; echo ${b:=$a}; echo $b'
+compare_both "non-colon form too"           'a=hi; echo ${b=$a}; echo $b'
+compare_both "command subst stored"         'echo ${u:=$(echo Z)}; echo $u'
+compare_both "set var not overwritten"      'b=keep; echo ${b:=new}; echo $b'
+compare_both "null var with = keeps null"   'b=; echo ${b=word}; echo "[$b]"'
+
+section "3. Operand not evaluated when branch not taken"
 
 compare_both "set var skips default"      'v=x; echo ${v:-$(echo no)}'
 
-section "3. Mixed operand forms still work"
+section "4. Mixed operand forms still work"
 
 compare_both "nested brace in operand"    'a=A; echo ${u:-pre${a}post}'
 compare_both "plain var in operand"       'a=A; echo ${u:-$a}'

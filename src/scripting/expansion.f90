@@ -885,15 +885,17 @@ contains
         ! ${var:=word}: assign word if var is unset or null, then expand to var
         if (has_colon) then
           if (.not. var_is_set .or. var_is_null) then
-            call set_shell_variable(shell, trim(operation), trim(param1))
+            ! Store the EXPANDED word, not the literal — the next $var
+            ! reference must see the same value this expansion produced
             result_value = expand_word_operand(trim(param1), shell)
+            call set_shell_variable(shell, trim(operation), result_value)
           else
             result_value = trim(var_value)
           end if
         else
           if (.not. var_is_set) then
-            call set_shell_variable(shell, trim(operation), trim(param1))
             result_value = expand_word_operand(trim(param1), shell)
+            call set_shell_variable(shell, trim(operation), result_value)
           else
             result_value = trim(var_value)
           end if
