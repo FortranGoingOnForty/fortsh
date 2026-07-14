@@ -23,4 +23,18 @@ section "3. which"
 compare_exit "which finds external command" 'which ls >/dev/null 2>&1'
 compare_exit "which nonexistent fails" 'which nonexistent_cmd_xyz_999 2>/dev/null'
 
+section "9. Wave-6: resolution table covers all live builtins (DOC-12)"
+
+compare_both "type : names a builtin"  'type :'
+compare_both "command -v :"            'command -v :; echo rc=$?'
+for b in config memory perf disown rawtest; do
+    out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "command -v $b")
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = "$b" ]; then
+        pass "command -v $b resolves"
+    else
+        fail "command -v $b resolves" "$b (rc 0)" "rc=$rc out=$out"
+    fi
+done
+
 print_summary

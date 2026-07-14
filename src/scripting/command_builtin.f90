@@ -480,7 +480,7 @@ contains
     character(len=*), intent(in) :: command_name
     logical :: is_builtin
     
-    character(len=16), parameter :: builtins(56) = [ &
+    character(len=16), parameter :: builtins(62) = [ &
       'cd              ', 'pwd             ', 'echo            ', 'printf          ', &
       'read            ', 'export          ', 'unset           ', 'set             ', &
       'shift           ', 'test            ', 'true            ', 'false           ', &
@@ -494,7 +494,9 @@ contains
       'help            ', 'defun           ', 'abbr            ', 'which           ', &
       'history         ', 'shopt           ', 'complete        ', 'compgen         ', &
       'coproc          ', 'printenv        ', 'pushd           ', 'popd            ', &
-      'dirs            ', 'prevd           ', 'nextd           ', 'dirh            ' ]
+      'dirs            ', 'prevd           ', 'nextd           ', 'dirh            ', &
+      ':               ', 'config          ', 'memory          ', 'perf            ', &
+      'disown          ', 'rawtest         ' ]
     
     integer :: i
     

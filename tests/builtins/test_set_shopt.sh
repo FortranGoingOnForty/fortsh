@@ -27,4 +27,13 @@ check_exit "shopt -s extglob" 'shopt -s extglob 2>/dev/null; echo done' "0"
 compare_exit "shopt -q queries option" 'shopt -q login_shell 2>/dev/null; true'
 compare_exit "shopt -u unsets option" 'shopt -s extglob 2>/dev/null; shopt -u extglob 2>/dev/null; true'
 
+section "9. Wave-6: unknown options keep their error status (BUILTIN-14)"
+
+compare_exit "set -o badopt exits 2"     'set -o badopt'
+compare_exit "shopt -s badoption exits 1" 'shopt -s badoption'
+compare_exit "valid set -o still 0"      'set -o noglob'
+compare_exit "valid shopt -s still 0"    'shopt -s nullglob'
+compare_both "status readable after set" 'set -o badopt 2>/dev/null; echo $?'
+compare_both "status readable after shopt" 'shopt -s badoption 2>/dev/null; echo $?'
+
 print_summary

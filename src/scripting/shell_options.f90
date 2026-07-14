@@ -53,6 +53,7 @@ contains
     character(len=256) :: option_str, option_name, param_idx_str
     integer :: i, arg_len, param_idx
     logical :: enable_option, setting_positional
+    logical :: set_failed
 
     if (cmd%num_tokens == 1) then
       ! Show all variables (simplified)
@@ -61,6 +62,7 @@ contains
     end if
 
     setting_positional = .false.
+    set_failed = .false.
     i = 2
     do while (i <= cmd%num_tokens)
       option_str = trim(cmd%tokens(i))
@@ -226,13 +228,16 @@ contains
                   shell%option_xtrace = enable_option
                 case default
                   write(error_unit, '(a)') 'set: unknown option: ' // trim(long_opt_name)
-                  shell%last_exit_status = 1
+                  ! bash: invalid option name exits 2
+                  shell%last_exit_status = 2
+                  set_failed = .true.
               end select
             end if
           case default
             write(error_unit, '(a)') 'set: unknown option: -' // option_name(fi:fi)
             had_error = .true.
-            shell%last_exit_status = 1
+            shell%last_exit_status = 2
+            set_failed = .true.
           end select
           fi = fi + 1
         end do
@@ -242,7 +247,8 @@ contains
       i = i + 1
     end do
     
-    shell%last_exit_status = 0
+    ! Keep the error status a failed option set above (BUILTIN-14)
+    if (.not. set_failed) shell%last_exit_status = 0
   end subroutine
 
   ! Handle 'shopt' builtin command for bash-style options
@@ -253,6 +259,9 @@ contains
     character(len=256) :: option_name, flag
     integer :: i
     logical :: show_all = .false., enable_option = .true.
+    logical :: shopt_failed, opt_ok
+
+    shopt_failed = .false.
     
     if (cmd%num_tokens == 1) then
       show_all = .true.
@@ -270,7 +279,8 @@ contains
         show_all = .true.
       else
         option_name = trim(flag)
-        call set_shopt_option(shell, option_name, enable_option)
+        call set_shopt_option(shell, option_name, enable_option, opt_ok)
+        if (.not. opt_ok) shopt_failed = .true.
       end if
       
       i = i + 1
@@ -280,15 +290,18 @@ contains
       call show_shopt_options(shell)
     end if
     
-    shell%last_exit_status = 0
+    ! Keep the error status a failed option set above (BUILTIN-14)
+    if (.not. shopt_failed) shell%last_exit_status = 0
   end subroutine
 
   ! Set a shopt option
-  subroutine set_shopt_option(shell, option_name, enable)
+  subroutine set_shopt_option(shell, option_name, enable, ok)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: option_name
     logical, intent(in) :: enable
-    
+    logical, intent(out), optional :: ok
+
+    if (present(ok)) ok = .true.
     select case (trim(option_name))
       case ('nullglob')
         shell%shopt_nullglob = enable
@@ -309,6 +322,7 @@ contains
       case default
         write(error_unit, '(a)') 'shopt: unknown option: ' // trim(option_name)
         shell%last_exit_status = 1
+        if (present(ok)) ok = .false.
     end select
   end subroutine
 

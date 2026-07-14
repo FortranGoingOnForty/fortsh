@@ -155,6 +155,9 @@ contains
       call set_shell_variable(shell, trim(optname), '?')
       if (silent_mode) then
         call set_shell_variable(shell, 'OPTARG', opt_char)
+      else
+        ! Non-silent mode prints the diagnostic, like bash (BUILTIN-18)
+        write(error_unit, '(a)') 'fortsh: illegal option -- ' // opt_char
       end if
       
       if (current_pos > len_trim(current_arg)) then

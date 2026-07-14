@@ -27,4 +27,19 @@ compare_output "getopts OPTIND reset between calls" 'f() { OPTIND=1; while getop
 compare_output "getopts preserves non-option args" 'f() { OPTIND=1; while getopts "v" opt; do echo "$opt"; done; shift $((OPTIND-1)); echo "$@"; }; f -v arg1 arg2'
 compare_output "getopts double-dash stops parsing" 'f() { OPTIND=1; while getopts "a" opt; do echo "$opt"; done; shift $((OPTIND-1)); echo "$@"; }; f -a -- -b'
 
+section "8. Wave-6: illegal-option diagnostic (BUILTIN-18)"
+
+out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c 'set -- -q; while getopts "ab:" o; do echo o=$o; done' 2>&1)
+if printf '%s' "$out" | grep -q 'illegal option -- q' && printf '%s' "$out" | grep -q 'o=?'; then
+    pass "non-silent mode prints illegal option"
+else
+    fail "non-silent mode prints illegal option" "diagnostic + o=?" "$out"
+fi
+out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c 'set -- -q; while getopts ":ab:" o; do echo "o=$o a=$OPTARG"; done' 2>&1)
+if [ "$out" = "o=? a=q" ]; then
+    pass "silent mode stays quiet with OPTARG set"
+else
+    fail "silent mode stays quiet with OPTARG set" "o=? a=q" "$out"
+fi
+
 print_summary
