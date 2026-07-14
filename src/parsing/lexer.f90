@@ -542,11 +542,13 @@ contains
                 cycle
               end if
             case default
-              ! Unknown escape — keep both chars
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-              token_len = token_len + 1
-              current_token(token_len:token_len) = next_ch
+              ! Unknown escape — keep both chars (needs two bytes of headroom)
+              if (token_len < MAX_TOKEN_LEN - 1) then
+                token_len = token_len + 1
+                current_token(token_len:token_len) = ch
+                token_len = token_len + 1
+                current_token(token_len:token_len) = next_ch
+              end if
             end select
           end if
           pos = pos + 2
