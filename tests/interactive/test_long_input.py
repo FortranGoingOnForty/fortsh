@@ -12,6 +12,8 @@ import time
 import pexpect
 import pytest
 
+pytestmark = pytest.mark.ci
+
 ROWS, COLS = 24, 80
 
 

@@ -124,3 +124,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "slow: marks tests as slow"
     )
+    config.addinivalue_line(
+        "markers",
+        "ci: pyte regression tests enforced by CI (run by run_tests.py "
+        "after the YAML specs). Mark a test ci only once it passes reliably "
+        "across Linux/ARM64/macOS PTY runs."
+    )

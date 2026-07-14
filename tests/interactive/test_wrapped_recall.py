@@ -21,7 +21,10 @@ try:
 except ImportError:  # pragma: no cover
     pyte = None
 
-pytestmark = pytest.mark.skipif(pyte is None, reason="pyte not installed")
+pytestmark = [
+    pytest.mark.ci,
+    pytest.mark.skipif(pyte is None, reason="pyte not installed"),
+]
 
 ROWS, COLS = 24, 80
 
