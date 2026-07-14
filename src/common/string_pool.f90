@@ -14,6 +14,7 @@ module string_pool
   public :: pool_get_string, pool_release_string, pool_intern_string
   public :: pool_statistics, pool_cleanup, pool_init
   public :: string_ref, pool_copy_to_ref, pool_get_string_ptr
+  public :: pool_ref_valid
 
   ! Constants
   integer, parameter :: NUM_BUCKETS = 5
@@ -26,6 +27,7 @@ module string_pool
     integer :: pool_index = 0     ! Encoded bucket and slot index
     integer :: ref_count = 0
     integer :: str_len = 0        ! Actual string length
+    integer :: generation = 0     ! Pool generation this ref was issued under
     character(:), pointer :: data => null()
   end type string_ref
 
@@ -62,6 +64,10 @@ module string_pool
   ! Global statistics
   type(pool_stats) :: stats
   logical :: pool_initialized = .false.
+  ! Bumped on every (re)initialisation so refs issued under freed backing
+  ! storage can be detected as stale (MEM-3). A ref is valid only while its
+  ! generation matches this and its data pointer is still associated.
+  integer :: pool_generation = 0
 
 contains
 
@@ -114,6 +120,7 @@ contains
     interned_refs = 0
     num_interned = 0
 
+    pool_generation = pool_generation + 1
     pool_initialized = .true.
   end subroutine pool_init
 
@@ -202,17 +209,37 @@ contains
       ref%str_len = length
       stats%cache_hits = stats%cache_hits + 1
     else if (bucket_idx > 0) then
-      ! Pool was full, need to expand
-      call expand_pool(bucket_idx)
-      ! Retry after expansion
-      ref = pool_get_string(length)
-      return
+      ! Pool bucket is full. Growing the shared backing array would reallocate
+      ! it at a new address and dangle every ref%data already handed out
+      ! (MEM-3 use-after-free), so satisfy this request with a standalone
+      ! allocation instead. Only reached when more than INITIAL_SLOTS strings
+      ! in one bucket are live at once — rare in normal shell use.
+#if defined(__APPLE__) && !defined(USE_C_STRINGS)
+      ! Same 127-byte guard the direct path uses: flang-new mishandles longer
+      ! standalone allocatable strings without the C string library.
+      if (length > 127) then
+        ref%pool_index = 0
+        ref%ref_count = 0
+        ref%str_len = 0
+        ref%data => null()
+        stats%cache_misses = stats%cache_misses + 1
+        return
+      end if
+#endif
+      allocate(character(len=length) :: ref%data)
+      ref%pool_index = -1
+      ref%ref_count = 1
+      ref%str_len = length
+      stats%cache_misses = stats%cache_misses + 1
     else
       ! Direct allocation
       ref%pool_index = -1
       ref%ref_count = 1
       ref%str_len = length
     end if
+
+    ! Stamp the generation so a ref outliving a pool teardown reads as stale.
+    ref%generation = pool_generation
 
     ! Update statistics
     stats%total_allocations = stats%total_allocations + 1
@@ -283,203 +310,6 @@ contains
     end do
   end function find_free_slot_16384
 
-  ! Expand a pool when it's full
-  subroutine expand_pool(bucket_idx)
-    integer, intent(in) :: bucket_idx
-    integer :: old_size, new_size
-
-    select case(bucket_idx)
-    case(1)  ! 64-byte pool
-      old_size = size_64
-      new_size = min(old_size * 2, MAX_SLOTS)
-      if (new_size > old_size) then
-        call resize_pool_64(new_size)
-        size_64 = new_size
-      end if
-    case(2)  ! 256-byte pool
-      old_size = size_256
-      new_size = min(old_size * 2, MAX_SLOTS)
-      if (new_size > old_size) then
-        call resize_pool_256(new_size)
-        size_256 = new_size
-      end if
-    case(3)  ! 1024-byte pool
-      old_size = size_1024
-      new_size = min(old_size * 2, MAX_SLOTS)
-      if (new_size > old_size) then
-        call resize_pool_1024(new_size)
-        size_1024 = new_size
-      end if
-    case(4)  ! 4096-byte pool
-      old_size = size_4096
-      new_size = min(old_size * 2, MAX_SLOTS)
-      if (new_size > old_size) then
-        call resize_pool_4096(new_size)
-        size_4096 = new_size
-      end if
-    case(5)  ! 16384-byte pool
-      old_size = size_16384
-      new_size = min(old_size * 2, MAX_SLOTS/10)
-      if (new_size > old_size) then
-        call resize_pool_16384(new_size)
-        size_16384 = new_size
-      end if
-    end select
-  end subroutine expand_pool
-
-  ! Resize helper functions for each pool
-  subroutine resize_pool_64(new_size)
-    integer, intent(in) :: new_size
-    character(len=64), allocatable, target :: temp(:)
-    logical, allocatable :: temp_use(:)
-    integer, allocatable :: temp_refs(:)
-    integer :: old_size
-
-    old_size = size(pool_64)
-
-    ! Save old data
-    allocate(temp(old_size))
-    allocate(temp_use(old_size))
-    allocate(temp_refs(old_size))
-    temp = pool_64
-    temp_use = in_use_64
-    temp_refs = ref_counts_64
-
-    ! Reallocate
-    deallocate(pool_64, in_use_64, ref_counts_64)
-    allocate(pool_64(new_size))
-    allocate(in_use_64(new_size))
-    allocate(ref_counts_64(new_size))
-
-    ! Restore data
-    pool_64(1:old_size) = temp
-    in_use_64(1:old_size) = temp_use
-    in_use_64(old_size+1:) = .false.
-    ref_counts_64(1:old_size) = temp_refs
-    ref_counts_64(old_size+1:) = 0
-
-    deallocate(temp, temp_use, temp_refs)
-  end subroutine resize_pool_64
-
-  subroutine resize_pool_256(new_size)
-    integer, intent(in) :: new_size
-    character(len=256), allocatable, target :: temp(:)
-    logical, allocatable :: temp_use(:)
-    integer, allocatable :: temp_refs(:)
-    integer :: old_size
-
-    old_size = size(pool_256)
-
-    allocate(temp(old_size))
-    allocate(temp_use(old_size))
-    allocate(temp_refs(old_size))
-    temp = pool_256
-    temp_use = in_use_256
-    temp_refs = ref_counts_256
-
-    deallocate(pool_256, in_use_256, ref_counts_256)
-    allocate(pool_256(new_size))
-    allocate(in_use_256(new_size))
-    allocate(ref_counts_256(new_size))
-
-    pool_256(1:old_size) = temp
-    in_use_256(1:old_size) = temp_use
-    in_use_256(old_size+1:) = .false.
-    ref_counts_256(1:old_size) = temp_refs
-    ref_counts_256(old_size+1:) = 0
-
-    deallocate(temp, temp_use, temp_refs)
-  end subroutine resize_pool_256
-
-  subroutine resize_pool_1024(new_size)
-    integer, intent(in) :: new_size
-    character(len=1024), allocatable, target :: temp(:)
-    logical, allocatable :: temp_use(:)
-    integer, allocatable :: temp_refs(:)
-    integer :: old_size
-
-    old_size = size(pool_1024)
-
-    allocate(temp(old_size))
-    allocate(temp_use(old_size))
-    allocate(temp_refs(old_size))
-    temp = pool_1024
-    temp_use = in_use_1024
-    temp_refs = ref_counts_1024
-
-    deallocate(pool_1024, in_use_1024, ref_counts_1024)
-    allocate(pool_1024(new_size))
-    allocate(in_use_1024(new_size))
-    allocate(ref_counts_1024(new_size))
-
-    pool_1024(1:old_size) = temp
-    in_use_1024(1:old_size) = temp_use
-    in_use_1024(old_size+1:) = .false.
-    ref_counts_1024(1:old_size) = temp_refs
-    ref_counts_1024(old_size+1:) = 0
-
-    deallocate(temp, temp_use, temp_refs)
-  end subroutine resize_pool_1024
-
-  subroutine resize_pool_4096(new_size)
-    integer, intent(in) :: new_size
-    character(len=4096), allocatable, target :: temp(:)
-    logical, allocatable :: temp_use(:)
-    integer, allocatable :: temp_refs(:)
-    integer :: old_size
-
-    old_size = size(pool_4096)
-
-    allocate(temp(old_size))
-    allocate(temp_use(old_size))
-    allocate(temp_refs(old_size))
-    temp = pool_4096
-    temp_use = in_use_4096
-    temp_refs = ref_counts_4096
-
-    deallocate(pool_4096, in_use_4096, ref_counts_4096)
-    allocate(pool_4096(new_size))
-    allocate(in_use_4096(new_size))
-    allocate(ref_counts_4096(new_size))
-
-    pool_4096(1:old_size) = temp
-    in_use_4096(1:old_size) = temp_use
-    in_use_4096(old_size+1:) = .false.
-    ref_counts_4096(1:old_size) = temp_refs
-    ref_counts_4096(old_size+1:) = 0
-
-    deallocate(temp, temp_use, temp_refs)
-  end subroutine resize_pool_4096
-
-  subroutine resize_pool_16384(new_size)
-    integer, intent(in) :: new_size
-    character(len=16384), allocatable, target :: temp(:)
-    logical, allocatable :: temp_use(:)
-    integer, allocatable :: temp_refs(:)
-    integer :: old_size
-
-    old_size = size(pool_16384)
-
-    allocate(temp(old_size))
-    allocate(temp_use(old_size))
-    allocate(temp_refs(old_size))
-    temp = pool_16384
-    temp_use = in_use_16384
-    temp_refs = ref_counts_16384
-
-    deallocate(pool_16384, in_use_16384, ref_counts_16384)
-    allocate(pool_16384(new_size))
-    allocate(in_use_16384(new_size))
-    allocate(ref_counts_16384(new_size))
-
-    pool_16384(1:old_size) = temp
-    in_use_16384(1:old_size) = temp_use
-    in_use_16384(old_size+1:) = .false.
-    ref_counts_16384(1:old_size) = temp_refs
-    ref_counts_16384(old_size+1:) = 0
-
-    deallocate(temp, temp_use, temp_refs)
-  end subroutine resize_pool_16384
 
   ! Release a string back to the pool
   subroutine pool_release_string(ref)
@@ -570,6 +400,21 @@ contains
     end if
 
   end function pool_get_string_ptr
+
+  ! Is this ref still safe to dereference? A pooled ref points into module
+  ! backing storage that pool_cleanup frees; after a teardown the raw pointer
+  ! is undefined and associated() on it is not reliable. Gate on the pool
+  ! generation first (checked WITHOUT touching the stale pointer, since Fortran
+  ! .and. does not short-circuit), then confirm association.
+  function pool_ref_valid(ref) result(valid)
+    type(string_ref), intent(in) :: ref
+    logical :: valid
+
+    valid = .false.
+    if (.not. pool_initialized) return
+    if (ref%generation /= pool_generation) return
+    valid = associated(ref%data)
+  end function pool_ref_valid
 
   ! Intern a string for deduplication
   ! WARNING: Uses allocatable strings - may be problematic on macOS ARM64 with flang-new

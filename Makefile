@@ -635,6 +635,9 @@ test-macos: test-macos-pool test-macos-compiler
 $(BUILDDIR)/test_memory_pool: tests/test_memory_pool.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o -o $@
 
+$(BUILDDIR)/test_pool_growth_uaf: tests/test_pool_growth_uaf.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o -o $@
+
 $(BUILDDIR)/test_lexer_simple: tests/test_lexer_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
 
@@ -662,6 +665,12 @@ test-memory-pool: $(BUILDDIR)/test_memory_pool
 	@echo "Testing Memory Pool (String Pool)"
 	@echo "=========================================="
 	@$(BUILDDIR)/test_memory_pool
+
+test-pool-growth: $(BUILDDIR)/test_pool_growth_uaf
+	@echo "=========================================="
+	@echo "Testing String Pool Growth (MEM-3 UAF)"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_pool_growth_uaf
 
 test-lexer: $(BUILDDIR)/test_lexer_simple
 	@echo "=========================================="
