@@ -141,10 +141,10 @@ contains
 
       actual_input_len = 0
       if (use_nchars) then
-        call read_n_characters(nchars, input_line)
+        call read_n_characters(nchars, input_line, eof_reached)
         actual_input_len = len_trim(input_line)
       else if (use_delimiter) then
-        call read_until_delimiter(delimiter, input_line)
+        call read_until_delimiter(delimiter, input_line, eof_reached)
         actual_input_len = len_trim(input_line)
       else if (use_timeout) then
         call read_with_timeout(timeout_sec, input_line, &
@@ -181,8 +181,9 @@ contains
         end if
       end if
 
-      ! Set exit status: 1 if EOF reached without reading any data, 0 otherwise
-      if (eof_reached .and. len_trim(input_line) == 0) then
+      ! bash: nonzero whenever EOF arrived before the delimiter, even if
+      ! partial data was read (and assigned to the variable)
+      if (eof_reached) then
         shell%last_exit_status = 1
       else
         shell%last_exit_status = 0
@@ -203,25 +204,28 @@ contains
     is_raw = .false.
     if (present(raw_mode)) is_raw = raw_mode
 
-    ! Use non-advancing I/O to get actual character count
+    ! Byte-level read so EOF before the newline is visible (BUILTIN-15):
+    ! the formatted layer reports a final unterminated record exactly like
+    ! a newline-ended one.
     input_line = ''
     nchars = 0
-    read(input_unit, '(a)', iostat=iostat, advance='no', &
-      size=nchars) input_line
-    if (iostat == IOSTAT_EOR .or. iostat == 0) then
-      if (present(eof_reached)) eof_reached = .false.
-      if (present(input_length)) input_length = nchars
-    else if (iostat == IOSTAT_END) then
-      input_line = ''
-      if (present(eof_reached)) eof_reached = .true.
-      if (present(input_length)) input_length = 0
-      return
-    else
-      input_line = ''
-      if (present(eof_reached)) eof_reached = .true.
-      if (present(input_length)) input_length = 0
-      return
-    end if
+    block
+      character :: bch
+      logical :: bgot, beof
+      do while (nchars < len(input_line))
+        call read_byte(bch, bgot, beof)
+        if (.not. bgot) then
+          if (present(eof_reached)) eof_reached = .true.
+          if (present(input_length)) input_length = nchars
+          return
+        end if
+        if (bch == char(10)) exit
+        nchars = nchars + 1
+        input_line(nchars:nchars) = bch
+      end do
+    end block
+    if (present(eof_reached)) eof_reached = .false.
+    if (present(input_length)) input_length = nchars
 
     ! POSIX: Without -r, backslash at end of line continues to next line
     if (.not. is_raw) then
@@ -247,40 +251,70 @@ contains
     end if
   end subroutine
 
-  subroutine read_n_characters(n, input_line)
+  ! Read one byte from fd 0. Bypasses Fortran's formatted layer, which
+  ! consumes a whole record per '(a1)' read (the BUILTIN-1 root cause) and
+  ! cannot distinguish a final unterminated record from a newline-ended
+  ! one (the BUILTIN-15 root cause).
+  subroutine read_byte(ch, got, at_eof)
+    use iso_c_binding, only: c_char, c_size_t, c_loc
+    use system_interface, only: c_read, STDIN_FD
+    character, intent(out) :: ch
+    logical, intent(out) :: got, at_eof
+    character(kind=c_char), target :: cbuf(1)
+    integer(c_size_t) :: nread
+
+    ch = ' '
+    got = .false.
+    at_eof = .false.
+    nread = c_read(STDIN_FD, c_loc(cbuf), 1_c_size_t)
+    if (nread == 1) then
+      ch = cbuf(1)
+      got = .true.
+    else
+      at_eof = .true.
+    end if
+  end subroutine read_byte
+
+  subroutine read_n_characters(n, input_line, eof_reached)
     integer, intent(in) :: n
     character(len=*), intent(out) :: input_line
-    
-    integer :: i, iostat
+    logical, intent(out) :: eof_reached
+
+    integer :: i
     character :: ch
-    
+    logical :: got
+
     input_line = ''
-    
-    do i = 1, min(n, len(input_line))
-      read(input_unit, '(a1)', iostat=iostat) ch
-      if (iostat /= 0) exit
+    eof_reached = .false.
+    i = 1
+    do while (i <= min(n, len(input_line)))
+      call read_byte(ch, got, eof_reached)
+      if (.not. got) return
+      ! bash: the default delimiter (newline) still ends read -n early
+      if (ch == char(10)) return
       input_line(i:i) = ch
+      i = i + 1
     end do
   end subroutine
 
-  subroutine read_until_delimiter(delimiter, input_line)
+  subroutine read_until_delimiter(delimiter, input_line, eof_reached)
     character, intent(in) :: delimiter
     character(len=*), intent(out) :: input_line
-    
+    logical, intent(out) :: eof_reached
+
     character :: ch
-    integer :: pos, iostat
-    
+    integer :: pos
+    logical :: got
+
     input_line = ''
+    eof_reached = .false.
     pos = 1
-    
+
     do while (pos <= len(input_line))
-      read(input_unit, '(a1)', iostat=iostat) ch
-      if (iostat /= 0) exit
-      
-      if (ch == delimiter) then
-        exit
-      end if
-      
+      call read_byte(ch, got, eof_reached)
+      if (.not. got) exit
+      if (ch == delimiter) exit
+      ! Newlines are ordinary data when the delimiter is something else
       input_line(pos:pos) = ch
       pos = pos + 1
     end do
