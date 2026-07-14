@@ -61,6 +61,20 @@ jobs:
           grep -q "pkgver = $ver\$" .SRCINFO                 || { echo ".SRCINFO pkgver mismatch"; fail=1; }
           exit $fail
 
+  bounds-check:
+    # OOB substring bugs in the lexer/parser only abort under
+    # -fcheck=bounds (MEM-1, DISC-2); release builds fail silently.
+    name: Bounds-Checked Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build debug (-fcheck=bounds)
+        run: make debug -j$(nproc)
+      - name: Bounds regression suite
+        run: ./tests/builtins/test_lexer_parser_bounds.sh
+
   posix-tests:
     name: POSIX Tests
     runs-on: ubuntu-latest
