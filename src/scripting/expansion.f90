@@ -972,27 +972,118 @@ contains
 
   end subroutine process_param_expansion
 
-  ! Expand nested ${...} in a word operand (used by default/assign/error/alternate operators)
+  ! Expand $VAR, ${...}, $(...), $((...)), and backticks in a word operand
+  ! (used by default/assign/error/alternate operators and pattern/replacement)
   recursive function expand_word_operand(word, shell) result(expanded)
     character(len=*), intent(in) :: word
     type(shell_state_t), intent(inout) :: shell
     character(len=:), allocatable :: expanded
-    integer :: dp, bp, depth
+    integer :: n, dp, bp, depth, btick
 
-    ! Quick check: if no $, return as-is
-    dp = index(word, '$')
-    if (dp == 0) then
-      expanded = trim(word)
+    n = len_trim(word)
+
+    ! Quick check: nothing expandable
+    dp = index(word(1:n), '$')
+    btick = index(word(1:n), '`')
+    if (dp == 0 .and. btick == 0) then
+      expanded = word(1:n)
       return
     end if
 
-    ! Handle simple $VAR (no braces)
-    if (dp + 1 <= len_trim(word) .and. word(dp+1:dp+1) /= '{') then
+    ! Backtick command substitution, when it precedes any $ form
+    if (btick > 0 .and. (dp == 0 .or. btick < dp)) then
+      block
+        integer :: bend, out_len
+        character(len=:), allocatable :: cmd_out
+        bend = btick + 1
+        do while (bend <= n)
+          if (word(bend:bend) == '`') exit
+          bend = bend + 1
+        end do
+        if (bend <= n) then
+          call execute_command_and_capture(shell, word(btick+1:bend-1), cmd_out, out_len)
+          expanded = word(1:btick-1)
+          if (out_len > 0) expanded = expanded // cmd_out(1:out_len)
+          if (bend + 1 <= n) expanded = expanded // expand_word_operand(word(bend+1:n), shell)
+          return
+        end if
+      end block
+    end if
+
+    ! $((...)) arithmetic — must be checked before $( command substitution
+    if (dp > 0 .and. dp + 2 <= n) then
+      if (word(dp+1:dp+2) == '((') then
+        block
+          integer :: ap
+          character(len=32) :: aval
+          depth = 2
+          ap = dp + 3
+          do while (ap <= n)
+            if (word(ap:ap) == '(') depth = depth + 1
+            if (word(ap:ap) == ')') then
+              depth = depth - 1
+              if (depth == 0) exit
+            end if
+            ap = ap + 1
+          end do
+          if (ap <= n) then
+            aval = arithmetic_expansion_shell(word(dp:ap), shell)
+            expanded = word(1:dp-1) // trim(aval)
+            if (ap + 1 <= n) expanded = expanded // expand_word_operand(word(ap+1:n), shell)
+            return
+          end if
+        end block
+      end if
+    end if
+
+    ! $(...) command substitution
+    if (dp > 0 .and. dp + 1 <= n) then
+      if (word(dp+1:dp+1) == '(') then
+        block
+          integer :: cp, out_len
+          character :: open_q
+          character(len=:), allocatable :: cmd_out
+          depth = 1
+          cp = dp + 2
+          do while (cp <= n)
+            if (word(cp:cp) == '"' .or. word(cp:cp) == "'") then
+              ! Quoted span - a ')' between quotes must not close the substitution
+              open_q = word(cp:cp)
+              cp = cp + 1
+              do while (cp <= n)
+                if (word(cp:cp) == open_q) exit
+                cp = cp + 1
+              end do
+              if (cp <= n) cp = cp + 1
+              cycle
+            end if
+            if (word(cp:cp) == '(') depth = depth + 1
+            if (word(cp:cp) == ')') then
+              depth = depth - 1
+              if (depth == 0) exit
+            end if
+            cp = cp + 1
+          end do
+          if (cp <= n) then
+            call execute_command_and_capture(shell, word(dp+2:cp-1), cmd_out, out_len)
+            expanded = word(1:dp-1)
+            if (out_len > 0) expanded = expanded // cmd_out(1:out_len)
+            if (cp + 1 <= n) expanded = expanded // expand_word_operand(word(cp+1:n), shell)
+            return
+          end if
+        end block
+      end if
+    end if
+
+    ! Handle simple $VAR (no braces). Bounds check split from the character
+    ! test: .and. does not short-circuit.
+    if (dp > 0 .and. dp + 1 <= n) then
+      if (word(dp+1:dp+1) /= '{') then
       block
         integer :: vend
         character(len=:), allocatable :: vval
         vend = dp + 1
-        do while (vend <= len_trim(word))
+        do while (vend <= n)
           if (.not. ((word(vend:vend) >= 'a' .and. word(vend:vend) <= 'z') .or. &
                      (word(vend:vend) >= 'A' .and. word(vend:vend) <= 'Z') .or. &
                      (word(vend:vend) >= '0' .and. word(vend:vend) <= '9') .or. &
@@ -1002,39 +1093,43 @@ contains
         if (vend > dp + 1) then
           vval = get_shell_variable(shell, word(dp+1:vend-1))
           expanded = word(1:dp-1) // trim(vval)
-          if (vend <= len_trim(word)) then
-            expanded = expanded // expand_word_operand(word(vend:), shell)
+          if (vend <= n) then
+            expanded = expanded // expand_word_operand(word(vend:n), shell)
           end if
           return
         end if
       end block
+      end if
     end if
 
     ! Handle ${...} brace expansion
-    dp = index(word, '${')
+    dp = index(word(1:n), '${')
 
     ! Find matching } counting nesting depth — start AFTER the opening ${
     depth = 1
     bp = dp + 2
-    do while (bp <= len_trim(word))
-      if (bp + 1 <= len_trim(word) .and. word(bp:bp) == '$' .and. word(bp+1:bp+1) == '{') then
-        depth = depth + 1
-        bp = bp + 2
-        cycle
-      else if (word(bp:bp) == '}') then
+    do while (bp <= n)
+      if (bp + 1 <= n .and. word(bp:bp) == '$') then
+        if (word(bp+1:bp+1) == '{') then
+          depth = depth + 1
+          bp = bp + 2
+          cycle
+        end if
+      end if
+      if (word(bp:bp) == '}') then
         depth = depth - 1
         if (depth == 0) exit
       end if
       bp = bp + 1
     end do
 
-    if (bp <= len_trim(word)) then
+    if (dp > 0 .and. bp <= n) then
       ! Recursively expand the inner ${...}
       block
         character(len=:), allocatable :: inner_result, prefix, suffix
         prefix = word(1:dp-1)
         call process_param_expansion(word(dp+2:bp-1), inner_result, shell)
-        suffix = word(bp+1:len_trim(word))
+        suffix = word(bp+1:n)
         ! Recurse on suffix in case there are more ${...}
         if (index(suffix, '${') > 0) then
           expanded = prefix // inner_result // expand_word_operand(suffix, shell)
@@ -1043,7 +1138,7 @@ contains
         end if
       end block
     else
-      expanded = trim(word)
+      expanded = word(1:n)
     end if
   end function
 
