@@ -15,6 +15,7 @@ module shell_types
   integer, parameter :: MAX_ENV_LEN = 32768
   integer, parameter :: MAX_PIPELINE = 10
   integer, parameter :: MAX_JOBS = 100
+  integer, parameter :: MAX_REAPED_JOBS = 64  ! terminated-job status cache size
   integer, parameter :: MAX_HEREDOC_LEN = 65536
   integer, parameter :: MAX_CONTROL_DEPTH = 20
   integer, parameter :: MAX_SHELL_VARS = 512
@@ -313,6 +314,12 @@ module shell_types
     integer :: next_job_id = 1
     integer :: current_job_id = 0   ! %% or %+ (most recent job)
     integer :: previous_job_id = 0  ! %- (previous job)
+    ! Terminated-job status cache: lets a repeated `wait $pid` return the
+    ! remembered status instead of ECHILD/127. Ring buffer keyed by pid.
+    integer(c_pid_t) :: reaped_pids(MAX_REAPED_JOBS) = 0
+    integer :: reaped_codes(MAX_REAPED_JOBS) = 0
+    integer :: reaped_next = 1      ! next ring slot to overwrite
+    integer :: reaped_count = 0     ! number of live entries (<= MAX_REAPED_JOBS)
     ! Shell variables (local scope)
     type(shell_var_t) :: variables(MAX_SHELL_VARS)
     integer :: num_variables = 0

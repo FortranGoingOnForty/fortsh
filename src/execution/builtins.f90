@@ -1685,8 +1685,44 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: target_pid, iostat, ret
     integer(c_int), target :: wait_status
-    integer :: i
-    
+    integer :: i, cached_code, k
+    integer(c_pid_t) :: reaped
+    logical :: wait_any
+
+    ! wait -n: return when the next single child terminates.
+    wait_any = .false.
+    do i = 2, cmd%num_tokens
+      if (trim(cmd%tokens(i)) == '-n') then
+        wait_any = .true.
+        exit
+      end if
+    end do
+
+    if (wait_any) then
+      reaped = c_waitpid(int(-1, c_pid_t), c_loc(wait_status), 0)
+      if (reaped > 0) then
+        if (WIFEXITED(wait_status)) then
+          shell%last_exit_status = WEXITSTATUS(wait_status)
+        else if (WIFSIGNALED(wait_status)) then
+          shell%last_exit_status = 128 + WTERMSIG(wait_status)
+        else
+          shell%last_exit_status = 1
+        end if
+        call record_reaped_status(shell, reaped, shell%last_exit_status)
+        ! Retire the job that owned the reaped pid.
+        do k = 1, MAX_JOBS
+          if (shell%jobs(k)%job_id > 0 .and. shell%jobs(k)%pgid == reaped) then
+            call remove_job(shell, shell%jobs(k)%job_id)
+            exit
+          end if
+        end do
+      else
+        ! No unwaited children left.
+        shell%last_exit_status = 127
+      end if
+      return
+    end if
+
     if (cmd%num_tokens == 1) then
       ! Wait for all background jobs
       block
@@ -1697,8 +1733,14 @@ contains
               shell%jobs(i)%state == JOB_RUNNING) then
             ret = c_waitpid(shell%jobs(i)%pgid, &
               c_loc(wait_status), 0)
-            if (WIFEXITED(wait_status) .or. &
-                WIFSIGNALED(wait_status)) then
+            if (WIFEXITED(wait_status)) then
+              call record_reaped_status(shell, shell%jobs(i)%pgid, &
+                                        WEXITSTATUS(wait_status))
+              num_done = num_done + 1
+              done_ids(num_done) = shell%jobs(i)%job_id
+            else if (WIFSIGNALED(wait_status)) then
+              call record_reaped_status(shell, shell%jobs(i)%pgid, &
+                                        128 + WTERMSIG(wait_status))
               num_done = num_done + 1
               done_ids(num_done) = shell%jobs(i)%job_id
             end if
@@ -1732,19 +1774,25 @@ contains
         end if
         
         if (target_pid > 0) then
-          ret = c_waitpid(int(target_pid, c_pid_t), c_loc(wait_status), 0)
-          if (ret > 0) then
-            if (WIFEXITED(wait_status)) then
-              shell%last_exit_status = WEXITSTATUS(wait_status)
-            else if (WIFSIGNALED(wait_status)) then
-              shell%last_exit_status = 128 + WTERMSIG(wait_status)
-            else
-              shell%last_exit_status = 1
-            end if
+          if (lookup_reaped_status(shell, int(target_pid, c_pid_t), cached_code)) then
+            ! Already reaped: bash reports the remembered status on repeat waits.
+            shell%last_exit_status = cached_code
           else
-            ! PID is not a child of this shell (or doesn't exist)
-            write(error_unit, '(a,i0,a)') 'wait: pid ', target_pid, ' not found'
-            shell%last_exit_status = 127
+            ret = c_waitpid(int(target_pid, c_pid_t), c_loc(wait_status), 0)
+            if (ret > 0) then
+              if (WIFEXITED(wait_status)) then
+                shell%last_exit_status = WEXITSTATUS(wait_status)
+              else if (WIFSIGNALED(wait_status)) then
+                shell%last_exit_status = 128 + WTERMSIG(wait_status)
+              else
+                shell%last_exit_status = 1
+              end if
+              call record_reaped_status(shell, int(target_pid, c_pid_t), shell%last_exit_status)
+            else
+              ! PID is not a child of this shell (or doesn't exist)
+              write(error_unit, '(a,i0,a)') 'wait: pid ', target_pid, ' not found'
+              shell%last_exit_status = 127
+            end if
           end if
         end if
       end do

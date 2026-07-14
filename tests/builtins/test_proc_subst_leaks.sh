@@ -39,6 +39,24 @@ compare_output "cat <(echo) contents" 'cat <(echo hello world)'
 compare_output "diff <(a) <(b)" 'diff <(printf "a\nb\n") <(printf "a\nc\n")'
 compare_output "while read < <(cmd)" 'while read l; do echo "got:$l"; done < <(printf "x\ny\n")'
 
+section "4b. while/until loop re-reads a <(…) redirect every run (DISC-1)"
+# A while/until node reading from a process substitution used to work only on
+# its first execution: the old buffered `read` over-consumed the fd, so an
+# enclosing loop or a second such statement saw an empty stream. The byte-level
+# read (BUILTIN-1/15) reads exactly one byte at a time and no longer corrupts
+# re-reads of the same fd.
+compare_output "for-loop re-runs while < <(cmd)" \
+    'for i in 1 2 3; do while read x; do echo "$i:$x"; done < <(echo v$i); done'
+compare_output "two while < <(cmd) statements" \
+    'while read x; do echo "a:$x"; done < <(echo p); while read x; do echo "b:$x"; done < <(echo q)'
+compare_output "for-loop re-runs until < <(cmd)" \
+    'for i in 1 2; do until ! read x; do echo "$i:$x"; done < <(printf "%s\n" a b); done'
+# Controls that always worked (simple command / brace group consumer).
+compare_output "for-loop simple cmd < <(cmd)" \
+    'for i in 1 2 3; do cat < <(echo v$i); done'
+compare_output "for-loop brace group < <(cmd)" \
+    'for i in 1 2 3; do { read x; echo "$i:$x"; } < <(echo v$i); done'
+
 section "5. No predictable /tmp FIFO files (SEC-3 dead path removed)"
 # The live path uses pipe + /dev/fd; the old predictable /tmp/fortsh_fifo_*
 # helpers were deleted. Nothing should ever create such a file.

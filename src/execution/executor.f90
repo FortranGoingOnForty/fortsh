@@ -15,7 +15,7 @@ module executor
   use performance
   use aliases, only: expand_alias, is_alias, get_alias
   use shell_options
-  use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR
+  use signal_handling, only: execute_trap, TRAP_DEBUG, TRAP_ERR, is_signal_ignored
   use better_errors
   use completion, only: register_completion_executor, completion_func_executor_t
   use iso_fortran_env, only: error_unit, input_unit
@@ -158,12 +158,13 @@ contains
         if (pgid == 0) pgid = c_getpid()
         ret = c_setpgid(0, pgid)
 
-        ! Reset signal handlers to default
-        old_handler = c_signal(SIGINT, c_null_funptr)
-        old_handler = c_signal(SIGPIPE, c_null_funptr)
-        old_handler = c_signal(SIGTSTP, c_null_funptr)
-        old_handler = c_signal(SIGTTIN, c_null_funptr)
-        old_handler = c_signal(SIGTTOU, c_null_funptr)
+        ! Reset signal handlers to default, but leave signals ignored via an
+        ! empty-action trap (trap '' SIG) ignored, as bash does across fork/exec.
+        if (.not. is_signal_ignored(shell, SIGINT))  old_handler = c_signal(SIGINT, c_null_funptr)
+        if (.not. is_signal_ignored(shell, SIGPIPE)) old_handler = c_signal(SIGPIPE, c_null_funptr)
+        if (.not. is_signal_ignored(shell, SIGTSTP)) old_handler = c_signal(SIGTSTP, c_null_funptr)
+        if (.not. is_signal_ignored(shell, SIGTTIN)) old_handler = c_signal(SIGTTIN, c_null_funptr)
+        if (.not. is_signal_ignored(shell, SIGTTOU)) old_handler = c_signal(SIGTTOU, c_null_funptr)
 
         ! Set up pipes
         if (i > start_idx) then
@@ -1508,12 +1509,13 @@ contains
         ret = c_setpgid(0, pgid)
       end if
 
-      ! Reset signal handlers to default
-      old_handler = c_signal(SIGINT, c_null_funptr)
-      old_handler = c_signal(SIGPIPE, c_null_funptr)
-      old_handler = c_signal(SIGTSTP, c_null_funptr)
-      old_handler = c_signal(SIGTTIN, c_null_funptr)
-      old_handler = c_signal(SIGTTOU, c_null_funptr)
+      ! Reset signal handlers to default, but leave signals ignored via an
+      ! empty-action trap (trap '' SIG) ignored, as bash does across fork/exec.
+      if (.not. is_signal_ignored(shell, SIGINT))  old_handler = c_signal(SIGINT, c_null_funptr)
+      if (.not. is_signal_ignored(shell, SIGPIPE)) old_handler = c_signal(SIGPIPE, c_null_funptr)
+      if (.not. is_signal_ignored(shell, SIGTSTP)) old_handler = c_signal(SIGTSTP, c_null_funptr)
+      if (.not. is_signal_ignored(shell, SIGTTIN)) old_handler = c_signal(SIGTTIN, c_null_funptr)
+      if (.not. is_signal_ignored(shell, SIGTTOU)) old_handler = c_signal(SIGTTOU, c_null_funptr)
 
       ! Handle here document
       call handle_heredoc(cmd, shell)
