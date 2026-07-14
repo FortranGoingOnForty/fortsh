@@ -1448,8 +1448,10 @@ contains
     ! POSIX: Empty subshell () is a syntax error
     if (.not. associated(commands)) then
       call write_stderr(parser_err_prefix() // "syntax error near unexpected token `)'")
-      if (allocated(state%raw_input)) then
-        call write_stderr("sh: -c: `" // trim(state%raw_input) // "'")
+      ! bash's second line (the echoed input) carries the same prefix and
+      ! only appears in non-interactive mode
+      if (.not. g_parser_interactive .and. allocated(state%raw_input)) then
+        call write_stderr(parser_err_prefix() // '`' // trim(state%raw_input) // "'")
       end if
       state%has_error = .true.
       return
