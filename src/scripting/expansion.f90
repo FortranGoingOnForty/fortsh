@@ -749,14 +749,30 @@ contains
           var_value = get_shell_variable(shell, trim(operation))
 
           if (len_trim(param1) > 0) then
-            read(param1, *, iostat=i) offset
-            if (i /= 0) offset = 0
+            ! Offset and length are arithmetic expressions (vars, sums),
+            ! not bare integers — route both through the evaluator
+            block
+              character(len=32) :: bound_str
+              ! arithmetic_expansion_shell expects the full $((...)) wrapper
+              bound_str = arithmetic_expansion_shell('$((' // trim(param1) // '))', shell)
+              read(bound_str, *, iostat=i) offset
+              if (i /= 0) offset = 0
+            end block
             ! Handle negative offsets (count from end)
             if (offset < 0) offset = len_trim(var_value) + offset
             if (offset < 0) offset = 0
             if (len_trim(param2) > 0) then
-              read(param2, *, iostat=i) length
-              if (i /= 0) length = 0
+              block
+                character(len=32) :: bound_str
+                bound_str = arithmetic_expansion_shell('$((' // trim(param2) // '))', shell)
+                read(bound_str, *, iostat=i) length
+                if (i /= 0) length = 0
+              end block
+              ! Negative length counts back from the end of the value
+              if (length < 0) then
+                length = len_trim(var_value) + length - offset
+                if (length < 0) length = 0
+              end if
               if (offset < len_trim(var_value)) then
                 i = min(length, len_trim(var_value) - offset)
                 result_value = var_value(offset+1:offset+i)
