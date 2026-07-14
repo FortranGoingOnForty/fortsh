@@ -24,4 +24,11 @@ section "4. trap in subshell"
 compare_output "trap not inherited in subshell" 'trap "echo parent" EXIT; (echo child); echo back'
 compare_output "trap in subshell independent" '(trap "echo sub_exit" EXIT; echo in_sub)'
 
+section "5. empty-action trap ignores the signal across fork/exec (EXEC-2)"
+# `trap "" SIG` installs SIG_IGN, which is inherited by forked/exec'd children.
+# fortsh used to install its generic handler unconditionally and then reset the
+# child to SIG_DFL, so the child died instead of ignoring the signal.
+compare_output "trap '' INT survives into child" 'trap "" INT; sh -c "kill -INT \$\$; echo survived"; echo rc=$?'
+compare_output "trap '' TERM survives into child" 'trap "" TERM; sh -c "kill -TERM \$\$; echo alive"; echo rc=$?'
+
 print_summary

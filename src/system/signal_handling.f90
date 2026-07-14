@@ -295,8 +295,14 @@ contains
 
     ! For real signals (not pseudo-signals like EXIT), register signal handler
     if (signum > 0 .and. signum <= 31) then
-      ! Initialize sigaction structure
-      sa%sa_handler = c_funloc(generic_signal_handler)
+      ! Initialize sigaction structure. An empty action (trap '' SIG) means
+      ! "ignore the signal": install SIG_IGN, which is (void(*)(int))1, rather
+      ! than the generic handler. This disposition is inherited across fork/exec.
+      if (len_trim(command) == 0) then
+        sa%sa_handler = transfer(1_c_intptr_t, sa%sa_handler)
+      else
+        sa%sa_handler = c_funloc(generic_signal_handler)
+      end if
       sa%sa_mask = 0
       sa%sa_flags = 0  ! Could add SA_RESTART for automatic syscall restart
       sa%sa_restorer = c_null_funptr
@@ -377,6 +383,23 @@ contains
       end if
     end do
   end function
+
+  ! Check if a signal is currently ignored via an empty-action trap (trap '' SIG).
+  ! Such a signal must stay ignored across fork/exec, not reset to default.
+  function is_signal_ignored(shell, signum) result(ignored)
+    type(shell_state_t), intent(in) :: shell
+    integer, intent(in) :: signum
+    logical :: ignored
+    integer :: i
+
+    ignored = .false.
+    do i = 1, size(shell%traps)
+      if (shell%traps(i)%signal == signum .and. shell%traps(i)%active) then
+        ignored = (len_trim(shell%traps(i)%command) == 0)
+        exit
+      end if
+    end do
+  end function is_signal_ignored
 
   ! Check if a trap is inherited from parent shell (visible but not executable)
   function is_trap_inherited(shell, signum) result(inherited)

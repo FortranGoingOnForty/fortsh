@@ -1240,6 +1240,7 @@ contains
   ! =====================================
 
   function execute_pipeline_node(node, shell) result(exit_status)
+    use signal_handling, only: is_signal_ignored
     type(command_node_t), pointer, intent(in) :: node
     type(shell_state_t), intent(inout) :: shell
     integer :: exit_status
@@ -1356,11 +1357,13 @@ contains
         ! when in_pipeline_child is set, so SIGTTOU won't stop the process.
         block
           type(c_funptr) :: old_handler
-          old_handler = c_signal(SIGINT,  c_null_funptr)
-          old_handler = c_signal(SIGPIPE, c_null_funptr)
-          old_handler = c_signal(SIGTSTP, c_null_funptr)
-          old_handler = c_signal(SIGTTIN, c_null_funptr)
-          old_handler = c_signal(SIGTTOU, c_null_funptr)
+          ! Leave signals ignored via an empty-action trap (trap '' SIG) ignored,
+          ! matching bash's fork/exec disposition; reset the rest to default.
+          if (.not. is_signal_ignored(shell, SIGINT))  old_handler = c_signal(SIGINT,  c_null_funptr)
+          if (.not. is_signal_ignored(shell, SIGPIPE)) old_handler = c_signal(SIGPIPE, c_null_funptr)
+          if (.not. is_signal_ignored(shell, SIGTSTP)) old_handler = c_signal(SIGTSTP, c_null_funptr)
+          if (.not. is_signal_ignored(shell, SIGTTIN)) old_handler = c_signal(SIGTTIN, c_null_funptr)
+          if (.not. is_signal_ignored(shell, SIGTTOU)) old_handler = c_signal(SIGTTOU, c_null_funptr)
         end block
 
         ! Set up stdin from previous pipe
