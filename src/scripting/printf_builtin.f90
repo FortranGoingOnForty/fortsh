@@ -4,8 +4,14 @@
 ! ==============================================================================
 module printf_builtin
   use shell_types
-  use iso_fortran_env, only: output_unit, error_unit
+  use iso_fortran_env, only: output_unit, error_unit, int64
+  use iso_c_binding, only: c_char, c_int, c_double, c_long_long, c_null_char
+  use io_helpers, only: parse_int64
   implicit none
+
+  ! Set when %b hits \c: all further printf output (including format
+  ! reuse for remaining arguments) stops immediately.
+  logical, save :: printf_stop = .false.
 
   ! Upper bound on printf field width/precision. A larger value (literal or via
   ! '*') would drive an unbounded buffer allocation and abort the shell.
@@ -23,7 +29,33 @@ module printf_builtin
     logical :: width_from_arg = .false. ! '*' for width
     logical :: prec_from_arg = .false.  ! '*' for precision
     character :: conversion = 's'       ! conversion specifier
+    character(len=64) :: time_format = '' ! strftime format for %(fmt)T
   end type
+
+  interface
+    function c_time_now() bind(C, name="fortsh_time_now")
+      import :: c_long_long
+      integer(c_long_long) :: c_time_now
+    end function c_time_now
+
+    function c_strftime_epoch(fmt, epoch, buf, buflen) bind(C, name="fortsh_strftime_epoch")
+      import :: c_char, c_long_long, c_int
+      character(kind=c_char), dimension(*), intent(in) :: fmt
+      integer(c_long_long), value :: epoch
+      character(kind=c_char), dimension(*), intent(out) :: buf
+      integer(c_int), value :: buflen
+      integer(c_int) :: c_strftime_epoch
+    end function c_strftime_epoch
+
+    function c_format_hexfloat(v, upper, buf, buflen) bind(C, name="fortsh_format_hexfloat")
+      import :: c_double, c_int, c_char
+      real(c_double), value :: v
+      integer(c_int), value :: upper
+      character(kind=c_char), dimension(*), intent(out) :: buf
+      integer(c_int), value :: buflen
+      integer(c_int) :: c_format_hexfloat
+    end function c_format_hexfloat
+  end interface
 
 contains
 
@@ -84,6 +116,7 @@ contains
 
     arg_index = 3
     fmt_error = .false.
+    printf_stop = .false.
 
     ! Size buffer based on argument content — each format cycle can produce
     ! up to sum(arg_lengths) + format_string_len of output
@@ -107,6 +140,8 @@ contains
         flush(output_unit)
       end if
 
+      ! %b \c ends all output, including format reuse
+      if (printf_stop) exit
       ! If no arguments were consumed, we're done (format has no specifiers or no more args)
       if (arg_index == prev_arg_index .or. arg_index > cmd%num_tokens) exit
     end do
@@ -202,6 +237,7 @@ contains
 
           ! Append formatted value to output (use exact length to preserve padding)
           call append_to_output_len(output, output_pos, formatted_value, fmt_len)
+          if (printf_stop) exit
         end if
       else if (current_char == char(92) .and. pos < format_len) then
         ! Handle escape sequences (backslash)
@@ -335,6 +371,30 @@ contains
         c = format_str(pos:pos)
       end if
 
+      ! %(fmt)T — strftime-style time conversion with its own parse shape
+      if (c == '(') then
+        block
+          integer :: close_p, sp
+          close_p = 0
+          sp = pos + 1
+          do while (sp <= format_len)
+            if (format_str(sp:sp) == ')') then
+              close_p = sp
+              exit
+            end if
+            sp = sp + 1
+          end do
+          if (close_p > 0 .and. close_p < format_len) then
+            if (format_str(close_p+1:close_p+1) == 'T') then
+              fmt_info%time_format = format_str(pos+1:close_p-1)
+              fmt_info%conversion = 'T'
+              pos = close_p + 2
+              return
+            end if
+          end if
+        end block
+      end if
+
       ! Check for conversion specifier
       if (index('diouxXeEfFgGaAcspbq', c) > 0) then
         fmt_info%conversion = c
@@ -356,7 +416,8 @@ contains
     logical, intent(out), optional :: had_error
 
     character(len=4096) :: raw_value, temp_value
-    integer :: int_val, status, val_len, pad_len, prec, actual_len
+    integer(int64) :: int_val
+    integer :: status, val_len, pad_len, prec, actual_len
     real(8) :: real_val
     character :: pad_char
 
@@ -386,8 +447,13 @@ contains
       end if
 
     case ('b')
-      ! %b: interpret backslash escapes in argument
-      call interpret_escapes(arg_value, raw_value)
+      ! %b: interpret backslash escapes; \c stops all further output
+      call interpret_escapes(arg_value, raw_value, printf_stop)
+      if (fmt_info%precision >= 0) then
+        if (fmt_info%precision < len_trim(raw_value)) then
+          raw_value(fmt_info%precision+1:) = ' '
+        end if
+      end if
 
     case ('c')
       ! Character
@@ -402,6 +468,7 @@ contains
       call parse_integer(arg_value, int_val, status)
       if (status == 0) then
         call format_integer(int_val, fmt_info, raw_value)
+        call apply_int_precision(raw_value, fmt_info%precision, int_val == 0_int64)
       else
         write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
         if (present(had_error)) had_error = .true.
@@ -414,6 +481,7 @@ contains
       if (status == 0) then
         write(temp_value, '(O0)') int_val
         raw_value = trim(temp_value)
+        call apply_int_precision(raw_value, fmt_info%precision, int_val == 0_int64)
         if (fmt_info%alternate .and. int_val /= 0) then
           raw_value = '0' // trim(raw_value)
         end if
@@ -429,6 +497,7 @@ contains
       if (status == 0) then
         write(temp_value, '(Z0)') int_val
         raw_value = to_lowercase(trim(temp_value))
+        call apply_int_precision(raw_value, fmt_info%precision, int_val == 0_int64)
         if (fmt_info%alternate .and. int_val /= 0) then
           raw_value = '0x' // trim(raw_value)
         end if
@@ -444,6 +513,7 @@ contains
       if (status == 0) then
         write(temp_value, '(Z0)') int_val
         raw_value = to_uppercase(trim(temp_value))
+        call apply_int_precision(raw_value, fmt_info%precision, int_val == 0_int64)
         if (fmt_info%alternate .and. int_val /= 0) then
           raw_value = '0X' // trim(raw_value)
         end if
@@ -454,16 +524,53 @@ contains
       end if
 
     case ('u')
-      ! Unsigned integer (treat as regular integer in Fortran)
+      ! Unsigned 64-bit: negatives print their two's-complement magnitude
       call parse_integer(arg_value, int_val, status)
       if (status == 0) then
-        if (int_val < 0) int_val = int_val + 2147483647 + 1  ! Approximate unsigned
-        write(raw_value, '(I0)') int_val
+        call uint64_to_str(int_val, raw_value)
+        call apply_int_precision(raw_value, fmt_info%precision, int_val == 0_int64)
       else
         write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
         if (present(had_error)) had_error = .true.
         raw_value = '0'
       end if
+
+    case ('a', 'A')
+      ! Hex float — via the C library so the layout matches the local bash
+      read(arg_value, *, iostat=status) real_val
+      if (status == 0) then
+        call hexfloat_to_str(real_val, fmt_info%conversion == 'A', raw_value)
+      else
+        if (len_trim(arg_value) > 0) then
+          write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+          if (present(had_error)) had_error = .true.
+        end if
+        raw_value = '0x0p+0'
+      end if
+
+    case ('T')
+      ! %(fmt)T — epoch seconds through strftime; -1/-2/missing mean now
+      block
+        integer(c_long_long) :: epoch
+        integer(int64) :: tval
+        logical :: tok_ok
+        if (actual_len == 0) then
+          epoch = c_time_now()
+        else
+          call parse_int64(arg_value(1:actual_len), tval, tok_ok)
+          if (.not. tok_ok) then
+            write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
+            if (present(had_error)) had_error = .true.
+            tval = -1_int64
+          end if
+          if (tval == -1_int64 .or. tval == -2_int64) then
+            epoch = c_time_now()
+          else
+            epoch = int(tval, c_long_long)
+          end if
+        end if
+        call strftime_to_str(fmt_info%time_format, epoch, raw_value)
+      end block
 
     case ('f', 'F')
       ! Fixed-point notation
@@ -528,6 +635,7 @@ contains
         else
           raw_value = to_uppercase(raw_value)
         end if
+        call g_strip_zeros(raw_value)
       else
         if (len_trim(arg_value) > 0) then
           write(error_unit, '(a,a,a)') 'fortsh: printf: ', trim(arg_value), ': invalid number'
@@ -540,6 +648,11 @@ contains
       ! Shell-quoted string: escape special characters with backslash
       block
         integer :: qi, qo
+        if (actual_len == 0) then
+          ! bash prints '' so the empty value survives re-parsing
+          raw_value = "''"
+          actual_len = 2
+        else
         qo = 1
         raw_value = ''
         do qi = 1, actual_len
@@ -555,6 +668,7 @@ contains
           qo = qo + 1
         end do
         actual_len = qo - 1
+        end if
       end block
 
     case default
@@ -617,7 +731,7 @@ contains
 
   subroutine parse_integer(arg_value, int_val, status)
     character(len=*), intent(in) :: arg_value
-    integer, intent(out) :: int_val
+    integer(int64), intent(out) :: int_val
     integer, intent(out) :: status
 
     character(len=256) :: clean_arg
@@ -654,7 +768,7 @@ contains
   end subroutine
 
   subroutine format_integer(int_val, fmt_info, result)
-    integer, intent(in) :: int_val
+    integer(int64), intent(in) :: int_val
     type(format_info_t), intent(in) :: fmt_info
     character(len=*), intent(out) :: result
 
@@ -699,9 +813,123 @@ contains
     result = adjustl(temp)
   end subroutine
 
-  subroutine interpret_escapes(input, output)
+  ! Integer precision is a minimum digit count, zero-padded before the
+  ! sign-agnostic magnitude; %.0d of the value 0 emits no digits at all.
+  subroutine apply_int_precision(str, prec, value_is_zero)
+    character(len=*), intent(inout) :: str
+    integer, intent(in) :: prec
+    logical, intent(in) :: value_is_zero
+    character(len=80) :: digits_part
+    integer :: n, sl
+
+    if (prec < 0) return
+    n = len_trim(str)
+    sl = 0
+    if (n >= 1) then
+      if (str(1:1) == '-' .or. str(1:1) == '+' .or. str(1:1) == ' ') sl = 1
+    end if
+    if (prec == 0 .and. value_is_zero) then
+      str = ''
+      return
+    end if
+    if (n - sl < prec) then
+      digits_part = str(sl+1:n)
+      str = str(1:sl) // repeat('0', prec - (n - sl)) // trim(digits_part)
+    end if
+  end subroutine apply_int_precision
+
+  ! Decimal digits of an int64 reinterpreted as unsigned (two's
+  ! complement magnitude for negatives): ishft(v,-1) is a logical shift,
+  ! so (v>>1)/5 is the unsigned quotient by 10, off by at most one.
+  subroutine uint64_to_str(v, str)
+    integer(int64), intent(in) :: v
+    character(len=*), intent(out) :: str
+    integer(int64) :: q, r
+    character(len=24) :: tail
+
+    if (v >= 0_int64) then
+      write(str, '(I0)') v
+    else
+      q = ishft(v, -1) / 5_int64
+      r = v - q * 10_int64
+      if (r >= 10_int64) then
+        q = q + 1_int64
+        r = r - 10_int64
+      end if
+      write(tail, '(I0)') q
+      str = trim(tail) // achar(48 + int(r))
+    end if
+  end subroutine uint64_to_str
+
+  subroutine hexfloat_to_str(v, upper, str)
+    real(8), intent(in) :: v
+    logical, intent(in) :: upper
+    character(len=*), intent(out) :: str
+    character(kind=c_char) :: cbuf(64)
+    integer(c_int) :: n, up
+    integer :: k
+
+    up = 0
+    if (upper) up = 1
+    n = c_format_hexfloat(real(v, c_double), up, cbuf, 64)
+    str = ''
+    do k = 1, min(int(n), len(str), 64)
+      str(k:k) = cbuf(k)
+    end do
+  end subroutine hexfloat_to_str
+
+  subroutine strftime_to_str(fmt, epoch, str)
+    character(len=*), intent(in) :: fmt
+    integer(c_long_long), intent(in) :: epoch
+    character(len=*), intent(out) :: str
+    character(kind=c_char) :: fbuf(256), obuf(256)
+    integer(c_int) :: n
+    integer :: k, fl
+
+    fl = min(len_trim(fmt), 255)
+    do k = 1, fl
+      fbuf(k) = fmt(k:k)
+    end do
+    fbuf(fl+1) = c_null_char
+    n = c_strftime_epoch(fbuf, epoch, obuf, 256)
+    str = ''
+    do k = 1, min(int(n), len(str), 256)
+      str(k:k) = obuf(k)
+    end do
+  end subroutine strftime_to_str
+
+  ! %g strips trailing fractional zeros (and a bare trailing point),
+  ! in the mantissa when an exponent is present.
+  subroutine g_strip_zeros(str)
+    character(len=*), intent(inout) :: str
+    character(len=64) :: expart
+    integer :: epos, mend
+
+    epos = index(str, 'e')
+    if (epos == 0) epos = index(str, 'E')
+    if (epos > 0) then
+      expart = str(epos:len_trim(str))
+      mend = epos - 1
+    else
+      expart = ''
+      mend = len_trim(str)
+    end if
+    if (index(str(1:mend), '.') > 0) then
+      do while (mend > 1)
+        if (str(mend:mend) /= '0') exit
+        mend = mend - 1
+      end do
+      if (mend >= 1) then
+        if (str(mend:mend) == '.') mend = mend - 1
+      end if
+    end if
+    str = str(1:mend) // trim(expart)
+  end subroutine g_strip_zeros
+
+  subroutine interpret_escapes(input, output, stop_out)
     character(len=*), intent(in) :: input
     character(len=*), intent(out) :: output
+    logical, intent(out), optional :: stop_out
 
     integer :: pos, out_pos, input_len, octal_val, i
     character :: c
@@ -711,6 +939,7 @@ contains
     out_pos = 1
     input_len = len_trim(input)
     output = ''
+    if (present(stop_out)) stop_out = .false.
 
     do while (pos <= input_len .and. out_pos <= len(output))
       c = input(pos:pos)
@@ -720,6 +949,10 @@ contains
         c = input(pos:pos)
 
         select case (c)
+        case ('c')
+          ! \c: stop ALL printf output from here on
+          if (present(stop_out)) stop_out = .true.
+          return
         case ('n')
           output(out_pos:out_pos) = char(10)
         case ('t')

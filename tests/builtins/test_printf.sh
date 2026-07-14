@@ -44,4 +44,56 @@ compare_output "printf %q shell-quoted string" 'printf "%q\n" "hello world"'
 compare_output "printf octal escape in format" 'printf "\101\n"'
 compare_output "printf hex escape in format" 'printf "\x41\n"'
 
+section "20. Wave-5: 64-bit integers and unsigned (BUILTIN-2, BUILTIN-16)"
+
+compare_both "%d past 2^31"          "printf '%d\n' 9999999999"
+compare_both "%x of -1 is 64-bit"    "printf '%x\n' -1"
+compare_both "%x past 2^32"          "printf '%x\n' 4294967296"
+compare_both "%u of -1"              "printf '%u\n' -1"
+compare_both "%u of -2"              "printf '%u\n' -2"
+compare_both "%u positive"           "printf '%u\n' 42"
+compare_both "small ints unchanged"  "printf '%d %05d %#x\n' 5 42 255"
+
+section "21. Wave-5: %b \\c terminator and precision (BUILTIN-8)"
+
+out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "printf '%b\n' 'a\tb\c' ignored" | od -An -c | tr -s ' ')
+exp=$(run_with_timeout "$TEST_TIMEOUT" "$BASH_REF" -c "printf '%b\n' 'a\tb\c' ignored" | od -An -c | tr -s ' ')
+if [ "$out" = "$exp" ]; then
+    pass "\\c stops output, args, and the trailing newline"
+else
+    fail "\\c stops output, args, and the trailing newline" "$exp" "$out"
+fi
+compare_both "%.2b truncates"        "printf '%.2b\n' abcdef"
+
+section "22. Wave-5: %(fmt)T and %a (BUILTIN-9)"
+
+out=$(TZ=UTC run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c "printf '%(%Y)T\n' 0")
+exp=$(TZ=UTC run_with_timeout "$TEST_TIMEOUT" "$BASH_REF" -c "printf '%(%Y)T\n' 0")
+if [ "$out" = "$exp" ]; then
+    pass "%(%Y)T of epoch 0 in UTC"
+else
+    fail "%(%Y)T of epoch 0 in UTC" "$exp" "$out"
+fi
+compare_both "%(%s)T round-trips"    "printf '%(%s)T\n' 1234567890"
+compare_both "%a hex float"          "printf '%a\n' 1.5"
+compare_both "%A hex float"          "printf '%A\n' 1.5"
+
+section "23. Wave-5: %g trailing zeros (BUILTIN-10)"
+
+compare_both "%g large -> short exp" "printf '%g\n' 100000000"
+compare_both "%g strips zeros"       "printf '%g\n' 1.5"
+compare_both "%g integral value"     "printf '%g\n' 1.0"
+
+section "24. Wave-5: integer precision (BUILTIN-11)"
+
+compare_both "width and precision"   "printf '%5.3d\n' 7"
+compare_both "%.5x zero-pads"        "printf '%.5x\n' 255"
+compare_both "%.0d of 0 is empty"    "printf '[%.0d]\n' 0"
+compare_both "%.0d of 5 prints"      "printf '[%.0d]\n' 5"
+
+section "25. Wave-5: %q of empty string (BUILTIN-17)"
+
+compare_both "empty arg round-trips" "printf '[%q]\n' ''"
+compare_both "non-empty unchanged"   "printf '%q\n' 'a b'"
+
 print_summary
