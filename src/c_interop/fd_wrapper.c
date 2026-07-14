@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <time.h>
 
 // Look up a user's home directory via getpwnam (for ~user expansion).
 // Returns the pw_dir string, or NULL if the user does not exist.
@@ -173,4 +174,24 @@ long long fortsh_stat_ino(const char *path) {
 extern char **environ;
 char *get_environ_ptr(int idx) {
     return environ[idx];
+}
+
+// Current Unix time, for printf %(fmt)T with argument -1/-2/absent.
+long long fortsh_time_now(void) {
+    return (long long)time(NULL);
+}
+
+// strftime an epoch through localtime, for printf %(fmt)T.
+int fortsh_strftime_epoch(const char *fmt, long long epoch, char *buf, int buflen) {
+    time_t t = (time_t)epoch;
+    struct tm tmv;
+    if (!localtime_r(&t, &tmv)) return 0;
+    return (int)strftime(buf, (size_t)buflen, fmt, &tmv);
+}
+
+// %a hex-float via the C library so the layout (long double
+// normalization) matches what the local bash printf produces.
+int fortsh_format_hexfloat(double v, int upper, char *buf, int buflen) {
+    int n = snprintf(buf, (size_t)buflen, upper ? "%LA" : "%La", (long double)v);
+    return n < 0 ? 0 : n;
 }
