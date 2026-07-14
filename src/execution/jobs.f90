@@ -48,6 +48,51 @@ contains
     if (job_id > 0) shell%num_jobs = shell%num_jobs + 1
   end function
 
+  ! Remember a terminated child's decoded wait status (128+sig for signals) so a
+  ! later `wait <pid>` reports it rather than 127 after the child has been reaped.
+  subroutine record_reaped_status(shell, pid, exit_code)
+    type(shell_state_t), intent(inout) :: shell
+    integer(c_pid_t), intent(in) :: pid
+    integer, intent(in) :: exit_code
+    integer :: i
+
+    if (pid <= 0) return
+
+    ! Update an existing entry for this pid if present (last status wins).
+    do i = 1, shell%reaped_count
+      if (shell%reaped_pids(i) == pid) then
+        shell%reaped_codes(i) = exit_code
+        return
+      end if
+    end do
+
+    shell%reaped_pids(shell%reaped_next) = pid
+    shell%reaped_codes(shell%reaped_next) = exit_code
+    shell%reaped_next = shell%reaped_next + 1
+    if (shell%reaped_next > MAX_REAPED_JOBS) shell%reaped_next = 1
+    if (shell%reaped_count < MAX_REAPED_JOBS) shell%reaped_count = shell%reaped_count + 1
+  end subroutine
+
+  ! Look up a remembered terminated-child status. Returns .true. and sets
+  ! exit_code on a hit; .false. when the pid is not in the cache.
+  function lookup_reaped_status(shell, pid, exit_code) result(found)
+    type(shell_state_t), intent(in) :: shell
+    integer(c_pid_t), intent(in) :: pid
+    integer, intent(out) :: exit_code
+    logical :: found
+    integer :: i
+
+    found = .false.
+    exit_code = 0
+    do i = 1, shell%reaped_count
+      if (shell%reaped_pids(i) == pid) then
+        exit_code = shell%reaped_codes(i)
+        found = .true.
+        return
+      end if
+    end do
+  end function
+
   subroutine remove_job(shell, job_id)
     type(shell_state_t), intent(inout) :: shell
     integer, intent(in) :: job_id
@@ -78,9 +123,11 @@ contains
           if (pid > 0) then
             if (WIFEXITED(status)) then
               shell%jobs(i)%state = JOB_DONE
+              call record_reaped_status(shell, pid, WEXITSTATUS(status))
               ! DON'T set last_exit_status for background jobs!
             else if (WIFSIGNALED(status)) then
               shell%jobs(i)%state = JOB_DONE
+              call record_reaped_status(shell, pid, 128 + WTERMSIG(status))
               ! DON'T set last_exit_status for background jobs!
             else if (WIFSTOPPED(status)) then
               shell%jobs(i)%state = JOB_STOPPED

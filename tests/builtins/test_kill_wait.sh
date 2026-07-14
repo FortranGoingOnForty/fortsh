@@ -29,6 +29,18 @@ compare_output "wait captures exit 42" '(exit 42) & wait $!; echo $?'
 compare_output "wait captures exit 0" '(exit 0) & wait $!; echo $?'
 compare_output "dollar-bang is last bg PID" 'sleep 0.1 & echo $! | grep -qE "^[0-9]+$" && echo valid'
 
+section "5. wait -n (EXEC-3)"
+# `wait -n` returns when the next single child terminates. It used to fall into
+# the pid parser, print 'wait: invalid pid', and return 1 without blocking.
+compare_output "wait -n returns first job status" 'sleep 0.3 & sleep 0.05 & wait -n; echo "s=$?"'
+compare_output "wait -n with no children is 127" 'wait -n; echo "s=$?"'
+
+section "6. repeated wait on a reaped pid (EXEC-4)"
+# The first wait reaps and reports the status; a second wait on the same pid
+# used to hit ECHILD and return 127. bash remembers the status and repeats it.
+compare_output "second wait repeats status 3" '(exit 3) & p=$!; wait $p; echo "a=$?"; wait $p; echo "b=$?"'
+compare_output "second wait repeats status 0" '(exit 0) & p=$!; wait $p; echo "a=$?"; wait $p; echo "b=$?"'
+
 section "7. signal-killed child exit status is 128+signum (EXEC-1)"
 # A child terminated by a signal must report 128+signum, not 0. extract_exit_status
 # used to return only WEXITSTATUS, so signal deaths read as success.
