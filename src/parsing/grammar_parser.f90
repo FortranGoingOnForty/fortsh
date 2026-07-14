@@ -72,6 +72,23 @@ contains
     end if
     state%raw_input = input  ! Save for heredoc parsing
     call tokenize(input, state%tokens, state%num_tokens)
+    if (last_tokenize_unterminated .and. .not. g_parser_interactive) then
+      ! bash exits 2 on EOF inside an unclosed construct; interactive mode
+      ! never gets here — the REPL gathers continuation lines first.
+      call write_stderr(parser_err_prefix()//'unexpected EOF while looking for matching `'// &
+                        last_unterminated_closer//"'")
+      last_parse_had_error = .true.
+      nullify(root)
+      return
+    end if
+    if (last_tokenize_truncated) then
+      ! token_t%value is a fixed 4096-byte buffer; running the clipped word
+      ! would silently change semantics, so reject the input instead (MEM-5).
+      call write_stderr(parser_err_prefix()//'word too long (limit 4096 bytes)')
+      last_parse_had_error = .true.
+      nullify(root)
+      return
+    end if
     state%pos = 1
     root => parse_complete_command(state)
     if (state%has_error .and. associated(root)) then
@@ -258,6 +275,74 @@ contains
     end do
   end function
 
+  ! Desugar |& — bash defines cmd |& next as cmd 2>&1 | next, so append a
+  ! 2>&1 (dup fd 2 onto 1) to the command left of the pipe. Simple commands
+  ! carry redirects on simple_cmd; compound nodes on the node itself.
+  subroutine attach_stderr_merge(node)
+    type(command_node_t), pointer :: node
+    type(redirection_t), allocatable :: tmp(:)
+    integer :: n
+
+    if (.not. associated(node)) return
+    if (node%node_type == CMD_SIMPLE .and. associated(node%simple_cmd)) then
+      n = node%simple_cmd%num_redirects
+      allocate(tmp(n + 1))
+      if (n > 0) tmp(1:n) = node%simple_cmd%redirects(1:n)
+      tmp(n + 1)%type = REDIR_DUP_OUT
+      tmp(n + 1)%fd = 2
+      tmp(n + 1)%target_fd = 1
+      if (allocated(node%simple_cmd%redirects)) deallocate(node%simple_cmd%redirects)
+      call move_alloc(tmp, node%simple_cmd%redirects)
+      node%simple_cmd%num_redirects = n + 1
+    else
+      n = node%num_redirects
+      allocate(tmp(n + 1))
+      if (n > 0) tmp(1:n) = node%redirects(1:n)
+      tmp(n + 1)%type = REDIR_DUP_OUT
+      tmp(n + 1)%fd = 2
+      tmp(n + 1)%target_fd = 1
+      if (allocated(node%redirects)) deallocate(node%redirects)
+      call move_alloc(tmp, node%redirects)
+      node%num_redirects = n + 1
+    end if
+  end subroutine attach_stderr_merge
+
+  ! Double the simple-command word arrays when full so words past the
+  ! initial capacity are kept instead of silently dropped (PARSE-5).
+  subroutine grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: words(:)
+    logical, allocatable, intent(inout) :: was_quoted(:), was_escaped(:)
+    integer, allocatable, intent(inout) :: quote_types(:), word_lens(:)
+    integer, intent(in) :: num_words
+    character(len=MAX_TOKEN_LEN), allocatable :: wtmp(:)
+    logical, allocatable :: ltmp(:)
+    integer, allocatable :: itmp(:)
+    integer :: n
+
+    if (num_words < size(words)) return
+    n = size(words)
+    allocate(wtmp(n * 2)); wtmp(1:n) = words; call move_alloc(wtmp, words)
+    allocate(ltmp(n * 2)); ltmp = .false.; ltmp(1:n) = was_quoted; call move_alloc(ltmp, was_quoted)
+    allocate(ltmp(n * 2)); ltmp = .false.; ltmp(1:n) = was_escaped; call move_alloc(ltmp, was_escaped)
+    allocate(itmp(n * 2)); itmp = QUOTE_NONE; itmp(1:n) = quote_types; call move_alloc(itmp, quote_types)
+    allocate(itmp(n * 2)); itmp = 0; itmp(1:n) = word_lens; call move_alloc(itmp, word_lens)
+  end subroutine grow_cmd_words
+
+  ! Same for the two-array for-loop word list.
+  subroutine grow_for_words(words, quote_types, num_words)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: words(:)
+    integer, allocatable, intent(inout) :: quote_types(:)
+    integer, intent(in) :: num_words
+    character(len=MAX_TOKEN_LEN), allocatable :: wtmp(:)
+    integer, allocatable :: itmp(:)
+    integer :: n
+
+    if (num_words < size(words)) return
+    n = size(words)
+    allocate(wtmp(n * 2)); wtmp(1:n) = words; call move_alloc(wtmp, words)
+    allocate(itmp(n * 2)); itmp = QUOTE_NONE; itmp(1:n) = quote_types; call move_alloc(itmp, quote_types)
+  end subroutine grow_for_words
+
   recursive function parse_pipeline_node(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, temp_node, commands(:)
@@ -275,11 +360,14 @@ contains
     node => parse_command_node(state)
     if (.not. associated(node)) return
     tok = current_token(state)
-    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|') then
+    if (tok%token_type == TOKEN_OPERATOR .and. &
+        (trim(tok%value) == '|' .or. trim(tok%value) == '|&')) then
       allocate(commands(16))
       num_commands = 1
+      if (trim(tok%value) == '|&') call attach_stderr_merge(node)
       commands(1) = node
-      do while (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|')
+      do while (tok%token_type == TOKEN_OPERATOR .and. &
+                (trim(tok%value) == '|' .or. trim(tok%value) == '|&'))
         call advance(state)
         call skip_newlines(state)
         temp_node => parse_command_node(state)
@@ -303,9 +391,13 @@ contains
             commands => tmp
           end block
         end if
+        tok = current_token(state)
+        ! A following |& means THIS stage pipes stderr too
+        if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|&') then
+          call attach_stderr_merge(temp_node)
+        end if
         num_commands = num_commands + 1
         commands(num_commands) = temp_node
-        tok = current_token(state)
       end do
       if (state%has_error) then
         ! Error occurred - return null
@@ -561,7 +653,8 @@ contains
               end if
             else
               ! This is a regular word (assignment after command name)
-              if (num_words < MAX_TOKENS) then
+              call grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+              if (num_words < size(words)) then
                 num_words = num_words + 1
                 words(num_words) = merged_word
                 was_quoted(num_words) = next_tok%quoted
@@ -582,7 +675,8 @@ contains
               assignments(num_assignments) = tok%value
               assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1
             else
-              if (num_words < MAX_TOKENS) then
+              call grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+              if (num_words < size(words)) then
                 num_words = num_words + 1
                 words(num_words) = tok%value
                 was_quoted(num_words) = tok%quoted
@@ -616,7 +710,8 @@ contains
           else
             ! Regular word - this is the command or an argument
             seen_command = .true.
-            if (num_words < MAX_TOKENS) then
+            call grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+            if (num_words < size(words)) then
               num_words = num_words + 1
               words(num_words) = tok%value
               was_quoted(num_words) = tok%quoted
@@ -1023,7 +1118,8 @@ contains
       call advance(state)
       tok = current_token(state)
       do while (tok%token_type == TOKEN_WORD)
-        if (num_words < MAX_TOKENS) then
+        call grow_for_words(words, quote_types, num_words)
+        if (num_words < size(words)) then
           num_words = num_words + 1
           words(num_words) = tok%value
           quote_types(num_words) = tok%quote_type
@@ -1352,8 +1448,10 @@ contains
     ! POSIX: Empty subshell () is a syntax error
     if (.not. associated(commands)) then
       call write_stderr(parser_err_prefix() // "syntax error near unexpected token `)'")
-      if (allocated(state%raw_input)) then
-        call write_stderr("sh: -c: `" // trim(state%raw_input) // "'")
+      ! bash's second line (the echoed input) carries the same prefix and
+      ! only appears in non-interactive mode
+      if (.not. g_parser_interactive .and. allocated(state%raw_input)) then
+        call write_stderr(parser_err_prefix() // '`' // trim(state%raw_input) // "'")
       end if
       state%has_error = .true.
       return

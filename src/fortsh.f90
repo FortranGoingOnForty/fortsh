@@ -38,7 +38,10 @@ program fortran_shell
   character(len=MAX_VAR_VALUE_LEN) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
   character(len=:), allocatable :: rprompt_value  ! RPROMPT variable value
   integer :: iostat, num_args, arg_idx, cmd_string_idx
-  character(len=MAX_PATH_LEN) :: arg1, command_string
+  character(len=MAX_PATH_LEN) :: arg1
+  ! Allocated to the actual -c argument length so long command strings are
+  ! not clipped at MAX_PATH_LEN (PARSE-5)
+  character(len=:), allocatable :: command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
   logical :: no_rc_file
   character(len=:), allocatable :: script_file
@@ -113,7 +116,12 @@ program fortran_shell
 
     case ('-c')
       if (arg_idx + 1 <= num_args) then
-        call get_command_argument(arg_idx + 1, command_string)
+        block
+          integer :: c_arg_len
+          call get_command_argument(arg_idx + 1, length=c_arg_len)
+          allocate(character(len=c_arg_len) :: command_string)
+          call get_command_argument(arg_idx + 1, command_string)
+        end block
         cmd_string_idx = arg_idx + 1
         execute_command_string = .true.
         ! Arguments after the command string become $0 and positional
@@ -810,35 +818,42 @@ contains
       content_end = 0
 
       j = content_pos
-      do while (j <= len_trim(input))
+      hd_scan: do while (j <= len_trim(input))
         ! Check if we're at start of a line
         if (j == content_pos .or. input(j-1:j-1) == char(10)) then
           ! For <<-, skip leading tabs before checking delimiter
           k = j
           if (strip_tabs) then
-            do while (k <= len_trim(input) .and. input(k:k) == char(9))
+            do while (k <= len_trim(input))
+              if (input(k:k) /= char(9)) exit
               k = k + 1
             end do
           end if
           ! Check if this line starts with the delimiter (after tabs if strip_tabs)
           if (k + len_trim(delimiter) - 1 <= len_trim(input)) then
             if (input(k:k+len_trim(delimiter)-1) == trim(delimiter)) then
-              ! Check if delimiter is alone on the line or followed by newline
-              if (k + len_trim(delimiter) > len_trim(input) .or. &
-                  input(k+len_trim(delimiter):k+len_trim(delimiter)) == char(10)) then
-                content_end = j - 1
-                content_pos = k + len_trim(delimiter)
-                if (content_pos <= len_trim(input) .and. &
-                    input(content_pos:content_pos) == char(10)) then
-                  content_pos = content_pos + 1
+              ! Delimiter must be alone on the line or followed by newline.
+              ! Bounds check split from the read: .or. does not short-circuit.
+              block
+                logical :: delim_line_end
+                integer :: dpos
+                dpos = k + len_trim(delimiter)
+                delim_line_end = (dpos > len_trim(input))
+                if (.not. delim_line_end) delim_line_end = (input(dpos:dpos) == char(10))
+                if (delim_line_end) then
+                  content_end = j - 1
+                  content_pos = dpos
+                  if (content_pos <= len_trim(input)) then
+                    if (input(content_pos:content_pos) == char(10)) content_pos = content_pos + 1
+                  end if
+                  exit hd_scan
                 end if
-                exit
-              end if
+              end block
             end if
           end if
         end if
         j = j + 1
-      end do
+      end do hd_scan
 
       ! Extract heredoc content
       if (content_end >= content_start) then
@@ -973,8 +988,8 @@ contains
       ! Handle line continuation (backslash-newline)
       input_line = remove_line_continuations(input_line)
 
-      ! If EOF was reached during continuation, exit
-      if (iostat /= 0) exit
+      ! On EOF during continuation, still parse the remainder — an unclosed
+      ! quote must reach the parser to be rejected (exit 2), not be dropped.
 
       ! Check for unclosed compound commands (if/fi, do/done, case/esac)
       do while (needs_compound_continuation(input_line))

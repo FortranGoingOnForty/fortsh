@@ -332,7 +332,7 @@ contains
           end block  ! amp_not_after_special bounds-safe check
         else if (working_input(i:i) == ';') then
           ! Check for ;; (double semicolon) which is used in case statements
-          if (i < len_trim(working_input) .and. working_input(i+1:i+1) == ';') then
+          if (char_follows(working_input, i, ';')) then
             ! This is ;; - inside case statements it's a pattern terminator
             if (case_depth > 0) then
               cmd_count = cmd_count + 1
@@ -1275,6 +1275,75 @@ contains
     end do
   end function
 
+  ! True when str(i+1:i+1) exists and equals ch. Bounds check runs in a
+  ! separate statement because .and. does not short-circuit: str(i+1:i+1)
+  ! is out of bounds when i is the last character.
+  function char_follows(str, i, ch) result(res)
+    character(len=*), intent(in) :: str
+    integer, intent(in) :: i
+    character, intent(in) :: ch
+    logical :: res
+
+    res = .false.
+    if (i + 1 > len_trim(str)) return
+    res = (str(i+1:i+1) == ch)
+  end function char_follows
+
+  ! True when str(i+1:i+1) exists and is an identifier character. Same
+  ! bounds-before-access split as char_follows.
+  function ident_char_follows(str, i) result(res)
+    character(len=*), intent(in) :: str
+    integer, intent(in) :: i
+    logical :: res
+    character :: c
+
+    res = .false.
+    if (i + 1 > len_trim(str)) return
+    c = str(i+1:i+1)
+    res = (c >= 'a' .and. c <= 'z') .or. (c >= 'A' .and. c <= 'Z') .or. &
+          (c >= '0' .and. c <= '9') .or. c == '_'
+  end function ident_char_follows
+
+  ! True when an unquoted <( or >( process substitution begins at str(i:i).
+  ! Checks run in separate statements because .and. does not short-circuit:
+  ! str(i+1:i+1) is out of bounds when i is the last character.
+  function procsub_starts_at(str, i, is_quoted) result(res)
+    character(len=*), intent(in) :: str
+    integer, intent(in) :: i
+    logical, intent(in) :: is_quoted
+    logical :: res
+
+    res = .false.
+    if (is_quoted) return
+    if (str(i:i) /= '<' .and. str(i:i) /= '>') return
+    if (i + 1 > len_trim(str)) return
+    res = (str(i+1:i+1) == '(')
+  end function procsub_starts_at
+
+  ! Advance i from an opening quote at str(i:i) to just past its closing
+  ! quote, so paren scans never see a ')' between quotes. Inside double
+  ! quotes a backslash escapes the next character; single quotes are literal.
+  subroutine skip_quoted_span(str, i)
+    character(len=*), intent(in) :: str
+    integer, intent(inout) :: i
+    character :: quote_ch
+    integer :: n
+
+    n = len_trim(str)
+    quote_ch = str(i:i)
+    i = i + 1
+    do while (i <= n)
+      if (quote_ch == '"' .and. str(i:i) == '\' .and. i < n) then
+        i = i + 2
+      else if (str(i:i) == quote_ch) then
+        i = i + 1
+        return
+      else
+        i = i + 1
+      end if
+    end do
+  end subroutine skip_quoted_span
+
   subroutine expand_variables(token, expanded, shell, was_quoted_in)
     use expansion, only: expand_braces, arithmetic_expansion_shell, process_param_expansion
     character(len=*), intent(in) :: token
@@ -1482,7 +1551,7 @@ contains
           result(j:j+len_trim(pid_str)-1) = trim(pid_str)
           j = j + len_trim(pid_str)
           i = i + 1
-        else if (working_token(i:i) == '\' .and. i < len_trim(working_token) .and. working_token(i+1:i+1) == '!') then
+        else if (working_token(i:i) == '\' .and. char_follows(working_token, i, '!')) then
           ! Handle bash-escaped $\! (bash adds backslash before ! in some contexts)
           i = i + 1  ! Skip the backslash
           write(pid_str, '(i15)') shell%last_bg_pid
@@ -1534,8 +1603,7 @@ contains
           i = i + 1
         else if (working_token(i:i) == '_') then
           ! Check if this is $_ alone or $_varname
-          if (i+1 <= len_trim(working_token) .and. &
-              (is_alnum(working_token(i+1:i+1)) .or. working_token(i+1:i+1) == '_')) then
+          if (ident_char_follows(working_token, i)) then
             ! $_varname - underscore-prefixed variable name
             var_start = i
             do while (i <= len_trim(working_token) .and. &
@@ -1571,7 +1639,7 @@ contains
           i = i + 1
         else if (working_token(i:i) == '(') then
           ! Check if it's $(( arithmetic expansion or $( command substitution
-          if (i+1 <= len_trim(working_token) .and. working_token(i+1:i+1) == '(') then
+          if (char_follows(working_token, i, '(')) then
             ! $((arithmetic)) expansion
             var_start = i - 1  ! Include the $ character
             i = i + 2  ! Skip both opening parens
@@ -1603,6 +1671,11 @@ contains
             brace_depth = 1
 
             do while (i <= len_trim(working_token) .and. brace_depth > 0)
+              if (working_token(i:i) == '"' .or. working_token(i:i) == "'") then
+                ! Quoted span - a ')' between quotes must not close the substitution
+                call skip_quoted_span(working_token, i)
+                cycle
+              end if
               if (working_token(i:i) == '(') then
                 brace_depth = brace_depth + 1
               else if (working_token(i:i) == ')') then
@@ -1726,9 +1799,7 @@ contains
       else if (working_token(i:i) == char(1)) then
         ! Skip sentinel character (marks quote boundary from lexer)
         i = i + 1
-      else if ((working_token(i:i) == '<' .or. working_token(i:i) == '>') .and. &
-               i + 1 <= len_trim(working_token) .and. working_token(i+1:i+1) == '(' .and. &
-               .not. is_quoted) then
+      else if (procsub_starts_at(working_token, i, is_quoted)) then
         ! Process substitution <(cmd) / >(cmd) — bash model:
         ! create pipe, fork child, use /dev/fd/N as the filename.
         ! No FIFOs, no temp files, no leaks.
@@ -2663,9 +2734,9 @@ contains
       end if
 
       ! Look for << not inside quotes (but NOT <<< which is here-string)
-      if (line(i:i) == '<' .and. i + 1 <= line_len .and. line(i+1:i+1) == '<') then
+      if (line(i:i) == '<' .and. char_follows(line, i, '<')) then
         ! Skip <<< (here-string, not heredoc)
-        if (i + 2 <= line_len .and. line(i+2:i+2) == '<') then
+        if (char_follows(line, i+1, '<')) then
           i = i + 3
           cycle
         end if
