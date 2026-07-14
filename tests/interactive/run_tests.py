@@ -529,7 +529,8 @@ def main():
     print(f"\nfortsh binary: {fortsh_path}")
 
     if args.pytest:
-        # Run pytest
+        # Run the entire pytest suite (developer use — includes tests not yet
+        # vetted for CI). CI runs only the `ci`-marked subset, below.
         import pytest
         test_dir = Path(__file__).parent
         return pytest.main([str(test_dir), '-v' if args.verbose else '-q'])
@@ -583,7 +584,25 @@ def main():
         generate_markdown_report(results, report_path)
         print(f"\nReport written to: {report_path}")
 
-    return 0 if failed == 0 else 1
+    exit_code = 0 if failed == 0 else 1
+
+    # When running the full suite (not a single --spec), also enforce the
+    # `ci`-marked pyte regression tests. These assert on-screen cursor/redraw
+    # state the YAML substring matcher cannot express (wrapped-line recall
+    # redraw, exact-width wrap, long-input cap). The rest of the pytest files
+    # are dev-only and run via --pytest.
+    if args.spec is None:
+        import pytest
+        print(f"\n{Fore.CYAN}=== pyte regression tests (ci-marked) ==={Style.RESET_ALL}")
+        pytest_dir = Path(__file__).parent
+        rc = pytest.main([str(pytest_dir), '-m', 'ci',
+                          '-v' if args.verbose else '-q', '-p', 'no:cacheprovider'])
+        # 5 == no tests collected (e.g. pyte missing → all deselected/skipped);
+        # don't fail the gate on an absent optional dependency.
+        if rc not in (0, 5):
+            exit_code = 1
+
+    return exit_code
 
 
 if __name__ == "__main__":

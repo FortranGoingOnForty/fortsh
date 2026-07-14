@@ -80,14 +80,16 @@ module readline
   integer, parameter :: MAX_HISTORY = 100      ! Increased from 10 (heap-allocated array, safe)
 #ifdef USE_C_STRINGS
   ! C string library enabled - use larger buffers (tested working with flang-new 21.x)
-  integer, parameter :: MAX_LINE_LEN = 1024
+  integer, parameter :: MAX_LINE_LEN = 8192
 #else
-  ! Legacy limit for older flang-new versions without C string library
-  integer, parameter :: MAX_LINE_LEN = 128     ! Buffer size - actual limit is 127 chars!
+  ! Legacy limit for older flang-new versions without C string library. Raised
+  ! from 128 to match the mainline minimum; not used by CI (flang-new enables
+  ! USE_C_STRINGS), but 127 usable chars truncated far too early on that build.
+  integer, parameter :: MAX_LINE_LEN = 1024    ! Buffer size - actual limit is 1023 chars
 #endif
 #else
   integer, parameter :: MAX_HISTORY = 1000
-  integer, parameter :: MAX_LINE_LEN = 1024
+  integer, parameter :: MAX_LINE_LEN = 8192
 #endif
 
   ! Glob expansion constants (from glob module)
@@ -2431,8 +2433,17 @@ contains
             ! Clear from cursor to end of screen
             call rdraw_append(char(27) // '[J')
 
-            ! Save cursor-up row count before content overwrites it
-            nav_cursor_row = current_row
+            ! Save cursor-up row count before content overwrites it. Use the
+            ! PHYSICAL row the old render left the cursor on
+            ! (module_cursor_screen_row), NOT current_row (the row the NEW,
+            ! possibly shorter, content's cursor lands on). When the old render
+            ! was taller than the new content (e.g. recalling a short line over a
+            ! wrapped one, or Ctrl-U on a wrapped recall), current_row
+            ! under-counts the physical rows, so the differential move-up below
+            ! stops short and ESC[J clears from a stale wrapped row — splicing
+            ! the new tail onto old content. This mirrors the full-rebuild path
+            ! at move_up_rows = module_cursor_screen_row above. (RL-2)
+            nav_cursor_row = module_cursor_screen_row
 
             ! Phase 2: mirror rendered content for line-level diff
             cframe_pos = 0
@@ -6187,14 +6198,20 @@ contains
     ! moves cursor to the left edge, and clears selection state.
     if (input_state%selection_active) call delete_selection(input_state)
 
-    ! Allocate temp buffer on heap
-    allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
+    ! temp_buffer (the right-shift scratch) is only needed for a middle
+    ! insertion; the append path never touches it. Allocate it lazily in the
+    ! else branch instead of on every keystroke — at MAX_LINE_LEN = 8192 the
+    ! per-keystroke append allocation was 8 KB of pure waste. (QUAL-8)
 
     ! Check if we have room for one more character
     ! CRITICAL: Must be >= MAX_LINE_LEN - 1 to prevent writing to position MAX_LINE_LEN + 1
-    ! during middle insertions which shift characters right
+    ! during middle insertions which shift characters right.
+    ! At the cap, ring the bell instead of dropping the char silently (QUAL-6):
+    ! the input still fits far more than the old 1023, but overflow must be
+    ! audible rather than truncating the command invisibly on its way to exec.
     if (input_state%length >= MAX_LINE_LEN - 1) then
-      if (allocated(temp_buffer)) deallocate(temp_buffer)
+      write(output_unit, '(a)', advance='no') char(7)
+      flush(output_unit)
       return
     end if
 
@@ -6249,6 +6266,8 @@ contains
       end if
     else
       ! Insert in middle - use temp to avoid substring overlap issues
+      ! Allocate the right-shift scratch only here, where it is actually used.
+      allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
       ! Initialize temp with current buffer
       call state_buffer_get(input_state, temp_buffer)
 
@@ -12775,9 +12794,17 @@ contains
         w = 0; k = k + 1
       end if
       cursor_col = cursor_col + w
-      if (cursor_col >= term_cols) then
+      ! Deferred wrap: a char that lands EXACTLY on term_cols fills the row and
+      ! leaves the cursor in the terminal's pending-wrap state — still on this
+      ! physical row, not advanced. Only a char that OVERFLOWS past term_cols is
+      ! on the next row. Using '>= term_cols' here advanced the row one early, so
+      ! the trailing cursor's module_cursor_screen_row was one too high and the
+      ! next keystroke's move-up over-counted and scrolled the screen after an
+      ! exact-width paste. Reset to the overflow (not 0) so a wide char that
+      ! crosses the boundary keeps correct column accounting. (RL-1)
+      if (cursor_col > term_cols) then
         cursor_row = cursor_row + 1
-        cursor_col = 0
+        cursor_col = cursor_col - term_cols
       end if
     end do
   end subroutine
