@@ -601,60 +601,9 @@ contains
           ! Scan to find matching ), respecting nested parens and quotes
           do while (pos <= input_len .and. paren_depth > 0)
             ch = input(pos:pos)
-            if (ch == '"') then
-              ! Skip double-quoted string inside command substitution
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = ch
-              end if
-              pos = pos + 1
-              do while (pos <= input_len)
-                ch = input(pos:pos)
-                if (ch == '\' .and. pos < input_len) then
-                  ! Skip escaped char
-                  if (token_len < MAX_TOKEN_LEN - 1) then
-                    token_len = token_len + 1
-                    current_token(token_len:token_len) = ch
-                    token_len = token_len + 1
-                    current_token(token_len:token_len) = input(pos+1:pos+1)
-                  end if
-                  pos = pos + 2
-                else if (ch == '"') then
-                  if (token_len < MAX_TOKEN_LEN) then
-                    token_len = token_len + 1
-                    current_token(token_len:token_len) = ch
-                  end if
-                  pos = pos + 1
-                  exit
-                else
-                  if (token_len < MAX_TOKEN_LEN) then
-                    token_len = token_len + 1
-                    current_token(token_len:token_len) = ch
-                  end if
-                  pos = pos + 1
-                end if
-              end do
-            else if (ch == "'") then
-              ! Skip single-quoted string
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = ch
-              end if
-              pos = pos + 1
-              do while (pos <= input_len .and. input(pos:pos) /= "'")
-                if (token_len < MAX_TOKEN_LEN) then
-                  token_len = token_len + 1
-                  current_token(token_len:token_len) = input(pos:pos)
-                end if
-                pos = pos + 1
-              end do
-              if (pos <= input_len) then
-                if (token_len < MAX_TOKEN_LEN) then
-                  token_len = token_len + 1
-                  current_token(token_len:token_len) = "'"
-                end if
-                pos = pos + 1
-              end if
+            if (ch == '"' .or. ch == "'") then
+              ! Quoted span - a ')' between quotes must not close the substitution
+              call consume_quoted_span(input, input_len, pos, current_token, token_len)
             else if (ch == '(') then
               paren_depth = paren_depth + 1
               if (token_len < MAX_TOKEN_LEN) then
@@ -748,6 +697,9 @@ contains
               current_token(token_len:token_len) = ch
             end if
             pos = pos + 1
+          else if (ch == '"' .or. ch == "'") then
+            ! Quoted span - a ')' between quotes must not close the substitution
+            call consume_quoted_span(input, input_len, pos, current_token, token_len)
           else if (ch == ')') then
             paren_depth = paren_depth - 1
             if (token_len < MAX_TOKEN_LEN) then
@@ -1250,6 +1202,51 @@ contains
     call add_token(tokens, num_tokens, TOKEN_EOF, '', input_len+1, input_len+1, .false.)
 
   end subroutine tokenize
+
+  ! Consume a quoted span inside $(...) verbatim, from the opening quote at
+  ! input(pos:pos) through its closing quote, appending to current_token.
+  ! Callers use this so paren accounting never sees a ')' between quotes.
+  ! Inside double quotes a backslash escapes the next character; single
+  ! quotes take everything literally.
+  subroutine consume_quoted_span(input, input_len, pos, current_token, token_len)
+    character(len=*), intent(in) :: input
+    integer, intent(in) :: input_len
+    integer, intent(inout) :: pos, token_len
+    character(len=*), intent(inout) :: current_token
+    character :: quote_ch, ch
+
+    quote_ch = input(pos:pos)
+    if (token_len < MAX_TOKEN_LEN) then
+      token_len = token_len + 1
+      current_token(token_len:token_len) = quote_ch
+    end if
+    pos = pos + 1
+    do while (pos <= input_len)
+      ch = input(pos:pos)
+      if (quote_ch == '"' .and. ch == '\' .and. pos < input_len) then
+        if (token_len < MAX_TOKEN_LEN - 1) then
+          token_len = token_len + 1
+          current_token(token_len:token_len) = ch
+          token_len = token_len + 1
+          current_token(token_len:token_len) = input(pos+1:pos+1)
+        end if
+        pos = pos + 2
+      else if (ch == quote_ch) then
+        if (token_len < MAX_TOKEN_LEN) then
+          token_len = token_len + 1
+          current_token(token_len:token_len) = ch
+        end if
+        pos = pos + 1
+        return
+      else
+        if (token_len < MAX_TOKEN_LEN) then
+          token_len = token_len + 1
+          current_token(token_len:token_len) = ch
+        end if
+        pos = pos + 1
+      end if
+    end do
+  end subroutine consume_quoted_span
 
   ! =====================================
   ! Helper: Add token to array

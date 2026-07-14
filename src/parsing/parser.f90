@@ -1275,6 +1275,30 @@ contains
     end do
   end function
 
+  ! Advance i from an opening quote at str(i:i) to just past its closing
+  ! quote, so paren scans never see a ')' between quotes. Inside double
+  ! quotes a backslash escapes the next character; single quotes are literal.
+  subroutine skip_quoted_span(str, i)
+    character(len=*), intent(in) :: str
+    integer, intent(inout) :: i
+    character :: quote_ch
+    integer :: n
+
+    n = len_trim(str)
+    quote_ch = str(i:i)
+    i = i + 1
+    do while (i <= n)
+      if (quote_ch == '"' .and. str(i:i) == '\' .and. i < n) then
+        i = i + 2
+      else if (str(i:i) == quote_ch) then
+        i = i + 1
+        return
+      else
+        i = i + 1
+      end if
+    end do
+  end subroutine skip_quoted_span
+
   subroutine expand_variables(token, expanded, shell, was_quoted_in)
     use expansion, only: expand_braces, arithmetic_expansion_shell, process_param_expansion
     character(len=*), intent(in) :: token
@@ -1603,6 +1627,11 @@ contains
             brace_depth = 1
 
             do while (i <= len_trim(working_token) .and. brace_depth > 0)
+              if (working_token(i:i) == '"' .or. working_token(i:i) == "'") then
+                ! Quoted span - a ')' between quotes must not close the substitution
+                call skip_quoted_span(working_token, i)
+                cycle
+              end if
               if (working_token(i:i) == '(') then
                 brace_depth = brace_depth + 1
               else if (working_token(i:i) == ')') then
