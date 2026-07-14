@@ -609,6 +609,15 @@ contains
 
       var_value = get_shell_variable(shell, trim(operation))
 
+      ! Expand $var/${...}/$(...)/backticks in pattern and replacement,
+      ! like the prefix/suffix-removal branches already do for patterns
+      if (index(trim(pattern), '$') > 0 .or. index(trim(pattern), '`') > 0) then
+        pattern = expand_word_operand(trim(pattern), shell)
+      end if
+      if (index(trim(replacement), '$') > 0 .or. index(trim(replacement), '`') > 0) then
+        replacement = expand_word_operand(trim(replacement), shell)
+      end if
+
         ! Check for anchor prefix in pattern
         if (len_trim(pattern) > 0 .and. pattern(1:1) == '#') then
           ! Anchored at start: ${var/#pat/repl}
