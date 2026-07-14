@@ -1735,6 +1735,16 @@ contains
             arithmetic_error_msg = 'division by zero'
             value = 0
           end if
+        case ('&=')
+          value = iand(current_val, right_val)
+        case ('|=')
+          value = ior(current_val, right_val)
+        case ('^=')
+          value = ieor(current_val, right_val)
+        case ('<<=')
+          value = ishft(current_val, int(right_val))
+        case ('>>=')
+          value = ishft(current_val, -int(right_val))
         case default
           value = right_val
         end select
@@ -1826,11 +1836,21 @@ contains
       else if (expr(i:i) == ')') then
         paren_depth = paren_depth - 1
       else if (paren_depth == 0) then
+        ! Check for shift compound assignment operators (3 chars) before the
+        ! 2-char scan so <<= is not misread as << followed by =
+        if (i + 2 <= len_trim(expr)) then
+          if (expr(i:i+2) == '<<=' .or. expr(i:i+2) == '>>=') then
+            pos = i
+            op_len = 3
+            return
+          end if
+        end if
         ! Check for compound assignment operators (2 chars)
         if (i < len_trim(expr)) then
           if (expr(i:i+1) == '+=' .or. expr(i:i+1) == '-=' .or. &
               expr(i:i+1) == '*=' .or. expr(i:i+1) == '/=' .or. &
-              expr(i:i+1) == '%=') then
+              expr(i:i+1) == '%=' .or. expr(i:i+1) == '&=' .or. &
+              expr(i:i+1) == '|=' .or. expr(i:i+1) == '^=') then
             pos = i
             op_len = 2
             return
