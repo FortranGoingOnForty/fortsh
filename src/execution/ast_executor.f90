@@ -108,7 +108,15 @@ contains
 
     select case(node%node_type)
     case(CMD_SIMPLE)
-      exit_status = execute_simple_command(node, shell)
+      ! Scope proc-subst cleanup to this command: reap the fds/children its own
+      ! <(…)/>(…) opened once it returns, so a loop of them stays flat (RES-1/2).
+      block
+        use substitution, only: cleanup_proc_substs_from
+        integer :: ps_mark
+        ps_mark = shell%num_proc_subst_fifos
+        exit_status = execute_simple_command(node, shell)
+        call cleanup_proc_substs_from(shell, ps_mark)
+      end block
     case(CMD_PIPELINE)
       exit_status = execute_pipeline_node(node, shell)
     case(CMD_LIST)
@@ -2637,7 +2645,7 @@ contains
     character(len=MAX_TOKEN_LEN) :: case_value
     integer :: case_value_len
     integer :: item_idx, pattern_idx
-    logical :: matched, needs_expansion
+    logical :: matched, needs_expansion, force_exec
     character(len=MAX_TOKEN_LEN) :: pattern
     character(len=:), allocatable :: expanded_pattern
     type(redirection_t) :: temp_redirect
@@ -2719,36 +2727,54 @@ contains
         node%case_stmt%word(1:case_value_len)
     end if
 
-    ! Try to match against each case item
-    do item_idx = 1, node%case_stmt%num_items
-      matched = .false.
+    ! Try to match against each case item. A ;& terminator forces the next
+    ! item's body to run without testing (force_exec); ;;& keeps testing the
+    ! remaining items after a match; ;; stops.
+    force_exec = .false.
+    item_idx = 1
+    do while (item_idx <= node%case_stmt%num_items)
+      matched = force_exec
 
-      ! Check each pattern in this item
-      do pattern_idx = 1, node%case_stmt%items(item_idx)%num_patterns
-        pattern = trim(node%case_stmt%items(item_idx)%patterns(pattern_idx))
+      ! Check each pattern in this item (skipped when falling through via ;&)
+      if (.not. force_exec) then
+        do pattern_idx = 1, node%case_stmt%items(item_idx)%num_patterns
+          pattern = trim(node%case_stmt%items(item_idx)%patterns(pattern_idx))
 
-        ! Expand variables in pattern (e.g., $P)
-        call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
+          ! Expand variables in pattern (e.g., $P)
+          call expand_variables(pattern, expanded_pattern, shell, was_quoted_in=.false.)
 
-        ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
-        if (case_value_len > 0) then
-          matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), &
-                                                     case_value(1:case_value_len))
-        else
-          matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), '')
-        end if
+          ! Match pattern using glob module (handles *, ?, [abc], [[:class:]], etc.)
+          if (case_value_len > 0) then
+            matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), &
+                                                       case_value(1:case_value_len))
+          else
+            matched = pattern_matches_no_dotfile_check(trim(expanded_pattern), '')
+          end if
 
-        if (matched) exit
-      end do
+          if (matched) exit
+        end do
+      end if
 
-      ! If matched, execute the commands for this case item
       if (matched) then
         if (associated(node%case_stmt%items(item_idx)%commands)) then
           exit_status = execute_ast_node(node%case_stmt%items(item_idx)%commands, shell)
         else
           exit_status = 0
         end if
-        exit  ! Only execute first match
+
+        select case (node%case_stmt%items(item_idx)%terminator)
+        case (CASE_TERM_FALLTHROUGH)   ! ;&  — run next item's body unconditionally
+          force_exec = .true.
+          item_idx = item_idx + 1
+        case (CASE_TERM_RETEST)        ! ;;& — resume testing remaining items
+          force_exec = .false.
+          item_idx = item_idx + 1
+        case default                   ! ;;  — done
+          exit
+        end select
+      else
+        force_exec = .false.
+        item_idx = item_idx + 1
       end if
     end do
 

@@ -4545,6 +4545,7 @@ contains
     open(newunit=tmp_unit, file=trim(tmpfile), status='old', action='write', iostat=iostat)
     if (iostat /= 0) then
       write(error_unit, '(a)') 'fc: failed to create temporary file'
+      call unlink_file(trim(tmpfile))  ! mkstemp already created it
       shell%last_exit_status = 1
       return
     end if
@@ -4566,6 +4567,7 @@ contains
     open(newunit=tmp_unit, file=trim(tmpfile), status='old', action='read', iostat=iostat)
     if (iostat /= 0) then
       write(error_unit, '(a)') 'fc: failed to read edited file'
+      call unlink_file(trim(tmpfile))
       shell%last_exit_status = 1
       return
     end if
@@ -4616,13 +4618,14 @@ contains
 
   subroutine unlink_file(filepath)
     character(len=*), intent(in) :: filepath
-    integer :: iostat
+    integer :: unit, stat
 
-    ! Use Fortran intrinsic to delete file
-    open(newunit=iostat, file=trim(filepath), status='old')
-    if (iostat >= 0) then
-      close(iostat, status='delete')
-    end if
+    ! Open then close(status='delete') to remove the file. The unit number and
+    ! the open status must be separate variables: newunit= returns a negative
+    ! unit, so reusing it as the iostat made the >= 0 guard always false and the
+    ! delete never ran (RES-3).
+    open(newunit=unit, file=trim(filepath), status='old', iostat=stat)
+    if (stat == 0) close(unit, status='delete')
   end subroutine
 
   ! ===========================================================================

@@ -180,10 +180,17 @@ module command_tree
   ! =====================================
   ! Case Statement Item
   ! =====================================
+  ! Case item terminators (bash): ;; ends the item, ;& falls through into the
+  ! next item's body unconditionally, ;;& re-tests the remaining patterns.
+  integer, parameter, public :: CASE_TERM_BREAK = 0        ! ;;
+  integer, parameter, public :: CASE_TERM_FALLTHROUGH = 1  ! ;&
+  integer, parameter, public :: CASE_TERM_RETEST = 2       ! ;;&
+
   type :: case_item_t
     character(len=MAX_TOKEN_LEN), allocatable :: patterns(:)  ! Case patterns
     integer :: num_patterns = 0
     type(command_node_t), pointer :: commands => null()       ! Commands for this case
+    integer :: terminator = CASE_TERM_BREAK                   ! ;; / ;& / ;;&
   end type case_item_t
 
   ! =====================================

@@ -562,6 +562,14 @@ module system_interface
       integer(c_int), value :: status
     end subroutine
 
+    ! _exit(2): terminate without flushing stdio or running atexit handlers.
+    ! Correct for the child after a failed exec so inherited buffers aren't
+    ! double-flushed.
+    subroutine c_underscore_exit(status) bind(C, name="_exit")
+      import :: c_int
+      integer(c_int), value :: status
+    end subroutine
+
     subroutine c_perror(s) bind(C, name="perror")
       import :: c_ptr
       type(c_ptr), value :: s
@@ -1295,6 +1303,91 @@ contains
     end do
 
     i = c_pclose(pipe_ptr)
+  end function
+
+  ! Run a command via fork + execvp with NO intervening shell, capturing its
+  ! stdout. Unlike execute_and_capture (popen -> /bin/sh -c), each element of
+  ! args is a single argv entry that the child never re-parses, so a value
+  ! containing shell metacharacters cannot inject commands (SEC-1). Output is
+  ! returned raw (newlines preserved) for line-based parsers.
+  function execute_argv_and_capture(args) result(output)
+    character(len=*), intent(in) :: args(:)
+    character(len=:), allocatable :: output
+
+    integer :: nargs, i, j, total, off
+    integer(c_int), target :: pipefd(2)
+    integer(c_pid_t) :: pid, wret
+    integer(c_int), target :: wstatus
+    integer(c_int) :: rc
+    character(kind=c_char), dimension(:), allocatable, target :: argbuf
+    type(c_ptr), dimension(:), allocatable, target :: c_argv
+    integer, allocatable :: arg_off(:)
+    character(kind=c_char), target :: rbuf(4096)
+    integer(c_size_t) :: nread
+
+    output = ''
+    nargs = size(args)
+    if (nargs == 0) return
+
+    ! Pack all args into one null-terminated flat buffer; remember each start.
+    total = 0
+    do i = 1, nargs
+      total = total + len_trim(args(i)) + 1
+    end do
+    allocate(argbuf(total))
+    allocate(arg_off(nargs))
+    off = 1
+    do i = 1, nargs
+      arg_off(i) = off
+      do j = 1, len_trim(args(i))
+        argbuf(off) = args(i)(j:j)
+        off = off + 1
+      end do
+      argbuf(off) = c_null_char
+      off = off + 1
+    end do
+
+    ! argv is a NULL-terminated array of pointers into argbuf.
+    allocate(c_argv(nargs + 1))
+    do i = 1, nargs
+      c_argv(i) = c_loc(argbuf(arg_off(i)))
+    end do
+    c_argv(nargs + 1) = c_null_ptr
+
+    if (c_pipe(c_loc(pipefd)) /= 0) return
+
+    pid = c_fork()
+    if (pid == 0) then
+      ! Child: stdout -> pipe write end, then exec the program directly
+      rc = c_close(pipefd(1))
+      rc = c_dup2(pipefd(2), 1_c_int)
+      rc = c_close(pipefd(2))
+      rc = c_execvp(c_argv(1), c_loc(c_argv))
+      ! Only reached if exec failed
+      call c_underscore_exit(127_c_int)
+    else if (pid < 0) then
+      ! Fork failed
+      rc = c_close(pipefd(1))
+      rc = c_close(pipefd(2))
+      return
+    end if
+
+    ! Parent: read all of the child's stdout
+    rc = c_close(pipefd(2))
+    do
+      nread = c_read(pipefd(1), c_loc(rbuf), int(4096, c_size_t))
+      if (nread <= 0) exit
+      block
+        character(len=:), allocatable :: chunk
+        allocate(character(len=int(nread)) :: chunk)
+        do i = 1, int(nread)
+          chunk(i:i) = rbuf(i)
+        end do
+        output = output // chunk
+      end block
+    end do
+    rc = c_close(pipefd(1))
+    wret = c_waitpid(pid, c_loc(wstatus), 0_c_int)
   end function
 
   ! Like execute_and_capture but converts newlines to tabs instead of spaces.
