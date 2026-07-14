@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 
 /* Internal buffer structure */
 struct fortsh_buffer {
@@ -417,12 +418,24 @@ int fortsh_pattern_replace_alloc(const char* input, int input_len,
         return input_len;
     }
 
-    /* Estimate output size */
-    int out_cap;
+    /* Estimate output size in size_t: the 32-bit product below overflowed int
+     * for a large input with a longer replacement (~0.5 MB input, single-char
+     * pattern, multi-KB replacement), producing a negative or undersized
+     * malloc (MEM-6). */
+    size_t out_cap;
     if (repl_len > pat_len) {
-        out_cap = input_len + (input_len / pat_len + 1) * (repl_len - pat_len) + 2;
+        size_t occurrences = (size_t)input_len / (size_t)pat_len + 1;
+        out_cap = (size_t)input_len
+                + occurrences * (size_t)(repl_len - pat_len)
+                + 2;
     } else {
-        out_cap = input_len + 2;
+        out_cap = (size_t)input_len + 2;
+    }
+
+    /* fortsh_pattern_replace takes an int cap and the writer truncates at
+     * cap-1; refuse a size we cannot represent rather than wrap it. */
+    if (out_cap > (size_t)INT_MAX) {
+        return -1;
     }
 
     char* output = (char*)malloc(out_cap);
@@ -430,7 +443,7 @@ int fortsh_pattern_replace_alloc(const char* input, int input_len,
 
     int result_len = fortsh_pattern_replace(input, input_len, pattern, pat_len,
                                             replacement, repl_len, replace_all,
-                                            output, out_cap);
+                                            output, (int)out_cap);
     *result_out = output;
     return result_len;
 }
