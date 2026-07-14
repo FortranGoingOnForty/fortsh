@@ -6198,8 +6198,10 @@ contains
     ! moves cursor to the left edge, and clears selection state.
     if (input_state%selection_active) call delete_selection(input_state)
 
-    ! Allocate temp buffer on heap
-    allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
+    ! temp_buffer (the right-shift scratch) is only needed for a middle
+    ! insertion; the append path never touches it. Allocate it lazily in the
+    ! else branch instead of on every keystroke — at MAX_LINE_LEN = 8192 the
+    ! per-keystroke append allocation was 8 KB of pure waste. (QUAL-8)
 
     ! Check if we have room for one more character
     ! CRITICAL: Must be >= MAX_LINE_LEN - 1 to prevent writing to position MAX_LINE_LEN + 1
@@ -6208,7 +6210,6 @@ contains
     ! the input still fits far more than the old 1023, but overflow must be
     ! audible rather than truncating the command invisibly on its way to exec.
     if (input_state%length >= MAX_LINE_LEN - 1) then
-      if (allocated(temp_buffer)) deallocate(temp_buffer)
       write(output_unit, '(a)', advance='no') char(7)
       flush(output_unit)
       return
@@ -6265,6 +6266,8 @@ contains
       end if
     else
       ! Insert in middle - use temp to avoid substring overlap issues
+      ! Allocate the right-shift scratch only here, where it is actually used.
+      allocate(character(len=MAX_LINE_LEN) :: temp_buffer)
       ! Initialize temp with current buffer
       call state_buffer_get(input_state, temp_buffer)
 
