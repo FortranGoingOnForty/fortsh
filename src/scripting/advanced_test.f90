@@ -72,7 +72,7 @@ module advanced_test
 contains
 
   ! Main [[ ]] test evaluation
-  function evaluate_test_expression(shell, tokens, num_tokens) result(test_result)
+  recursive function evaluate_test_expression(shell, tokens, num_tokens) result(test_result)
     type(shell_state_t), intent(inout) :: shell
     character(len=*), intent(in) :: tokens(:)
     integer, intent(in) :: num_tokens
@@ -86,6 +86,29 @@ contains
     if (num_tokens < 3) then
       test_result = TEST_ERROR
       return
+    end if
+
+    ! A leading ! negates the whole expression. Handle it before the
+    ! token-count dispatch below, which would otherwise route
+    ! [[ ! -e x ]] (5 tokens) into the binary branch with left='!'.
+    if (num_tokens >= 4) then
+      if (trim(tokens(2)) == '!') then
+        block
+          character(len=len(tokens)) :: sub_tokens(num_tokens - 1)
+          integer :: si
+          sub_tokens(1) = tokens(1)
+          do si = 3, num_tokens
+            sub_tokens(si - 1) = tokens(si)
+          end do
+          test_result = evaluate_test_expression(shell, sub_tokens, num_tokens - 1)
+          if (test_result == TEST_TRUE) then
+            test_result = TEST_FALSE
+          else if (test_result == TEST_FALSE) then
+            test_result = TEST_TRUE
+          end if
+        end block
+        return
+      end if
     end if
 
     ! Skip [[ and ]] tokens
@@ -146,7 +169,8 @@ contains
     case ('=', '==')
       result_bool = wildcard_match(trim(expanded_left), trim(expanded_right))
     case ('!=')
-      result_bool = (trim(expanded_left) /= trim(expanded_right))
+      ! != negates the pattern match, mirroring == (the RHS is a glob)
+      result_bool = .not. wildcard_match(trim(expanded_left), trim(expanded_right))
     case ('<')
       result_bool = (trim(expanded_left) < trim(expanded_right))
     case ('>')
@@ -158,17 +182,17 @@ contains
     
     ! Numeric comparisons
     case ('-eq')
-      result_bool = numeric_equal(expanded_left, expanded_right)
+      result_bool = numeric_compare(shell, expanded_left, expanded_right, 'eq')
     case ('-ne')
-      result_bool = .not. numeric_equal(expanded_left, expanded_right)
+      result_bool = numeric_compare(shell, expanded_left, expanded_right, 'ne')
     case ('-lt')
-      result_bool = numeric_less_than(expanded_left, expanded_right)
+      result_bool = numeric_compare(shell, expanded_left, expanded_right, 'lt')
     case ('-le')
-      result_bool = numeric_less_equal(expanded_left, expanded_right)
+      result_bool = numeric_compare(shell, expanded_left, expanded_right, 'le')
     case ('-gt')
-      result_bool = numeric_greater_than(expanded_left, expanded_right)
+      result_bool = numeric_compare(shell, expanded_left, expanded_right, 'gt')
     case ('-ge')
-      result_bool = numeric_greater_equal(expanded_left, expanded_right)
+      result_bool = numeric_compare(shell, expanded_left, expanded_right, 'ge')
     
     ! File tests
     case ('-ef')
@@ -412,6 +436,38 @@ contains
         end do
         
         return
+      else if (pattern(p_pos:p_pos) == '[') then
+        ! Bracket expression: [abc], [a-z], leading ! or ^ negates
+        block
+          integer :: close_pos, ci
+          logical :: negated, member
+          close_pos = 0
+          ci = p_pos + 1
+          if (ci <= p_len) then
+            if (pattern(ci:ci) == '!' .or. pattern(ci:ci) == '^') ci = ci + 1
+          end if
+          ci = ci + 1  ! a ] right after the (negated) opening is a literal member
+          do while (ci <= p_len)
+            if (pattern(ci:ci) == ']') then
+              close_pos = ci
+              exit
+            end if
+            ci = ci + 1
+          end do
+          if (close_pos == 0) then
+            ! No closing ] — a lone [ matches itself, like bash
+            if (pattern(p_pos:p_pos) /= string(s_pos:s_pos)) return
+            p_pos = p_pos + 1
+            s_pos = s_pos + 1
+          else
+            member = char_in_bracket(string(s_pos:s_pos), &
+                                     pattern(p_pos+1:close_pos-1), negated)
+            if (negated) member = .not. member
+            if (.not. member) return
+            p_pos = close_pos + 1
+            s_pos = s_pos + 1
+          end if
+        end block
       else if (pattern(p_pos:p_pos) == '?' .or. pattern(p_pos:p_pos) == string(s_pos:s_pos)) then
         p_pos = p_pos + 1
         s_pos = s_pos + 1
@@ -428,81 +484,78 @@ contains
     matches = (s_pos > s_len .and. p_pos > p_len)
   end function
 
+  ! Test one character against a bracket-expression body (content between
+  ! [ and ]). Handles literal sets, a-z ranges, and a leading !/^ which is
+  ! reported through `negated` for the caller to apply.
+  function char_in_bracket(c, body, negated) result(member)
+    character, intent(in) :: c
+    character(len=*), intent(in) :: body
+    logical, intent(out) :: negated
+    logical :: member
+    integer :: k, blen
+
+    member = .false.
+    negated = .false.
+    blen = len(body)
+    k = 1
+    if (blen >= 1) then
+      if (body(1:1) == '!' .or. body(1:1) == '^') then
+        negated = .true.
+        k = 2
+      end if
+    end if
+    do while (k <= blen)
+      ! Bounds check split from the read: .and. does not short-circuit
+      if (k + 2 <= blen) then
+        if (body(k+1:k+1) == '-') then
+          ! Range a-z
+          if (c >= body(k:k) .and. c <= body(k+2:k+2)) member = .true.
+          k = k + 3
+          cycle
+        end if
+      end if
+      if (c == body(k:k)) member = .true.
+      k = k + 1
+    end do
+  end function char_in_bracket
+
   ! Numeric comparison functions
-  function numeric_equal(left, right) result(equal)
-    character(len=*), intent(in) :: left, right
-    logical :: equal
-    integer :: left_val, right_val, status1, status2
-    
-    read(left, *, iostat=status1) left_val
-    read(right, *, iostat=status2) right_val
-    
-    if (status1 == 0 .and. status2 == 0) then
-      equal = (left_val == right_val)
-    else
-      equal = .false.
-    end if
-  end function
+  ! [[ ]] numeric operands are arithmetic expressions: bare names resolve
+  ! as variables and expressions evaluate (BUILTIN-13), 64-bit so values
+  ! past 2^31 compare correctly (BUILTIN-6).
+  function numeric_operand(shell, operand, val) result(ok)
+    use expansion, only: arithmetic_expansion_shell
+    use io_helpers, only: parse_int64
+    use iso_fortran_env, only: int64
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: operand
+    integer(int64), intent(out) :: val
+    logical :: ok
+    character(len=32) :: astr
 
-  function numeric_less_than(left, right) result(less)
-    character(len=*), intent(in) :: left, right
-    logical :: less
-    integer :: left_val, right_val, status1, status2
-    
-    read(left, *, iostat=status1) left_val
-    read(right, *, iostat=status2) right_val
-    
-    if (status1 == 0 .and. status2 == 0) then
-      less = (left_val < right_val)
-    else
-      less = .false.
-    end if
-  end function
+    astr = arithmetic_expansion_shell('$((' // trim(operand) // '))', shell)
+    call parse_int64(astr, val, ok)
+  end function numeric_operand
 
-  function numeric_less_equal(left, right) result(less_eq)
-    character(len=*), intent(in) :: left, right
-    logical :: less_eq
-    integer :: left_val, right_val, status1, status2
-    
-    read(left, *, iostat=status1) left_val
-    read(right, *, iostat=status2) right_val
-    
-    if (status1 == 0 .and. status2 == 0) then
-      less_eq = (left_val <= right_val)
-    else
-      less_eq = .false.
-    end if
-  end function
+  function numeric_compare(shell, left, right, op) result(res)
+    use iso_fortran_env, only: int64
+    type(shell_state_t), intent(inout) :: shell
+    character(len=*), intent(in) :: left, right, op
+    logical :: res
+    integer(int64) :: lv, rv
 
-  function numeric_greater_than(left, right) result(greater)
-    character(len=*), intent(in) :: left, right
-    logical :: greater
-    integer :: left_val, right_val, status1, status2
-    
-    read(left, *, iostat=status1) left_val
-    read(right, *, iostat=status2) right_val
-    
-    if (status1 == 0 .and. status2 == 0) then
-      greater = (left_val > right_val)
-    else
-      greater = .false.
-    end if
-  end function
-
-  function numeric_greater_equal(left, right) result(greater_eq)
-    character(len=*), intent(in) :: left, right
-    logical :: greater_eq
-    integer :: left_val, right_val, status1, status2
-    
-    read(left, *, iostat=status1) left_val
-    read(right, *, iostat=status2) right_val
-    
-    if (status1 == 0 .and. status2 == 0) then
-      greater_eq = (left_val >= right_val)
-    else
-      greater_eq = .false.
-    end if
-  end function
+    res = .false.
+    if (.not. numeric_operand(shell, left, lv)) return
+    if (.not. numeric_operand(shell, right, rv)) return
+    select case(op)
+    case('eq'); res = (lv == rv)
+    case('ne'); res = (lv /= rv)
+    case('lt'); res = (lv < rv)
+    case('le'); res = (lv <= rv)
+    case('gt'); res = (lv > rv)
+    case('ge'); res = (lv >= rv)
+    end select
+  end function numeric_compare
 
   ! File comparison functions (simplified implementations)
   function files_same_device_inode(file1, file2) result(same)

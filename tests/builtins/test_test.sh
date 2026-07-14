@@ -93,4 +93,23 @@ compare_exit "[ 11-digit value ]"      '[ 99999999999 -gt 5 ]'
 compare_exit "[[ 5000000000 -gt 4 ]]"  '[[ 5000000000 -gt 4 ]]'
 compare_exit "[ 2147483647 still ok ]" '[ 2147483647 -gt 5 ]'
 
+section "10. Wave-4: [[ ]] negation, patterns, arithmetic (BUILTIN-3/7/12/13)"
+
+compare_exit "[[ ! -e missing ]]"       '[[ ! -e /nonexistent ]]'
+compare_exit "[[ ! -f missing ]]"       '[[ ! -f /nonexistent ]]'
+compare_exit "[[ ! -d missing ]]"       '[[ ! -d /nonexistent ]]'
+compare_exit "[[ ! -z nonempty ]]"      '[[ ! -z foo ]]'
+compare_exit "[[ ! -e / ]] is false"    '[[ ! -e / ]]'
+compare_exit "[[ != negates glob ]]"    '[[ abc != a* ]]'
+compare_exit "[[ != non-matching ]]"    '[[ abc != x* ]]'
+compare_exit "[[ == glob unchanged ]]"  '[[ abc == a* ]]'
+compare_exit "[[ bracket class hit ]]"  '[[ x == [xy] ]]'
+compare_exit "[[ bracket class miss ]]" '[[ z == [xy] ]]'
+compare_exit "[[ range class ]]"        '[[ m == [a-z] ]]'
+compare_exit "[[ range class miss ]]"   '[[ 5 == [a-z] ]]'
+compare_exit "[[ negated class ]]"      '[[ a == [!b] ]]'
+compare_exit "[[ arithmetic operand ]]" '[[ "2+2" -eq 4 ]]'
+compare_exit "[[ bare name operand ]]"  'x=5; [[ x -eq 5 ]]'
+compare_exit "[[ expanded still ok ]]"  'x=5; [[ $x -eq 5 ]]'
+
 print_summary
