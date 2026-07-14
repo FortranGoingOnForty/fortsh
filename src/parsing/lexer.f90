@@ -466,7 +466,9 @@ contains
                   pos = pos + 1
                   hdigits = hdigits + 1
                 end do
-                if (hdigits > 0 .and. hval <= 255) then
+                if (hdigits > 0 .and. hval == 0) then
+                  call skip_ansi_c_remainder(input, input_len, pos)
+                else if (hdigits > 0 .and. hval <= 255) then
                   token_len = token_len + 1
                   current_token(token_len:token_len) = char(hval)
                 end if
@@ -489,7 +491,9 @@ contains
                   pos = pos + 1
                   odigits = odigits + 1
                 end do
-                if (odigits > 0 .and. oval <= 255) then
+                if (odigits > 0 .and. oval == 0) then
+                  call skip_ansi_c_remainder(input, input_len, pos)
+                else if (odigits > 0 .and. oval <= 255) then
                   token_len = token_len + 1
                   current_token(token_len:token_len) = char(oval)
                 end if
@@ -516,7 +520,11 @@ contains
                   pos = pos + 1
                   udigits = udigits + 1
                 end do
-                if (udigits > 0) call encode_utf8(uval, current_token, token_len)
+                if (udigits > 0 .and. uval == 0) then
+                  call skip_ansi_c_remainder(input, input_len, pos)
+                else if (udigits > 0) then
+                  call encode_utf8(uval, current_token, token_len)
+                end if
                 cycle
               end block
             case('U')
@@ -540,7 +548,11 @@ contains
                   pos = pos + 1
                   udigits = udigits + 1
                 end do
-                if (udigits > 0) call encode_utf8(uval, current_token, token_len)
+                if (udigits > 0 .and. uval == 0) then
+                  call skip_ansi_c_remainder(input, input_len, pos)
+                else if (udigits > 0) then
+                  call encode_utf8(uval, current_token, token_len)
+                end if
                 cycle
               end block
             case('c')
@@ -1100,6 +1112,25 @@ contains
 
   end subroutine tokenize
 
+  ! Skip the rest of a $'...' segment after an escape resolved to NUL.
+  ! bash drops everything from the NUL to the closing quote but keeps
+  ! adjacent segments of the same word ($'a\0b'post yields "apost").
+  ! Leaves pos at the closing quote so the caller's normal close path runs.
+  subroutine skip_ansi_c_remainder(input, input_len, pos)
+    character(len=*), intent(in) :: input
+    integer, intent(in) :: input_len
+    integer, intent(inout) :: pos
+
+    do while (pos <= input_len)
+      if (input(pos:pos) == "'") return
+      if (input(pos:pos) == '\' .and. pos < input_len) then
+        pos = pos + 2
+      else
+        pos = pos + 1
+      end if
+    end do
+  end subroutine skip_ansi_c_remainder
+
   ! Append one character to the token buffer, or record the truncation.
   subroutine append_ch(buf, buf_len, c)
     character(len=*), intent(inout) :: buf
@@ -1358,7 +1389,9 @@ contains
               exit
             end if
           end do
-          if (oct_val > 0 .and. oct_val <= 127) then
+          if (n_digits > 0 .and. oct_val == 0) then
+            call skip_ansi_c_remainder(input, input_len, pos)
+          else if (oct_val > 0 .and. oct_val <= 255) then
             call append_ch(current_token, token_len, char(oct_val))
           end if
         case('x')
@@ -1384,7 +1417,9 @@ contains
               exit
             end if
           end do
-          if (hex_val > 0 .and. hex_val <= 127) then
+          if (n_digits > 0 .and. hex_val == 0) then
+            call skip_ansi_c_remainder(input, input_len, pos)
+          else if (hex_val > 0 .and. hex_val <= 255) then
             call append_ch(current_token, token_len, char(hex_val))
           end if
         case('u')
@@ -1406,7 +1441,11 @@ contains
             pos = pos + 1
             n_digits = n_digits + 1
           end do
-          call encode_utf8(hex_val, current_token, token_len)
+          if (n_digits > 0 .and. hex_val == 0) then
+            call skip_ansi_c_remainder(input, input_len, pos)
+          else
+            call encode_utf8(hex_val, current_token, token_len)
+          end if
         case('U')
           ! Unicode: \UHHHHHHHH (8 hex digits) → UTF-8
           hex_val = 0
@@ -1426,7 +1465,11 @@ contains
             pos = pos + 1
             n_digits = n_digits + 1
           end do
-          call encode_utf8(hex_val, current_token, token_len)
+          if (n_digits > 0 .and. hex_val == 0) then
+            call skip_ansi_c_remainder(input, input_len, pos)
+          else
+            call encode_utf8(hex_val, current_token, token_len)
+          end if
         case('c')
           ! Control character: \cX → char(ichar(X) & 31)
           if (pos + 2 <= input_len) then
