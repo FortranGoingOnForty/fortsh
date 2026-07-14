@@ -493,46 +493,59 @@ contains
       end select
     end if
 
-    ! Check for case conversion first (^, ^^, ,, ,,) — but only if this
-    ! isn't a pattern substitution (contains /). Otherwise ${x/pat/,}
-    ! gets misidentified as case conversion because the last char is ','.
+    ! Case modification: ${v^} ${v^^} ${v,} ${v,,} ${v~} ${v~~}, each with
+    ! an optional per-character pattern argument (${v^^[hl]}). The operator
+    ! is found by scanning, not by the final character, so pattern forms
+    ! ending in ']' are recognized. The prefix before the operator must be
+    ! a plain name, so operators inside ${v:-a,b} operands never match.
+    ! Skipped when / is present (that is a pattern substitution).
     i = len_trim(var_name)
     if (i > 1 .and. index(var_name(1:i), '/') == 0) then
-      if (var_name(i:i) == '^') then
-        ! Check for ^^ (uppercase all) or ^ (uppercase first)
-        if (i > 1 .and. var_name(i-1:i-1) == '^') then
-          ! ${var^^} - uppercase all
-          operation = var_name(:i-2)
-          var_value = get_shell_variable(shell, trim(operation))
-          result_value = to_upper(trim(var_value))
-        else
-          ! ${var^} - uppercase first
-          operation = var_name(:i-1)
-          var_value = get_shell_variable(shell, trim(operation))
-          if (len_trim(var_value) > 0) then
-            result_value = to_upper(var_value(1:1))
-            if (len_trim(var_value) > 1) result_value = trim(result_value) // var_value(2:)
+      block
+        integer :: op_pos, pat_start, ci
+        character :: op_ch
+        logical :: op_all, name_ok
+        op_pos = 0
+        do ci = 2, i
+          if (var_name(ci:ci) == '^' .or. var_name(ci:ci) == ',' .or. &
+              var_name(ci:ci) == '~') then
+            op_pos = ci
+            exit
+          end if
+        end do
+        if (op_pos > 1) then
+          name_ok = .true.
+          do ci = 1, op_pos - 1
+            if (.not. ((var_name(ci:ci) >= 'a' .and. var_name(ci:ci) <= 'z') .or. &
+                       (var_name(ci:ci) >= 'A' .and. var_name(ci:ci) <= 'Z') .or. &
+                       (var_name(ci:ci) >= '0' .and. var_name(ci:ci) <= '9') .or. &
+                       var_name(ci:ci) == '_')) then
+              name_ok = .false.
+              exit
+            end if
+          end do
+          if (name_ok) then
+            op_ch = var_name(op_pos:op_pos)
+            op_all = .false.
+            pat_start = op_pos + 1
+            if (op_pos < i) then
+              if (var_name(op_pos+1:op_pos+1) == op_ch) then
+                op_all = .true.
+                pat_start = op_pos + 2
+              end if
+            end if
+            operation = var_name(:op_pos-1)
+            var_value = get_shell_variable(shell, trim(operation))
+            if (pat_start <= i) then
+              result_value = apply_case_mod(trim(var_value), op_ch, op_all, &
+                                            var_name(pat_start:i))
+            else
+              result_value = apply_case_mod(trim(var_value), op_ch, op_all, '')
+            end if
+            return
           end if
         end if
-        return
-      else if (var_name(i:i) == ',') then
-        ! Check for ,, (lowercase all) or , (lowercase first)
-        if (i > 1 .and. var_name(i-1:i-1) == ',') then
-          ! ${var,,} - lowercase all
-          operation = var_name(:i-2)
-          var_value = get_shell_variable(shell, trim(operation))
-          result_value = to_lower(trim(var_value))
-        else
-          ! ${var,} - lowercase first
-          operation = var_name(:i-1)
-          var_value = get_shell_variable(shell, trim(operation))
-          if (len_trim(var_value) > 0) then
-            result_value = to_lower(var_value(1:1))
-            if (len_trim(var_value) > 1) result_value = trim(result_value) // var_value(2:)
-          end if
-        end if
-        return
-      end if
+      end block
     end if
 
     ! Find operator positions, skipping characters inside nested ${...}
@@ -1369,6 +1382,48 @@ contains
   end function
 
   ! Pattern replacement in string
+  ! Apply a case-modification operator to a value. op_ch is ^ (upper),
+  ! , (lower), or ~ (toggle); op_all selects every character vs only the
+  ! first; pat restricts the change to characters matching the glob
+  ! (empty pattern matches every character, bash's default).
+  function apply_case_mod(value, op_ch, op_all, pat) result(out)
+    character(len=*), intent(in) :: value, pat
+    character, intent(in) :: op_ch
+    logical, intent(in) :: op_all
+    character(len=len(value)) :: out
+    integer :: k, kmax
+    logical :: m
+    character :: c
+
+    out = value
+    if (op_all) then
+      kmax = len(value)
+    else
+      kmax = min(1, len(value))
+    end if
+    do k = 1, kmax
+      c = out(k:k)
+      if (len_trim(pat) > 0) then
+        m = match_pattern(c, trim(pat))
+      else
+        m = .true.
+      end if
+      if (.not. m) cycle
+      select case (op_ch)
+      case ('^')
+        if (c >= 'a' .and. c <= 'z') out(k:k) = achar(iachar(c) - 32)
+      case (',')
+        if (c >= 'A' .and. c <= 'Z') out(k:k) = achar(iachar(c) + 32)
+      case ('~')
+        if (c >= 'a' .and. c <= 'z') then
+          out(k:k) = achar(iachar(c) - 32)
+        else if (c >= 'A' .and. c <= 'Z') then
+          out(k:k) = achar(iachar(c) + 32)
+        end if
+      end select
+    end do
+  end function apply_case_mod
+
   ! Build one replacement instance for ${var/pat/repl}: an unescaped &
   ! inserts the matched text (bash 5); a backslash escapes the next
   ! character to its literal (bash quote removal), so \& is a literal &.
