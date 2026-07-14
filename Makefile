@@ -288,7 +288,7 @@ $(BUILDDIR)/scripting/test_builtin.o: src/scripting/test_builtin.f90 $(BUILDDIR)
 $(BUILDDIR)/scripting/advanced_test.o: src/scripting/advanced_test.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/scripting/expansion.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/scripting/printf_builtin.o: src/scripting/printf_builtin.f90 $(BUILDDIR)/common/types.o | $(BUILDDIR)/scripting
+$(BUILDDIR)/scripting/printf_builtin.o: src/scripting/printf_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/io_helpers.o | $(BUILDDIR)/scripting
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/scripting/read_builtin.o: src/scripting/read_builtin.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/scripting
