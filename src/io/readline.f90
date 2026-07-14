@@ -12784,9 +12784,17 @@ contains
         w = 0; k = k + 1
       end if
       cursor_col = cursor_col + w
-      if (cursor_col >= term_cols) then
+      ! Deferred wrap: a char that lands EXACTLY on term_cols fills the row and
+      ! leaves the cursor in the terminal's pending-wrap state — still on this
+      ! physical row, not advanced. Only a char that OVERFLOWS past term_cols is
+      ! on the next row. Using '>= term_cols' here advanced the row one early, so
+      ! the trailing cursor's module_cursor_screen_row was one too high and the
+      ! next keystroke's move-up over-counted and scrolled the screen after an
+      ! exact-width paste. Reset to the overflow (not 0) so a wide char that
+      ! crosses the boundary keeps correct column accounting. (RL-1)
+      if (cursor_col > term_cols) then
         cursor_row = cursor_row + 1
-        cursor_col = 0
+        cursor_col = cursor_col - term_cols
       end if
     end do
   end subroutine
