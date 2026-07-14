@@ -441,24 +441,27 @@ contains
       return
     end if
     
-    ! Construct config file path
-    config_file = trim(home_dir) // '/.fshrc'
-    
-    ! Check if config file exists
+    ! Prefer the documented ~/.fortshrc; fall back to the legacy ~/.fshrc,
+    ! mirroring the startup source order (DOC-10)
+    config_file = trim(home_dir) // '/.fortshrc'
     inquire(file=config_file, exist=file_exists)
     if (.not. file_exists) then
-      write(output_unit, '(a)') 'fortsh: no .fshrc file found'
+      config_file = trim(home_dir) // '/.fshrc'
+      inquire(file=config_file, exist=file_exists)
+    end if
+    if (.not. file_exists) then
+      write(output_unit, '(a)') 'fortsh: no .fortshrc file found'
       return
     end if
     
     ! Open and display the config file
     open(newunit=unit, file=config_file, status='old', action='read', iostat=iostat)
     if (iostat /= 0) then
-      write(error_unit, '(a)') 'fortsh: error: could not read .fshrc'
+      write(error_unit, '(a)') 'fortsh: error: could not read ' // trim(config_file)
       return
     end if
     
-    write(output_unit, '(a)') 'Contents of .fshrc:'
+    write(output_unit, '(a)') 'Contents of ' // trim(config_file) // ':'
     write(output_unit, '(a)') '=================='
     
     do
