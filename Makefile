@@ -151,7 +151,6 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/io/syntax_highlight.o \
           $(BUILDDIR)/execution/coprocess.o \
           $(BUILDDIR)/execution/better_errors.o \
-          $(BUILDDIR)/io/heredoc.o \
           $(BUILDDIR)/io/fd_redirection.o \
           $(BUILDDIR)/scripting/control_flow.o \
           $(BUILDDIR)/parsing/lexer.o \
@@ -343,9 +342,6 @@ $(BUILDDIR)/io/suggestions.o: src/io/suggestions.f90 | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/system/signals.o | $(BUILDDIR)/io
-	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
-
-$(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
