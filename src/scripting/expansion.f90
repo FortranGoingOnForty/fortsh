@@ -1369,6 +1369,31 @@ contains
   end function
 
   ! Pattern replacement in string
+  ! Build one replacement instance for ${var/pat/repl}: an unescaped &
+  ! inserts the matched text (bash 5); a backslash escapes the next
+  ! character to its literal (bash quote removal), so \& is a literal &.
+  function build_replacement(repl, matched) result(out)
+    character(len=*), intent(in) :: repl, matched
+    character(len=:), allocatable :: out
+    integer :: k, nr
+
+    out = ''
+    nr = len(repl)
+    k = 1
+    do while (k <= nr)
+      if (repl(k:k) == '\' .and. k < nr) then
+        out = out // repl(k+1:k+1)
+        k = k + 2
+      else if (repl(k:k) == '&') then
+        out = out // matched
+        k = k + 1
+      else
+        out = out // repl(k:k)
+        k = k + 1
+      end if
+    end do
+  end function build_replacement
+
   subroutine pattern_replace(input, pattern, replacement, replace_all, output)
     character(len=*), intent(in) :: input, pattern, replacement
     logical, intent(in) :: replace_all
@@ -1387,9 +1412,12 @@ contains
     pat_len = len_trim(pattern)
     repl_len = len_trim(replacement)
 
-    ! Use glob-aware Fortran path for patterns with wildcards/charclasses
-    if (pat_len > 0 .and. (index(pattern(1:pat_len), '[') > 0 .or. &
-        index(pattern(1:pat_len), '*') > 0 .or. index(pattern(1:pat_len), '?') > 0)) then
+    ! Use glob-aware Fortran path for patterns with wildcards/charclasses,
+    ! and for replacements needing & backreference or \-unescape handling
+    ! (the C literal replacer knows neither)
+    if ((pat_len > 0 .and. (index(pattern(1:pat_len), '[') > 0 .or. &
+        index(pattern(1:pat_len), '*') > 0 .or. index(pattern(1:pat_len), '?') > 0)) .or. &
+        index(replacement, '&') > 0 .or. index(replacement, '\') > 0) then
       call pattern_replace_glob(input, pattern, replacement, replace_all, output)
       return
     end if
@@ -1481,12 +1509,22 @@ contains
       end if
       if (matched) then
         if (repl_len > 0) then
-          result_buf(out_pos:out_pos + repl_len - 1) = replacement(1:repl_len)
-          out_pos = out_pos + repl_len
+          block
+            character(len=:), allocatable :: rep_out
+            rep_out = build_replacement(replacement(1:repl_len), input(i2:i2+j2-1))
+            do while (out_pos + len(rep_out) - 1 > out_cap)
+              call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
+            end do
+            if (len(rep_out) > 0) then
+              result_buf(out_pos:out_pos + len(rep_out) - 1) = rep_out
+              out_pos = out_pos + len(rep_out)
+            end if
+          end block
         end if
         i2 = i2 + j2  ! skip matched portion
         if (.not. replace_all) then
           do while (i2 <= in_len)
+            if (out_pos > out_cap) call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
             result_buf(out_pos:out_pos) = input(i2:i2)
             out_pos = out_pos + 1
             i2 = i2 + 1
@@ -1494,6 +1532,7 @@ contains
           exit
         end if
       else
+        if (out_pos > out_cap) call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
         result_buf(out_pos:out_pos) = input(i2:i2)
         out_pos = out_pos + 1
         i2 = i2 + 1
@@ -1542,15 +1581,22 @@ contains
       end do
       if (matched) then
         if (repl_len > 0) then
-          if (out_pos + repl_len - 1 > out_cap) then
-            call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
-          end if
-          result_buf(out_pos:out_pos + repl_len - 1) = replacement(1:repl_len)
-          out_pos = out_pos + repl_len
+          block
+            character(len=:), allocatable :: rep_out
+            rep_out = build_replacement(replacement(1:repl_len), input(i2:i2+j2-1))
+            do while (out_pos + len(rep_out) - 1 > out_cap)
+              call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
+            end do
+            if (len(rep_out) > 0) then
+              result_buf(out_pos:out_pos + len(rep_out) - 1) = rep_out
+              out_pos = out_pos + len(rep_out)
+            end if
+          end block
         end if
         i2 = i2 + j2
         if (.not. replace_all) then
           do while (i2 <= in_len)
+            if (out_pos > out_cap) call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
             result_buf(out_pos:out_pos) = input(i2:i2)
             out_pos = out_pos + 1
             i2 = i2 + 1
@@ -1558,6 +1604,7 @@ contains
           exit
         end if
       else
+        if (out_pos > out_cap) call grow_string_buffer_exp(result_buf, out_cap, out_cap * 2, out_pos - 1)
         result_buf(out_pos:out_pos) = input(i2:i2)
         out_pos = out_pos + 1
         i2 = i2 + 1

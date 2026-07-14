@@ -13,7 +13,19 @@ compare_both "braced var pattern"         'v=aXb; p=X; echo ${v/${p}/_}'
 compare_both "braced var replacement"     'v=ab; r=Z; echo ${v/b/${r}}'
 compare_both "command subst replacement"  'v=ab; echo ${v/b/$(echo CS)}'
 
-section "2. Literal forms unchanged"
+section "2. & backreference and backslash unescape (EXPAND-9)"
+
+compare_both "& inserts matched text"     'v=abc; echo ${v/b/[&]}'
+compare_both "& under replace-all"        'v=hello; echo ${v//l/[&]}'
+compare_both "& with glob match"          'v=abc; echo ${v/b*/[&]}'
+compare_both "& mid-replacement"          'v=abc; echo ${v/b/x&y}'
+compare_both "escaped \\& is literal"     'v=abc; echo ${v/b/\&}'
+compare_both "escaped slash unescapes"    'v=a.b.c; echo ${v//./\/}'
+compare_both "any backslash pair unescapes" 'v=abc; echo ${v/b/C:\path}'
+compare_both "& via expanded replacement" 'p=X; v=aXa; r="[&]"; echo ${v//$p/$r}'
+compare_both "growth past 2x input"       'v=aaaa; echo ${v//a/XYZ}'
+
+section "3. Literal forms unchanged"
 
 compare_both "single replace"             'v=hello; echo ${v/l/L}'
 compare_both "replace all"                'v=hello; echo ${v//l/L}'
