@@ -80,14 +80,16 @@ module readline
   integer, parameter :: MAX_HISTORY = 100      ! Increased from 10 (heap-allocated array, safe)
 #ifdef USE_C_STRINGS
   ! C string library enabled - use larger buffers (tested working with flang-new 21.x)
-  integer, parameter :: MAX_LINE_LEN = 1024
+  integer, parameter :: MAX_LINE_LEN = 8192
 #else
-  ! Legacy limit for older flang-new versions without C string library
-  integer, parameter :: MAX_LINE_LEN = 128     ! Buffer size - actual limit is 127 chars!
+  ! Legacy limit for older flang-new versions without C string library. Raised
+  ! from 128 to match the mainline minimum; not used by CI (flang-new enables
+  ! USE_C_STRINGS), but 127 usable chars truncated far too early on that build.
+  integer, parameter :: MAX_LINE_LEN = 1024    ! Buffer size - actual limit is 1023 chars
 #endif
 #else
   integer, parameter :: MAX_HISTORY = 1000
-  integer, parameter :: MAX_LINE_LEN = 1024
+  integer, parameter :: MAX_LINE_LEN = 8192
 #endif
 
   ! Glob expansion constants (from glob module)
@@ -6201,9 +6203,14 @@ contains
 
     ! Check if we have room for one more character
     ! CRITICAL: Must be >= MAX_LINE_LEN - 1 to prevent writing to position MAX_LINE_LEN + 1
-    ! during middle insertions which shift characters right
+    ! during middle insertions which shift characters right.
+    ! At the cap, ring the bell instead of dropping the char silently (QUAL-6):
+    ! the input still fits far more than the old 1023, but overflow must be
+    ! audible rather than truncating the command invisibly on its way to exec.
     if (input_state%length >= MAX_LINE_LEN - 1) then
       if (allocated(temp_buffer)) deallocate(temp_buffer)
+      write(output_unit, '(a)', advance='no') char(7)
+      flush(output_unit)
       return
     end if
 
