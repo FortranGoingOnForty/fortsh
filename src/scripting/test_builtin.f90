@@ -7,7 +7,8 @@ module test_builtin
   use system_interface
   use variables, only: is_shell_variable_set
   use advanced_test, only: evaluate_test_expression
-  use iso_fortran_env, only: output_unit, error_unit
+  use iso_fortran_env, only: output_unit, error_unit, int64
+  use io_helpers, only: parse_int64
   implicit none
 
 contains
@@ -192,29 +193,46 @@ contains
         right_operand = cmd%tokens(4)
 
         select case(trim(operator))
-      ! String comparisons
+      ! String comparisons — true token lengths, so trailing spaces
+      ! are significant ("x " differs from "x")
       case('=', '==')
-        test_result = (trim(left_operand) == trim(right_operand))
+        test_result = tokens_str_equal(cmd, 2, 4)
       case('!=')
-        test_result = (trim(left_operand) /= trim(right_operand))
+        test_result = .not. tokens_str_equal(cmd, 2, 4)
       case('<')
         test_result = (trim(left_operand) < trim(right_operand))
       case('>')
         test_result = (trim(left_operand) > trim(right_operand))
 
-      ! Integer comparisons
-      case('-eq')
-        test_result = string_to_int(left_operand) == string_to_int(right_operand)
-      case('-ne')
-        test_result = string_to_int(left_operand) /= string_to_int(right_operand)
-      case('-lt')
-        test_result = string_to_int(left_operand) < string_to_int(right_operand)
-      case('-le')
-        test_result = string_to_int(left_operand) <= string_to_int(right_operand)
-      case('-gt')
-        test_result = string_to_int(left_operand) > string_to_int(right_operand)
-      case('-ge')
-        test_result = string_to_int(left_operand) >= string_to_int(right_operand)
+      ! Integer comparisons: 64-bit, and a non-integer operand is a
+      ! usage error (exit 2), never silently 0
+      case('-eq', '-ne', '-lt', '-le', '-gt', '-ge')
+        block
+          integer(int64) :: lv, rv
+          logical :: lok, rok
+          call parse_int64(left_operand, lv, lok)
+          call parse_int64(right_operand, rv, rok)
+          if (.not. lok) then
+            write(error_unit, '(a)') 'fortsh: [: ' // trim(left_operand) // &
+                                     ': integer expression expected'
+            shell%last_exit_status = 2
+            return
+          end if
+          if (.not. rok) then
+            write(error_unit, '(a)') 'fortsh: [: ' // trim(right_operand) // &
+                                     ': integer expression expected'
+            shell%last_exit_status = 2
+            return
+          end if
+          select case(trim(operator))
+          case('-eq'); test_result = (lv == rv)
+          case('-ne'); test_result = (lv /= rv)
+          case('-lt'); test_result = (lv < rv)
+          case('-le'); test_result = (lv <= rv)
+          case('-gt'); test_result = (lv > rv)
+          case('-ge'); test_result = (lv >= rv)
+          end select
+        end block
 
       ! File comparisons
       case('-nt')
@@ -365,13 +383,31 @@ contains
     end if
   end subroutine
 
-  function string_to_int(str) result(int_val)
-    character(len=*), intent(in) :: str
-    integer :: int_val
-    integer :: iostat
-    
-    read(str, *, iostat=iostat) int_val
-    if (iostat /= 0) int_val = 0
-  end function
+  ! True content length of a token: token_lengths preserves trailing
+  ! spaces of quoted operands that trim() would drop.
+  function token_len_of(cmd, idx) result(l)
+    type(command_t), intent(in) :: cmd
+    integer, intent(in) :: idx
+    integer :: l
+
+    l = len_trim(cmd%tokens(idx))
+    if (allocated(cmd%token_lengths)) then
+      if (idx <= size(cmd%token_lengths)) then
+        if (cmd%token_lengths(idx) > l) l = cmd%token_lengths(idx)
+      end if
+    end if
+  end function token_len_of
+
+  function tokens_str_equal(cmd, li, ri) result(eq)
+    type(command_t), intent(in) :: cmd
+    integer, intent(in) :: li, ri
+    logical :: eq
+    integer :: ll, rl
+
+    ll = token_len_of(cmd, li)
+    rl = token_len_of(cmd, ri)
+    eq = .false.
+    if (ll == rl) eq = (cmd%tokens(li)(1:ll) == cmd%tokens(ri)(1:rl))
+  end function tokens_str_equal
 
 end module test_builtin

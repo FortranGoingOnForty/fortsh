@@ -65,4 +65,32 @@ compare_exit "[[ string comparison > ]]" '[[ "def" > "abc" ]]'
 compare_exit "[[ -z in extended ]]" '[[ -z "" ]]'
 compare_exit "[[ -n in extended ]]" '[[ -n "hello" ]]'
 
+section "7. Wave-4: string compares honor trailing spaces (BUILTIN-4)"
+
+compare_exit "[ trailing space differs ]"    '[ "x " = "x" ]'
+compare_exit "[ blank differs from empty ]"  '[ " " = "" ]'
+compare_exit "[ != sees trailing space ]"    '[ "x " != "x" ]'
+compare_exit "[ equal stays equal ]"         '[ "x" = "x" ]'
+compare_exit "test trailing space differs"   'test "x " = "x"'
+
+section "8. Wave-4: non-integer operands are usage errors (BUILTIN-5)"
+
+compare_exit "[ abc -eq 1 ] exits 2"   '[ abc -eq 1 ]'
+compare_exit "[ abc -eq 0 ] exits 2"   '[ abc -eq 0 ]'
+compare_exit "[ 5 -gt abc ] exits 2"   '[ 5 -gt abc ]'
+compare_exit "valid compare unchanged" '[ 5 -gt 3 ]'
+out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c '[ abc -eq 1 ]' 2>&1)
+if printf '%s' "$out" | grep -q 'integer expression expected'; then
+    pass "diagnostic names the bad operand"
+else
+    fail "diagnostic names the bad operand" "integer expression expected" "$out"
+fi
+
+section "9. Wave-4: 64-bit numeric comparisons (BUILTIN-6)"
+
+compare_exit "[ 2^31 boundary ]"       '[ 2147483648 -gt 5 ]'
+compare_exit "[ 11-digit value ]"      '[ 99999999999 -gt 5 ]'
+compare_exit "[[ 5000000000 -gt 4 ]]"  '[[ 5000000000 -gt 4 ]]'
+compare_exit "[ 2147483647 still ok ]" '[ 2147483647 -gt 5 ]'
+
 print_summary

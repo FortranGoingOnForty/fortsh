@@ -34,6 +34,7 @@ module io_helpers
   public :: write_stdout, write_stderr, write_stdout_nonl
   public :: write_stdout_checked, write_stdout_nonl_checked
   public :: write_error_message
+  public :: parse_int64
 
 contains
 
@@ -157,5 +158,31 @@ contains
 
     deallocate(c_str)
   end subroutine write_stderr
+
+  ! Parse a decimal integer (optional sign, surrounding blanks) into int64.
+  ! ok is .false. for anything else — callers must not treat garbage as 0.
+  ! Shared by test/[ (BUILTIN-5/6) and printf (wave-5 64-bit work) so
+  ! integer parsing and overflow behavior stay consistent across builtins.
+  subroutine parse_int64(str, value, ok)
+    use iso_fortran_env, only: int64
+    character(len=*), intent(in) :: str
+    integer(int64), intent(out) :: value
+    logical, intent(out) :: ok
+    character(len=:), allocatable :: t
+    integer :: k, s, ios
+
+    value = 0_int64
+    ok = .false.
+    t = trim(adjustl(str))
+    if (len(t) == 0) return
+    s = 1
+    if (t(1:1) == '+' .or. t(1:1) == '-') s = 2
+    if (s > len(t)) return
+    do k = s, len(t)
+      if (t(k:k) < '0' .or. t(k:k) > '9') return
+    end do
+    read(t, *, iostat=ios) value
+    ok = (ios == 0)
+  end subroutine parse_int64
 
 end module io_helpers
