@@ -72,6 +72,15 @@ contains
     end if
     state%raw_input = input  ! Save for heredoc parsing
     call tokenize(input, state%tokens, state%num_tokens)
+    if (last_tokenize_unterminated .and. .not. g_parser_interactive) then
+      ! bash exits 2 on EOF inside an unclosed construct; interactive mode
+      ! never gets here — the REPL gathers continuation lines first.
+      call write_stderr(parser_err_prefix()//'unexpected EOF while looking for matching `'// &
+                        last_unterminated_closer//"'")
+      last_parse_had_error = .true.
+      nullify(root)
+      return
+    end if
     state%pos = 1
     root => parse_complete_command(state)
     if (state%has_error .and. associated(root)) then

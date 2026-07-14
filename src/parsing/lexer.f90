@@ -21,6 +21,8 @@ module lexer
   public :: peek_token
   public :: is_keyword
   public :: is_operator
+  public :: last_tokenize_unterminated
+  public :: last_unterminated_closer
 
   ! Lexer state enumeration
   integer, parameter :: LEX_NORMAL = 1
@@ -33,6 +35,15 @@ module lexer
   ! Context tracking for [[ ]] test expressions
   ! Inside [[ ]], && || < > are test operators, not shell operators
   logical :: in_double_bracket_context = .false.
+
+  ! Set when tokenize hits end of input inside an unclosed quote, $'...',
+  ! $(, ${, or <(/>( — the closer is the character bash names in its
+  ! "unexpected EOF while looking for matching" diagnostic. tokenize has no
+  ! status argument, so parse_command_line reads these to reject the input
+  ! in non-interactive mode; the interactive REPL resolves unterminated
+  ! constructs upstream with continuation lines.
+  logical :: last_tokenize_unterminated = .false.
+  character(len=1) :: last_unterminated_closer = ' '
 
 contains
 
@@ -146,6 +157,8 @@ contains
     continuing_word = .false.
     token_has_quoted_part = .false.
     in_double_bracket_context = .false.
+    last_tokenize_unterminated = .false.
+    last_unterminated_closer = ' '
 
     do while (pos <= input_len .and. num_tokens < size(tokens))
       ch = input(pos:pos)
@@ -1183,17 +1196,36 @@ contains
 
     ! Flush any remaining token
     if (state == LEX_IN_WORD .and. token_len > 0) then
+      if (paren_depth > 0) then
+        ! Still inside $(, ${, or <(/>( at end of input
+        last_tokenize_unterminated = .true.
+        if (index(current_token(1:token_len), '${') > 0 .and. &
+            index(current_token(1:token_len), '$(') == 0) then
+          last_unterminated_closer = '}'
+        else
+          last_unterminated_closer = ')'
+        end if
+      end if
       call add_word_or_keyword(tokens, num_tokens, current_token(1:token_len), &
                               token_start, input_len, token_has_quoted_part, in_escape)
     else if (state == LEX_IN_SINGLE_QUOTE .or. state == LEX_IN_DOUBLE_QUOTE) then
       ! Unterminated quote - add as word with error marker
+      last_tokenize_unterminated = .true.
       if (state == LEX_IN_SINGLE_QUOTE) then
+        last_unterminated_closer = "'"
         call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
                     token_start, input_len, .true., quote_type=QUOTE_SINGLE)
       else
+        last_unterminated_closer = '"'
         call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
                     token_start, input_len, .true., quote_type=QUOTE_DOUBLE)
       end if
+    else if (state == LEX_IN_DOLLAR_SINGLE_QUOTE) then
+      ! Unterminated $'...' at end of input
+      last_tokenize_unterminated = .true.
+      last_unterminated_closer = "'"
+      call add_token(tokens, num_tokens, TOKEN_WORD, current_token(1:token_len), &
+                  token_start, input_len, .true., quote_type=QUOTE_SINGLE)
     else if (state == LEX_IN_OPERATOR .and. token_len > 0) then
       ! Flush operator
       call add_token(tokens, num_tokens, TOKEN_OPERATOR, current_token(1:token_len), &
@@ -1581,6 +1613,8 @@ contains
     end do
 
     ! Unterminated $'...' - add sentinel anyway
+    last_tokenize_unterminated = .true.
+    last_unterminated_closer = "'"
     if (token_len < MAX_TOKEN_LEN) then
       token_len = token_len + 1
       current_token(token_len:token_len) = char(3)

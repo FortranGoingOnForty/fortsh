@@ -973,8 +973,8 @@ contains
       ! Handle line continuation (backslash-newline)
       input_line = remove_line_continuations(input_line)
 
-      ! If EOF was reached during continuation, exit
-      if (iostat /= 0) exit
+      ! On EOF during continuation, still parse the remainder — an unclosed
+      ! quote must reach the parser to be rejected (exit 2), not be dropped.
 
       ! Check for unclosed compound commands (if/fi, do/done, case/esac)
       do while (needs_compound_continuation(input_line))
