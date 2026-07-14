@@ -818,35 +818,42 @@ contains
       content_end = 0
 
       j = content_pos
-      do while (j <= len_trim(input))
+      hd_scan: do while (j <= len_trim(input))
         ! Check if we're at start of a line
         if (j == content_pos .or. input(j-1:j-1) == char(10)) then
           ! For <<-, skip leading tabs before checking delimiter
           k = j
           if (strip_tabs) then
-            do while (k <= len_trim(input) .and. input(k:k) == char(9))
+            do while (k <= len_trim(input))
+              if (input(k:k) /= char(9)) exit
               k = k + 1
             end do
           end if
           ! Check if this line starts with the delimiter (after tabs if strip_tabs)
           if (k + len_trim(delimiter) - 1 <= len_trim(input)) then
             if (input(k:k+len_trim(delimiter)-1) == trim(delimiter)) then
-              ! Check if delimiter is alone on the line or followed by newline
-              if (k + len_trim(delimiter) > len_trim(input) .or. &
-                  input(k+len_trim(delimiter):k+len_trim(delimiter)) == char(10)) then
-                content_end = j - 1
-                content_pos = k + len_trim(delimiter)
-                if (content_pos <= len_trim(input) .and. &
-                    input(content_pos:content_pos) == char(10)) then
-                  content_pos = content_pos + 1
+              ! Delimiter must be alone on the line or followed by newline.
+              ! Bounds check split from the read: .or. does not short-circuit.
+              block
+                logical :: delim_line_end
+                integer :: dpos
+                dpos = k + len_trim(delimiter)
+                delim_line_end = (dpos > len_trim(input))
+                if (.not. delim_line_end) delim_line_end = (input(dpos:dpos) == char(10))
+                if (delim_line_end) then
+                  content_end = j - 1
+                  content_pos = dpos
+                  if (content_pos <= len_trim(input)) then
+                    if (input(content_pos:content_pos) == char(10)) content_pos = content_pos + 1
+                  end if
+                  exit hd_scan
                 end if
-                exit
-              end if
+              end block
             end if
           end if
         end if
         j = j + 1
-      end do
+      end do hd_scan
 
       ! Extract heredoc content
       if (content_end >= content_start) then

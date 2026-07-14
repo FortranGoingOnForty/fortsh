@@ -200,7 +200,8 @@ contains
         ! Comments: # to end of line
         if (ch == '#') then
           ! Skip until newline or end of input
-          do while (pos <= input_len .and. input(pos:pos) /= char(10))
+          do while (pos <= input_len)
+            if (input(pos:pos) == char(10)) exit
             pos = pos + 1
           end do
           cycle
@@ -854,7 +855,8 @@ contains
                 ! Skip double-quoted string
                 call append_ch(current_token, token_len, ch)
                 pos = pos + 1
-                do while (pos <= input_len .and. input(pos:pos) /= '"')
+                do while (pos <= input_len)
+                  if (input(pos:pos) == '"') exit
                   if (input(pos:pos) == '\' .and. pos < input_len) then
                     call append_two(current_token, token_len, input(pos:pos), input(pos+1:pos+1))
                     pos = pos + 2
@@ -871,7 +873,8 @@ contains
                 ! Skip single-quoted string
                 call append_ch(current_token, token_len, ch)
                 pos = pos + 1
-                do while (pos <= input_len .and. input(pos:pos) /= "'")
+                do while (pos <= input_len)
+                  if (input(pos:pos) == "'") exit
                   call append_ch(current_token, token_len, input(pos:pos))
                   pos = pos + 1
                 end do
