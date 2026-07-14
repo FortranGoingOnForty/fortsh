@@ -24,5 +24,8 @@ section "3. printenv"
 compare_output "printenv specific var" 'export MYVAR=hello; printenv MYVAR'
 compare_exit "printenv nonexistent var fails" 'printenv NONEXISTENT_VAR_XYZ_99'
 compare_exit "printenv with no args succeeds" 'printenv >/dev/null'
+# MEM-2: the pooled printenv path copied the value into a fixed 1024-byte
+# buffer and truncated anything longer. A 5000-byte value must print whole.
+compare_output "printenv 5000-byte value not truncated" 'export V=$(head -c 5000 /dev/zero | tr "\0" x); printenv V | wc -c'
 
 print_summary
