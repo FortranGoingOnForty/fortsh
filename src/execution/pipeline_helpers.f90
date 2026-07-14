@@ -118,6 +118,7 @@ contains
     temp_cap = max(cmd%num_tokens * 10, 256)
     allocate(temp_tokens(temp_cap))
     allocate(temp_token_lengths(temp_cap))
+
     allocate(temp_token_quoted(temp_cap))
     temp_token_lengths = 0
     temp_token_quoted = .false.
@@ -818,22 +819,44 @@ contains
       end do
       cmd%num_tokens = expanded_count
 
-      ! Update token_lengths to match new tokens (use trimmed length)
-      if (allocated(cmd%token_lengths)) deallocate(cmd%token_lengths)
-      allocate(cmd%token_lengths(expanded_count))
-      do i = 1, expanded_count
-        cmd%token_lengths(i) = len_trim(expanded_tokens(i))
-      end do
+      ! Rebuild token metadata. Globbing only rewrites tokens it expands;
+      ! when the count is unchanged, tokens that passed through verbatim
+      ! keep their original length and quoted/escaped flags — resetting
+      ! them dropped trailing spaces of quoted operands whenever a sibling
+      ! token merely CONTAINED a glob character ([ "x " = "x" ]).
+      block
+        integer, allocatable :: old_lens(:)
+        logical, allocatable :: old_q(:), old_e(:)
+        integer :: old_num
 
-      ! Reset token_quoted and token_escaped for expanded tokens
-      ! (glob-expanded filenames are not quoted)
-      if (allocated(cmd%token_quoted)) deallocate(cmd%token_quoted)
-      allocate(cmd%token_quoted(expanded_count))
-      cmd%token_quoted = .false.
-
-      if (allocated(cmd%token_escaped)) deallocate(cmd%token_escaped)
-      allocate(cmd%token_escaped(expanded_count))
-      cmd%token_escaped = .false.
+        old_num = size(original_tokens)
+        if (allocated(cmd%token_lengths)) call move_alloc(cmd%token_lengths, old_lens)
+        if (allocated(cmd%token_quoted)) call move_alloc(cmd%token_quoted, old_q)
+        if (allocated(cmd%token_escaped)) call move_alloc(cmd%token_escaped, old_e)
+        allocate(cmd%token_lengths(expanded_count))
+        allocate(cmd%token_quoted(expanded_count))
+        allocate(cmd%token_escaped(expanded_count))
+        do i = 1, expanded_count
+          cmd%token_lengths(i) = len_trim(expanded_tokens(i))
+          cmd%token_quoted(i) = .false.
+          cmd%token_escaped(i) = .false.
+          if (expanded_count == old_num) then
+            if (expanded_tokens(i) == original_tokens(i)) then
+              if (allocated(old_lens)) then
+                if (i <= size(old_lens)) then
+                  if (old_lens(i) > cmd%token_lengths(i)) cmd%token_lengths(i) = old_lens(i)
+                end if
+              end if
+              if (allocated(old_q)) then
+                if (i <= size(old_q)) cmd%token_quoted(i) = old_q(i)
+              end if
+              if (allocated(old_e)) then
+                if (i <= size(old_e)) cmd%token_escaped(i) = old_e(i)
+              end if
+            end if
+          end if
+        end do
+      end block
     else
       ! No expansion occurred - restore original
       allocate(character(len=tok_char_len) :: cmd%tokens(cmd%num_tokens))

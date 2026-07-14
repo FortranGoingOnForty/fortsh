@@ -65,4 +65,51 @@ compare_exit "[[ string comparison > ]]" '[[ "def" > "abc" ]]'
 compare_exit "[[ -z in extended ]]" '[[ -z "" ]]'
 compare_exit "[[ -n in extended ]]" '[[ -n "hello" ]]'
 
+section "7. Wave-4: string compares honor trailing spaces (BUILTIN-4)"
+
+compare_exit "[ trailing space differs ]"    '[ "x " = "x" ]'
+compare_exit "[ blank differs from empty ]"  '[ " " = "" ]'
+compare_exit "[ != sees trailing space ]"    '[ "x " != "x" ]'
+compare_exit "[ equal stays equal ]"         '[ "x" = "x" ]'
+compare_exit "test trailing space differs"   'test "x " = "x"'
+
+section "8. Wave-4: non-integer operands are usage errors (BUILTIN-5)"
+
+compare_exit "[ abc -eq 1 ] exits 2"   '[ abc -eq 1 ]'
+compare_exit "[ abc -eq 0 ] exits 2"   '[ abc -eq 0 ]'
+compare_exit "[ 5 -gt abc ] exits 2"   '[ 5 -gt abc ]'
+compare_exit "valid compare unchanged" '[ 5 -gt 3 ]'
+out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c '[ abc -eq 1 ]' 2>&1)
+if printf '%s' "$out" | grep -q 'integer expression expected'; then
+    pass "diagnostic names the bad operand"
+else
+    fail "diagnostic names the bad operand" "integer expression expected" "$out"
+fi
+
+section "9. Wave-4: 64-bit numeric comparisons (BUILTIN-6)"
+
+compare_exit "[ 2^31 boundary ]"       '[ 2147483648 -gt 5 ]'
+compare_exit "[ 11-digit value ]"      '[ 99999999999 -gt 5 ]'
+compare_exit "[[ 5000000000 -gt 4 ]]"  '[[ 5000000000 -gt 4 ]]'
+compare_exit "[ 2147483647 still ok ]" '[ 2147483647 -gt 5 ]'
+
+section "10. Wave-4: [[ ]] negation, patterns, arithmetic (BUILTIN-3/7/12/13)"
+
+compare_exit "[[ ! -e missing ]]"       '[[ ! -e /nonexistent ]]'
+compare_exit "[[ ! -f missing ]]"       '[[ ! -f /nonexistent ]]'
+compare_exit "[[ ! -d missing ]]"       '[[ ! -d /nonexistent ]]'
+compare_exit "[[ ! -z nonempty ]]"      '[[ ! -z foo ]]'
+compare_exit "[[ ! -e / ]] is false"    '[[ ! -e / ]]'
+compare_exit "[[ != negates glob ]]"    '[[ abc != a* ]]'
+compare_exit "[[ != non-matching ]]"    '[[ abc != x* ]]'
+compare_exit "[[ == glob unchanged ]]"  '[[ abc == a* ]]'
+compare_exit "[[ bracket class hit ]]"  '[[ x == [xy] ]]'
+compare_exit "[[ bracket class miss ]]" '[[ z == [xy] ]]'
+compare_exit "[[ range class ]]"        '[[ m == [a-z] ]]'
+compare_exit "[[ range class miss ]]"   '[[ 5 == [a-z] ]]'
+compare_exit "[[ negated class ]]"      '[[ a == [!b] ]]'
+compare_exit "[[ arithmetic operand ]]" '[[ "2+2" -eq 4 ]]'
+compare_exit "[[ bare name operand ]]"  'x=5; [[ x -eq 5 ]]'
+compare_exit "[[ expanded still ok ]]"  'x=5; [[ $x -eq 5 ]]'
+
 print_summary
