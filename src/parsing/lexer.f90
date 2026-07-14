@@ -1086,6 +1086,13 @@ contains
               call add_token(tokens, num_tokens, TOKEN_OPERATOR, '||', token_start, pos, .false.)
               state = LEX_NORMAL
               pos = pos + 1
+            else if (ch == '&') then
+              ! |& pipes stdout+stderr (bash shorthand for 2>&1 |)
+              current_token(2:2) = ch
+              token_len = 2
+              call add_token(tokens, num_tokens, TOKEN_OPERATOR, '|&', token_start, pos, .false.)
+              state = LEX_NORMAL
+              pos = pos + 1
             else
               call add_token(tokens, num_tokens, TOKEN_OPERATOR, '|', token_start, pos-1, .false.)
               state = LEX_NORMAL

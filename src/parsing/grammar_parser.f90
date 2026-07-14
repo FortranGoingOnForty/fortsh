@@ -267,6 +267,38 @@ contains
     end do
   end function
 
+  ! Desugar |& — bash defines cmd |& next as cmd 2>&1 | next, so append a
+  ! 2>&1 (dup fd 2 onto 1) to the command left of the pipe. Simple commands
+  ! carry redirects on simple_cmd; compound nodes on the node itself.
+  subroutine attach_stderr_merge(node)
+    type(command_node_t), pointer :: node
+    type(redirection_t), allocatable :: tmp(:)
+    integer :: n
+
+    if (.not. associated(node)) return
+    if (node%node_type == CMD_SIMPLE .and. associated(node%simple_cmd)) then
+      n = node%simple_cmd%num_redirects
+      allocate(tmp(n + 1))
+      if (n > 0) tmp(1:n) = node%simple_cmd%redirects(1:n)
+      tmp(n + 1)%type = REDIR_DUP_OUT
+      tmp(n + 1)%fd = 2
+      tmp(n + 1)%target_fd = 1
+      if (allocated(node%simple_cmd%redirects)) deallocate(node%simple_cmd%redirects)
+      call move_alloc(tmp, node%simple_cmd%redirects)
+      node%simple_cmd%num_redirects = n + 1
+    else
+      n = node%num_redirects
+      allocate(tmp(n + 1))
+      if (n > 0) tmp(1:n) = node%redirects(1:n)
+      tmp(n + 1)%type = REDIR_DUP_OUT
+      tmp(n + 1)%fd = 2
+      tmp(n + 1)%target_fd = 1
+      if (allocated(node%redirects)) deallocate(node%redirects)
+      call move_alloc(tmp, node%redirects)
+      node%num_redirects = n + 1
+    end if
+  end subroutine attach_stderr_merge
+
   recursive function parse_pipeline_node(state) result(node)
     type(parser_state_t), intent(inout) :: state
     type(command_node_t), pointer :: node, temp_node, commands(:)
@@ -284,11 +316,14 @@ contains
     node => parse_command_node(state)
     if (.not. associated(node)) return
     tok = current_token(state)
-    if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|') then
+    if (tok%token_type == TOKEN_OPERATOR .and. &
+        (trim(tok%value) == '|' .or. trim(tok%value) == '|&')) then
       allocate(commands(16))
       num_commands = 1
+      if (trim(tok%value) == '|&') call attach_stderr_merge(node)
       commands(1) = node
-      do while (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|')
+      do while (tok%token_type == TOKEN_OPERATOR .and. &
+                (trim(tok%value) == '|' .or. trim(tok%value) == '|&'))
         call advance(state)
         call skip_newlines(state)
         temp_node => parse_command_node(state)
@@ -312,9 +347,13 @@ contains
             commands => tmp
           end block
         end if
+        tok = current_token(state)
+        ! A following |& means THIS stage pipes stderr too
+        if (tok%token_type == TOKEN_OPERATOR .and. trim(tok%value) == '|&') then
+          call attach_stderr_merge(temp_node)
+        end if
         num_commands = num_commands + 1
         commands(num_commands) = temp_node
-        tok = current_token(state)
       end do
       if (state%has_error) then
         ! Error occurred - return null
