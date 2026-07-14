@@ -23,6 +23,7 @@ module lexer
   public :: is_operator
   public :: last_tokenize_unterminated
   public :: last_unterminated_closer
+  public :: last_tokenize_truncated
 
   ! Lexer state enumeration
   integer, parameter :: LEX_NORMAL = 1
@@ -44,6 +45,13 @@ module lexer
   ! constructs upstream with continuation lines.
   logical :: last_tokenize_unterminated = .false.
   character(len=1) :: last_unterminated_closer = ' '
+
+  ! Set when any append would exceed MAX_TOKEN_LEN. token_t%value is fixed
+  ! at 4096 bytes, so over-long words cannot be grown here; instead of
+  ! silently clipping (the old behavior), parse_command_line rejects the
+  ! input with a diagnostic. All append sites go through append_ch /
+  ! append_two so this flag and the bounds guard cannot drift per-site.
+  logical :: last_tokenize_truncated = .false.
 
 contains
 
@@ -136,7 +144,7 @@ contains
   ! =====================================
   subroutine tokenize(input, tokens, num_tokens)
     character(len=*), intent(in) :: input
-    type(token_t), intent(out) :: tokens(:)
+    type(token_t), allocatable, intent(inout) :: tokens(:)
     integer, intent(out) :: num_tokens
 
     integer :: pos, input_len, state, token_start
@@ -159,8 +167,9 @@ contains
     in_double_bracket_context = .false.
     last_tokenize_unterminated = .false.
     last_unterminated_closer = ' '
+    last_tokenize_truncated = .false.
 
-    do while (pos <= input_len .and. num_tokens < size(tokens))
+    do while (pos <= input_len)
       ch = input(pos:pos)
 
       ! Get next character for lookahead (if available)
@@ -269,10 +278,7 @@ contains
           do while (pos <= input_len .and. paren_depth > 0)
             if (input(pos:pos) == '(') paren_depth = paren_depth + 1
             if (input(pos:pos) == ')') paren_depth = paren_depth - 1
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = input(pos:pos)
-            end if
+            call append_ch(current_token, token_len, input(pos:pos))
             pos = pos + 1
           end do
           cycle
@@ -338,10 +344,7 @@ contains
         if (ch == "'") then
           ! End of single-quoted string
           ! Add sentinel char(3) to mark end of single-quoted literal
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(3)
-          end if
+          call append_ch(current_token, token_len, char(3))
           pos = pos + 1  ! Move past closing quote
           ! Check if next character continues the word (adjacent quote, word char, or escape)
           if (pos <= input_len) then
@@ -376,10 +379,7 @@ contains
           end if
         else
           ! Add character to token (everything is literal)
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         end if
 
@@ -387,10 +387,7 @@ contains
       case(LEX_IN_DOLLAR_SINGLE_QUOTE)
         if (ch == "'") then
           ! End of $'...' string — add sentinels to mark as quoted
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(3)  ! end sentinel
-          end if
+          call append_ch(current_token, token_len, char(3))  ! end sentinel
           pos = pos + 1
           ! Check if next character continues the word
           if (pos <= input_len) then
@@ -556,21 +553,15 @@ contains
               end if
             case default
               ! Unknown escape — keep both chars (needs two bytes of headroom)
-              if (token_len < MAX_TOKEN_LEN - 1) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = ch
-                token_len = token_len + 1
-                current_token(token_len:token_len) = next_ch
-              end if
+              call append_two(current_token, token_len, ch, next_ch)
             end select
+          else
+            last_tokenize_truncated = .true.
           end if
           pos = pos + 2
         else
           ! Regular character — add literally
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         end if
 
@@ -580,37 +571,21 @@ contains
           ! Backslash escape in double quotes (only for $, `, ", \, newline)
           if (next_ch == '$' .or. next_ch == '`') then
             ! For \$ and \` - keep BOTH chars so expansion can see the escape
-            if (token_len < MAX_TOKEN_LEN - 1) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-              token_len = token_len + 1
-              current_token(token_len:token_len) = next_ch
-            end if
+            call append_two(current_token, token_len, ch, next_ch)
             pos = pos + 2
           else if (next_ch == '"' .or. next_ch == '\' .or. next_ch == char(10)) then
             ! For \" and \\ and \newline - add only escaped character
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = next_ch
-            end if
+            call append_ch(current_token, token_len, next_ch)
             pos = pos + 2
           else
             ! Backslash is literal
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           end if
         else if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
           ! Command substitution inside double quotes - need to find matching )
           ! while ignoring quotes inside $()
-          if (token_len < MAX_TOKEN_LEN - 1) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = '$'
-            token_len = token_len + 1
-            current_token(token_len:token_len) = '('
-          end if
+          call append_two(current_token, token_len, '$', '(')
           pos = pos + 2
           paren_depth = 1
           ! Scan to find matching ), respecting nested parens and quotes
@@ -621,23 +596,14 @@ contains
               call consume_quoted_span(input, input_len, pos, current_token, token_len)
             else if (ch == '(') then
               paren_depth = paren_depth + 1
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = ch
-              end if
+              call append_ch(current_token, token_len, ch)
               pos = pos + 1
             else if (ch == ')') then
               paren_depth = paren_depth - 1
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = ch
-              end if
+              call append_ch(current_token, token_len, ch)
               pos = pos + 1
             else
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = ch
-              end if
+              call append_ch(current_token, token_len, ch)
               pos = pos + 1
             end if
           end do
@@ -650,30 +616,21 @@ contains
             if (next_ch == "'" .or. next_ch == '"') then
               ! Adjacent quote follows - continue building this token
               ! Add sentinel to mark quote boundary (so expansion knows where quoted part ends)
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = char(1)  ! ASCII SOH as sentinel
-              end if
+              call append_ch(current_token, token_len, char(1))  ! ASCII SOH as sentinel
               state = LEX_IN_WORD
               continuing_word = .false.
               cycle
             else if (next_ch == '\') then
               ! Backslash escape follows - continue building this token
               ! Add sentinel to mark quote boundary
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = char(1)  ! ASCII SOH as sentinel
-              end if
+              call append_ch(current_token, token_len, char(1))  ! ASCII SOH as sentinel
               state = LEX_IN_WORD
               continuing_word = .false.
               cycle
             else if (is_word_char(next_ch)) then
               ! Word character follows - continue building this token
               ! Add sentinel to mark quote boundary (so expansion knows where quoted part ends)
-              if (token_len < MAX_TOKEN_LEN) then
-                token_len = token_len + 1
-                current_token(token_len:token_len) = char(1)  ! ASCII SOH as sentinel
-              end if
+              call append_ch(current_token, token_len, char(1))  ! ASCII SOH as sentinel
               state = LEX_IN_WORD
               continuing_word = .false.
               cycle
@@ -692,10 +649,7 @@ contains
           end if
         else
           ! Add character to token
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         end if
 
@@ -707,20 +661,14 @@ contains
           ! Inside command substitution - track paren depth
           if (ch == '(') then
             paren_depth = paren_depth + 1
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           else if (ch == '"' .or. ch == "'") then
             ! Quoted span - a ')' between quotes must not close the substitution
             call consume_quoted_span(input, input_len, pos, current_token, token_len)
           else if (ch == ')') then
             paren_depth = paren_depth - 1
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
             ! If paren_depth hits 0, we closed the $(...)
             if (paren_depth == 0) then
@@ -751,10 +699,7 @@ contains
             end if
           else
             ! Inside $() - keep EVERYTHING including spaces
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           end if
         ! Check if we're inside ${ - if so, keep EVERYTHING until closing }
@@ -763,17 +708,11 @@ contains
           ! Inside parameter expansion - track brace depth
           if (ch == '{') then
             paren_depth = paren_depth + 1
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           else if (ch == '}') then
             paren_depth = paren_depth - 1
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
             ! If paren_depth hits 0, we closed the ${...}
             if (paren_depth == 0) then
@@ -808,27 +747,16 @@ contains
             end if
           else
             ! Inside ${ - keep EVERYTHING including spaces
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           end if
         else if (ch == '\' .and. pos < input_len) then
           ! Backslash escape in word
           ! For expansion-triggering chars, preserve backslash
           if (next_ch == '$' .or. next_ch == '`') then
-            if (token_len < MAX_TOKEN_LEN - 1) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = '\'
-              token_len = token_len + 1
-              current_token(token_len:token_len) = next_ch
-            end if
+            call append_two(current_token, token_len, '\', next_ch)
           else
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = next_ch
-            end if
+            call append_ch(current_token, token_len, next_ch)
           end if
           pos = pos + 2
         else if (ch == "'" .or. ch == '"') then
@@ -856,10 +784,7 @@ contains
               cycle
             end if
             ! Add sentinel char(2) to mark start of single-quoted literal (no expansion)
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = char(2)
-            end if
+            call append_ch(current_token, token_len, char(2))
             state = LEX_IN_SINGLE_QUOTE
           else
             state = LEX_IN_DOUBLE_QUOTE
@@ -871,147 +796,87 @@ contains
           ! which is handled in the NORMAL state. So `echo a#b` -> a#b, and
           ! `$#` stays the parameter. `echo a #b` still comments (the space
           ! ends the word first, then '#' is seen in the NORMAL state).
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         else if (ch == '$' .and. pos < input_len .and. next_ch == '(') then
           ! $( for command/arithmetic substitution - keep in word
-          if (token_len < MAX_TOKEN_LEN - 1) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-            token_len = token_len + 1
-            current_token(token_len:token_len) = next_ch
-            paren_depth = 1  ! Track that we're inside $(
-          end if
+          call append_two(current_token, token_len, ch, next_ch)
+          paren_depth = 1  ! Track that we're inside $(
           pos = pos + 2
         else if (ch == '$' .and. pos < input_len .and. next_ch == '{') then
           ! ${ for parameter expansion - keep in word
-          if (token_len < MAX_TOKEN_LEN - 1) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-            token_len = token_len + 1
-            current_token(token_len:token_len) = next_ch
-            paren_depth = 1  ! Track that we're inside ${
-          end if
+          call append_two(current_token, token_len, ch, next_ch)
+          paren_depth = 1  ! Track that we're inside ${
           pos = pos + 2
         else if ((ch >= '0' .and. ch <= '9') .or. ch == '+' .or. ch == '-' .or. &
                  ch == '*' .or. ch == '/' .or. ch == '%') then
           ! Keep these chars in word (for variables and arithmetic)
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         else if (ch == '(' .or. ch == ')') then
           ! Inside [[ ]], keep parens as part of word (regex patterns, grouping)
           if (in_double_bracket_context) then
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           ! Parentheses: Keep ONLY if inside $(( or $(
           ! Check if current token ends with $ (for x=$(cmd) or just $(cmd))
           ! NOTE: Only for '(' - ')' after $ (like $$) should end the word
           else if (ch == '(' .and. token_len >= 1 .and. current_token(token_len:token_len) == '$') then
             ! Just added $, now seeing ( - this is $( substitution - keep both
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           else if (token_len >= 2 .and. index(current_token(1:token_len), '$(') > 0) then
             ! Already inside $(...) - keep parens
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = ch
-            end if
+            call append_ch(current_token, token_len, ch)
             pos = pos + 1
           else if (ch == '(' .and. token_len >= 1 .and. &
                    current_token(token_len:token_len) == '=') then
             ! Array assignment: VAR=(...) - include the parenthesized content
             ! Scan for matching ) respecting quotes and nested parens
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = '('
-            end if
+            call append_ch(current_token, token_len, '(')
             pos = pos + 1
             paren_depth = 1
             do while (pos <= input_len .and. paren_depth > 0)
               ch = input(pos:pos)
               if (ch == '"') then
                 ! Skip double-quoted string
-                if (token_len < MAX_TOKEN_LEN) then
-                  token_len = token_len + 1
-                  current_token(token_len:token_len) = ch
-                end if
+                call append_ch(current_token, token_len, ch)
                 pos = pos + 1
                 do while (pos <= input_len .and. input(pos:pos) /= '"')
                   if (input(pos:pos) == '\' .and. pos < input_len) then
-                    if (token_len < MAX_TOKEN_LEN - 1) then
-                      token_len = token_len + 1
-                      current_token(token_len:token_len) = input(pos:pos)
-                      token_len = token_len + 1
-                      current_token(token_len:token_len) = input(pos+1:pos+1)
-                    end if
+                    call append_two(current_token, token_len, input(pos:pos), input(pos+1:pos+1))
                     pos = pos + 2
                   else
-                    if (token_len < MAX_TOKEN_LEN) then
-                      token_len = token_len + 1
-                      current_token(token_len:token_len) = input(pos:pos)
-                    end if
+                    call append_ch(current_token, token_len, input(pos:pos))
                     pos = pos + 1
                   end if
                 end do
                 if (pos <= input_len) then
-                  if (token_len < MAX_TOKEN_LEN) then
-                    token_len = token_len + 1
-                    current_token(token_len:token_len) = '"'
-                  end if
+                  call append_ch(current_token, token_len, '"')
                   pos = pos + 1
                 end if
               else if (ch == "'") then
                 ! Skip single-quoted string
-                if (token_len < MAX_TOKEN_LEN) then
-                  token_len = token_len + 1
-                  current_token(token_len:token_len) = ch
-                end if
+                call append_ch(current_token, token_len, ch)
                 pos = pos + 1
                 do while (pos <= input_len .and. input(pos:pos) /= "'")
-                  if (token_len < MAX_TOKEN_LEN) then
-                    token_len = token_len + 1
-                    current_token(token_len:token_len) = input(pos:pos)
-                  end if
+                  call append_ch(current_token, token_len, input(pos:pos))
                   pos = pos + 1
                 end do
                 if (pos <= input_len) then
-                  if (token_len < MAX_TOKEN_LEN) then
-                    token_len = token_len + 1
-                    current_token(token_len:token_len) = "'"
-                  end if
+                  call append_ch(current_token, token_len, "'")
                   pos = pos + 1
                 end if
               else if (ch == '(') then
                 paren_depth = paren_depth + 1
-                if (token_len < MAX_TOKEN_LEN) then
-                  token_len = token_len + 1
-                  current_token(token_len:token_len) = ch
-                end if
+                call append_ch(current_token, token_len, ch)
                 pos = pos + 1
               else if (ch == ')') then
                 paren_depth = paren_depth - 1
-                if (token_len < MAX_TOKEN_LEN) then
-                  token_len = token_len + 1
-                  current_token(token_len:token_len) = ch
-                end if
+                call append_ch(current_token, token_len, ch)
                 pos = pos + 1
               else
-                if (token_len < MAX_TOKEN_LEN) then
-                  token_len = token_len + 1
-                  current_token(token_len:token_len) = ch
-                end if
+                call append_ch(current_token, token_len, ch)
                 pos = pos + 1
               end if
             end do
@@ -1032,26 +897,17 @@ contains
         else if (ch == '{' .or. ch == '}') then
           ! Braces: Keep in word for brace expansion (e.g., {1,2,3} or file{a,b}.txt)
           ! They're only command group operators when surrounded by whitespace
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         else if (in_double_bracket_context .and. &
                  (ch == '&' .or. ch == '|' .or. ch == '<' .or. ch == '>' .or. &
                   ch == '(' .or. ch == ')')) then
           ! Inside [[ ]], these are test operators, not shell operators
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         else if (is_word_char(ch)) then
           ! Continue word
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = ch
-          end if
+          call append_ch(current_token, token_len, ch)
           pos = pos + 1
         else
           ! End of word
@@ -1244,6 +1100,36 @@ contains
 
   end subroutine tokenize
 
+  ! Append one character to the token buffer, or record the truncation.
+  subroutine append_ch(buf, buf_len, c)
+    character(len=*), intent(inout) :: buf
+    integer, intent(inout) :: buf_len
+    character(len=1), intent(in) :: c
+
+    if (buf_len < MAX_TOKEN_LEN) then
+      buf_len = buf_len + 1
+      buf(buf_len:buf_len) = c
+    else
+      last_tokenize_truncated = .true.
+    end if
+  end subroutine append_ch
+
+  ! Append two characters (escape pairs) — both or neither.
+  subroutine append_two(buf, buf_len, c1, c2)
+    character(len=*), intent(inout) :: buf
+    integer, intent(inout) :: buf_len
+    character(len=1), intent(in) :: c1, c2
+
+    if (buf_len < MAX_TOKEN_LEN - 1) then
+      buf_len = buf_len + 1
+      buf(buf_len:buf_len) = c1
+      buf_len = buf_len + 1
+      buf(buf_len:buf_len) = c2
+    else
+      last_tokenize_truncated = .true.
+    end if
+  end subroutine append_two
+
   ! Consume a quoted span inside $(...) verbatim, from the opening quote at
   ! input(pos:pos) through its closing quote, appending to current_token.
   ! Callers use this so paren accounting never sees a ')' between quotes.
@@ -1257,33 +1143,19 @@ contains
     character :: quote_ch, ch
 
     quote_ch = input(pos:pos)
-    if (token_len < MAX_TOKEN_LEN) then
-      token_len = token_len + 1
-      current_token(token_len:token_len) = quote_ch
-    end if
+    call append_ch(current_token, token_len, quote_ch)
     pos = pos + 1
     do while (pos <= input_len)
       ch = input(pos:pos)
       if (quote_ch == '"' .and. ch == '\' .and. pos < input_len) then
-        if (token_len < MAX_TOKEN_LEN - 1) then
-          token_len = token_len + 1
-          current_token(token_len:token_len) = ch
-          token_len = token_len + 1
-          current_token(token_len:token_len) = input(pos+1:pos+1)
-        end if
+        call append_two(current_token, token_len, ch, input(pos+1:pos+1))
         pos = pos + 2
       else if (ch == quote_ch) then
-        if (token_len < MAX_TOKEN_LEN) then
-          token_len = token_len + 1
-          current_token(token_len:token_len) = ch
-        end if
+        call append_ch(current_token, token_len, ch)
         pos = pos + 1
         return
       else
-        if (token_len < MAX_TOKEN_LEN) then
-          token_len = token_len + 1
-          current_token(token_len:token_len) = ch
-        end if
+        call append_ch(current_token, token_len, ch)
         pos = pos + 1
       end if
     end do
@@ -1294,7 +1166,7 @@ contains
   ! =====================================
   subroutine add_token(tokens, num_tokens, tok_type, value, start_pos, end_pos, quoted, escaped, quote_type)
     use shell_types, only: QUOTE_NONE
-    type(token_t), intent(inout) :: tokens(:)
+    type(token_t), allocatable, intent(inout) :: tokens(:)
     integer, intent(inout) :: num_tokens
     integer, intent(in) :: tok_type, start_pos, end_pos
     character(len=*), intent(in) :: value
@@ -1302,6 +1174,15 @@ contains
     logical, intent(in), optional :: escaped
     integer, intent(in), optional :: quote_type
 
+    ! Grow instead of silently dropping tokens past the initial capacity
+    if (num_tokens >= size(tokens)) then
+      block
+        type(token_t), allocatable :: tmp(:)
+        allocate(tmp(size(tokens) * 2))
+        tmp(1:num_tokens) = tokens(1:num_tokens)
+        call move_alloc(tmp, tokens)
+      end block
+    end if
     if (num_tokens < size(tokens)) then
       num_tokens = num_tokens + 1
       tokens(num_tokens)%token_type = tok_type
@@ -1327,7 +1208,7 @@ contains
   ! Helper: Add word or keyword token
   ! =====================================
   subroutine add_word_or_keyword(tokens, num_tokens, value, start_pos, end_pos, quoted, escaped)
-    type(token_t), intent(inout) :: tokens(:)
+    type(token_t), allocatable, intent(inout) :: tokens(:)
     integer, intent(inout) :: num_tokens
     character(len=*), intent(in) :: value
     integer, intent(in) :: start_pos, end_pos
@@ -1412,10 +1293,7 @@ contains
     integer :: oct_val, hex_val, n_digits
 
     ! Add sentinel to mark start of quoted content (no expansion)
-    if (token_len < MAX_TOKEN_LEN) then
-      token_len = token_len + 1
-      current_token(token_len:token_len) = char(2)
-    end if
+    call append_ch(current_token, token_len, char(2))
 
     do while (pos <= input_len)
       ch = input(pos:pos)
@@ -1424,10 +1302,7 @@ contains
         ! Closing quote
         pos = pos + 1
         ! Add sentinel to mark end of quoted content
-        if (token_len < MAX_TOKEN_LEN) then
-          token_len = token_len + 1
-          current_token(token_len:token_len) = char(3)
-        end if
+        call append_ch(current_token, token_len, char(3))
         return
       end if
 
@@ -1436,70 +1311,37 @@ contains
         esc_ch = input(pos+1:pos+1)
         select case(esc_ch)
         case('a')   ! Alert (bell)
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(7)
-          end if
+          call append_ch(current_token, token_len, char(7))
           pos = pos + 2
         case('b')   ! Backspace
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(8)
-          end if
+          call append_ch(current_token, token_len, char(8))
           pos = pos + 2
         case('e', 'E')  ! Escape
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(27)
-          end if
+          call append_ch(current_token, token_len, char(27))
           pos = pos + 2
         case('f')   ! Form feed
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(12)
-          end if
+          call append_ch(current_token, token_len, char(12))
           pos = pos + 2
         case('n')   ! Newline
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(10)
-          end if
+          call append_ch(current_token, token_len, char(10))
           pos = pos + 2
         case('r')   ! Carriage return
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(13)
-          end if
+          call append_ch(current_token, token_len, char(13))
           pos = pos + 2
         case('t')   ! Horizontal tab
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(9)
-          end if
+          call append_ch(current_token, token_len, char(9))
           pos = pos + 2
         case('v')   ! Vertical tab
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(11)
-          end if
+          call append_ch(current_token, token_len, char(11))
           pos = pos + 2
         case('\')   ! Literal backslash
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = '\'
-          end if
+          call append_ch(current_token, token_len, '\')
           pos = pos + 2
         case("'")   ! Literal single quote
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = "'"
-          end if
+          call append_ch(current_token, token_len, "'")
           pos = pos + 2
         case('"')   ! Literal double quote
-          if (token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = '"'
-          end if
+          call append_ch(current_token, token_len, '"')
           pos = pos + 2
         case('0', '1', '2', '3', '4', '5', '6', '7')
           ! Octal: \nnn (up to 3 digits)
@@ -1516,9 +1358,8 @@ contains
               exit
             end if
           end do
-          if (oct_val > 0 .and. oct_val <= 127 .and. token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(oct_val)
+          if (oct_val > 0 .and. oct_val <= 127) then
+            call append_ch(current_token, token_len, char(oct_val))
           end if
         case('x')
           ! Hex: \xHH (up to 2 digits)
@@ -1543,9 +1384,8 @@ contains
               exit
             end if
           end do
-          if (hex_val > 0 .and. hex_val <= 127 .and. token_len < MAX_TOKEN_LEN) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = char(hex_val)
+          if (hex_val > 0 .and. hex_val <= 127) then
+            call append_ch(current_token, token_len, char(hex_val))
           end if
         case('u')
           ! Unicode: \uHHHH (4 hex digits) → UTF-8
@@ -1591,30 +1431,19 @@ contains
           ! Control character: \cX → char(ichar(X) & 31)
           if (pos + 2 <= input_len) then
             ch = input(pos+2:pos+2)
-            if (token_len < MAX_TOKEN_LEN) then
-              token_len = token_len + 1
-              current_token(token_len:token_len) = char(iand(ichar(ch), 31))
-            end if
+            call append_ch(current_token, token_len, char(iand(ichar(ch), 31)))
             pos = pos + 3
           else
             pos = pos + 2
           end if
         case default
           ! Unknown escape: include backslash and character literally
-          if (token_len < MAX_TOKEN_LEN - 1) then
-            token_len = token_len + 1
-            current_token(token_len:token_len) = '\'
-            token_len = token_len + 1
-            current_token(token_len:token_len) = esc_ch
-          end if
+          call append_two(current_token, token_len, '\', esc_ch)
           pos = pos + 2
         end select
       else
         ! Regular character
-        if (token_len < MAX_TOKEN_LEN) then
-          token_len = token_len + 1
-          current_token(token_len:token_len) = ch
-        end if
+        call append_ch(current_token, token_len, ch)
         pos = pos + 1
       end if
     end do
@@ -1622,10 +1451,7 @@ contains
     ! Unterminated $'...' - add sentinel anyway
     last_tokenize_unterminated = .true.
     last_unterminated_closer = "'"
-    if (token_len < MAX_TOKEN_LEN) then
-      token_len = token_len + 1
-      current_token(token_len:token_len) = char(3)
-    end if
+    call append_ch(current_token, token_len, char(3))
   end subroutine process_ansi_c_quote
 
   subroutine encode_utf8(codepoint, buf, buf_len)
@@ -1635,16 +1461,15 @@ contains
 
     if (codepoint < 0) return
     if (codepoint <= 127) then
-      if (buf_len < MAX_TOKEN_LEN) then
-        buf_len = buf_len + 1
-        buf(buf_len:buf_len) = char(codepoint)
-      end if
+      call append_ch(buf, buf_len, char(codepoint))
     else if (codepoint <= int(z'7FF')) then
       if (buf_len + 1 < MAX_TOKEN_LEN) then
         buf_len = buf_len + 1
         buf(buf_len:buf_len) = char(ior(int(z'C0'), ishft(codepoint, -6)))
         buf_len = buf_len + 1
         buf(buf_len:buf_len) = char(ior(int(z'80'), iand(codepoint, int(z'3F'))))
+      else
+        last_tokenize_truncated = .true.
       end if
     else if (codepoint <= int(z'FFFF')) then
       if (buf_len + 2 < MAX_TOKEN_LEN) then
@@ -1654,6 +1479,8 @@ contains
         buf(buf_len:buf_len) = char(ior(int(z'80'), iand(ishft(codepoint, -6), int(z'3F'))))
         buf_len = buf_len + 1
         buf(buf_len:buf_len) = char(ior(int(z'80'), iand(codepoint, int(z'3F'))))
+      else
+        last_tokenize_truncated = .true.
       end if
     else if (codepoint <= int(z'10FFFF')) then
       if (buf_len + 3 < MAX_TOKEN_LEN) then
@@ -1665,6 +1492,8 @@ contains
         buf(buf_len:buf_len) = char(ior(int(z'80'), iand(ishft(codepoint, -6), int(z'3F'))))
         buf_len = buf_len + 1
         buf(buf_len:buf_len) = char(ior(int(z'80'), iand(codepoint, int(z'3F'))))
+      else
+        last_tokenize_truncated = .true.
       end if
     end if
   end subroutine encode_utf8

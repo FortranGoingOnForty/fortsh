@@ -81,6 +81,14 @@ contains
       nullify(root)
       return
     end if
+    if (last_tokenize_truncated) then
+      ! token_t%value is a fixed 4096-byte buffer; running the clipped word
+      ! would silently change semantics, so reject the input instead (MEM-5).
+      call write_stderr(parser_err_prefix()//'word too long (limit 4096 bytes)')
+      last_parse_had_error = .true.
+      nullify(root)
+      return
+    end if
     state%pos = 1
     root => parse_complete_command(state)
     if (state%has_error .and. associated(root)) then
@@ -298,6 +306,42 @@ contains
       node%num_redirects = n + 1
     end if
   end subroutine attach_stderr_merge
+
+  ! Double the simple-command word arrays when full so words past the
+  ! initial capacity are kept instead of silently dropped (PARSE-5).
+  subroutine grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: words(:)
+    logical, allocatable, intent(inout) :: was_quoted(:), was_escaped(:)
+    integer, allocatable, intent(inout) :: quote_types(:), word_lens(:)
+    integer, intent(in) :: num_words
+    character(len=MAX_TOKEN_LEN), allocatable :: wtmp(:)
+    logical, allocatable :: ltmp(:)
+    integer, allocatable :: itmp(:)
+    integer :: n
+
+    if (num_words < size(words)) return
+    n = size(words)
+    allocate(wtmp(n * 2)); wtmp(1:n) = words; call move_alloc(wtmp, words)
+    allocate(ltmp(n * 2)); ltmp = .false.; ltmp(1:n) = was_quoted; call move_alloc(ltmp, was_quoted)
+    allocate(ltmp(n * 2)); ltmp = .false.; ltmp(1:n) = was_escaped; call move_alloc(ltmp, was_escaped)
+    allocate(itmp(n * 2)); itmp = QUOTE_NONE; itmp(1:n) = quote_types; call move_alloc(itmp, quote_types)
+    allocate(itmp(n * 2)); itmp = 0; itmp(1:n) = word_lens; call move_alloc(itmp, word_lens)
+  end subroutine grow_cmd_words
+
+  ! Same for the two-array for-loop word list.
+  subroutine grow_for_words(words, quote_types, num_words)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: words(:)
+    integer, allocatable, intent(inout) :: quote_types(:)
+    integer, intent(in) :: num_words
+    character(len=MAX_TOKEN_LEN), allocatable :: wtmp(:)
+    integer, allocatable :: itmp(:)
+    integer :: n
+
+    if (num_words < size(words)) return
+    n = size(words)
+    allocate(wtmp(n * 2)); wtmp(1:n) = words; call move_alloc(wtmp, words)
+    allocate(itmp(n * 2)); itmp = QUOTE_NONE; itmp(1:n) = quote_types; call move_alloc(itmp, quote_types)
+  end subroutine grow_for_words
 
   recursive function parse_pipeline_node(state) result(node)
     type(parser_state_t), intent(inout) :: state
@@ -609,7 +653,8 @@ contains
               end if
             else
               ! This is a regular word (assignment after command name)
-              if (num_words < MAX_TOKENS) then
+              call grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+              if (num_words < size(words)) then
                 num_words = num_words + 1
                 words(num_words) = merged_word
                 was_quoted(num_words) = next_tok%quoted
@@ -630,7 +675,8 @@ contains
               assignments(num_assignments) = tok%value
               assignment_lens(num_assignments) = tok%end_pos - tok%start_pos + 1
             else
-              if (num_words < MAX_TOKENS) then
+              call grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+              if (num_words < size(words)) then
                 num_words = num_words + 1
                 words(num_words) = tok%value
                 was_quoted(num_words) = tok%quoted
@@ -664,7 +710,8 @@ contains
           else
             ! Regular word - this is the command or an argument
             seen_command = .true.
-            if (num_words < MAX_TOKENS) then
+            call grow_cmd_words(words, was_quoted, was_escaped, quote_types, word_lens, num_words)
+            if (num_words < size(words)) then
               num_words = num_words + 1
               words(num_words) = tok%value
               was_quoted(num_words) = tok%quoted
@@ -1071,7 +1118,8 @@ contains
       call advance(state)
       tok = current_token(state)
       do while (tok%token_type == TOKEN_WORD)
-        if (num_words < MAX_TOKENS) then
+        call grow_for_words(words, quote_types, num_words)
+        if (num_words < size(words)) then
           num_words = num_words + 1
           words(num_words) = tok%value
           quote_types(num_words) = tok%quote_type

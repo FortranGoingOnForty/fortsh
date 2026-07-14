@@ -38,7 +38,10 @@ program fortran_shell
   character(len=MAX_VAR_VALUE_LEN) :: rprompt_str ! Right-side prompt (like zsh RPROMPT)
   character(len=:), allocatable :: rprompt_value  ! RPROMPT variable value
   integer :: iostat, num_args, arg_idx, cmd_string_idx
-  character(len=MAX_PATH_LEN) :: arg1, command_string
+  character(len=MAX_PATH_LEN) :: arg1
+  ! Allocated to the actual -c argument length so long command strings are
+  ! not clipped at MAX_PATH_LEN (PARSE-5)
+  character(len=:), allocatable :: command_string
   logical :: execute_command_string, execute_script_file, syntax_check_only
   logical :: no_rc_file
   character(len=:), allocatable :: script_file
@@ -113,7 +116,12 @@ program fortran_shell
 
     case ('-c')
       if (arg_idx + 1 <= num_args) then
-        call get_command_argument(arg_idx + 1, command_string)
+        block
+          integer :: c_arg_len
+          call get_command_argument(arg_idx + 1, length=c_arg_len)
+          allocate(character(len=c_arg_len) :: command_string)
+          call get_command_argument(arg_idx + 1, command_string)
+        end block
         cmd_string_idx = arg_idx + 1
         execute_command_string = .true.
         ! Arguments after the command string become $0 and positional
