@@ -29,4 +29,16 @@ compare_output "wait captures exit 42" '(exit 42) & wait $!; echo $?'
 compare_output "wait captures exit 0" '(exit 0) & wait $!; echo $?'
 compare_output "dollar-bang is last bg PID" 'sleep 0.1 & echo $! | grep -qE "^[0-9]+$" && echo valid'
 
+section "7. signal-killed child exit status is 128+signum (EXEC-1)"
+# A child terminated by a signal must report 128+signum, not 0. extract_exit_status
+# used to return only WEXITSTATUS, so signal deaths read as success.
+compare_exit "child killed by SIGTERM is 143" 'sh -c "kill -TERM \$\$"'
+compare_exit "child killed by SIGKILL is 137" 'sh -c "kill -KILL \$\$"'
+compare_exit "exec subshell killed by TERM is 143" '( exec sh -c "kill -TERM \$\$" )'
+# Downstream: a correct non-zero status makes negation and errexit behave.
+# Assert via exit code (compare_output would catch bash's job-control message,
+# which fortsh does not emit for a synchronous subshell).
+compare_exit "negation of killed subshell succeeds" '! ( exec sh -c "kill -TERM \$\$" )'
+compare_exit "errexit aborts on killed subshell (143 not 0)" 'set -e; ( exec sh -c "kill -TERM \$\$" ); echo after'
+
 print_summary

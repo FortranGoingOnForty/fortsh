@@ -3102,12 +3102,22 @@ contains
   end function wait_for_process
 
   function extract_exit_status(status) result(exit_code)
+    use system_interface, only: wifexited, wexitstatus, wifsignaled, wtermsig, &
+                                wifstopped, wstopsig
     integer, intent(in) :: status
     integer :: exit_code
 
-    ! Extract exit code from wait status
-    exit_code = ishft(status, -8)
-    exit_code = iand(exit_code, 255)
+    ! Full wait-status decode: a signal-killed child is 128+signal, like
+    ! every other wait site (a bare WEXITSTATUS read 0 for those)
+    if (wifexited(status)) then
+      exit_code = wexitstatus(status)
+    else if (wifsignaled(status)) then
+      exit_code = 128 + wtermsig(status)
+    else if (wifstopped(status)) then
+      exit_code = 128 + wstopsig(status)
+    else
+      exit_code = 1
+    end if
   end function extract_exit_status
 
   ! Execute a pending trap command (set by signal_handling module)
