@@ -512,7 +512,7 @@ contains
                 end do
                 deallocate(brace_words)
                 cycle  ! All words already added as separate tokens
-              else
+              else if (bw_count == 1) then
                 ! Single word — fall through to normal variable expansion
                 expanded = trim(brace_words(1))
                 deallocate(brace_words)
@@ -520,6 +520,10 @@ contains
                   call expand_variables(expanded, var_expanded, shell, was_quoted_in=.false.)
                   if (allocated(var_expanded)) expanded = var_expanded
                 end if
+              else
+                ! All-empty brace expansion ({,}) — the word disappears
+                deallocate(brace_words)
+                cycle
               end if
               end if
             end block

@@ -943,9 +943,9 @@ contains
         if (has_colon) then
           if (.not. var_is_set .or. var_is_null) then
             if (len_trim(param1) > 0) then
-              write(error_unit, '(A)') trim(operation) // ': ' // trim(param1)
+              write(error_unit, '(A)') 'fortsh: ' // trim(operation) // ': ' // trim(param1)
             else
-              write(error_unit, '(A)') trim(operation) // ': parameter null or not set'
+              write(error_unit, '(A)') 'fortsh: ' // trim(operation) // ': parameter null or not set'
             end if
             shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
             shell%fatal_expansion_error = .true.  ! Signal to abort execution
@@ -956,9 +956,9 @@ contains
         else
           if (.not. var_is_set) then
             if (len_trim(param1) > 0) then
-              write(error_unit, '(A)') trim(operation) // ': ' // trim(param1)
+              write(error_unit, '(A)') 'fortsh: ' // trim(operation) // ': ' // trim(param1)
             else
-              write(error_unit, '(A)') trim(operation) // ': parameter not set'
+              write(error_unit, '(A)') 'fortsh: ' // trim(operation) // ': parameter not set'
             end if
             shell%last_exit_status = 127  ! bash uses 127 for direct expansion errors
             shell%fatal_expansion_error = .true.  ! Signal to abort execution
@@ -1988,7 +1988,7 @@ contains
     character(len=*), intent(in) :: expr
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value
-    integer :: qmark_pos, colon_pos, depth, i
+    integer :: qmark_pos, colon_pos, depth, qdepth, i
     character(len=512) :: condition_expr, true_expr, false_expr
 
     ! Find ? outside parentheses
@@ -2006,17 +2006,24 @@ contains
     end do
 
     if (qmark_pos > 0) then
-      ! Find matching : after the ?
+      ! Find matching : after the ? — count nested ? so 1?0?2:3:4 pairs
+      ! the first : with the inner ?, not ours
       colon_pos = 0
       depth = 0
+      qdepth = 0
       do i = qmark_pos + 1, len_trim(expr)
         if (expr(i:i) == '(') then
           depth = depth + 1
         else if (expr(i:i) == ')') then
           depth = depth - 1
+        else if (depth == 0 .and. expr(i:i) == '?') then
+          qdepth = qdepth + 1
         else if (depth == 0 .and. expr(i:i) == ':') then
-          colon_pos = i
-          exit
+          if (qdepth == 0) then
+            colon_pos = i
+            exit
+          end if
+          qdepth = qdepth - 1
         end if
       end do
 
@@ -3872,6 +3879,12 @@ contains
     ! Count words to allocate exact size
     word_count = 0
     if (len(expanded) == 0) then
+      if (index(word, '{') > 0) then
+        ! Brace parsed with all-empty fields ({,}): bash expands to empty
+        ! words that null-removal then drops — the word disappears
+        allocate(words(0))
+        return
+      end if
       allocate(words(1))
       words(1) = word
       word_count = 1
@@ -3899,6 +3912,8 @@ contains
     end do
 
     if (word_count == 0) then
+      ! Expansion produced only separators ({,,}) — same drop as above
+      if (index(word, '{') > 0) return
       word_count = 1
       words(1) = word
     end if

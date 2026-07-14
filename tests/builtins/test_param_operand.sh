@@ -26,7 +26,13 @@ section "3. Operand not evaluated when branch not taken"
 
 compare_both "set var skips default"      'v=x; echo ${v:-$(echo no)}'
 
-section "4. Mixed operand forms still work"
+section "4. \${var:?msg} carries the shell-name prefix (EXPAND-11)"
+
+compare_both ":? message prefixed"  'echo ${z:?is unset}'
+compare_both ":? default message"   'echo ${z:?}'
+compare_exit ":? exit status"       'echo ${z:?is unset}'
+
+section "5. Mixed operand forms still work"
 
 compare_both "nested brace in operand"    'a=A; echo ${u:-pre${a}post}'
 compare_both "plain var in operand"       'a=A; echo ${u:-$a}'

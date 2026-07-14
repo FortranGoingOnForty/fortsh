@@ -21,7 +21,15 @@ compare_both "non-expanding brace stays literal" \
 compare_both "plain words unaffected" \
     'for w in a b; do echo $w; done'
 
-section "2. Array literals"
+section "2. Fully-empty brace forms (EXPAND-12)"
+
+compare_both "bare {,} disappears"        'echo {,}'
+compare_both "bare {,,} disappears"       'echo {,,}'
+compare_both "empty fields with suffix"   'echo x{,}y'
+compare_both "empty fields with prefix"   'echo a{,}'
+compare_both "printf sees no args"        'printf "[%s]" {,}; echo'
+
+section "3. Array literals"
 
 compare_both "range literal yields elements" \
     'arr=({1..10}); echo "${arr[0]} ${arr[9]} n=${#arr[@]}"'

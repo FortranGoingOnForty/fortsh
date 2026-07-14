@@ -17,7 +17,14 @@ compare_both ">>= shifts right"     'a=8; echo $((a>>=1)); echo $a'
 compare_both "<<= shifts left"      'a=8; echo $((a<<=3)); echo $a'
 compare_both "shift count from var" 'a=5; b=3; echo $((a<<=b)); echo $a'
 
-section "3. Existing operators unaffected"
+section "3. Nested ternary pairs : with the inner ? (EXPAND-10)"
+
+compare_both "nested in true branch"  'echo $((1?0?2:3:4))'
+compare_both "nested picks true-true" 'echo $((1?2?20:21:3))'
+compare_both "nested in false branch" 'echo $((0?1:2?3:4))'
+compare_both "plain ternary"          'echo $((1?2:3))'
+
+section "4. Existing operators unaffected"
 
 compare_both "+= still works"       'a=5; echo $((a+=2)); echo $a'
 compare_both "plain = still works"  'a=2; b=4; echo $((a=b)); echo $a'
