@@ -31,4 +31,22 @@ compare_both "plain = still works"  'a=2; b=4; echo $((a=b)); echo $a'
 compare_both "comparisons not eaten" 'echo $((3<=4)) $((4>=4)) $((2==2)) $((2!=3))'
 compare_both "plain shifts intact"  'echo $((1<<4)) $((256>>2))'
 
+section "5. Long expressions are not truncated (QUAL-2)"
+
+sum126=$(awk 'BEGIN{s="1";for(i=2;i<=126;i++)s=s"+1";print s}')
+sum300=$(awk 'BEGIN{s="1";for(i=2;i<=300;i++)s=s"+1";print s}')
+compare_both "126-term sum (old boundary)" "echo \$(($sum126))"
+compare_both "300-term sum"                "echo \$(($sum300))"
+
+section "6. Negative exponent errors like bash (EXPAND-13)"
+
+compare_exit "2**-1 exits nonzero"  'echo $((2**-1))'
+out=$(run_with_timeout "$TEST_TIMEOUT" "$FORTSH_BIN" -c 'echo $((2**-1))' 2>&1)
+if printf '%s' "$out" | grep -q 'exponent less than 0'; then
+    pass "diagnostic names the negative exponent"
+else
+    fail "diagnostic names the negative exponent" "exponent less than 0" "$out"
+fi
+compare_both "positive exponents fine" 'echo $((2**10)) $((3**4)) $((2**0))'
+
 print_summary

@@ -1818,7 +1818,7 @@ contains
     character(len=*), intent(in) :: expression
     type(shell_state_t), intent(inout) :: shell
     character(len=32) :: result_value
-    character(len=512) :: expr
+    character(len=:), allocatable :: expr
     character(len=:), allocatable :: expanded_expr
     integer(kind=8) :: result_int
 
@@ -1907,7 +1907,8 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val, current_val
     integer :: pos, op_len, iostat
-    character(len=512) :: var_name, right_expr, var_value_str
+    character(len=:), allocatable :: var_name, right_expr
+    character(len=32) :: var_value_str
     character(len=:), allocatable :: temp_value
 
     ! Check for assignment operators (right-to-left associative, so find rightmost)
@@ -1989,7 +1990,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value
     integer :: qmark_pos, colon_pos, depth, qdepth, i
-    character(len=512) :: condition_expr, true_expr, false_expr
+    character(len=:), allocatable :: condition_expr, true_expr, false_expr
 
     ! Find ? outside parentheses
     qmark_pos = 0
@@ -2114,7 +2115,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     ! FIRST check for || operator (lowest precedence in logical chain)
     pos = find_operator(expr, '||')
@@ -2139,7 +2140,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     ! FIRST check for && operator (lowest precedence in this chain)
     pos = find_operator(expr, '&&')
@@ -2164,7 +2165,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     ! FIRST check for | operator
     pos = find_single_operator(expr, '|')
@@ -2184,7 +2185,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     ! FIRST check for ^ operator
     pos = find_single_operator(expr, '^')
@@ -2204,7 +2205,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     ! FIRST check for & operator
     pos = find_single_operator(expr, '&')
@@ -2224,7 +2225,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     pos = find_operator(expr, '==')
     if (pos > 0) then
@@ -2262,7 +2263,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     pos = find_operator(expr, '<=')
     if (pos > 0) then
@@ -2313,7 +2314,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     ! Try << (left shift)
     pos = find_operator(expr, '<<')
@@ -2348,7 +2349,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
 
     pos = find_rightmost_additive(expr)
     if (pos > 0) then
@@ -2371,7 +2372,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, right_val
     integer :: pos
-    character(len=512) :: left_expr, right_expr
+    character(len=:), allocatable :: left_expr, right_expr
     character :: op
 
     pos = find_rightmost_multiplicative(expr, op)
@@ -2409,7 +2410,7 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, exponent, base_val
     integer :: pos, i
-    character(len=512) :: base_expr, exp_expr
+    character(len=:), allocatable :: base_expr, exp_expr
 
     pos = find_operator(expr, '**')
     if (pos > 0) then
@@ -2417,7 +2418,11 @@ contains
       exp_expr = expr(pos+2:)
       base_val = eval_unary_shell(trim(adjustl(base_expr)), shell)
       exponent = eval_power_shell(trim(adjustl(exp_expr)), shell)
-      if (exponent < 0) then; value = 0
+      if (exponent < 0) then
+        ! bash errors on negative exponents (integer-only arithmetic)
+        arithmetic_error = .true.
+        arithmetic_error_msg = 'exponent less than 0'
+        value = 0
       else if (exponent == 0) then; value = 1
       else
         value = base_val
@@ -2434,7 +2439,8 @@ contains
     character(len=*), intent(in) :: expr
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, current_val
-    character(len=512) :: rest, var_name, var_value_str, trimmed_expr
+    character(len=:), allocatable :: rest, var_name, trimmed_expr
+    character(len=32) :: var_value_str
     character(len=:), allocatable :: temp_value
     integer :: iostat
 
@@ -2534,7 +2540,8 @@ contains
     character(len=*), intent(in) :: expr
     type(shell_state_t), intent(inout) :: shell
     integer(kind=8) :: value, new_val
-    character(len=512) :: inner_expr, temp_expr, var_name, var_value_str
+    character(len=:), allocatable :: inner_expr, temp_expr, var_name
+    character(len=32) :: var_value_str
     character(len=:), allocatable :: var_value
     integer :: iostat, paren_end, expr_len
 
@@ -2822,7 +2829,8 @@ contains
     type(c_ptr) :: rbuf
     integer :: i, start_pos, bracket_count, rc, vlen
     integer(c_size_t) :: buf_len, copied
-    character(len=256) :: var_expr
+    ! Allocatable: a fixed 256 cap silently truncated long $(( )) words
+    character(len=:), allocatable :: var_expr
     character(len=:), allocatable :: var_value
     logical :: in_single_quote, in_double_quote
 
@@ -3012,7 +3020,8 @@ contains
     ! gfortran path: native Fortran allocatable (safe on x86_64)
     character(len=:), allocatable :: result
     integer :: i, start_pos, bracket_count, result_capacity, result_pos
-    character(len=256) :: var_expr
+    ! Allocatable: a fixed 256 cap silently truncated long $(( )) words
+    character(len=:), allocatable :: var_expr
     character(len=:), allocatable :: var_value
     logical :: in_single_quote, in_double_quote
 

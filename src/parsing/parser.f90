@@ -1354,7 +1354,9 @@ contains
     character(len=:), allocatable :: result, working_token
     integer :: i, j, var_start, brace_depth, end_pos
     integer :: result_cap
-    character(len=256) :: var_name  ! Variable names are short; was MAX_TOKEN_LEN (4096)
+    ! Allocatable: this buffer also carries whole $((expr)) / $(cmd) / ${...}
+    ! spans, which a fixed 256 cap silently truncated (QUAL-2)
+    character(len=:), allocatable :: var_name
     character(len=:), allocatable :: var_value, brace_expanded
     character(len=20) :: pid_str
     logical :: is_quoted, is_single_quoted
