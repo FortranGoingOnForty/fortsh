@@ -411,6 +411,54 @@ contains
               ! Check if this is an array assignment: VAR=(...)
               if (value_len >= 2 .and. assign_value(1:1) == '(' .and. &
                   assign_value(value_len:value_len) == ')') then
+                ! Brace-expand unquoted items so arr=({1..3}) yields three
+                ! elements. Done here because variables.f90 cannot use the
+                ! expansion module (circular dependency).
+                if (index(assign_value(2:value_len-1), '{') > 0) then
+                  block
+                    use expansion, only: expand_braces
+                    character(len=:), allocatable :: interior, rebuilt, item
+                    integer :: ip, istart, ilen
+                    character :: qch
+                    interior = assign_value(2:value_len-1)
+                    ilen = len(interior)
+                    rebuilt = ''
+                    ip = 1
+                    do while (ip <= ilen)
+                      if (interior(ip:ip) == ' ' .or. interior(ip:ip) == char(9)) then
+                        ip = ip + 1
+                        cycle
+                      end if
+                      istart = ip
+                      if (interior(ip:ip) == '"' .or. interior(ip:ip) == "'") then
+                        qch = interior(ip:ip)
+                        ip = ip + 1
+                        do while (ip <= ilen)
+                          if (interior(ip:ip) == qch) exit
+                          ip = ip + 1
+                        end do
+                        if (ip <= ilen) ip = ip + 1
+                      else
+                        do while (ip <= ilen)
+                          if (interior(ip:ip) == ' ' .or. interior(ip:ip) == char(9)) exit
+                          ip = ip + 1
+                        end do
+                      end if
+                      item = interior(istart:ip-1)
+                      if (item(1:1) /= '"' .and. item(1:1) /= "'" .and. &
+                          index(item, '{') > 0 .and. index(item, '}') > 0) then
+                        item = expand_braces(item)
+                      end if
+                      if (len(rebuilt) > 0) then
+                        rebuilt = rebuilt // ' ' // item
+                      else
+                        rebuilt = item
+                      end if
+                    end do
+                    assign_value = '(' // rebuilt // ')'
+                    value_len = len(rebuilt) + 2
+                  end block
+                end if
                 ! Array assignment - expand variables/command substitutions first
                 block
                   use variables, only: handle_array_assignment
@@ -2318,8 +2366,10 @@ contains
         call split_on_ifs(trim(expanded_word), ifs_chars, split_words, split_count)
       else if (index(node%for_loop%words(i), '{') > 0 .and. &
                index(node%for_loop%words(i), '}') > 0 .and. &
-               allocated(expanded_word) .and. len(expanded_word) > len_trim(node%for_loop%words(i))) then
-        ! Brace expansion produced multiple words - split on spaces
+               allocated(expanded_word)) then
+        ! Brace expansion produces space-joined words - split on spaces.
+        ! No length gate: {1..3} expands to "1 2 3", which is SHORTER than
+        ! its source, and a non-expanding brace has no spaces to split.
         call split_on_ifs(trim(expanded_word), ' ', split_words, split_count)
       else
         ! Literal word (no expansion) - do not split on IFS

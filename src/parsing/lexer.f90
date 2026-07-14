@@ -151,6 +151,10 @@ contains
     character(len=1) :: ch, next_ch
     character(len=MAX_TOKEN_LEN) :: current_token
     integer :: token_len, paren_depth
+    ! Which construct opened paren_depth: 'P' for $(...), 'B' for ${...}.
+    ! Both can appear in one token, so branch dispatch must not guess from
+    ! token content.
+    character(len=1) :: word_depth_kind
     logical :: in_escape, continuing_word, token_has_quoted_part
 
     num_tokens = 0
@@ -162,6 +166,7 @@ contains
     token_len = 0
     in_escape = .false.
     paren_depth = 0
+    word_depth_kind = ' '
     continuing_word = .false.
     token_has_quoted_part = .false.
     in_double_bracket_context = .false.
@@ -314,6 +319,7 @@ contains
           token_len = 2
           current_token = '$('
           paren_depth = 1  ! Track that we're inside $(
+          word_depth_kind = 'P'
           pos = pos + 2
           cycle
         end if
@@ -326,6 +332,7 @@ contains
           token_len = 2
           current_token = '${'
           paren_depth = 1  ! Track that we're inside ${
+          word_depth_kind = 'B'
           pos = pos + 2
           cycle
         end if
@@ -670,7 +677,7 @@ contains
       case(LEX_IN_WORD)
         ! Check if we're inside $() - if so, keep EVERYTHING including spaces
         ! IMPORTANT: Also check paren_depth > 0 to ensure we're actually inside the $()
-        if (index(current_token(1:token_len), '$(') > 0 .and. paren_depth > 0) then
+        if (paren_depth > 0 .and. word_depth_kind == 'P') then
           ! Inside command substitution - track paren depth
           if (ch == '(') then
             paren_depth = paren_depth + 1
@@ -717,7 +724,7 @@ contains
           end if
         ! Check if we're inside ${ - if so, keep EVERYTHING until closing }
         ! IMPORTANT: Also check paren_depth > 0 to ensure we're actually inside the ${}
-        else if (index(current_token(1:token_len), '${') > 0 .and. paren_depth > 0) then
+        else if (paren_depth > 0 .and. word_depth_kind == 'B') then
           ! Inside parameter expansion - track brace depth
           if (ch == '{') then
             paren_depth = paren_depth + 1
@@ -815,11 +822,13 @@ contains
           ! $( for command/arithmetic substitution - keep in word
           call append_two(current_token, token_len, ch, next_ch)
           paren_depth = 1  ! Track that we're inside $(
+          word_depth_kind = 'P'
           pos = pos + 2
         else if (ch == '$' .and. pos < input_len .and. next_ch == '{') then
           ! ${ for parameter expansion - keep in word
           call append_two(current_token, token_len, ch, next_ch)
           paren_depth = 1  ! Track that we're inside ${
+          word_depth_kind = 'B'
           pos = pos + 2
         else if ((ch >= '0' .and. ch <= '9') .or. ch == '+' .or. ch == '-' .or. &
                  ch == '*' .or. ch == '/' .or. ch == '%') then
@@ -1077,8 +1086,7 @@ contains
       if (paren_depth > 0) then
         ! Still inside $(, ${, or <(/>( at end of input
         last_tokenize_unterminated = .true.
-        if (index(current_token(1:token_len), '${') > 0 .and. &
-            index(current_token(1:token_len), '$(') == 0) then
+        if (word_depth_kind == 'B') then
           last_unterminated_closer = '}'
         else
           last_unterminated_closer = ')'

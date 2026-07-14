@@ -91,9 +91,14 @@ section() {
     printf "\n${BLUE}==========================================\n%s\n==========================================${NC}\n" "$1"
 }
 
-# Normalize shell name prefixes in error messages for comparison
+# Normalize shell name prefixes in error messages for comparison.
+# BASH_REF may be a full path (macOS CI uses /opt/homebrew/bin/bash), and
+# bash prefixes diagnostics with exactly the name it was invoked as — so
+# path-qualified forms must normalize the same as bare ones.
 normalize_shell_name() {
-    printf '%s\n' "$1" | sed -e 's/bash: line [0-9]*: /SHELL: /g' \
+    printf '%s\n' "$1" | sed -e 's|[^ ]*/bash: line [0-9]*: |SHELL: |g' \
+                              -e 's|[^ ]*/bash: |SHELL: |g' \
+                              -e 's/bash: line [0-9]*: /SHELL: /g' \
                               -e 's/fortsh: line [0-9]*: /SHELL: /g' \
                               -e 's/bash: /SHELL: /g' \
                               -e 's/fortsh: /SHELL: /g'
