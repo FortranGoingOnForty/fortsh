@@ -56,7 +56,8 @@ Pretty much everything:
 - Indirect expansion (`${!ref}`, `${!ref:-fallback}`)
 - Coprocesses (`coproc { cmd; }`)
 - Regex matching with capture groups (`BASH_REMATCH`)
-- Vi and Emacs editing modes
+- Vi and Emacs editing modes (vi text objects, visual mode, and dot-repeat)
+- Terminal resize reflows the current line correctly
 - Per-builtin help texts (`help cd`, `help export`, etc.)
 - fzf integration (file browser, history search, directory jump, git browser)
 - Bracketed paste mode (large pastes land atomically)
@@ -578,6 +579,9 @@ The useful ones: `[[`, `alias`, `bg`, `command`, `compgen`, `complete`, `coproc`
 - `perf` - show performance metrics
 - `help <builtin>` - detailed help for any builtin
 - `defun` - function definition helper
+- `pushd` / `popd` / `dirs` - directory stack
+- `prevd` / `nextd` - directory history (back / forward)
+- `abbr` - fish-style abbreviations that expand as you type
 
 Every builtin has detailed help: `help cd`, `help export`, `help trap`, etc.
 
