@@ -4296,7 +4296,6 @@ contains
     type(shell_state_t), intent(inout) :: shell
     integer :: i
 #ifdef USE_MEMORY_POOL
-    type(string_ref) :: env_value_ref
     character(len=:), allocatable :: temp_str
 #else
     character(len=:), allocatable :: env_value
@@ -4315,18 +4314,15 @@ contains
       end do
       shell%last_exit_status = 0
     else
-      ! Print specific environment variable(s)
-#ifdef USE_MEMORY_POOL
-      env_value_ref = pool_get_string(1024)
-      call dashboard_track_allocation(MOD_BUILTINS, 1024, 3)
-#endif
+      ! Print specific environment variable(s). Print the full value straight
+      ! from the allocatable temp_str — a fixed-length pooled copy here would
+      ! truncate any value longer than its length (MEM-2).
       shell%last_exit_status = 0
       do i = 2, cmd%num_tokens
 #ifdef USE_MEMORY_POOL
         temp_str = get_environment_var(trim(cmd%tokens(i)))
         if (allocated(temp_str) .and. len(temp_str) > 0) then
-          env_value_ref%data = temp_str
-          write(output_unit, '(a)') trim(env_value_ref%data)
+          write(output_unit, '(a)') temp_str
         else
           shell%last_exit_status = 1
         end if
@@ -4340,10 +4336,6 @@ contains
         end if
 #endif
       end do
-#ifdef USE_MEMORY_POOL
-      call pool_release_string(env_value_ref)
-      call dashboard_track_deallocation(MOD_BUILTINS, 1024, 3)
-#endif
     end if
   end subroutine
 

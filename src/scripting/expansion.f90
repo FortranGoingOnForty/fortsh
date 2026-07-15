@@ -7,7 +7,7 @@ module expansion
   use variables  ! includes check_nounset
   use command_capture, only: execute_command_and_capture
   use glob, only: pattern_matches_no_dotfile_check
-  use iso_fortran_env, only: output_unit, error_unit
+  use iso_fortran_env, only: output_unit, error_unit, int64
 #ifdef USE_C_STRINGS
   use iso_c_binding, only: c_char, c_int, c_null_char, c_ptr, c_f_pointer, c_size_t
 #endif
@@ -1519,6 +1519,7 @@ contains
     ! gfortran path: character-by-character scan, no C dependencies
     integer :: in_len, pat_len, repl_len, i2, j2
     integer :: out_pos, out_cap
+    integer(int64) :: out_cap64
     logical :: matched, has_glob
     character(len=:), allocatable :: result_buf
 
@@ -1536,7 +1537,18 @@ contains
                 index(pattern(1:pat_len), '[') > 0)
 
     if (repl_len > pat_len) then
-      out_cap = in_len + (in_len / pat_len + 1) * (repl_len - pat_len) + 1
+      ! Compute in 64-bit; the 32-bit product overflows for a large input with
+      ! a longer replacement, wrapping out_cap negative and under-allocating
+      ! (MEM-6). If the estimate exceeds the 32-bit index space, degrade to an
+      ! empty result rather than corrupt — mirrors the C path returning -1.
+      out_cap64 = int(in_len, int64) &
+                + (int(in_len, int64) / int(pat_len, int64) + 1_int64) &
+                  * int(repl_len - pat_len, int64) + 1_int64
+      if (out_cap64 > int(huge(out_cap), int64)) then
+        output = ''
+        return
+      end if
+      out_cap = int(out_cap64)
     else
       out_cap = in_len + 1
     end if

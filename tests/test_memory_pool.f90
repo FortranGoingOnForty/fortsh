@@ -9,6 +9,7 @@ program test_memory_pool
   type(string_ref) :: ref1, ref2, refs(100)
   character(len=100) :: test_string
   integer :: allocs, deallocs, current, peak
+  integer :: intern_before, intern_after
   real :: hit_rate
   integer(int64) :: start_time, end_time, clock_rate
 
@@ -70,19 +71,31 @@ program test_memory_pool
   call pool_release_string(ref1)
   call pool_release_string(ref2)
 
-  ! Test 4: String interning
+  ! Test 4: String interning + release accounting (MEM-4).
+  ! Releasing an interned ref used to fall through the pooled branch, leaking
+  ! its allocation while still decrementing the counters. current_strings must
+  ! rise by exactly the two interns and return to baseline after both releases.
   print *, "Test 4: String interning..."
+  call pool_statistics(allocs, deallocs, current, peak, hit_rate)
+  intern_before = current
   ref1 = pool_intern_string("common_string")
   ref2 = pool_intern_string("common_string")
-
-  if (ref1%ref_count /= ref2%ref_count) then
-    print *, "  WARNING: Interning may not be working correctly"
-  else
-    print *, "  PASSED: String interning works"
-  end if
-
+  call pool_statistics(allocs, deallocs, current, peak, hit_rate)
+  intern_after = current
   call pool_release_string(ref1)
   call pool_release_string(ref2)
+  call pool_statistics(allocs, deallocs, current, peak, hit_rate)
+
+  if (intern_after - intern_before /= 2) then
+    print *, "  FAILED: interning did not account for 2 live strings, delta=", &
+             intern_after - intern_before
+    all_tests_passed = .false.
+  else if (current /= intern_before) then
+    print *, "  FAILED: interned refs leaked - current_strings", intern_before, "->", current
+    all_tests_passed = .false.
+  else
+    print *, "  PASSED: String interning allocates and releases cleanly"
+  end if
 
   ! Test 5: Stress test - rapid allocation/deallocation
   print *, "Test 5: Stress test (1000 allocations)..."

@@ -1626,7 +1626,7 @@ contains
       ! contents live in module-level session storage (session_kill_buffer
       ! / session_vi_yank) and survive on their own; only their per-state
       ! length companions would be wiped by init, so carry those over.
-      if (.not. associated(module_input_state%buffer_ref%data)) then
+      if (.not. pool_ref_valid(module_input_state%buffer_ref)) then
         block
           integer :: saved_kill_len, saved_vi_len
           saved_kill_len = module_input_state%kill_length

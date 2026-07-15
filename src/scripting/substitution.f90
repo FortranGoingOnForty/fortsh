@@ -391,48 +391,6 @@ contains
     shell%num_proc_subst_fifos = idx
   end subroutine
 
-  ! Update FIFO with background process PID
-  subroutine set_fifo_pid(shell, fifo_path, pid)
-    type(shell_state_t), intent(inout) :: shell
-    character(len=*), intent(in) :: fifo_path
-    integer(c_pid_t), intent(in) :: pid
-    integer :: i
-
-    do i = 1, shell%num_proc_subst_fifos
-      if (shell%proc_subst_fifos(i)%active .and. &
-          trim(shell%proc_subst_fifos(i)%fifo_path) == trim(fifo_path)) then
-        shell%proc_subst_fifos(i)%pid = pid
-        return
-      end if
-    end do
-  end subroutine
-
-  ! Clean up a specific FIFO
-  subroutine cleanup_fifo(shell, fifo_path)
-    type(shell_state_t), intent(inout) :: shell
-    character(len=*), intent(in) :: fifo_path
-    integer :: i
-    logical :: success
-
-    do i = 1, shell%num_proc_subst_fifos
-      if (shell%proc_subst_fifos(i)%active .and. &
-          trim(shell%proc_subst_fifos(i)%fifo_path) == trim(fifo_path)) then
-
-        ! Remove the FIFO file
-        success = remove_file(trim(fifo_path))
-        if (.not. success) then
-          write(error_unit, '(A)') 'fortsh: warning: failed to remove FIFO: ' // trim(fifo_path)
-        end if
-
-        ! Mark as inactive
-        shell%proc_subst_fifos(i)%active = .false.
-        shell%proc_subst_fifos(i)%fifo_path = ''
-        shell%proc_subst_fifos(i)%pid = 0
-        return
-      end if
-    end do
-  end subroutine
-
   ! Clean up all active FIFOs
   subroutine cleanup_all_fifos(shell)
     type(shell_state_t), intent(inout) :: shell

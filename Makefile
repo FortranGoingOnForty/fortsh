@@ -151,7 +151,6 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/io/syntax_highlight.o \
           $(BUILDDIR)/execution/coprocess.o \
           $(BUILDDIR)/execution/better_errors.o \
-          $(BUILDDIR)/io/heredoc.o \
           $(BUILDDIR)/io/fd_redirection.o \
           $(BUILDDIR)/scripting/control_flow.o \
           $(BUILDDIR)/parsing/lexer.o \
@@ -343,9 +342,6 @@ $(BUILDDIR)/io/suggestions.o: src/io/suggestions.f90 | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/system/signals.o | $(BUILDDIR)/io
-	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
-
-$(BUILDDIR)/io/heredoc.o: src/io/heredoc.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/scripting/variables.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
@@ -635,6 +631,12 @@ test-macos: test-macos-pool test-macos-compiler
 $(BUILDDIR)/test_memory_pool: tests/test_memory_pool.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o -o $@
 
+$(BUILDDIR)/test_pool_growth_uaf: tests/test_pool_growth_uaf.f90 $(BUILDDIR)/common/string_pool.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o -o $@
+
+$(BUILDDIR)/test_pattern_replace_overflow: tests/test_pattern_replace_overflow.c src/c_interop/fortsh_strings.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) -Isrc/c_interop $< src/c_interop/fortsh_strings.c -o $@
+
 $(BUILDDIR)/test_lexer_simple: tests/test_lexer_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
 
@@ -662,6 +664,18 @@ test-memory-pool: $(BUILDDIR)/test_memory_pool
 	@echo "Testing Memory Pool (String Pool)"
 	@echo "=========================================="
 	@$(BUILDDIR)/test_memory_pool
+
+test-pool-growth: $(BUILDDIR)/test_pool_growth_uaf
+	@echo "=========================================="
+	@echo "Testing String Pool Growth (MEM-3 UAF)"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_pool_growth_uaf
+
+test-pattern-overflow: $(BUILDDIR)/test_pattern_replace_overflow
+	@echo "=========================================="
+	@echo "Testing pattern_replace overflow guard (MEM-6)"
+	@echo "=========================================="
+	@$(BUILDDIR)/test_pattern_replace_overflow
 
 test-lexer: $(BUILDDIR)/test_lexer_simple
 	@echo "=========================================="
