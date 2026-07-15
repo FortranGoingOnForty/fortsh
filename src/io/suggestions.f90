@@ -4,6 +4,7 @@
 ! Separated from readline for testability — no I/O, no terminal ops.
 ! ==============================================================================
 module suggestions
+  use string_utils, only: to_lower => char_lower
   implicit none
   private
 
@@ -113,19 +114,6 @@ contains
       end if
     end do
   end function compute_path_suggestion
-
-  ! ASCII lowercase of a single character (module is I/O-free by design).
-  pure function to_lower(c) result(lc)
-    character(len=1), intent(in) :: c
-    character(len=1) :: lc
-    integer :: code
-    code = iachar(c)
-    if (code >= iachar('A') .and. code <= iachar('Z')) then
-      lc = achar(code + 32)
-    else
-      lc = c
-    end if
-  end function to_lower
 
   ! --------------------------------------------------------------------------
   ! Compute a history-based suggestion.

@@ -7,6 +7,7 @@ module expansion
   use variables  ! includes check_nounset
   use command_capture, only: execute_command_and_capture
   use glob, only: pattern_matches_no_dotfile_check
+  use string_utils, only: to_upper, to_lower
   use iso_fortran_env, only: output_unit, error_unit, int64
 #ifdef USE_C_STRINGS
   use iso_c_binding, only: c_char, c_int, c_null_char, c_ptr, c_f_pointer, c_size_t
@@ -1193,36 +1194,6 @@ contains
   ! ============================================================================
   ! Parameter Expansion Helper Functions
   ! ============================================================================
-
-  ! Convert string to uppercase
-  function to_upper(input) result(output)
-    character(len=*), intent(in) :: input
-    character(len=len(input)) :: output
-    integer :: i, char_code
-
-    output = input
-    do i = 1, len_trim(input)
-      char_code = ichar(input(i:i))
-      if (char_code >= ichar('a') .and. char_code <= ichar('z')) then
-        output(i:i) = char(char_code - 32)
-      end if
-    end do
-  end function
-
-  ! Convert string to lowercase
-  function to_lower(input) result(output)
-    character(len=*), intent(in) :: input
-    character(len=len(input)) :: output
-    integer :: i, char_code
-
-    output = input
-    do i = 1, len_trim(input)
-      char_code = ichar(input(i:i))
-      if (char_code >= ichar('A') .and. char_code <= ichar('Z')) then
-        output(i:i) = char(char_code + 32)
-      end if
-    end do
-  end function
 
   ! Quote value - wrap in single quotes and escape embedded single quotes
   ! Used for ${var@Q} transformation

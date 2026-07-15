@@ -4,6 +4,7 @@
 ! ==============================================================================
 module readline
   use shell_types
+  use string_utils, only: to_lowercase => char_lower
   use system_interface
   use completion, only: get_completion_spec, generate_completions, completion_spec_t, MAX_COMPLETIONS
   use syntax_highlight, only: highlight_command_line, highlight_single_char, init_syntax_highlighting, MAX_HIGHLIGHT_LEN
@@ -9653,20 +9654,6 @@ contains
     end do
   end function
 
-  ! Helper: convert character to lowercase
-  function to_lowercase(c) result(lower)
-    character, intent(in) :: c
-    character :: lower
-    integer :: ascii_val
-
-    ascii_val = ichar(c)
-    if (ascii_val >= ichar('A') .and. ascii_val <= ichar('Z')) then
-      lower = char(ascii_val + 32)
-    else
-      lower = c
-    end if
-  end function
-
   ! Sort completions by fuzzy match score (bubble sort - good enough for small arrays)
   subroutine sort_completions_by_score(scored_completions, count)
     type(scored_completion_t), intent(inout) :: scored_completions(:)
@@ -9868,13 +9855,6 @@ contains
     ! Deallocate heap-allocated buffer
     if (allocated(highlighted)) deallocate(highlighted)
   end subroutine
-
-  ! Helper to convert integer to string
-  function int_to_str(n) result(str)
-    integer, intent(in) :: n
-    character(len=20) :: str
-    write(str, '(i15)') n
-  end function
 
   ! Advanced line editing functions for Phase 5
   subroutine handle_home(input_state)

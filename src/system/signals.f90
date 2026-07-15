@@ -6,6 +6,7 @@ module signal_handler
   use iso_c_binding
   use system_interface
   use shell_types
+  use string_utils, only: to_upper
   implicit none
 
   ! Additional signal constants not in system_interface
@@ -297,18 +298,5 @@ contains
     active_timeout%active = .false.
     active_timeout%target_pid = 0
   end subroutine
-
-  function to_upper(str) result(upper_str)
-    character(len=*), intent(in) :: str
-    character(len=len(str)) :: upper_str
-    integer :: i
-    
-    upper_str = str
-    do i = 1, len_trim(str)
-      if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
-        upper_str(i:i) = char(ichar(str(i:i)) - 32)
-      end if
-    end do
-  end function
 
 end module signal_handler
