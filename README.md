@@ -63,7 +63,7 @@ Pretty much everything:
 
 ## What Doesn't Work
 
-- Some advanced vi mode features (yank/put, marks)
+- Vi marks jump with `'` only, not backtick
 - Your expectations, probably
 - More?!
 
