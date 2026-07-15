@@ -607,12 +607,12 @@ src/
 ├── parsing/         # Lexer, grammar parser, AST, glob
 ├── execution/       # AST executor, builtins, job control, pipelines
 ├── scripting/       # Variables, expansion, control flow, completion
-├── io/              # Readline (~9000 lines), heredoc, fd redirection
+├── io/              # Readline (~13,000 lines), suggestions, syntax highlighting, fd redirection
 ├── c_interop/       # C FFI: string ops, fd wrapper, terminal size
 └── fortsh.f90       # Main REPL loop
 ```
 
-~70,000 lines of Fortran, fully self-contained with no external Fortran library dependencies.
+~63,000 lines of Fortran, fully self-contained with no external Fortran library dependencies.
 
 ## Why?
 
