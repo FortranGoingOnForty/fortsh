@@ -1362,8 +1362,11 @@ contains
     logical :: is_quoted, is_single_quoted
     logical :: escapes_already_processed  ! True if lexer already processed escapes
 
-    ! Initialize growing result buffer
-    result_cap = max(len(token) * 4, 16384)
+    ! Initialize growing result buffer. ensure_result_cap grows it on demand
+    ! (guarding every write, incl. the main loop's j+256 headroom), so this is
+    ! only an initial size — a small floor avoids a 16 KB allocation per token
+    ! while still covering typical short tokens without an early grow (QUAL-10).
+    result_cap = max(len(token) * 4, 512)
     allocate(character(len=result_cap) :: result)
 
     ! Check if token was originally quoted (from lexer metadata or token inspection)
