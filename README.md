@@ -6,11 +6,10 @@ A shell written in Fortran. Because we can.
 ## Status
 
 **CI**: All green across x86_64 Linux, ARM64 Linux, and macOS ARM64 (Apple Silicon)
-**POSIX compliance**: 3,632+ tests passing across 23 POSIX suites
-**Builtin tests**: 850+ passing | **Integration tests**: 482 passing | **Stress tests**: 204 passing
-**Interactive PTY tests**: 180+ passing
-**bash compatibility**: ~99%
-**Chance you'll miss the other 1%**: Low
+**POSIX compliance**: 3,776 passing across 25 POSIX suites
+**Builtin tests**: 1,151 passing | **Integration tests**: 479 passing / 3 skipped | **Stress tests**: 204 passing
+**Interactive PTY tests**: 1,079 YAML spec cases passing (+ 130 pyte screen-scrape functions, `run_tests.py --pytest`)
+**Known bash gaps**: `local -n` namerefs, `shopt -s extglob` patterns, `declare -p` for arrays, `compgen -b`
 
 Turns out you can write a pretty decent shell in Fortran. Who knew.
 
@@ -56,14 +55,15 @@ Pretty much everything:
 - Indirect expansion (`${!ref}`, `${!ref:-fallback}`)
 - Coprocesses (`coproc { cmd; }`)
 - Regex matching with capture groups (`BASH_REMATCH`)
-- Vi and Emacs editing modes
+- Vi and Emacs editing modes (vi text objects, visual mode, and dot-repeat)
+- Terminal resize reflows the current line correctly
 - Per-builtin help texts (`help cd`, `help export`, etc.)
 - fzf integration (file browser, history search, directory jump, git browser)
 - Bracketed paste mode (large pastes land atomically)
 
 ## What Doesn't Work
 
-- Some advanced vi mode features (yank/put, marks)
+- Vi marks jump with `'` only, not backtick
 - Your expectations, probably
 - More?!
 
@@ -122,7 +122,7 @@ Greyed-out suggestions appear as you type:
 
 - History-based (commands you've run)
 - Path-based (file/directory completions)
-- Accept with **Right Arrow** or **Ctrl-F**
+- Accept with **Right Arrow** (or **Ctrl-E** / **End**)
 
 ### cd-less Navigation
 
@@ -578,6 +578,9 @@ The useful ones: `[[`, `alias`, `bg`, `command`, `compgen`, `complete`, `coproc`
 - `perf` - show performance metrics
 - `help <builtin>` - detailed help for any builtin
 - `defun` - function definition helper
+- `pushd` / `popd` / `dirs` - directory stack
+- `prevd` / `nextd` - directory history (back / forward)
+- `abbr` - fish-style abbreviations that expand as you type
 
 Every builtin has detailed help: `help cd`, `help export`, `help trap`, etc.
 
@@ -607,12 +610,12 @@ src/
 ├── parsing/         # Lexer, grammar parser, AST, glob
 ├── execution/       # AST executor, builtins, job control, pipelines
 ├── scripting/       # Variables, expansion, control flow, completion
-├── io/              # Readline (~9000 lines), heredoc, fd redirection
+├── io/              # Readline (~13,000 lines), suggestions, syntax highlighting, fd redirection
 ├── c_interop/       # C FFI: string ops, fd wrapper, terminal size
 └── fortsh.f90       # Main REPL loop
 ```
 
-~70,000 lines of Fortran, fully self-contained with no external Fortran library dependencies.
+~63,000 lines of Fortran, fully self-contained with no external Fortran library dependencies.
 
 ## Why?
 

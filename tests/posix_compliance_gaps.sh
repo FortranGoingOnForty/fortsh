@@ -2394,7 +2394,10 @@ section "362. EXPORT COMMAND"
 
 compare_posix_output "export basic" 'export X=5; sh -c "echo \$X"'
 compare_posix_output "export separate" 'Y=6; export Y; sh -c "echo \$Y"'
-compare_posix_output "export list" 'export | grep -c ='
+# Probe a known name instead of counting all exports: the default-exported
+# set differs between shells (fortsh exports a few more shell vars), so a raw
+# count is environment-dependent. Listing a var we just exported is not.
+compare_posix_output "export list" 'export FORTSH_EXPORT_PROBE=1; export | grep -c "FORTSH_EXPORT_PROBE"'
 compare_posix_output "export unset" 'export Z=7; unset Z; sh -c "echo \${Z:-unset}"'
 
 section "363. READONLY COMMAND"

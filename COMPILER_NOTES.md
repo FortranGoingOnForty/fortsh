@@ -35,7 +35,7 @@ flang-new has a known issue where Fortran string operations (substring slicing, 
 
 Additionally, a `safe_assign_alloc_str` routine performs char-by-char copies for allocatable strings >16 bytes, and the expansion pipeline uses C-backed growing buffers (`buffer_grow`, `buffer_append_chars`) for all variable and parameter expansion.
 
-The workaround is transparent — no command length limits, no feature restrictions. macOS ARM64 passes the full test suite (3,600+ POSIX tests, 850+ builtin tests, 200+ stress tests) identically to Linux.
+The workaround is transparent — no command length limits, no feature restrictions. macOS ARM64 passes the full test suite (3,776 POSIX tests, 1,151 builtin tests, 204 stress tests) identically to Linux.
 
 ## flang-new Fortran I/O Caveat
 

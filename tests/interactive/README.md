@@ -33,13 +33,25 @@ tests/interactive/
 ├── fortsh_pty.py             # PTY management class
 ├── conftest.py               # Pytest fixtures
 ├── requirements.txt          # Python dependencies
-├── test_specs/               # YAML test specifications
-│   ├── line_editing.yaml     # Line editing tests (49 tests)
-│   ├── history.yaml          # History navigation/expansion (37 tests)
-│   ├── completion.yaml       # Tab completion tests (37 tests)
-│   ├── signals_jobs.yaml     # Signals and job control (40 tests)
-│   ├── prompt_display.yaml   # Prompt and display tests (39 tests)
-│   └── posix.yaml            # POSIX shell features (119 tests)
+├── test_specs/               # YAML test specifications (1,079 cases across 17 files)
+│   ├── line_editing.yaml     # Line editing (50)
+│   ├── history.yaml          # History navigation/expansion (36)
+│   ├── completion.yaml       # Tab completion (36)
+│   ├── signals_jobs.yaml     # Signals and job control (39)
+│   ├── prompt_display.yaml   # Prompt and display (41)
+│   ├── selection.yaml        # Text selection (55)
+│   ├── vi_mode.yaml          # Vi editing mode (29)
+│   ├── paste.yaml            # Bracketed paste (5)
+│   ├── stress.yaml           # Large/deep inputs (41)
+│   ├── posix.yaml            # POSIX shell features (119)
+│   ├── posix_basic_auto.yaml       # (96)
+│   ├── posix_basic_sample.yaml     # (15)
+│   ├── posix_advanced_auto.yaml    # (100)
+│   ├── posix_extended_auto.yaml    # (117)
+│   ├── posix_coverage_auto.yaml    # (98)
+│   ├── posix_gaps_auto.yaml        # (170)
+│   └── posix_untested_auto.yaml    # (32)
+├── test_*.py                 # 130 pyte screen-scrape functions across 26 files (run_tests.py --pytest)
 ├── utils/
 │   ├── keys.py               # Key sequence definitions
 │   └── matchers.py           # Output matching utilities

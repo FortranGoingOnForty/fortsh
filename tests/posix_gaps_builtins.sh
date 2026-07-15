@@ -237,7 +237,9 @@ compare_posix_output "unset v flag" 'x=5; unset -v x; echo ${x:-unset}'
 
 section "16. EXPORT"
 compare_posix_output "export basic" 'export X=5; sh -c "echo \$X"'
-compare_posix_output "export list" 'export | grep -c ='
+# Probe a known name instead of counting all exports (env-dependent: the
+# default-exported set differs between shells). See posix_compliance_gaps.sh.
+compare_posix_output "export list" 'export FORTSH_EXPORT_PROBE=1; export | grep -c "FORTSH_EXPORT_PROBE"'
 
 # ============================================================================
 # RETURN AND DOT
