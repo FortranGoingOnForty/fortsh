@@ -8,7 +8,7 @@ A shell written in Fortran. Because we can.
 **CI**: All green across x86_64 Linux, ARM64 Linux, and macOS ARM64 (Apple Silicon)
 **POSIX compliance**: 3,632+ tests passing across 23 POSIX suites
 **Builtin tests**: 1,151 passing | **Integration tests**: 479 passing / 3 skipped | **Stress tests**: 204 passing
-**Interactive PTY tests**: 180+ passing
+**Interactive PTY tests**: 1,079 YAML spec cases passing (+ 130 pyte screen-scrape functions, `run_tests.py --pytest`)
 **Known bash gaps**: `local -n` namerefs, `shopt -s extglob` patterns, `declare -p` for arrays, `compgen -b`
 
 Turns out you can write a pretty decent shell in Fortran. Who knew.
