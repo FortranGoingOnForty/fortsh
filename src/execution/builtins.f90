@@ -57,67 +57,78 @@ contains
   function is_builtin_impl(cmd_name) result(is_built)
     character(len=*), intent(in) :: cmd_name
     logical :: is_built
+    integer :: nlen
+    character(len=32) :: n
 
-    is_built = (trim(cmd_name) == 'exit' .or. &
-                trim(cmd_name) == 'cd' .or. &
-                trim(cmd_name) == 'pwd' .or. &
-                trim(cmd_name) == 'pushd' .or. &
-                trim(cmd_name) == 'popd' .or. &
-                trim(cmd_name) == 'dirs' .or. &
-                trim(cmd_name) == 'prevd' .or. &
-                trim(cmd_name) == 'nextd' .or. &
-                trim(cmd_name) == 'dirh' .or. &
-                trim(cmd_name) == 'export' .or. &
-                trim(cmd_name) == 'echo' .or. &
-                trim(cmd_name) == 'jobs' .or. &
-                trim(cmd_name) == 'fg' .or. &
-                trim(cmd_name) == 'bg' .or. &
-                trim(cmd_name) == 'disown' .or. &
-                trim(cmd_name) == 'source' .or. &
-                trim(cmd_name) == '.' .or. &
-                trim(cmd_name) == ':' .or. &
-                trim(cmd_name) == 'history' .or. &
-                trim(cmd_name) == 'kill' .or. &
-                trim(cmd_name) == 'wait' .or. &
-                trim(cmd_name) == 'trap' .or. &
-                trim(cmd_name) == 'config' .or. &
-                trim(cmd_name) == 'alias' .or. &
-                trim(cmd_name) == 'unalias' .or. &
-                trim(cmd_name) == 'abbr' .or. &
-                trim(cmd_name) == 'help' .or. &
-                trim(cmd_name) == 'perf' .or. &
-                trim(cmd_name) == 'memory' .or. &
-                trim(cmd_name) == 'rawtest' .or. &
-                trim(cmd_name) == 'defun' .or. &
-                trim(cmd_name) == 'set' .or. &
-                trim(cmd_name) == 'shopt' .or. &
-                trim(cmd_name) == 'type' .or. &
-                trim(cmd_name) == 'which' .or. &
-                trim(cmd_name) == 'command' .or. &
-                trim(cmd_name) == 'unset' .or. &
-                trim(cmd_name) == 'readonly' .or. &
-                trim(cmd_name) == 'declare' .or. &
-                trim(cmd_name) == 'printenv' .or. &
-                trim(cmd_name) == 'local' .or. &
-                trim(cmd_name) == 'shift' .or. &
-                trim(cmd_name) == 'break' .or. &
-                trim(cmd_name) == 'continue' .or. &
-                trim(cmd_name) == 'return' .or. &
-                trim(cmd_name) == 'exec' .or. &
-                trim(cmd_name) == 'eval' .or. &
-                trim(cmd_name) == 'hash' .or. &
-                trim(cmd_name) == 'umask' .or. &
-                trim(cmd_name) == 'ulimit' .or. &
-                trim(cmd_name) == 'times' .or. &
-                trim(cmd_name) == 'let' .or. &
-                trim(cmd_name) == 'getopts' .or. &
-                trim(cmd_name) == 'printf' .or. &
-                trim(cmd_name) == 'read' .or. &
-                trim(cmd_name) == 'fc' .or. &
-                trim(cmd_name) == 'coproc' .or. &
-                trim(cmd_name) == 'complete' .or. &
-                trim(cmd_name) == 'compgen' .or. &
-                is_test_command(cmd_name))
+    ! Bucket on the first character so each dispatch compares only the few
+    ! builtin names sharing that initial letter instead of sweeping the whole
+    ! ~60-name table (Fortran .or. is not guaranteed to short-circuit, so the
+    ! old flat chain could evaluate every comparison). Names longer than the
+    ! buffer cannot be builtins, so skip straight to the test-command fallback.
+    is_built = .false.
+    nlen = len_trim(cmd_name)
+    if (nlen == 0) return
+
+    if (nlen <= len(n)) then
+      n = cmd_name(1:nlen)
+      select case (cmd_name(1:1))
+      case ('.')
+        is_built = (n == '.')
+      case (':')
+        is_built = (n == ':')
+      case ('a')
+        is_built = (n == 'alias' .or. n == 'abbr')
+      case ('b')
+        is_built = (n == 'bg' .or. n == 'break')
+      case ('c')
+        is_built = (n == 'cd' .or. n == 'config' .or. n == 'command' .or. &
+                    n == 'continue' .or. n == 'coproc' .or. n == 'complete' .or. &
+                    n == 'compgen')
+      case ('d')
+        is_built = (n == 'dirs' .or. n == 'dirh' .or. n == 'disown' .or. &
+                    n == 'defun' .or. n == 'declare')
+      case ('e')
+        is_built = (n == 'exit' .or. n == 'export' .or. n == 'echo' .or. &
+                    n == 'exec' .or. n == 'eval')
+      case ('f')
+        is_built = (n == 'fg' .or. n == 'fc')
+      case ('g')
+        is_built = (n == 'getopts')
+      case ('h')
+        is_built = (n == 'history' .or. n == 'help' .or. n == 'hash')
+      case ('j')
+        is_built = (n == 'jobs')
+      case ('k')
+        is_built = (n == 'kill')
+      case ('l')
+        is_built = (n == 'local' .or. n == 'let')
+      case ('m')
+        is_built = (n == 'memory')
+      case ('n')
+        is_built = (n == 'nextd')
+      case ('p')
+        is_built = (n == 'pwd' .or. n == 'pushd' .or. n == 'popd' .or. &
+                    n == 'prevd' .or. n == 'perf' .or. n == 'printenv' .or. &
+                    n == 'printf')
+      case ('r')
+        is_built = (n == 'rawtest' .or. n == 'readonly' .or. n == 'return' .or. &
+                    n == 'read')
+      case ('s')
+        is_built = (n == 'source' .or. n == 'set' .or. n == 'shopt' .or. &
+                    n == 'shift')
+      case ('t')
+        is_built = (n == 'trap' .or. n == 'type' .or. n == 'times')
+      case ('u')
+        is_built = (n == 'unalias' .or. n == 'unset' .or. n == 'umask' .or. &
+                    n == 'ulimit')
+      case ('w')
+        is_built = (n == 'wait' .or. n == 'which')
+      end select
+    end if
+
+    ! Test-command family ('[', '[[', 'test'): '[' and '[[' fall through the
+    ! select above, and 'test' is deliberately left out of the 't' bucket.
+    if (.not. is_built) is_built = is_test_command(cmd_name)
   end function
 
   subroutine execute_builtin_impl(cmd, shell)
