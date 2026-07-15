@@ -122,7 +122,7 @@ Greyed-out suggestions appear as you type:
 
 - History-based (commands you've run)
 - Path-based (file/directory completions)
-- Accept with **Right Arrow** or **Ctrl-F**
+- Accept with **Right Arrow** (or **Ctrl-E** / **End**)
 
 ### cd-less Navigation
 
