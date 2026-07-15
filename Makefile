@@ -177,6 +177,7 @@ OBJECTS = $(BUILDDIR)/common/types.o \
           $(BUILDDIR)/io/readline_bufferops.o \
           $(BUILDDIR)/io/readline_history.o \
           $(BUILDDIR)/io/readline_completion_backend.o \
+          $(BUILDDIR)/io/readline_editops.o \
           $(BUILDDIR)/io/readline_fzf.o \
           $(BUILDDIR)/io/readline.o \
           $(BUILDDIR)/scripting/shell_options.o \
@@ -366,10 +367,13 @@ $(BUILDDIR)/io/readline_history.o: src/io/readline_history.f90 $(BUILDDIR)/io/re
 $(BUILDDIR)/io/readline_completion_backend.o: src/io/readline_completion_backend.f90 $(BUILDDIR)/io/readline_constants.o $(BUILDDIR)/io/readline_state.o $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/scripting/completion.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/common/string_utils.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
+$(BUILDDIR)/io/readline_editops.o: src/io/readline_editops.f90 $(BUILDDIR)/io/readline_constants.o $(BUILDDIR)/io/readline_state.o $(BUILDDIR)/io/readline_bufferops.o $(BUILDDIR)/io/readline_history.o $(BUILDDIR)/io/readline_completion_backend.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
+
 $(BUILDDIR)/io/readline_fzf.o: src/io/readline_fzf.f90 $(BUILDDIR)/io/readline_constants.o $(BUILDDIR)/io/readline_state.o $(BUILDDIR)/io/readline_bufferops.o $(BUILDDIR)/system/interface.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
-$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/io/readline_constants.o $(BUILDDIR)/io/readline_state.o $(BUILDDIR)/io/readline_bufferops.o $(BUILDDIR)/io/readline_history.o $(BUILDDIR)/io/readline_completion_backend.o $(BUILDDIR)/io/readline_fzf.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/common/string_utils.o | $(BUILDDIR)/io
+$(BUILDDIR)/io/readline.o: src/io/readline.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/io/readline_constants.o $(BUILDDIR)/io/readline_state.o $(BUILDDIR)/io/readline_bufferops.o $(BUILDDIR)/io/readline_history.o $(BUILDDIR)/io/readline_completion_backend.o $(BUILDDIR)/io/readline_editops.o $(BUILDDIR)/io/readline_fzf.o $(BUILDDIR)/common/buffer_ops.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/scripting/abbreviations.o $(BUILDDIR)/parsing/glob.o $(BUILDDIR)/scripting/completion.o $(C_STRING_OBJ) $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/system/signals.o $(BUILDDIR)/common/string_utils.o | $(BUILDDIR)/io
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) -c $< -o $@
 
 $(BUILDDIR)/io/fd_redirection.o: src/io/fd_redirection.f90 $(BUILDDIR)/common/types.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/io_helpers.o $(BUILDDIR)/scripting/variables.o | $(BUILDDIR)/io
