@@ -7,7 +7,7 @@ A shell written in Fortran. Because we can.
 
 **CI**: All green across x86_64 Linux, ARM64 Linux, and macOS ARM64 (Apple Silicon)
 **POSIX compliance**: 3,632+ tests passing across 23 POSIX suites
-**Builtin tests**: 850+ passing | **Integration tests**: 482 passing | **Stress tests**: 204 passing
+**Builtin tests**: 1,151 passing | **Integration tests**: 479 passing / 3 skipped | **Stress tests**: 204 passing
 **Interactive PTY tests**: 180+ passing
 **bash compatibility**: ~99%
 **Chance you'll miss the other 1%**: Low
