@@ -2216,10 +2216,7 @@ contains
     ! POSIX: If 'in' is omitted (num_words == 0), iterate over positional parameters
     if (node%for_loop%num_words == 0) then
       do i = 1, shell%num_positional
-        if (total_words < MAX_TOKEN_LEN) then
-          total_words = total_words + 1
-          expanded_words(total_words) = shell%positional_params(i)%str
-        end if
+        call append_word(expanded_words, total_words, shell%positional_params(i)%str)
       end do
     else
 
@@ -2230,10 +2227,7 @@ contains
           node%for_loop%words_was_quoted(i)) then
         ! Quoted $@ - add each positional parameter as separate word without IFS splitting
         do j = 1, shell%num_positional
-          if (total_words < MAX_TOKEN_LEN) then
-            total_words = total_words + 1
-            expanded_words(total_words) = shell%positional_params(j)%str
-          end if
+          call append_word(expanded_words, total_words, shell%positional_params(j)%str)
         end do
         cycle  ! Skip normal expansion for this word
       end if
@@ -2276,11 +2270,7 @@ contains
                 call get_assoc_array_keys(shell, &
                   trim(arr_name), akeys, nk)
                 do ai = 1, nk
-                  if (total_words < MAX_TOKEN_LEN) then
-                    total_words = total_words + 1
-                    expanded_words(total_words) = &
-                      akeys(ai)
-                  end if
+                  call append_word(expanded_words, total_words, akeys(ai))
                 end do
                 cycle
               else
@@ -2288,15 +2278,11 @@ contains
                 nk = get_array_size(shell, &
                   trim(arr_name))
                 do ai = 0, nk - 1
-                  if (total_words < MAX_TOKEN_LEN) then
-                    block
-                      character(len=20) :: idx_str
-                      total_words = total_words + 1
-                      write(idx_str, '(i0)') ai
-                      expanded_words(total_words) = &
-                        trim(idx_str)
-                    end block
-                  end if
+                  block
+                    character(len=20) :: idx_str
+                    write(idx_str, '(i0)') ai
+                    call append_word(expanded_words, total_words, trim(idx_str))
+                  end block
                 end do
                 if (nk > 0) cycle
               end if
@@ -2305,12 +2291,8 @@ contains
               call get_assoc_array_keys(shell, &
                 trim(arr_name), akeys, nk)
               do ai = 1, nk
-                if (total_words < MAX_TOKEN_LEN) then
-                  total_words = total_words + 1
-                  expanded_words(total_words) = &
-                    get_assoc_array_value(shell, &
-                    trim(arr_name), trim(akeys(ai)))
-                end if
+                call append_word(expanded_words, total_words, &
+                  get_assoc_array_value(shell, trim(arr_name), trim(akeys(ai))))
               end do
               cycle
             else
@@ -2321,18 +2303,15 @@ contains
                       == trim(arr_name) .and. &
                       shell%variables(ai)%is_array) then
                     do bstart = 1, nk
-                      if (total_words < MAX_TOKEN_LEN &
-                          .and. allocated( &
+                      if (allocated( &
                           shell%variables(ai) &
-                          %array_values(bstart)%str) &
-                          .and. len_trim( &
+                          %array_values(bstart)%str)) then
+                       if (len_trim( &
                           shell%variables(ai) &
-                          %array_values(bstart)%str) > 0) &
-                      then
-                        total_words = total_words + 1
-                        expanded_words(total_words) = &
-                          shell%variables(ai) &
-                          %array_values(bstart)%str
+                          %array_values(bstart)%str) > 0) then
+                        call append_word(expanded_words, total_words, &
+                          shell%variables(ai)%array_values(bstart)%str)
+                       end if
                       end if
                     end do
                     exit
@@ -2389,24 +2368,15 @@ contains
           if (glob_count > 0) then
             ! Add all matched files
             do j = 1, glob_count
-              if (total_words < MAX_TOKEN_LEN) then
-                total_words = total_words + 1
-                expanded_words(total_words) = glob_matches(j)
-              end if
+              call append_word(expanded_words, total_words, glob_matches(j))
             end do
           else
             ! No matches - use the pattern literally
-            if (total_words < MAX_TOKEN_LEN) then
-              total_words = total_words + 1
-              expanded_words(total_words) = split_words(k)
-            end if
+            call append_word(expanded_words, total_words, split_words(k))
           end if
         else
           ! Not a glob pattern - use the word as-is
-          if (total_words < MAX_TOKEN_LEN) then
-            total_words = total_words + 1
-            expanded_words(total_words) = split_words(k)
-          end if
+          call append_word(expanded_words, total_words, split_words(k))
         end if
       end do
     end do
@@ -3323,12 +3293,43 @@ contains
   end function is_ast_function
 
   ! Split a string on IFS characters
+  ! Grow an allocatable word list to hold at least `needed` elements,
+  ! preserving existing contents. Doubling growth keeps amortized cost linear.
+  subroutine grow_word_list(list, needed)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: list(:)
+    integer, intent(in) :: needed
+    character(len=MAX_TOKEN_LEN), allocatable :: tmp(:)
+    integer :: oldsize, newsize
+
+    oldsize = 0
+    if (allocated(list)) oldsize = size(list)
+    if (oldsize >= needed) return
+    newsize = max(needed, max(oldsize * 2, 64))
+    allocate(tmp(newsize))
+    if (oldsize > 0) tmp(1:oldsize) = list(1:oldsize)
+    call move_alloc(tmp, list)
+  end subroutine grow_word_list
+
+  ! Append one word to an allocatable list, growing on demand and bumping the
+  ! running count. Replaces the old fixed `total_words < MAX_TOKEN_LEN` guards
+  ! that silently dropped (or, unclamped, over-read) words past the cap.
+  subroutine append_word(list, count, val)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: list(:)
+    integer, intent(inout) :: count
+    character(len=*), intent(in) :: val
+
+    if (.not. allocated(list)) call grow_word_list(list, 64)
+    if (count + 1 > size(list)) call grow_word_list(list, count + 1)
+    count = count + 1
+    list(count) = val
+  end subroutine append_word
+
   subroutine split_on_ifs(str, ifs_chars, words, word_count)
     character(len=*), intent(in) :: str
     character(len=*), intent(in) :: ifs_chars
-    character(len=MAX_TOKEN_LEN), intent(out) :: words(:)
+    character(len=MAX_TOKEN_LEN), allocatable, intent(inout) :: words(:)
     integer, intent(out) :: word_count
-    integer :: i, str_len, word_pos, max_words
+    integer :: i, str_len, word_pos
     logical :: in_word
     character(len=MAX_TOKEN_LEN) :: current_word
 
@@ -3337,7 +3338,7 @@ contains
     word_pos = 0
     in_word = .false.
     str_len = len_trim(str)
-    max_words = size(words)
+    if (.not. allocated(words)) call grow_word_list(words, 64)
 
     ! Handle empty string
     if (str_len == 0) then
@@ -3346,8 +3347,7 @@ contains
 
     ! Special case: empty IFS means no splitting - return entire string as one word
     if (len(ifs_chars) == 0) then
-      word_count = 1
-      words(1) = str(1:str_len)
+      call append_word(words, word_count, str(1:str_len))
       return
     end if
 
@@ -3362,19 +3362,13 @@ contains
           is_ifs_ws = (str(i:i) == ' ' .or. str(i:i) == char(9) .or. str(i:i) == char(10))
           if (in_word) then
             ! End current word
-            word_count = word_count + 1
-            if (word_count <= max_words) then
-              words(word_count) = current_word(1:word_pos)
-            end if
+            call append_word(words, word_count, current_word(1:word_pos))
             current_word = ''
             word_pos = 0
             in_word = .false.
           else if (.not. is_ifs_ws .and. prev_was_nonws_delim) then
             ! Consecutive non-whitespace IFS chars produce empty fields
-            word_count = word_count + 1
-            if (word_count <= max_words) then
-              words(word_count) = ''
-            end if
+            call append_word(words, word_count, '')
           end if
           prev_was_nonws_delim = .not. is_ifs_ws
         else
@@ -3389,10 +3383,7 @@ contains
 
     ! Add final word if any
     if (in_word) then
-      word_count = word_count + 1
-      if (word_count <= max_words) then
-        words(word_count) = current_word(1:word_pos)
-      end if
+      call append_word(words, word_count, current_word(1:word_pos))
     end if
   end subroutine split_on_ifs
 
