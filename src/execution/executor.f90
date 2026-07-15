@@ -79,10 +79,22 @@ contains
     end do
   end subroutine
 
-  ! DEPRECATED: Legacy pipeline execution path, only used by FORTSH_USE_OLD_PARSER=1.
-  ! The AST executor (ast_executor.f90::execute_pipeline_node) is the primary pipeline
-  ! implementation with full feature parity. This subroutine will be removed when the
-  ! legacy parser path is retired.
+  ! Multi-stage pipe execution. LIVE, not deprecated: there is no
+  ! FORTSH_USE_OLD_PARSER toggle (grep src/ finds only this comment's former
+  ! wording). The real layering is AST-over-legacy delegation, not two
+  ! switchable engines:
+  !   ast_executor.f90 owns the AST / pipeline structure and delegates leaf
+  !   and simple-command execution to executor.f90::execute_pipeline
+  !   (ast_executor.f90:1067,1172). execute_pipeline (line 29) then dispatches
+  !   a genuine N-stage pipe to this routine (line 43), and also runs group,
+  !   subshell, alias, eval, and loop-body commands; command_builtin.f90 calls
+  !   it too.
+  ! Authoritative variable expansion is parser.f90::expand_variables (~32
+  ! sites); expansion.f90::enhanced_expand_variables (~3 sites) is niche. The
+  ! canonical tokenizer is parser.f90::tokenize_with_substitution;
+  ! syntax_highlight.f90::tokenize_v2 is highlighter-only. A fix to expansion
+  ! or tokenization must land in the authoritative copy, not silently in one
+  ! branch (cf. the QUAL-4 arithmetic-chain divergence).
   subroutine execute_pipe_chain(pipeline, start_idx, shell, original_input)
     type(pipeline_t), intent(inout) :: pipeline
     integer, intent(in) :: start_idx

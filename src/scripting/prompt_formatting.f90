@@ -9,6 +9,7 @@ module prompt_formatting
   use iso_fortran_env, only: output_unit
   use substitution, only: enhanced_command_substitution
   use variables, only: get_shell_variable
+  use string_utils, only: to_lower
   implicit none
 
   ! History counter for prompts
@@ -1015,21 +1016,6 @@ contains
     else
       write(ansi_code, '(a,i0,a)') char(27)//'[', 40 + base_code, 'm'
     end if
-  end function
-
-  ! Convert string to lowercase
-  function to_lower(str) result(lower)
-    character(len=*), intent(in) :: str
-    character(len=len(str)) :: lower
-    integer :: i, ic
-
-    lower = str
-    do i = 1, len_trim(str)
-      ic = iachar(str(i:i))
-      if (ic >= iachar('A') .and. ic <= iachar('Z')) then
-        lower(i:i) = achar(ic + 32)
-      end if
-    end do
   end function
 
   ! Expand zsh-style color escapes in a string

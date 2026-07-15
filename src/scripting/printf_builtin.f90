@@ -7,6 +7,7 @@ module printf_builtin
   use iso_fortran_env, only: output_unit, error_unit, int64
   use iso_c_binding, only: c_char, c_int, c_double, c_long_long, c_null_char
   use io_helpers, only: parse_int64
+  use string_utils, only: to_uppercase => to_upper, to_lowercase => to_lower
   implicit none
 
   ! Set when %b hits \c: all further printf output (including format
@@ -1166,31 +1167,5 @@ contains
       output_pos = output_pos + value_len
     end if
   end subroutine
-
-  function to_lowercase(str) result(lower_str)
-    character(len=*), intent(in) :: str
-    character(len=len(str)) :: lower_str
-    integer :: i
-
-    lower_str = str
-    do i = 1, len_trim(str)
-      if (str(i:i) >= 'A' .and. str(i:i) <= 'Z') then
-        lower_str(i:i) = char(ichar(str(i:i)) + 32)
-      end if
-    end do
-  end function
-
-  function to_uppercase(str) result(upper_str)
-    character(len=*), intent(in) :: str
-    character(len=len(str)) :: upper_str
-    integer :: i
-
-    upper_str = str
-    do i = 1, len_trim(str)
-      if (str(i:i) >= 'a' .and. str(i:i) <= 'z') then
-        upper_str(i:i) = char(ichar(str(i:i)) - 32)
-      end if
-    end do
-  end function
 
 end module printf_builtin

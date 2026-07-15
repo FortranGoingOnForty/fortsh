@@ -361,13 +361,6 @@ contains
     num_coprocs = 0
   end subroutine
 
-  function int_to_string(val) result(str)
-    integer, intent(in) :: val
-    character(len=32) :: str
-    
-    write(str, '(I0)') val
-  end function
-
   subroutine execute_command_native(command, shell)
     use trap_dispatch, only: eval_trap_string
     character(len=*), intent(in) :: command
