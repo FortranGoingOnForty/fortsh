@@ -688,8 +688,8 @@ $(BUILDDIR)/test_expansion_simple: tests/test_expansion_simple.f90 $(BUILDDIR)/c
 $(BUILDDIR)/test_variables_simple: tests/test_variables_simple.f90 $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(BUILDDIR)/common/types.o -o $@
 
-$(BUILDDIR)/test_suggestions: tests/test_suggestions.f90 $(BUILDDIR)/io/suggestions.o | $(BUILDDIR)
-	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/suggestions.o -o $@
+$(BUILDDIR)/test_suggestions: tests/test_suggestions.f90 $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/common/string_utils.o | $(BUILDDIR)
+	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/suggestions.o $(BUILDDIR)/common/string_utils.o -o $@
 
 $(BUILDDIR)/test_syntax_highlight: tests/test_syntax_highlight.f90 $(BUILDDIR)/io/syntax_highlight.o $(CORE_C_OBJS) | $(BUILDDIR)
 	$(FC) $(FCFLAGS) -J$(BUILDDIR) $< $(BUILDDIR)/io/syntax_highlight.o $(BUILDDIR)/system/interface.o $(BUILDDIR)/common/types.o $(BUILDDIR)/common/string_pool.o $(BUILDDIR)/common/memory_dashboard.o $(CORE_C_OBJS) -o $@
