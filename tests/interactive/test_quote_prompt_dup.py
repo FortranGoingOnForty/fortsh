@@ -43,9 +43,10 @@ ROWS, COLS = 24, 80
 
 # Distinctive first prompt line so counting occurrences is unambiguous, plus a
 # second line ('> ') and an RPROMPT — the two-line + right-prompt layout the
-# duplication was reported against.
+# duplication was reported against. No \w: the prompt must render identically
+# whatever directory the suite runs from.
 PROMPT_MARK = "FORTSH-PROMPT-MARK"
-RC_TEXT = "PS1='" + PROMPT_MARK + " \\w\n> '\nRPROMPT='rp'\n"
+RC_TEXT = "PS1='" + PROMPT_MARK + "\n> '\nRPROMPT='rp'\n"
 
 # Metacharacters that are inert inside single quotes but break out of a
 # double-quoted shell word — exactly the ones that exposed the old shell-out.
@@ -53,10 +54,17 @@ RC_TEXT = "PS1='" + PROMPT_MARK + " \\w\n> '\nRPROMPT='rp'\n"
 METACHARS = ['"', '`', '$(', "'"]
 
 
-def _spawn(fortsh_path, rc_path):
+def _spawn(fortsh_path, home):
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
-    env["FORTSH_RC_FILE"] = str(rc_path)
+    # Own HOME, holding the rc: without a ~/.fortshrc (or ~/.fortsh_profile)
+    # fortsh treats the session as a first run and blocks on
+    # "Create default configs? [Y/n]:", so the prompt never renders. A CI
+    # runner has no config; a developer's machine does. Pinning HOME makes the
+    # test behave the same on both. FORTSH_TEST_MODE would also skip that
+    # prompt, but it disables the redraw this test exists to exercise.
+    env["HOME"] = str(home)
+    env["FORTSH_RC_FILE"] = str(home / ".fortshrc")
     env["HISTFILE"] = "/dev/null"
     return pexpect.spawn(fortsh_path, [], env=env, encoding=None,
                          timeout=8, dimensions=(ROWS, COLS))
@@ -64,10 +72,9 @@ def _spawn(fortsh_path, rc_path):
 
 @pytest.mark.parametrize("meta", METACHARS)
 def test_metachar_typing_does_not_duplicate_prompt(fortsh_path, tmp_path, meta):
-    rc = tmp_path / "quoterc"
-    rc.write_text(RC_TEXT)
+    (tmp_path / ".fortshrc").write_text(RC_TEXT)
 
-    child = _spawn(fortsh_path, rc)
+    child = _spawn(fortsh_path, tmp_path)
     screen = pyte.Screen(COLS, ROWS)
     stream = pyte.ByteStream(screen)
 
