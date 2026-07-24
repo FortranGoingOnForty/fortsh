@@ -552,7 +552,7 @@ help:
 
 # Package information
 PACKAGE = fortsh
-VERSION = 1.0.1
+VERSION = 1.9.0
 # Legacy version (pre-semver reset): 6.0.6
 
 # Distribution and packaging targets
