@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        1.8.0
+Version:        1.9.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -59,6 +59,18 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Fri Jul 24 2026 mfw <espadon@outlook.com> - 1.9.0-1
+- Fix prompt duplication when typing " ` or $( — the per-keystroke directory
+  scan no longer builds a /bin/sh command from the typed word (native readdir)
+- Multi-line paste and editing; submit starts output below the whole buffer
+- Right prompt reworked as a row-0 re-emit layer; survives resize and redraw
+- Fish-parity completion pager with option and git-subcommand descriptions
+- Undo/redo, richer vi mode (text objects, visual mode, dot-repeat), abbreviations
+- Wrapped-line redraw fixes: recall, Ctrl-U, exact-width wrap, resize staircase
+- Security: mkstemp for fzf temp files, ps via execvp argv instead of popen
+- Memory: string-pool use-after-free and ref-accounting fixes, 64-bit size math
+- readline split from one 13k-line module into nine focused modules
+
 * Sun Mar 09 2026 mfw <espadon@outlook.com> - 1.3.3-1
 - Redesign Ctrl-R reverse search with fish-style two-line rendering
 - Fix heap corruption (SIGABRT) when accepting search suggestions
