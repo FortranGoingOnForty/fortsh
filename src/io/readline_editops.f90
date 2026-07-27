@@ -955,7 +955,7 @@ contains
 
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: j, search_max
+    integer :: j, search_max, eff_len
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
     type(suggestion_result_t) :: hist_result
@@ -986,8 +986,16 @@ contains
       return
     end if
 
+    ! AR-11 PAIRS: when the only thing to the right of the cursor is the
+    ! closers we auto-inserted, suggest from the text the user actually typed.
+    ! Feeding the closers into the match would compare `echo "quo"` against
+    ! history and find nothing, which silenced suggestions inside every quoted
+    ! argument. The renderer hides those closers while a suggestion shows.
+    eff_len = input_state%length
+    if (autopair_tail_only(input_state)) eff_len = input_state%cursor_pos
+
     ! Clear suggestion if buffer is empty or in special modes
-    if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history &
+    if (eff_len == 0 .or. input_state%in_search .or. input_state%in_history &
         .or. input_state%in_prefix_search) then
       input_state%suggestion = ''
       input_state%suggestion_length = 0
@@ -997,7 +1005,7 @@ contains
 
     ! Get current input - copy character-by-character (avoid substring on allocatable)
     current_input = ''
-    do j = 1, input_state%length
+    do j = 1, eff_len
       current_input(j:j) = state_buffer_get_char(input_state, j)
     end do
 
@@ -1009,12 +1017,12 @@ contains
       search_max = command_history%count
       do
         hist_result = compute_history_suggestion( &
-          current_input, input_state%length, &
+          current_input, eff_len, &
           command_history%lines, command_history%count, search_max)
 
         if (hist_result%source == SUGGEST_NONE) exit
 
-        if (history_suggestion_valid(current_input(1:input_state%length), &
+        if (history_suggestion_valid(current_input(1:eff_len), &
                                      hist_result%text(1:hist_result%length))) then
           input_state%suggestion = ''
           do j = 1, hist_result%length
@@ -1032,7 +1040,7 @@ contains
     end if
 
     ! Priority 2: path-based suggestion (fallback when no history match)
-    call try_path_suggestion(current_input(1:input_state%length), input_state)
+    call try_path_suggestion(current_input(1:eff_len), input_state)
 
     if (allocated(current_input)) deallocate(current_input)
   end subroutine

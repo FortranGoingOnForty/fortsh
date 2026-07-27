@@ -232,3 +232,94 @@ def test_non_opener_still_types_over_a_selection(fortsh_path, tmp_path):
     line, _ = _line(fortsh_path, tmp_path, [b"echo abc", SHIFT_LEFT * 3, b"X"])
     assert line.startswith("> echo X")
     assert "abc" not in line
+
+
+# ------------------------------------------- autosuggestions inside a pair
+
+SUGGEST_FG = "brightblack"     # what fortsh's ESC[90m shadow text reads as
+
+
+def _cells(fortsh_path, tmp_path, chunks, seed, cols=COLS):
+    """Like _line, but seeds history first and returns (text, dim_text) for the
+    input row — dim_text being the shadow-rendered autosuggestion. Screen text
+    alone cannot tell a suggestion from accepted text; the colour can."""
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env.pop("FORTSH_TEST_MODE", None)
+    child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
+                          encoding=None, timeout=8, dimensions=(ROWS, cols))
+    screen = pyte.Screen(cols, ROWS)
+    stream = pyte.ByteStream(screen)
+
+    def drain(secs=0.5):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                stream.feed(child.read_nonblocking(65536, timeout=0.2))
+            except pexpect.TIMEOUT:
+                pass
+            except pexpect.EOF:
+                break
+
+    time.sleep(1.0)
+    drain(1.0)
+    child.sendline(seed)
+    time.sleep(0.5)
+    drain(0.5)
+    for chunk in chunks:
+        child.send(chunk)
+        time.sleep(0.25)
+    drain(0.6)
+
+    rows = [r.rstrip() for r in screen.display]
+    idx = [i for i, r in enumerate(rows) if r.startswith(">")]
+    assert idx, f"no input line rendered; screen was {[r for r in rows if r]!r}"
+    y = idx[-1]
+    row = screen.buffer[y]
+    text = rows[y]
+    dim = "".join(row[x].data for x in range(cols) if row[x].fg == SUGGEST_FG)
+    try:
+        child.send(b"\x03")
+        child.sendline(b"exit")
+        child.close(force=True)
+    except Exception:
+        pass
+    return text, dim
+
+
+SEED = b'echo "quoted hello there"'
+
+
+def test_suggestion_shows_inside_a_pair(fortsh_path, tmp_path):
+    """The pending closer is hidden behind the suggestion, which carries its
+    own closing quote — so the line reads right instead of `echo "quo"ted...`."""
+    text, dim = _cells(fortsh_path, tmp_path, [b'echo "', b"quo"], SEED)
+    assert text.startswith('> echo "quoted hello there"')
+    assert dim == 'ted hello there"'
+
+
+def test_right_accepts_and_consumes_the_pending_closer(fortsh_path, tmp_path):
+    """A full accept drops the pending closers: exactly one trailing quote,
+    and nothing left rendered as shadow text."""
+    text, dim = _cells(fortsh_path, tmp_path,
+                       [b'echo "', b"quo", RIGHT], SEED)
+    assert text.startswith('> echo "quoted hello there"')
+    assert dim == ""
+    assert not text.startswith('> echo "quoted hello there""')
+
+
+def test_word_accept_keeps_the_pair_open(fortsh_path, tmp_path):
+    """A PARTIAL accept stays inside the pair, so the closing quote is still
+    waiting and is not shadow text."""
+    ALT_F = b"\x1bf"
+    text, dim = _cells(fortsh_path, tmp_path,
+                       [b'echo "', b"quo", ALT_F], SEED)
+    assert text.startswith('> echo "quoted "')
+    assert '"' not in dim
+
+
+def test_no_suggestion_leaves_the_closer_visible(fortsh_path, tmp_path):
+    """With nothing to suggest, the pending closer renders normally."""
+    text, dim = _cells(fortsh_path, tmp_path, [b'echo "', b"zzq"], SEED)
+    assert text.startswith('> echo "zzq"')
+    assert dim == ""

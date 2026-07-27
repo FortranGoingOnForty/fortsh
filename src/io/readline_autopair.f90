@@ -248,6 +248,43 @@ contains
     end do
   end subroutine autopair_note_delete
 
+  ! True when everything to the RIGHT of the cursor is exactly the closers we
+  ! inserted, innermost first. The line then reads as if the cursor were at the
+  ! end, which is what lets an autosuggestion appear inside a pair: the pending
+  ! closers are provisional, so the renderer hides them behind the suggestion
+  ! (which carries its own closing quote) and accepting drops them.
+  !
+  ! Without this, typing `git commit -m "` killed autosuggestions for the whole
+  ! quoted argument — the single most common place they are wanted.
+  function autopair_tail_only(state) result(yes)
+    type(input_state_t), intent(in) :: state
+    logical :: yes
+    integer :: i, slot
+
+    yes = .false.
+    if (.not. global_autopair) return
+    if (ap_n <= 0) return
+    if (state%length - state%cursor_pos /= ap_n) return
+
+    do i = 1, ap_n
+      ! The stack top is the INNERMOST closer, so it sits nearest the cursor.
+      slot = ap_n - i + 1
+      if (ap_pos(slot) /= state%cursor_pos + i) return
+      if (state_buffer_get_char(state, state%cursor_pos + i) /= ap_ch(slot)) return
+    end do
+    yes = .true.
+  end function autopair_tail_only
+
+  ! Number of pending closers parked to the right of the cursor, or 0 when the
+  ! tail is anything else. Callers use it to size the span an accepted
+  ! suggestion replaces.
+  function autopair_pending_tail(state) result(n)
+    type(input_state_t), intent(in) :: state
+    integer :: n
+    n = 0
+    if (autopair_tail_only(state)) n = ap_n
+  end function autopair_pending_tail
+
   ! Did this keystroke move any bytes? Compared against the pre-dispatch
   ! snapshot the undo layer already takes for free (undo_capture_pre), so the
   ! input loop's sweep can keep the stack across pure cursor motion — arrowing

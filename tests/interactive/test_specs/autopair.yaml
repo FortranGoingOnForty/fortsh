@@ -117,6 +117,23 @@ tests:
     match_type: "contains"
 
   # =============================================================
+  # AUTOSUGGESTIONS — the pending closer must not survive an accept
+  # =============================================================
+  # If accepting left the hidden closer behind, the line would end
+  # `...))""` — an unclosed quote — and the shell would sit in continuation,
+  # swallowing the next line instead of running it. Expecting 72 from that
+  # NEXT line is what proves the accept was clean.
+  - name: "Accepting a suggestion inside a pair leaves no stray closer"
+    steps:
+      - send_line: 'echo "pair $((6*7))"'
+      - send: 'echo "pa'
+      - send_key: "Right"
+      - send_key: "Enter"
+      - send_line: "echo $((8*9))"
+    expect_output: "72"
+    match_type: "contains"
+
+  # =============================================================
   # set -o autopair
   # =============================================================
   - name: "set +o autopair leaves a fully typed line working"

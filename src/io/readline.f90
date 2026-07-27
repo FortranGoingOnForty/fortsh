@@ -641,6 +641,8 @@ contains
     integer :: nav_cursor_row  ! Saved current_row for cursor-up navigation
     integer :: highlighted_len  ! Actual length of highlighted string
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
+    integer :: ap_eff_len          ! AR-11: rendered buffer length (see ap_hide_tail)
+    logical :: ap_hide_tail        ! AR-11: pending closers stand behind a suggestion
     logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
     logical :: submit_pending  ! Normal Enter: defer the newline until after the
                                ! in-place redraw (clears paste highlight first)
@@ -1593,6 +1595,25 @@ contains
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
 
+              ! AR-11 PAIRS: when a suggestion is live and the ONLY thing right
+              ! of the cursor is the closers we auto-inserted, render the buffer
+              ! up to the cursor and let the suggestion stand in for them. The
+              ! suggestion carries its own closing quote, so "echo \"quo" shows
+              ! as `echo "quoted hello there"` rather than the nonsense
+              ! `echo "quo"ted hello there"`; accepting drops the pending
+              ! closers. Restricted to the plain single-line render path so the
+              ! shortened length and the suggestion block below always agree —
+              ! the selection / paste-highlight / prefix-search branches draw
+              ! their own segments off the full length.
+              ap_hide_tail = (module_input_state%suggestion_length > 0 .and. &
+                              .not. module_input_state%selection_active .and. &
+                              .not. module_input_state%paste_hl_active .and. &
+                              .not. module_input_state%in_prefix_search .and. &
+                              index(temp_buf(:module_input_state%length), char(10)) == 0 .and. &
+                              autopair_tail_only(module_input_state))
+              ap_eff_len = module_input_state%length
+              if (ap_hide_tail) ap_eff_len = module_input_state%cursor_pos
+
               ! Multi-line buffer (AR-10, e.g. a pasted snippet): render with
               ! \n -> \r\n so each logical line starts at column 0. Highlight
               ! still applies (tokenize_v2 treats \n as a separator). This path
@@ -1658,20 +1679,22 @@ contains
                   call rdraw_append(temp_buf(module_input_state%prefix_search_len+1:module_input_state%length))
                 end if
               else
-                call highlight_command_line(temp_buf(:module_input_state%length), &
+                call highlight_command_line(temp_buf(:ap_eff_len), &
                                             module_highlighted_buffer, module_highlighted_len, &
-                                            module_input_state%length)
+                                            ap_eff_len)
                 if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
                   call rdraw_append(module_highlighted_buffer(:module_highlighted_len))
                 else
-                  call rdraw_append(temp_buf(:module_input_state%length))
+                  call rdraw_append(temp_buf(:ap_eff_len))
                 end if
               end if
 
-              ! Display autosuggestion if present (only when cursor is at end)
+              ! Display autosuggestion if present (only when the cursor is at
+              ! the end of what we just RENDERED — end of buffer normally, or
+              ! end of the typed text when ap_hide_tail parked the closers).
               if (module_input_state%suggestion_length > 0 .and. &
-                  module_input_state%cursor_pos == module_input_state%length) then
-                cursor_visual_pos = prompt_visual_len + 1 + module_input_state%length
+                  module_input_state%cursor_pos == ap_eff_len) then
+                cursor_visual_pos = prompt_visual_len + 1 + ap_eff_len
 
                 if (term_cols > 0 .and. term_cols <= 500) then
                   current_col = mod(cursor_visual_pos, term_cols)
@@ -4996,6 +5019,18 @@ contains
 
     old_cursor_pos = input_state%cursor_pos
 
+    ! AR-11 PAIRS: with a live suggestion standing in for the pending closers,
+    ! the cursor is visually at end-of-line even though bytes follow it. Accept
+    ! wins over motion here, or Right would step into a closer the user cannot
+    ! see. Guarded like the end-of-buffer accept below (no shift-extension, and
+    ! not on the press that clears a paste highlight).
+    if (autopair_tail_only(input_state) .and. input_state%suggestion_length > 0 &
+        .and. .not. module_extending_selection &
+        .and. .not. module_paste_hl_cleared_this_key) then
+      call accept_autosuggestion(input_state)
+      return
+    end if
+
     if (input_state%cursor_pos < input_state%length) then
       ! Get terminal size
       call get_terminal_size_from_env(term_cols)
@@ -5026,7 +5061,9 @@ contains
       ! Update module cursor tracking
       module_cursor_screen_row = new_row
       module_cursor_screen_col = new_col
-    else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0 &
+    else if ((input_state%cursor_pos == input_state%length .or. &
+              autopair_tail_only(input_state)) &
+             .and. input_state%suggestion_length > 0 &
              .and. .not. module_extending_selection &
              .and. .not. module_paste_hl_cleared_this_key) then
       ! At end of line with suggestion - accept it (but not during shift-extension —
@@ -6802,10 +6839,15 @@ contains
   ! path. No-op for exact-case / history suggestions (replace_len == 0).
   subroutine apply_suggestion_recase(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: j, base
+    integer :: j, base, anchor
     if (input_state%suggestion_replace_len <= 0) return
-    if (input_state%suggestion_replace_len > input_state%length) return
-    base = input_state%length - input_state%suggestion_replace_len
+    ! AR-11 PAIRS: the typed token ends at the CURSOR when pending closers are
+    ! parked to its right, not at end-of-buffer — recasing off the length would
+    ! rewrite the closers themselves.
+    anchor = input_state%length
+    if (autopair_pending_tail(input_state) > 0) anchor = input_state%cursor_pos
+    if (input_state%suggestion_replace_len > anchor) return
+    base = anchor - input_state%suggestion_replace_len
     do j = 1, input_state%suggestion_replace_len
       call state_buffer_set_char(input_state, base + j, &
         input_state%suggestion_replace_text(j:j))
@@ -6815,7 +6857,7 @@ contains
   ! Accept the current autosuggestion
   subroutine accept_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: j, new_length
+    integer :: j, new_length, ap_tail
 
     if (input_state%suggestion_length == 0) return
 
@@ -6823,6 +6865,19 @@ contains
     if (input_state%selection_active) call collapse_selection(input_state)
 
     call apply_suggestion_recase(input_state)
+
+    ! AR-11 PAIRS: the renderer hid the pending closers behind this suggestion,
+    ! and the suggestion carries its own closing quote. Drop them before
+    ! appending, or accepting leaves `echo "quo"ted hello there"`.
+    ap_tail = autopair_pending_tail(input_state)
+    if (ap_tail > 0) then
+      do j = 1, ap_tail
+        call state_buffer_set_char(input_state, input_state%length - ap_tail + j, ' ')
+      end do
+      input_state%length = input_state%length - ap_tail
+      input_state%cursor_pos = input_state%length
+      call autopair_reset()
+    end if
 
     ! Safety check: ensure we won't overflow
     new_length = input_state%length + input_state%suggestion_length
@@ -6880,6 +6935,29 @@ contains
       if (word_end <= 0) return
     end if
 
+    ! AR-11 PAIRS: a PARTIAL accept stays inside the pair — splice the word in
+    ! at the cursor and let the pending closers slide right, so the closing
+    ! quote is still waiting when the rest of the argument is typed. (A full
+    ! accept, above, consumes them instead: the whole suggestion ends the
+    ! argument and brings its own closer.)
+    if (autopair_pending_tail(input_state) > 0) then
+      if (input_state%length + word_end > MAX_LINE_LEN - 1) return
+      do i = input_state%length, input_state%cursor_pos + 1, -1
+        call state_buffer_set_char(input_state, i + word_end, &
+                                   state_buffer_get_char(input_state, i))
+      end do
+      do i = 1, word_end
+        call state_buffer_set_char(input_state, input_state%cursor_pos + i, &
+                                   input_state%suggestion(i:i))
+      end do
+      input_state%length = input_state%length + word_end
+      call autopair_note_insert_n(input_state%cursor_pos + 1, word_end)
+      input_state%cursor_pos = input_state%cursor_pos + word_end
+      input_state%dirty = .true.
+      call update_autosuggestion(input_state)
+      return
+    end if
+
     ! Append first word to buffer using accessor (handles memory pool + C strings)
     do i = 1, word_end
       call state_buffer_set_char(input_state, input_state%length + i, input_state%suggestion(i:i))
@@ -6899,7 +6977,8 @@ contains
   subroutine forward_word_or_accept(input_state)
     type(input_state_t), intent(inout) :: input_state
 
-    if (input_state%cursor_pos == input_state%length .and. &
+    if ((input_state%cursor_pos == input_state%length .or. &
+         autopair_tail_only(input_state)) .and. &
         input_state%suggestion_length > 0) then
       call accept_autosuggestion_word(input_state)
     else
