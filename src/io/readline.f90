@@ -2300,11 +2300,21 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer :: i
     integer :: bytes_to_delete, delete_count
+    logical :: ap_consumed
 
     ! Shift-phase (Sprint 3): Backspace on an active selection deletes the
     ! whole range — no further character deletion. The key is "consumed".
     if (input_state%selection_active) then
       call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
+
+    ! AR-11 PAIRS: backspacing out of an empty pair we created — cursor sitting
+    ! in "(|)" — removes both halves, so an auto-close is undone by the same
+    ! single keypress that would have undone a plain insert.
+    call autopair_try_backspace(input_state, ap_consumed)
+    if (ap_consumed) then
       call update_autosuggestion(input_state)
       return
     end if
@@ -2369,6 +2379,12 @@ contains
       input_state%dirty = .true.
     end if
 
+    ! AR-11 PAIRS: a plain backspace inside a pair shifts the pending closers
+    ! left; deleting one of them drops the stack (handled inside note_delete).
+    ! Claiming the key keeps the post-dispatch sweep from wiping the rest.
+    call autopair_note_delete(input_state%cursor_pos + 1, bytes_to_delete)
+    ap_keep_this_key = .true.
+
     ! Update autosuggestion after deleting character
     call update_autosuggestion(input_state)
   end subroutine
@@ -2413,6 +2429,10 @@ contains
     end do
 
     input_state%dirty = .true.
+    ! AR-11 PAIRS: as in handle_backspace — shift the pending closers left over
+    ! the span just removed rather than losing them to the sweep.
+    call autopair_note_delete(input_state%cursor_pos + 1, bytes_to_delete)
+    ap_keep_this_key = .true.
     call update_autosuggestion(input_state)
   end subroutine
 
