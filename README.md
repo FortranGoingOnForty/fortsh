@@ -124,6 +124,41 @@ Greyed-out suggestions appear as you type:
 - Path-based (file/directory completions)
 - Accept with **Right Arrow** (or **Ctrl-E** / **End**)
 
+### Smart Quotes and Brackets
+
+Typing an opener inserts its closer and leaves the cursor between the two:
+
+```bash
+echo (          # -> echo (|)
+echo "          # -> echo "|"
+echo ${         # -> echo ${|}
+```
+
+Pairs `(` `[` `{` `"` `'` and `` ` ``. Typing the closing character walks over
+the one already there instead of doubling it, so you can type a line straight
+through — `echo $((6*7))` gives exactly that, not `echo $((6*7))))`. Backspace
+with the cursor inside an empty pair removes both halves.
+
+It stays out of the way when a pair would be wrong:
+
+```bash
+echo don't          # apostrophe after a word char stays literal
+echo \"             # backslash-escaped opener stays literal
+echo 'a(b'          # nothing pairs inside single quotes
+```
+
+An opener typed directly in front of existing text inserts alone, so putting
+the cursor before `foo` and typing `(` gives `(foo`, not `()foo`. Only closers
+fortsh inserted itself are skipped over — a closer you typed by hand in front
+of an unrelated one still inserts.
+
+On by default. Turn it off with `set +o autopair` (in `~/.fortshrc` to make it
+stick).
+
+**Known limitation:** autosuggestions are suppressed while the cursor sits
+inside a pair, because the pending closer means the cursor is no longer at the
+end of the line. Typing past the closer brings them back.
+
 ### cd-less Navigation
 
 Type a directory path, press Enter. That's it.
