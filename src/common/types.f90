@@ -387,6 +387,10 @@ module shell_types
     logical :: option_posix = .false.          ! set -o posix (POSIX mode)
     logical :: option_privileged = .false.     ! set -o privileged (restricted mode)
     logical :: option_fuzzy_complete = .false. ! set -o fuzzy-complete (fuzzy tab completion)
+    ! set -o autopair (AR-11): auto-close quotes/brackets. ON by default; the
+    ! same default is duplicated in readline_autopair%global_autopair because
+    ! set_global_autopair only ever runs from `set -o`. Keep the two in sync.
+    logical :: option_autopair = .true.
     integer :: original_stderr_fd = 2          ! Saved copy of original stderr for shell messages
     ! Bash-style shell options (shopt)
     logical :: shopt_nullglob = .false.        ! nullglob (empty glob matches)

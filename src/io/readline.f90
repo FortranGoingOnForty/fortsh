@@ -7,6 +7,7 @@ module readline
   use readline_constants
   use readline_state
   use readline_bufferops
+  use readline_autopair
   use readline_history
   use readline_completion_backend
   use readline_editops
