@@ -42,10 +42,14 @@ def _session(tmp_path, cols=90, rows=24):
 
 
 def _bin():
-    for p in (os.environ.get("FORTSH"), "./bin/fortsh"):
-        if p and os.path.isfile(p):
-            return os.path.abspath(p)
-    return "./bin/fortsh"
+    """Locate the binary the same way conftest does.
+
+    The old list only tried "./bin/fortsh", which resolves against pytest's
+    invocation directory — from tests/interactive there is no such file, so
+    every test here failed to spawn unless FORTSH was set by hand.
+    """
+    from conftest import find_fortsh_binary
+    return find_fortsh_binary()
 
 
 def _rows(screen):
