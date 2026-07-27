@@ -365,8 +365,28 @@ contains
     character, intent(in) :: ch
     integer :: term_cols
     character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
-    logical :: ap_do_close, ap_ok
+    logical :: ap_do_close, ap_ok, ap_consumed
     character :: ap_closer
+
+    ! AR-11 PAIRS: typing the closer we auto-inserted walks over it instead of
+    ! doubling it. This lives here rather than in the keystroke dispatch so the
+    ! vi dot-repeat replay — which calls insert_char_impl directly, bypassing
+    ! insert_char_wrapper so it isn't re-recorded — reproduces the original edit
+    ! byte for byte: a recorded "()" replays as auto-close then skip-over.
+    ! Skipped while a selection is live, where the key must type over instead.
+    if (.not. input_state%selection_active) then
+      call autopair_try_skip(input_state, ch, ap_consumed)
+      if (ap_consumed) then
+        if (test_mode_enabled) then
+          ! Test mode has no redraw: re-emit the byte to walk the terminal
+          ! cursor over the glyph already sitting there.
+          write(output_unit, '(a)', advance='no') ch
+          flush(output_unit)
+        end if
+        call update_autosuggestion(input_state)
+        return
+      end if
+    end if
 
     ! Shift-phase type-over (Sprint 3): typing a character while a selection
     ! is active replaces the selection. delete_selection removes the bytes,

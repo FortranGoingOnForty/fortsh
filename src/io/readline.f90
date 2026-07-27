@@ -906,10 +906,11 @@ contains
         ! AR-11 PAIRS: the pending auto-inserted closers are tracked by buffer
         ! POSITION, and only self-insert, skip-over and pair-backspace keep
         ! those positions honest. Arm the flag here; each of those three sets
-        ! it, and the post-dispatch sweep below drops the whole stack for every
-        ! other key. That single choke point is why no edit path (kill, yank,
-        ! history recall, completion, undo, vi ops, FZF) needs its own reset —
-        ! and a dropped stack costs at most a skip-over, never a wrong edit.
+        ! it, and the post-dispatch sweep below drops the whole stack for any
+        ! OTHER key that moved bytes. That single choke point is why no edit
+        ! path (kill, yank, history recall, completion, undo, vi ops, FZF)
+        ! needs a reset of its own — and a dropped stack costs at most a
+        ! skip-over, never a wrong edit.
         ap_keep_this_key = .false.
 
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
@@ -1352,8 +1353,12 @@ contains
         ! Undo (DIV-1): record this keystroke's edit (if any) as an undo point.
         call undo_commit_if_changed(module_input_state)
 
-        ! AR-11 PAIRS: see the arming comment above.
-        if (.not. ap_keep_this_key) call autopair_reset()
+        ! AR-11 PAIRS: see the arming comment above. A key that left the bytes
+        ! alone (any cursor motion, Ctrl-L, a search keystroke) cannot have
+        ! invalidated the recorded positions, so the stack survives it.
+        if (.not. ap_keep_this_key) then
+          if (autopair_buffer_changed(module_input_state)) call autopair_reset()
+        end if
 
         ! Coalesce input bursts (paste / fast typing): if bytes are already
         ! queued on stdin, defer the redraw and loop to consume them, so the

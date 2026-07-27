@@ -238,6 +238,25 @@ contains
     end do
   end subroutine autopair_note_delete
 
+  ! Did this keystroke move any bytes? Compared against the pre-dispatch
+  ! snapshot the undo layer already takes for free (undo_capture_pre), so the
+  ! input loop's sweep can keep the stack across pure cursor motion — arrowing
+  ! back inside "(|)" and typing ')' still skips over — and drop it only when
+  ! an unaudited edit path could have invalidated the recorded positions.
+  function autopair_buffer_changed(state) result(changed)
+    type(input_state_t), intent(in) :: state
+    logical :: changed
+    integer :: j
+    changed = (state%length /= undo_pre_len)
+    if (changed) return
+    do j = 1, state%length
+      if (state_buffer_get_char(state, j) /= undo_pre_buf(j:j)) then
+        changed = .true.
+        return
+      end if
+    end do
+  end function autopair_buffer_changed
+
   ! Is the top-of-stack closer the byte sitting immediately at the cursor?
   ! Re-reads the buffer, and drops the whole stack if the recorded position no
   ! longer holds what we put there.
