@@ -152,12 +152,14 @@ the cursor before `foo` and typing `(` gives `(foo`, not `()foo`. Only closers
 fortsh inserted itself are skipped over — a closer you typed by hand in front
 of an unrelated one still inserts.
 
+Autosuggestions keep working inside a pair. The pending closer is drawn behind
+the suggestion, which carries its own — so `echo "quo` shows as
+`echo "quoted hello there"`, and accepting it (Right / Ctrl-E / End) does not
+leave a stray quote behind. Accepting a single word (Alt-F) keeps the pair open
+for the rest of the argument.
+
 On by default. Turn it off with `set +o autopair` (in `~/.fortshrc` to make it
 stick).
-
-**Known limitation:** autosuggestions are suppressed while the cursor sits
-inside a pair, because the pending closer means the cursor is no longer at the
-end of the line. Typing past the closer brings them back.
 
 ### cd-less Navigation
 
