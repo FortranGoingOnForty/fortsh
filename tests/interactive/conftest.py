@@ -14,7 +14,12 @@ from fortsh_pty import FortshPTY, FortshTestSession
 
 
 def find_fortsh_binary() -> str:
-    """Find the fortsh binary."""
+    """Find the fortsh binary.
+
+    Returns an ABSOLUTE path: the candidates are relative to the directory
+    pytest was invoked from, but tests spawn fortsh with cwd=tmp_path, where a
+    relative path no longer resolves.
+    """
     candidates = [
         "./bin/fortsh",
         "../bin/fortsh",
@@ -28,9 +33,9 @@ def find_fortsh_binary() -> str:
 
     for path in candidates:
         if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
+            return os.path.abspath(path)
 
-    return "./bin/fortsh"
+    return os.path.abspath("./bin/fortsh")
 
 
 @pytest.fixture
