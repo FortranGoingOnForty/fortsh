@@ -77,6 +77,16 @@ tests:
     expect_output: "42 done"
     match_type: "contains"
 
+  # Regression: a multi-byte insert must SHIFT the pending closer, not forfeit
+  # it. When it forfeited, the trailing quote here stopped skipping over and
+  # opened a second string instead, so the line never produced 42.
+  - name: "Multi-byte input inside a pair keeps the closer skippable"
+    steps:
+      - send: "echo '世界' $((6*7"
+      - send_key: "Enter"
+    expect_output: "42"
+    match_type: "contains"
+
   # =============================================================
   # GUARDS — pairing stays out of the way
   # =============================================================

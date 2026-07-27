@@ -214,11 +214,21 @@ contains
   ! shifted one to the right.
   subroutine autopair_note_insert(at_pos)
     integer, intent(in) :: at_pos
-    integer :: i
-    do i = 1, ap_n
-      if (ap_pos(i) >= at_pos) ap_pos(i) = ap_pos(i) + 1
-    end do
+    call autopair_note_insert_n(at_pos, 1)
   end subroutine autopair_note_insert
+
+  ! As above for an `n`-byte insertion starting at `at_pos` — one multi-byte
+  ! UTF-8 character. Typing 世 inside a pair must SHIFT the pending closer, not
+  ! forfeit it, or the closing quote of `echo 'Hello 世界'` stops skipping over
+  ! and the line ends up unbalanced.
+  subroutine autopair_note_insert_n(at_pos, n)
+    integer, intent(in) :: at_pos, n
+    integer :: i
+    if (n <= 0) return
+    do i = 1, ap_n
+      if (ap_pos(i) >= at_pos) ap_pos(i) = ap_pos(i) + n
+    end do
+  end subroutine autopair_note_insert_n
 
   ! `n` bytes starting at `from_pos` were removed. An entry INSIDE the removed
   ! span means the pair itself was broken, so the whole stack is dropped rather

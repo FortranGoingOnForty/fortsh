@@ -141,6 +141,16 @@ def test_third_quote_extends_instead_of_pairing(fortsh_path, tmp_path):
     assert '""""' not in line
 
 
+def test_multibyte_inside_a_pair_keeps_the_closer(fortsh_path, tmp_path):
+    """Regression: a multi-byte insert must shift the pending closer, not
+    forfeit it, or the trailing quote opens a second string instead of
+    skipping over the one already there."""
+    line, _ = _line(fortsh_path, tmp_path,
+                    [b"echo '", "\u4e16\u754c".encode("utf-8"), b"'"])
+    assert line.startswith("> echo '\u4e16\u754c'")
+    assert "''" not in line
+
+
 # -------------------------------------------------------------- skip-over
 
 def test_typed_closer_skips_over_ours(fortsh_path, tmp_path):

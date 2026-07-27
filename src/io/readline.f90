@@ -945,6 +945,10 @@ contains
           ! while navigating accepts the selection (space-separated), typing
           ! with the menu merely shown dismisses it
           if (module_input_state%in_menu_select) then
+            ! AR-11 PAIRS: accepting a menu item rewrites the buffer wholesale,
+            ! so any recorded closer position is meaningless afterwards. This
+            ! path cycles past the post-dispatch sweep, hence the explicit drop.
+            call autopair_reset()
             if (module_input_state%in_process_kill_mode) then
               call exit_menu_select_mode(module_input_state)
               module_input_state%in_process_kill_mode = .false.
@@ -959,6 +963,7 @@ contains
             end if
           else if (module_input_state%completions_shown .and. &
                    module_input_state%menu_num_items > 0) then
+            call autopair_reset()
             call exit_menu_select_mode(module_input_state)
           end if
           ! Multi-byte UTF-8 character (emoji, CJK, etc.)
@@ -970,9 +975,9 @@ contains
           end if
           call insert_utf8_char(module_input_state, utf8_char(1:utf8_num_bytes), utf8_num_bytes, utf8_i)
           call undo_commit_if_changed(module_input_state)  ! DIV-1 (this path cycles)
-          ! AR-11 PAIRS: multi-byte inserts don't maintain closer positions, and
-          ! this path cycles past the post-dispatch sweep, so drop the stack here.
-          call autopair_reset()
+          ! AR-11 PAIRS: insert_utf8_char shifted the pending closers itself, so
+          ! nothing to drop here — typing CJK or an emoji inside a pair must not
+          ! cost the closing quote its skip-over.
           cycle  ! Skip the control character processing below
         end if
 
@@ -2182,6 +2187,12 @@ contains
       input_state%cursor_pos = input_state%cursor_pos + num_bytes
       input_state%dirty = .true.
     end if
+
+    ! AR-11 PAIRS: shift the pending closers over the bytes just inserted. The
+    ! character occupies positions cursor_pos-num_bytes+1 .. cursor_pos now that
+    ! the cursor has advanced past it.
+    call autopair_note_insert_n(input_state%cursor_pos - num_bytes + 1, num_bytes)
+    ap_keep_this_key = .true.
 
     ! Update autosuggestion
     call update_autosuggestion(input_state)
