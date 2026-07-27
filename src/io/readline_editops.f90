@@ -14,6 +14,7 @@ module readline_editops
   use readline_constants
   use readline_state
   use readline_bufferops
+  use readline_autopair
   use readline_history, only: get_history_line
   use readline_completion_backend, only: complete_files_enhanced
   use suggestions, only: compute_path_suggestion, compute_history_suggestion, &
@@ -364,6 +365,8 @@ contains
     character, intent(in) :: ch
     integer :: term_cols
     character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
+    logical :: ap_do_close, ap_ok
+    character :: ap_closer
 
     ! Shift-phase type-over (Sprint 3): typing a character while a selection
     ! is active replaces the selection. delete_selection removes the bytes,
@@ -403,6 +406,13 @@ contains
         ch == '>' .or. ch == '<' .or. ch == ')') then
       call try_expand_abbreviation_at_cursor(input_state)
     end if
+
+    ! AR-11 PAIRS: decide about auto-closing BEFORE the opener goes in — the
+    ! guards read the quote context and the character at the cursor, both of
+    ! which the insertion itself changes (typing '"' flips PLAIN to DQ). Run it
+    ! after the abbreviation expansion above, which can move the cursor.
+    ap_do_close = autopair_should_close(input_state, ch)
+    ap_closer = autopair_closer_for(ch)
 
     ! If cursor is at end, simple append
     if (input_state%cursor_pos >= input_state%length) then
@@ -463,6 +473,29 @@ contains
 
     ! Deallocate heap-allocated temp buffer
     if (allocated(temp_buffer)) deallocate(temp_buffer)
+
+    ! AR-11 PAIRS: keep any pending closers pointing at the right bytes (the
+    ! insert above shifted everything from the cursor rightward), and mark the
+    ! keystroke as one that MAINTAINS the stack, so the input loop's
+    ! post-dispatch sweep leaves it alone.
+    call autopair_note_insert(input_state%cursor_pos)
+    ap_keep_this_key = .true.
+
+    ! Auto-close: drop the closer in at the cursor without advancing it.
+    if (ap_do_close) then
+      call autopair_insert_closer(input_state, ap_closer, ap_ok)
+      if (ap_ok) then
+        ! The cursor now sits mid-buffer, so the fast append/wrap paths above
+        ! no longer describe the screen — force the full redraw.
+        input_state%dirty = .true.
+        if (test_mode_enabled) then
+          ! Test mode skips the redraw entirely and echoes inline, so draw the
+          ! closer and step back over it with a plain BS (no escapes).
+          write(output_unit, '(a)', advance='no') ap_closer // char(8)
+          flush(output_unit)
+        end if
+      end if
+    end if
 
     ! Update autosuggestion after inserting character
     call update_autosuggestion(input_state)

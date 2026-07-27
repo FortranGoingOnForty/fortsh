@@ -126,16 +126,19 @@ contains
   end function ap_is_word
 
   ! G1: auto-close only when the character AFTER the cursor is one we are
-  ! willing to push a closer in front of — end of line, whitespace, or a
-  ! terminator. Typing '(' just before an existing word gives "(foo", never
-  ! "()foo", which is what makes the feature stay out of the way.
+  ! willing to push a closer in front of — end of line, whitespace, a
+  ! terminator, or another closer. Typing '(' just before an existing word
+  ! gives "(foo", never "()foo", which is what keeps the feature out of the
+  ! way. Closers must be on the list or nesting inside a pair we just made
+  ! would not work: with the cursor in "${|}" the next byte is the '}' we
+  ! inserted ourselves, and in 'echo "|"' it is the closing quote.
   pure function ap_next_ok(ch) result(yes)
     character, intent(in) :: ch
     logical :: yes
-    yes = (ch == char(0)  .or. ch == ' ' .or. ch == char(9) .or. &
-           ch == ')' .or. ch == ']' .or. ch == '}' .or. &
-           ch == ';' .or. ch == '&' .or. ch == '|' .or. &
-           ch == ',' .or. ch == '>')
+    yes = autopair_is_closer(ch) .or. &
+          ch == char(0) .or. ch == ' ' .or. ch == char(9) .or. &
+          ch == ';' .or. ch == '&' .or. ch == '|' .or. &
+          ch == ',' .or. ch == '>'
   end function ap_next_ok
 
   ! Quote state of buffer(1:cursor_pos). Mirrors parser's has_unclosed_quote,
@@ -300,11 +303,15 @@ contains
 
   ! Insert `closer` at the cursor WITHOUT advancing it, and record it as
   ! pending. Called right after the opener has been inserted normally.
-  subroutine autopair_insert_closer(state, closer)
+  ! `ok` reports whether the byte actually went in — callers that echo the
+  ! closer themselves (test mode) must not draw one that was refused.
+  subroutine autopair_insert_closer(state, closer, ok)
     type(input_state_t), intent(inout) :: state
     character, intent(in) :: closer
+    logical, intent(out) :: ok
     integer :: i
 
+    ok = .false.
     ! Same -1 headroom guard as insert_char_impl.
     if (state%length >= MAX_LINE_LEN - 1) return
 
@@ -321,6 +328,7 @@ contains
 
     state%dirty = .true.
     ap_keep_this_key = .true.
+    ok = .true.
   end subroutine autopair_insert_closer
 
   ! Typing a closer we already inserted moves over it instead of doubling it.

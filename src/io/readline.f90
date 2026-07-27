@@ -725,6 +725,7 @@ contains
     prev_diff_valid = .false.
     prev_render_valid = .false.
     call undo_reset()   ! each line has its own undo history (DIV-1)
+    call autopair_reset()  ! pending closers never cross a line (AR-11)
 
     ! Initialize history on first use
     call init_history()
@@ -902,6 +903,15 @@ contains
         undo_navigate_this_key = .false.
         call undo_capture_pre(module_input_state)
 
+        ! AR-11 PAIRS: the pending auto-inserted closers are tracked by buffer
+        ! POSITION, and only self-insert, skip-over and pair-backspace keep
+        ! those positions honest. Arm the flag here; each of those three sets
+        ! it, and the post-dispatch sweep below drops the whole stack for every
+        ! other key. That single choke point is why no edit path (kill, yank,
+        ! history recall, completion, undo, vi ops, FZF) needs its own reset —
+        ! and a dropped stack costs at most a skip-over, never a wrong edit.
+        ap_keep_this_key = .false.
+
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
         ! handler re-arms it after inserting, so clearing here (before dispatch)
         ! correctly leaves it lit only until the user's next keystroke/motion.
@@ -959,6 +969,9 @@ contains
           end if
           call insert_utf8_char(module_input_state, utf8_char(1:utf8_num_bytes), utf8_num_bytes, utf8_i)
           call undo_commit_if_changed(module_input_state)  ! DIV-1 (this path cycles)
+          ! AR-11 PAIRS: multi-byte inserts don't maintain closer positions, and
+          ! this path cycles past the post-dispatch sweep, so drop the stack here.
+          call autopair_reset()
           cycle  ! Skip the control character processing below
         end if
 
@@ -1338,6 +1351,9 @@ contains
 
         ! Undo (DIV-1): record this keystroke's edit (if any) as an undo point.
         call undo_commit_if_changed(module_input_state)
+
+        ! AR-11 PAIRS: see the arming comment above.
+        if (.not. ap_keep_this_key) call autopair_reset()
 
         ! Coalesce input bursts (paste / fast typing): if bytes are already
         ! queued on stdin, defer the redraw and loop to consume them, so the
