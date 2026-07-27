@@ -377,6 +377,13 @@ contains
     if (.not. input_state%selection_active) then
       call autopair_try_skip(input_state, ch, ap_consumed)
       if (ap_consumed) then
+        if (test_mode_enabled) then
+          ! Keep every typed byte in the test-mode transcript (see the
+          ! middle-insert echo below) — the user pressed this key, so a spec
+          ! matching on the typed line must still find it.
+          write(output_unit, '(a)', advance='no') ch
+          flush(output_unit)
+        end if
         call update_autosuggestion(input_state)
         return
       end if
@@ -493,6 +500,20 @@ contains
 
       ! Middle insertion requires full redraw
       input_state%dirty = .true.
+
+      if (test_mode_enabled) then
+        ! Test mode skips the redraw and treats the PTY stream as a plain
+        ! transcript of what was typed, so a middle insertion has to echo too —
+        ! otherwise it never reaches the stream at all. That was survivable
+        ! while middle insertions were rare, but autopair puts the cursor
+        ! inside a pair, making EVERY following character a middle insertion:
+        ! `echo ${UNSET:?error message}` reached the transcript as `echo ${`,
+        ! and specs that match on the echoed line silently lost their anchor.
+        ! The column will not match the buffer — test mode has no cursor
+        ! addressing to make it — but every typed byte is present and in order.
+        write(output_unit, '(a)', advance='no') ch
+        flush(output_unit)
+      end if
     end if
 
     ! Deallocate heap-allocated temp buffer
@@ -512,13 +533,14 @@ contains
         ! The cursor now sits mid-buffer, so the fast append/wrap paths above
         ! no longer describe the screen — force the full redraw.
         !
-        ! Nothing is echoed for test mode here on purpose. Test mode has no
-        ! redraw and echoes only the APPEND path, so every mid-buffer edit is
-        ! already silent there; emitting the closer plus a BS would draw a
-        ! glyph that the next keystroke visually overwrites, which is worse
-        ! than staying quiet. Test-mode specs assert on executed output, and
-        ! the buffer itself is correct either way.
         input_state%dirty = .true.
+        if (test_mode_enabled) then
+          ! Keep the test-mode transcript complete (see the middle-insert echo
+          ! above): the closer is a byte the user will see, so it belongs in
+          ! the stream even though nothing here can position it.
+          write(output_unit, '(a)', advance='no') ap_closer
+          flush(output_unit)
+        end if
       end if
     end if
 
