@@ -150,6 +150,16 @@ jobs:
           source .venv/bin/activate
           python run_tests.py
 
+      # The YAML specs above assert on executed output; these assert on what is
+      # RENDERED (cursor position, colours, redraw layout) and cover editing
+      # features the specs cannot reach. `-m "not known_failure"` skips tests
+      # that already fail on trunk for unrelated reasons — see pytest.ini.
+      - name: Run interactive pytest suite
+        run: |
+          cd tests/interactive
+          source .venv/bin/activate
+          python -m pytest -q -m "not known_failure"
+
   # ============================================================================
   # ARM64 Linux (gfortran)
   # ============================================================================
@@ -178,6 +188,16 @@ jobs:
           cd tests/interactive
           source .venv/bin/activate
           python run_tests.py
+
+      # The YAML specs above assert on executed output; these assert on what is
+      # RENDERED (cursor position, colours, redraw layout) and cover editing
+      # features the specs cannot reach. `-m "not known_failure"` skips tests
+      # that already fail on trunk for unrelated reasons — see pytest.ini.
+      - name: Run interactive pytest suite
+        run: |
+          cd tests/interactive
+          source .venv/bin/activate
+          python -m pytest -q -m "not known_failure"
 
   arm64-linux-posix:
     name: "ARM64 Linux: POSIX Tests"
@@ -305,6 +325,16 @@ jobs:
           cd tests/interactive
           source .venv/bin/activate
           python run_tests.py
+
+      # The YAML specs above assert on executed output; these assert on what is
+      # RENDERED (cursor position, colours, redraw layout) and cover editing
+      # features the specs cannot reach. `-m "not known_failure"` skips tests
+      # that already fail on trunk for unrelated reasons — see pytest.ini.
+      - name: Run interactive pytest suite
+        run: |
+          cd tests/interactive
+          source .venv/bin/activate
+          python -m pytest -q -m "not known_failure"
 
   macos-arm64-integration:
     name: "macOS ARM64: Integration Tests"
