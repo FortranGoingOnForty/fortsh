@@ -1,0 +1,2 @@
+Hello 世界
+ set -o emacs; PS1= rocket

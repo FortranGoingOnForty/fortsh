@@ -196,3 +196,29 @@ def test_set_plus_o_autopair_disables_it(fortsh_path, tmp_path):
     line, _ = _line(fortsh_path, tmp_path, [b"set +o autopair\r", b"echo ("])
     assert line.startswith("> echo (")
     assert "()" not in line
+
+
+# ------------------------------------------------------- selection wrapping
+
+SHIFT_LEFT = b"\x1b[1;2D"
+
+
+def test_opener_wraps_a_selection(fortsh_path, tmp_path):
+    """An opener typed over a shift-selection surrounds it instead of
+    replacing it; every other character still types over."""
+    line, _ = _line(fortsh_path, tmp_path, [b"echo abc", SHIFT_LEFT * 3, b"("])
+    assert line.startswith("> echo (abc)")
+
+
+def test_wrapping_can_be_repeated(fortsh_path, tmp_path):
+    """The selection is kept over the original text, so a second opener wraps
+    around the first pair."""
+    line, _ = _line(fortsh_path, tmp_path,
+                    [b"echo abc", SHIFT_LEFT * 3, b"(", b'"'])
+    assert line.startswith('> echo ("abc")')
+
+
+def test_non_opener_still_types_over_a_selection(fortsh_path, tmp_path):
+    line, _ = _line(fortsh_path, tmp_path, [b"echo abc", SHIFT_LEFT * 3, b"X"])
+    assert line.startswith("> echo X")
+    assert "abc" not in line

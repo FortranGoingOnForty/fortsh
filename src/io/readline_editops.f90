@@ -382,6 +382,16 @@ contains
       end if
     end if
 
+    ! AR-11 PAIRS: an OPENER typed over a selection surrounds it instead of
+    ! replacing it. Every other character still types over, below.
+    if (input_state%selection_active) then
+      call autopair_wrap_selection(input_state, ch, ap_consumed)
+      if (ap_consumed) then
+        call update_autosuggestion(input_state)
+        return
+      end if
+    end if
+
     ! Shift-phase type-over (Sprint 3): typing a character while a selection
     ! is active replaces the selection. delete_selection removes the bytes,
     ! moves cursor to the left edge, and clears selection state.

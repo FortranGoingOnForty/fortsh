@@ -350,6 +350,55 @@ contains
     ok = .true.
   end subroutine autopair_insert_closer
 
+  ! An opener typed while a selection is live SURROUNDS the selection rather
+  ! than typing over it — the editor convention, and strictly more useful here
+  ! since replacing is still reachable by deleting first. The selection is kept
+  ! over the original text (now shifted one right) so it can be wrapped again.
+  ! `consumed` is .true. when the keystroke was handled here.
+  subroutine autopair_wrap_selection(state, ch, consumed)
+    type(input_state_t), intent(inout) :: state
+    character, intent(in) :: ch
+    logical, intent(out) :: consumed
+    integer :: sel_start, sel_end, i
+    character :: closer
+
+    consumed = .false.
+    if (.not. global_autopair) return
+    if (.not. state%selection_active) return
+    if (state%selection_anchor < 0) return
+
+    closer = autopair_closer_for(ch)
+    if (closer == ' ') return
+
+    sel_start = min(state%selection_anchor, state%cursor_pos)
+    sel_end   = max(state%selection_anchor, state%cursor_pos)
+    if (sel_end <= sel_start) return
+    if (state%length + 2 > MAX_LINE_LEN - 1) return
+
+    ! The selected text occupies 1-based positions sel_start+1 .. sel_end.
+    ! Open a two-byte gap around it, working right to left: the tail past the
+    ! selection moves by 2, the selection itself by 1.
+    do i = state%length, sel_end + 1, -1
+      call state_buffer_set_char(state, i + 2, state_buffer_get_char(state, i))
+    end do
+    do i = sel_end, sel_start + 1, -1
+      call state_buffer_set_char(state, i + 1, state_buffer_get_char(state, i))
+    end do
+    call state_buffer_set_char(state, sel_start + 1, ch)
+    call state_buffer_set_char(state, sel_end + 2, closer)
+
+    state%length = state%length + 2
+    state%selection_anchor = sel_start + 1
+    state%cursor_pos = sel_end + 1
+    state%dirty = .true.
+
+    ! No stack bookkeeping: the closer lands at the far end of the selection,
+    ! not at the cursor, so it is not a pending closer to skip over. Leaving
+    ! ap_keep_this_key false lets the input loop's sweep drop the old entries,
+    ! whose positions this two-part shift would otherwise have invalidated.
+    consumed = .true.
+  end subroutine autopair_wrap_selection
+
   ! Typing a closer we already inserted moves over it instead of doubling it.
   ! `consumed` is .true. when the keystroke was handled here.
   subroutine autopair_try_skip(state, ch, consumed)
