@@ -35,6 +35,10 @@ def _line(fortsh_path, tmp_path, chunks, cols=COLS):
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
     env.pop("FORTSH_TEST_MODE", None)
+    # Pin HOME/HISTFILE so the developer's real history cannot supply a
+    # different autosuggestion than the one these assertions expect.
+    env["HOME"] = str(tmp_path)
+    env["HISTFILE"] = "/dev/null"
     child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
                           encoding=None, timeout=8, dimensions=(ROWS, cols))
     screen = pyte.Screen(cols, ROWS)
@@ -246,6 +250,10 @@ def _cells(fortsh_path, tmp_path, chunks, seed, cols=COLS):
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
     env.pop("FORTSH_TEST_MODE", None)
+    # Pin HOME/HISTFILE so the developer's real history cannot supply a
+    # different autosuggestion than the one these assertions expect.
+    env["HOME"] = str(tmp_path)
+    env["HISTFILE"] = "/dev/null"
     child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
                           encoding=None, timeout=8, dimensions=(ROWS, cols))
     screen = pyte.Screen(cols, ROWS)

@@ -33,6 +33,11 @@ def _run_keys(fortsh_path, tmp_path, chunks):
     consecutive-kill flag rotates between them), execute, return screen rows."""
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
+    # Pin HOME/HISTFILE: with the developer's real home the shell loads their
+    # history and renders an autosuggestion onto the very row these assertions
+    # match, so the tests passed only on a machine with an empty history.
+    env["HOME"] = str(tmp_path)
+    env["HISTFILE"] = "/dev/null"
     child = pexpect.spawn(fortsh_path, ["--norc"], cwd=str(tmp_path), env=env,
                           encoding=None, timeout=8, dimensions=(ROWS, COLS))
     screen = pyte.Screen(COLS, ROWS)
