@@ -377,12 +377,6 @@ contains
     if (.not. input_state%selection_active) then
       call autopair_try_skip(input_state, ch, ap_consumed)
       if (ap_consumed) then
-        if (test_mode_enabled) then
-          ! Test mode has no redraw: re-emit the byte to walk the terminal
-          ! cursor over the glyph already sitting there.
-          write(output_unit, '(a)', advance='no') ch
-          flush(output_unit)
-        end if
         call update_autosuggestion(input_state)
         return
       end if
@@ -507,13 +501,14 @@ contains
       if (ap_ok) then
         ! The cursor now sits mid-buffer, so the fast append/wrap paths above
         ! no longer describe the screen — force the full redraw.
+        !
+        ! Nothing is echoed for test mode here on purpose. Test mode has no
+        ! redraw and echoes only the APPEND path, so every mid-buffer edit is
+        ! already silent there; emitting the closer plus a BS would draw a
+        ! glyph that the next keystroke visually overwrites, which is worse
+        ! than staying quiet. Test-mode specs assert on executed output, and
+        ! the buffer itself is correct either way.
         input_state%dirty = .true.
-        if (test_mode_enabled) then
-          ! Test mode skips the redraw entirely and echoes inline, so draw the
-          ! closer and step back over it with a plain BS (no escapes).
-          write(output_unit, '(a)', advance='no') ap_closer // char(8)
-          flush(output_unit)
-        end if
       end if
     end if
 
