@@ -1,0 +1,124 @@
+# Smart quotes and brackets (AR-11 PAIRS)
+#
+# These assert on what the shell EXECUTED, which is the strongest available
+# proof that the closer really landed in the buffer: an unclosed quote or
+# bracket would put fortsh into continuation instead of running the line, and
+# a doubled closer would be a syntax error.
+#
+# expect_output is a regex handed to pexpect, and it is matched against the
+# whole PTY stream — which includes the terminal echo of what we typed. So
+# every expectation below is an ARITHMETIC RESULT (or an expanded variable):
+# a string the shell can only produce by evaluating the line. Never assert on
+# text that also appears in the keystrokes, or the test passes on the echo
+# alone. Screen-level behaviour (cursor position, guards that suppress
+# pairing) is covered by test_autopair.py, which reads the rendered buffer.
+
+metadata:
+  category: "Autopair"
+  description: "Auto-inserted closing quotes/brackets and skip-over on the typed closer"
+  phase: 11
+
+tests:
+  # =============================================================
+  # AUTO-CLOSE — the closer is never typed
+  # =============================================================
+  - name: "Unclosed double quote and parens are auto-closed"
+    steps:
+      - send: 'echo "$((6*7'
+      - send_key: "Enter"
+    expect_output: "42"
+    match_type: "contains"
+
+  # The apostrophe must follow a NON-word character to open a pair (guard G2,
+  # the one that keeps "don't" intact), hence the space before it here.
+  - name: "Unclosed single quote does not hang the line in continuation"
+    steps:
+      - send: "echo 'q"
+      - send_key: "Enter"
+      - send_line: "echo $((6*7))"
+    expect_output: "42"
+    match_type: "contains"
+
+  - name: "Unclosed command substitution paren is auto-closed"
+    steps:
+      - send: "echo $((6*7"
+      - send_key: "Enter"
+    expect_output: "42"
+    match_type: "contains"
+
+  - name: "Unclosed brace expansion is auto-closed"
+    steps:
+      - send: "echo ${HOME"
+      - send_key: "Enter"
+    expect_output: "/"
+    match_type: "contains"
+
+  - name: "Nested openers all auto-close in the right order"
+    steps:
+      - send: "echo $((3*(2+5"
+      - send_key: "Enter"
+    expect_output: "21"
+    match_type: "contains"
+
+  # =============================================================
+  # SKIP-OVER — typing the closer walks over it, never doubles it
+  # =============================================================
+  - name: "Typing every closing paren does not double any of them"
+    steps:
+      - send: "echo $((6*7))"
+      - send_key: "Enter"
+    expect_output: "42"
+    match_type: "contains"
+
+  - name: "Typing the closing quote does not double it"
+    steps:
+      - send: 'echo "$((6*7))" done'
+      - send_key: "Enter"
+    expect_output: "42 done"
+    match_type: "contains"
+
+  # =============================================================
+  # GUARDS — pairing stays out of the way
+  # =============================================================
+  - name: "Apostrophe inside a word does not open a pair"
+    steps:
+      - send: "echo \"don't $((6*7))\""
+      - send_key: "Enter"
+    expect_output: "don't 42"
+    match_type: "contains"
+
+  - name: "Single-quoted text runs unchanged with pairing suppressed"
+    steps:
+      - send: "echo 'a(b' $((6*7"
+      - send_key: "Enter"
+    expect_output: "42"
+    match_type: "contains"
+
+  # =============================================================
+  # BACKSPACE — one keypress undoes an auto-close
+  # =============================================================
+  - name: "Backspace inside an empty pair removes both halves"
+    steps:
+      - send: "echo ("
+      - send_key: "Backspace"
+      - send: "$((6*7"
+      - send_key: "Enter"
+    expect_output: "42"
+    match_type: "contains"
+
+  # =============================================================
+  # set -o autopair
+  # =============================================================
+  - name: "set +o autopair leaves a fully typed line working"
+    steps:
+      - send_line: "set +o autopair"
+      - send: "echo $((6*7))"
+      - send_key: "Enter"
+    expect_output: "42"
+    match_type: "contains"
+
+  - name: "autopair is listed by set -o and defaults on"
+    steps:
+      - send_line: "set -o"
+    expect_output: "autopair"
+    match_type: "contains"
