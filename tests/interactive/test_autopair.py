@@ -29,9 +29,15 @@ LEFT = b"\x1b[D"
 RIGHT = b"\x1b[C"
 
 
-def _line(fortsh_path, tmp_path, chunks, cols=COLS):
+def _line(fortsh_path, tmp_path, chunks, cols=COLS, setup=None):
     """Type each chunk as a discrete keystroke burst; return the input line
-    as rendered, plus the cursor's column."""
+    as rendered, plus the cursor's column.
+
+    `setup` is a command run to completion BEFORE typing begins. Folding it
+    into `chunks` as "cmd\r" only allowed the inter-chunk 0.15s gap for the
+    shell to execute it and repaint, which is not enough on a loaded macOS
+    runner — the following keystrokes then landed before the setting applied.
+    """
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
     env.pop("FORTSH_TEST_MODE", None)
@@ -56,6 +62,9 @@ def _line(fortsh_path, tmp_path, chunks, cols=COLS):
 
     time.sleep(1.0)
     drain(1.0)
+    if setup is not None:
+        child.send(setup + b"\r")
+        drain(1.5)
     for chunk in chunks:
         child.send(chunk)
         time.sleep(0.15)
@@ -207,7 +216,8 @@ def test_backspace_is_plain_once_the_pair_was_skipped(fortsh_path, tmp_path):
 # ------------------------------------------------------------- set -o
 
 def test_set_plus_o_autopair_disables_it(fortsh_path, tmp_path):
-    line, _ = _line(fortsh_path, tmp_path, [b"set +o autopair\r", b"echo ("])
+    line, _ = _line(fortsh_path, tmp_path, [b"echo ("],
+                    setup=b"set +o autopair")
     assert line.startswith("> echo (")
     assert "()" not in line
 
