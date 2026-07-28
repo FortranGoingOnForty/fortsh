@@ -1535,8 +1535,24 @@ contains
     ! Don't disable VEOF, VERASE, VKILL - we may want to check them
 #endif
 
-    ! Apply raw mode settings - use TCSAFLUSH to discard pending input
-    ! TCSAFLUSH is critical on macOS to ensure settings actually take effect
+    ! Apply raw mode settings - use TCSAFLUSH to discard pending input.
+    !
+    ! KNOWN COST: this throws away type-ahead. Keystrokes entered while a
+    ! command runs are echoed by the terminal driver and then dropped when we
+    ! re-enter raw mode, so the next prompt comes up empty where other shells
+    ! replay them.
+    !
+    ! TCSADRAIN fixes that and raw mode still engages correctly (the tcgetattr
+    ! verification below passes on macOS 26 arm64 and Linux — the old claim
+    ! that TCSAFLUSH was required for the settings to take effect is wrong).
+    ! It was tried and reverted: retaining type-ahead makes a line typed ahead
+    ! lose its `ignorespace` history exclusion, because it arrives back to back
+    ! with the previous line. Ten history-expansion tests broke on macOS —
+    ! `!!` repeated the next queued line instead of the previous command.
+    !
+    ! So switching this is not a one-line change: it needs the history
+    ! recording path to apply ignorespace per submitted line regardless of how
+    ! the bytes were buffered. Worth doing, but on its own.
     ret = c_tcsetattr(STDIN_FD, TCSAFLUSH, raw_termios)
     ! DEBUG: Commented out - too noisy
     mode_ok = (ret == 0)

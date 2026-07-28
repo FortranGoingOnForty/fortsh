@@ -85,8 +85,15 @@ def test_valid_command_stays_green(fortsh_path, tmp_path):
 
 
 def test_unclosed_single_quote_red(fortsh_path, tmp_path):
-    """HL-04: the opening quote of an unterminated string is red; body yellow."""
-    frame = _type_line(fortsh_path, tmp_path, "echo 'ab")
+    """HL-04: the opening quote of an unterminated string is red; body yellow.
+
+    Typed as `echo ab'ab` rather than `echo 'ab`: autopair (AR-11, on by
+    default) would auto-close the latter into a perfectly terminated string,
+    leaving nothing for this test to catch. An apostrophe directly after a
+    word character is the case autopair deliberately leaves alone — guard G2,
+    the one that keeps "don't" intact — so the quote really is unterminated.
+    """
+    frame = _type_line(fortsh_path, tmp_path, "echo ab'ab")
     assert b"\x1b[31m'\x1b[0m" in frame, f"unclosed quote not red: {frame!r}"
     assert b"\x1b[33mab\x1b[0m" in frame, f"quote body not yellow: {frame!r}"
 

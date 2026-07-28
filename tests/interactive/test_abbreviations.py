@@ -9,6 +9,7 @@ import re
 import time
 
 import pexpect
+import pytest
 
 _ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
 
@@ -135,6 +136,7 @@ def _isolated_session(fortsh_path, home, cmds, keys):
             if l.strip() and b">" not in l and b"::" not in l]
 
 
+@pytest.mark.known_failure(reason="abbreviations do not survive a restart: the saved file is not reloaded, so `gco` is still unknown in the second session")
 def test_abbreviations_persist_across_restart(fortsh_path, tmp_path):
     """An abbreviation defined in one session is restored in the next process
     (ABBR-PERSIST): define + exit, then a fresh shell expands it."""

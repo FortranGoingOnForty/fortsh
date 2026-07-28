@@ -6,7 +6,7 @@ module shell_options
   use shell_types
   use variables, only: set_shell_variable
   use system_interface, only: get_pid, get_ppid
-  use readline, only: set_global_editing_mode, set_global_fuzzy_complete
+  use readline, only: set_global_editing_mode, set_global_fuzzy_complete, set_global_autopair
   use iso_fortran_env, only: output_unit, error_unit
   use io_helpers, only: write_stdout
   implicit none
@@ -167,6 +167,9 @@ contains
               select case (trim(long_opt_name))
                 case ('allexport')
                   shell%option_allexport = enable_option
+                case ('autopair')
+                  shell%option_autopair = enable_option
+                  call set_global_autopair(enable_option)
                 case ('braceexpand')
                   shell%option_braceexpand = enable_option
                 case ('emacs')
@@ -471,11 +474,13 @@ contains
 
     ! Print each option with its current state (on/off), alphabetically sorted
     call print_option('allexport', shell%option_allexport)
+    call print_option('autopair', shell%option_autopair)
     call print_option('braceexpand', shell%option_braceexpand)
     call print_option('emacs', shell%option_emacs)
     call print_option('errexit', shell%option_errexit)
     call print_option('errtrace', shell%option_errtrace)
     call print_option('functrace', shell%option_functrace)
+    call print_option('fuzzy-complete', shell%option_fuzzy_complete)
     call print_option('hashall', shell%option_hashall)
     call print_option('histexpand', shell%option_histexpand)
     call print_option('history', shell%option_history)

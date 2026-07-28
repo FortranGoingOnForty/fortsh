@@ -1,5 +1,5 @@
 Name:           fortsh
-Version:        1.9.0
+Version:        1.10.0
 Release:        1%{?dist}
 Summary:        Fortran Shell - A modern shell implementation in Fortran with advanced features
 
@@ -59,6 +59,19 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Mon Jul 27 2026 mfw <espadon@outlook.com> - 1.10.0-1
+- Smart quotes and brackets (set -o autopair, on by default): typing ( [ { " '
+  or ` inserts the closer and parks the cursor between the two
+- Typing a closer fortsh inserted walks over it instead of doubling it, so a
+  fully typed line like echo $((6*7)) comes out exactly as typed
+- Backspace inside an empty pair removes both halves; an opener typed over a
+  selection wraps it instead of replacing it
+- Guards keep pairing out of the way: no pair after a word char (don't), after
+  a backslash, inside single quotes, or in front of existing text
+- Autosuggestions keep working inside a pair: the pending closer is drawn
+  behind the suggestion, and accepting leaves no stray quote
+- CI now runs the interactive pytest suite, which previously ran nowhere
+
 * Fri Jul 24 2026 mfw <espadon@outlook.com> - 1.9.0-1
 - Fix prompt duplication when typing " ` or $( — the per-keystroke directory
   scan no longer builds a /bin/sh command from the typed word (native readdir)

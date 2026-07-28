@@ -42,6 +42,16 @@ def _open_menu(fortsh_path, tmp_path):
 
     time.sleep(1.0)
     drain(1.0)
+    # Pin the prompt before doing anything layout-sensitive. fortsh's default
+    # prompt is user@host :: cwd, taken from gethostname(), and CI runners have
+    # ~60-character hostnames — on the macOS runner the prompt alone consumed
+    # this 28-column terminal, wrecking the geometry these assertions depend
+    # on. PS1 is not read from the environment at startup, so it has to be set
+    # as a command. This removes the host dependence; it does not paper over
+    # the separate, pre-existing narrow-terminal rendering bug (present in
+    # 1.9.0 too), which deserves its own test.
+    child.sendline(b"PS1='> '")
+    drain(1.0)
     child.send(b"cat file_")
     drain(0.6)
     child.send(b"\t")   # draw menu
@@ -161,6 +171,16 @@ def test_esc_dismisses_shown_menu(fortsh_path, tmp_path):
 
     time.sleep(1.0)
     drain(1.0)
+    # Pin the prompt before doing anything layout-sensitive. fortsh's default
+    # prompt is user@host :: cwd, taken from gethostname(), and CI runners have
+    # ~60-character hostnames — on the macOS runner the prompt alone consumed
+    # this 28-column terminal, wrecking the geometry these assertions depend
+    # on. PS1 is not read from the environment at startup, so it has to be set
+    # as a command. This removes the host dependence; it does not paper over
+    # the separate, pre-existing narrow-terminal rendering bug (present in
+    # 1.9.0 too), which deserves its own test.
+    child.sendline(b"PS1='> '")
+    drain(1.0)
     child.send(b"cat file_")
     drain(0.5)
     child.send(b"\t")  # draw menu, do NOT enter
@@ -209,6 +229,16 @@ def test_menu_enters_on_first_item(fortsh_path, tmp_path):
         return m.group(1).decode("utf-8", "replace").strip() if m else None
 
     time.sleep(1.0)
+    grab(1.0)
+    # Pin the prompt before doing anything layout-sensitive. fortsh's default
+    # prompt is user@host :: cwd, taken from gethostname(), and CI runners have
+    # ~60-character hostnames — on the macOS runner the prompt alone consumed
+    # this 28-column terminal, wrecking the geometry these assertions depend
+    # on. PS1 is not read from the environment at startup, so it has to be set
+    # as a command. This removes the host dependence; it does not paper over
+    # the separate, pre-existing narrow-terminal rendering bug (present in
+    # 1.9.0 too), which deserves its own test.
+    child.sendline(b"PS1='> '")
     grab(1.0)
     child.send(b"cat file_")
     grab(0.6)

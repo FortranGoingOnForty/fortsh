@@ -159,7 +159,10 @@ tests:
 - name: '139. QUOTING EDGE CASES: adjacent quotes concat'
   steps:
   - send_line: echo "a"b"c"
-  expect_output: a"b"c
+  # abc, not a"b"c: adjacent quoted and unquoted runs CONCATENATE, which is the
+  # whole point of the case. The old expectation was the echoed input line, so
+  # it matched the terminal echo and never checked the shell at all.
+  expect_output: abc
   match_type: contains
 - name: '139. QUOTING EDGE CASES: quote in quote'
   steps:
@@ -179,7 +182,9 @@ tests:
 - name: '142. REDIRECTION EDGE CASES: read/write mode'
   steps:
   - send_line: echo data > /tmp/posix_rw.txt; cat <> /tmp/posix_rw.txt; rm /tmp/posix_rw.txt
-  expect_output: data > /tmp/posix_rw.txt; cat <> /tmp/posix_rw.txt; rm /tmp/posix_rw.txt
+  # `cat <>` on the file just written prints its contents. The old expectation
+  # was the command line itself, so it matched the echo rather than the result.
+  expect_output: data
   match_type: contains
 - name: '144. SET -n (NOEXEC) TESTING: set -n parse only'
   steps:

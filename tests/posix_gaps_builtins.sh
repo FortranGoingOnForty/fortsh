@@ -183,7 +183,14 @@ compare_posix_output "set -- clears positionals" "set -- a b; set --; echo \$#"
 compare_posix_error "set -- with empty" "set -- ''; echo \$# |\$1|"
 compare_posix_output "set -- with spaces" "set -- 'a b' 'c d'; echo \$1"
 compare_posix_output "set without args shows vars" "X=1; set | grep -c '^X='"
-compare_posix_output "set -o lists options" "set -o 2>&1 | wc -l"
+# Counts only the options bash itself defines, NOT every line of output. The
+# old form compared `set -o | wc -l` against bash, which asserted that fortsh
+# exposes exactly as many options as bash — so a shell-specific option like
+# fuzzy-complete or autopair could never be listed, and a fortsh that listed 27
+# entirely different names would still have passed. This checks the property
+# that actually matters: every option bash defines is present in fortsh too.
+BASH_OPTS='^(allexport|braceexpand|emacs|errexit|errtrace|functrace|hashall|histexpand|history|ignoreeof|interactive-comments|keyword|monitor|noclobber|noexec|noglob|nolog|notify|nounset|onecmd|physical|pipefail|posix|privileged|verbose|vi|xtrace)$'
+compare_posix_output "set -o lists options" "set -o 2>&1 | awk '{print \$1}' | grep -cE '$BASH_OPTS'"
 compare_posix_output "set args" 'set -- a b c; echo $1 $2 $3'
 compare_posix_output "set count" 'set -- a b c d e; echo $#'
 compare_posix_output "set all" 'set -- x y z; echo "$@"'

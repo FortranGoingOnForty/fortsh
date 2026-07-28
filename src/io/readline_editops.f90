@@ -14,6 +14,7 @@ module readline_editops
   use readline_constants
   use readline_state
   use readline_bufferops
+  use readline_autopair
   use readline_history, only: get_history_line
   use readline_completion_backend, only: complete_files_enhanced
   use suggestions, only: compute_path_suggestion, compute_history_suggestion, &
@@ -364,6 +365,39 @@ contains
     character, intent(in) :: ch
     integer :: term_cols
     character(len=:), allocatable :: temp_buffer  ! Heap allocation to avoid stack overflow
+    logical :: ap_do_close, ap_ok, ap_consumed
+    character :: ap_closer
+
+    ! AR-11 PAIRS: typing the closer we auto-inserted walks over it instead of
+    ! doubling it. This lives here rather than in the keystroke dispatch so the
+    ! vi dot-repeat replay — which calls insert_char_impl directly, bypassing
+    ! insert_char_wrapper so it isn't re-recorded — reproduces the original edit
+    ! byte for byte: a recorded "()" replays as auto-close then skip-over.
+    ! Skipped while a selection is live, where the key must type over instead.
+    if (.not. input_state%selection_active) then
+      call autopair_try_skip(input_state, ch, ap_consumed)
+      if (ap_consumed) then
+        if (test_mode_enabled) then
+          ! Keep every typed byte in the test-mode transcript (see the
+          ! middle-insert echo below) — the user pressed this key, so a spec
+          ! matching on the typed line must still find it.
+          write(output_unit, '(a)', advance='no') ch
+          flush(output_unit)
+        end if
+        call update_autosuggestion(input_state)
+        return
+      end if
+    end if
+
+    ! AR-11 PAIRS: an OPENER typed over a selection surrounds it instead of
+    ! replacing it. Every other character still types over, below.
+    if (input_state%selection_active) then
+      call autopair_wrap_selection(input_state, ch, ap_consumed)
+      if (ap_consumed) then
+        call update_autosuggestion(input_state)
+        return
+      end if
+    end if
 
     ! Shift-phase type-over (Sprint 3): typing a character while a selection
     ! is active replaces the selection. delete_selection removes the bytes,
@@ -403,6 +437,13 @@ contains
         ch == '>' .or. ch == '<' .or. ch == ')') then
       call try_expand_abbreviation_at_cursor(input_state)
     end if
+
+    ! AR-11 PAIRS: decide about auto-closing BEFORE the opener goes in — the
+    ! guards read the quote context and the character at the cursor, both of
+    ! which the insertion itself changes (typing '"' flips PLAIN to DQ). Run it
+    ! after the abbreviation expansion above, which can move the cursor.
+    ap_do_close = autopair_should_close(input_state, ch)
+    ap_closer = autopair_closer_for(ch)
 
     ! If cursor is at end, simple append
     if (input_state%cursor_pos >= input_state%length) then
@@ -459,10 +500,49 @@ contains
 
       ! Middle insertion requires full redraw
       input_state%dirty = .true.
+
+      if (test_mode_enabled) then
+        ! Test mode skips the redraw and treats the PTY stream as a plain
+        ! transcript of what was typed, so a middle insertion has to echo too —
+        ! otherwise it never reaches the stream at all. That was survivable
+        ! while middle insertions were rare, but autopair puts the cursor
+        ! inside a pair, making EVERY following character a middle insertion:
+        ! `echo ${UNSET:?error message}` reached the transcript as `echo ${`,
+        ! and specs that match on the echoed line silently lost their anchor.
+        ! The column will not match the buffer — test mode has no cursor
+        ! addressing to make it — but every typed byte is present and in order.
+        write(output_unit, '(a)', advance='no') ch
+        flush(output_unit)
+      end if
     end if
 
     ! Deallocate heap-allocated temp buffer
     if (allocated(temp_buffer)) deallocate(temp_buffer)
+
+    ! AR-11 PAIRS: keep any pending closers pointing at the right bytes (the
+    ! insert above shifted everything from the cursor rightward), and mark the
+    ! keystroke as one that MAINTAINS the stack, so the input loop's
+    ! post-dispatch sweep leaves it alone.
+    call autopair_note_insert(input_state%cursor_pos)
+    ap_keep_this_key = .true.
+
+    ! Auto-close: drop the closer in at the cursor without advancing it.
+    if (ap_do_close) then
+      call autopair_insert_closer(input_state, ap_closer, ap_ok)
+      if (ap_ok) then
+        ! The cursor now sits mid-buffer, so the fast append/wrap paths above
+        ! no longer describe the screen — force the full redraw.
+        !
+        input_state%dirty = .true.
+        if (test_mode_enabled) then
+          ! Keep the test-mode transcript complete (see the middle-insert echo
+          ! above): the closer is a byte the user will see, so it belongs in
+          ! the stream even though nothing here can position it.
+          write(output_unit, '(a)', advance='no') ap_closer
+          flush(output_unit)
+        end if
+      end if
+    end if
 
     ! Update autosuggestion after inserting character
     call update_autosuggestion(input_state)
@@ -897,7 +977,7 @@ contains
 
   subroutine update_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: j, search_max
+    integer :: j, search_max, eff_len
     ! CRITICAL: Use fixed-length (NOT deferred-length) for flang-new compatibility
     character(len=MAX_LINE_LEN), allocatable :: current_input
     type(suggestion_result_t) :: hist_result
@@ -928,8 +1008,16 @@ contains
       return
     end if
 
+    ! AR-11 PAIRS: when the only thing to the right of the cursor is the
+    ! closers we auto-inserted, suggest from the text the user actually typed.
+    ! Feeding the closers into the match would compare `echo "quo"` against
+    ! history and find nothing, which silenced suggestions inside every quoted
+    ! argument. The renderer hides those closers while a suggestion shows.
+    eff_len = input_state%length
+    if (autopair_tail_only(input_state)) eff_len = input_state%cursor_pos
+
     ! Clear suggestion if buffer is empty or in special modes
-    if (input_state%length == 0 .or. input_state%in_search .or. input_state%in_history &
+    if (eff_len == 0 .or. input_state%in_search .or. input_state%in_history &
         .or. input_state%in_prefix_search) then
       input_state%suggestion = ''
       input_state%suggestion_length = 0
@@ -939,7 +1027,7 @@ contains
 
     ! Get current input - copy character-by-character (avoid substring on allocatable)
     current_input = ''
-    do j = 1, input_state%length
+    do j = 1, eff_len
       current_input(j:j) = state_buffer_get_char(input_state, j)
     end do
 
@@ -951,12 +1039,12 @@ contains
       search_max = command_history%count
       do
         hist_result = compute_history_suggestion( &
-          current_input, input_state%length, &
+          current_input, eff_len, &
           command_history%lines, command_history%count, search_max)
 
         if (hist_result%source == SUGGEST_NONE) exit
 
-        if (history_suggestion_valid(current_input(1:input_state%length), &
+        if (history_suggestion_valid(current_input(1:eff_len), &
                                      hist_result%text(1:hist_result%length))) then
           input_state%suggestion = ''
           do j = 1, hist_result%length
@@ -974,7 +1062,7 @@ contains
     end if
 
     ! Priority 2: path-based suggestion (fallback when no history match)
-    call try_path_suggestion(current_input(1:input_state%length), input_state)
+    call try_path_suggestion(current_input(1:eff_len), input_state)
 
     if (allocated(current_input)) deallocate(current_input)
   end subroutine

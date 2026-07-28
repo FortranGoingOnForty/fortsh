@@ -7,6 +7,7 @@ module readline
   use readline_constants
   use readline_state
   use readline_bufferops
+  use readline_autopair
   use readline_history
   use readline_completion_backend
   use readline_editops
@@ -640,6 +641,8 @@ contains
     integer :: nav_cursor_row  ! Saved current_row for cursor-up navigation
     integer :: highlighted_len  ! Actual length of highlighted string
     integer :: sel_start, sel_end  ! Selection byte range for Sprint 2 rendering
+    integer :: ap_eff_len          ! AR-11: rendered buffer length (see ap_hide_tail)
+    logical :: ap_hide_tail        ! AR-11: pending closers stand behind a suggestion
     logical :: defer_redraw  ! Coalesce: skip redraw while more input is queued
     logical :: submit_pending  ! Normal Enter: defer the newline until after the
                                ! in-place redraw (clears paste highlight first)
@@ -724,6 +727,7 @@ contains
     prev_diff_valid = .false.
     prev_render_valid = .false.
     call undo_reset()   ! each line has its own undo history (DIV-1)
+    call autopair_reset()  ! pending closers never cross a line (AR-11)
 
     ! Initialize history on first use
     call init_history()
@@ -901,6 +905,16 @@ contains
         undo_navigate_this_key = .false.
         call undo_capture_pre(module_input_state)
 
+        ! AR-11 PAIRS: the pending auto-inserted closers are tracked by buffer
+        ! POSITION, and only self-insert, skip-over and pair-backspace keep
+        ! those positions honest. Arm the flag here; each of those three sets
+        ! it, and the post-dispatch sweep below drops the whole stack for any
+        ! OTHER key that moved bytes. That single choke point is why no edit
+        ! path (kill, yank, history recall, completion, undo, vi ops, FZF)
+        ! needs a reset of its own — and a dropped stack costs at most a
+        ! skip-over, never a wrong edit.
+        ap_keep_this_key = .false.
+
         ! Fish-style paste highlight clears on the next key. The bracketed-paste
         ! handler re-arms it after inserting, so clearing here (before dispatch)
         ! correctly leaves it lit only until the user's next keystroke/motion.
@@ -933,6 +947,10 @@ contains
           ! while navigating accepts the selection (space-separated), typing
           ! with the menu merely shown dismisses it
           if (module_input_state%in_menu_select) then
+            ! AR-11 PAIRS: accepting a menu item rewrites the buffer wholesale,
+            ! so any recorded closer position is meaningless afterwards. This
+            ! path cycles past the post-dispatch sweep, hence the explicit drop.
+            call autopair_reset()
             if (module_input_state%in_process_kill_mode) then
               call exit_menu_select_mode(module_input_state)
               module_input_state%in_process_kill_mode = .false.
@@ -947,6 +965,7 @@ contains
             end if
           else if (module_input_state%completions_shown .and. &
                    module_input_state%menu_num_items > 0) then
+            call autopair_reset()
             call exit_menu_select_mode(module_input_state)
           end if
           ! Multi-byte UTF-8 character (emoji, CJK, etc.)
@@ -958,6 +977,9 @@ contains
           end if
           call insert_utf8_char(module_input_state, utf8_char(1:utf8_num_bytes), utf8_num_bytes, utf8_i)
           call undo_commit_if_changed(module_input_state)  ! DIV-1 (this path cycles)
+          ! AR-11 PAIRS: insert_utf8_char shifted the pending closers itself, so
+          ! nothing to drop here — typing CJK or an emoji inside a pair must not
+          ! cost the closing quote its skip-over.
           cycle  ! Skip the control character processing below
         end if
 
@@ -1338,6 +1360,13 @@ contains
         ! Undo (DIV-1): record this keystroke's edit (if any) as an undo point.
         call undo_commit_if_changed(module_input_state)
 
+        ! AR-11 PAIRS: see the arming comment above. A key that left the bytes
+        ! alone (any cursor motion, Ctrl-L, a search keystroke) cannot have
+        ! invalidated the recorded positions, so the stack survives it.
+        if (.not. ap_keep_this_key) then
+          if (autopair_buffer_changed(module_input_state)) call autopair_reset()
+        end if
+
         ! Coalesce input bursts (paste / fast typing): if bytes are already
         ! queued on stdin, defer the redraw and loop to consume them, so the
         ! whole burst lands in ONE frame (like bash/zsh) instead of redrawing
@@ -1566,6 +1595,25 @@ contains
               ! Try syntax highlighting
               call state_buffer_get(module_input_state, temp_buf)
 
+              ! AR-11 PAIRS: when a suggestion is live and the ONLY thing right
+              ! of the cursor is the closers we auto-inserted, render the buffer
+              ! up to the cursor and let the suggestion stand in for them. The
+              ! suggestion carries its own closing quote, so "echo \"quo" shows
+              ! as `echo "quoted hello there"` rather than the nonsense
+              ! `echo "quo"ted hello there"`; accepting drops the pending
+              ! closers. Restricted to the plain single-line render path so the
+              ! shortened length and the suggestion block below always agree —
+              ! the selection / paste-highlight / prefix-search branches draw
+              ! their own segments off the full length.
+              ap_hide_tail = (module_input_state%suggestion_length > 0 .and. &
+                              .not. module_input_state%selection_active .and. &
+                              .not. module_input_state%paste_hl_active .and. &
+                              .not. module_input_state%in_prefix_search .and. &
+                              index(temp_buf(:module_input_state%length), char(10)) == 0 .and. &
+                              autopair_tail_only(module_input_state))
+              ap_eff_len = module_input_state%length
+              if (ap_hide_tail) ap_eff_len = module_input_state%cursor_pos
+
               ! Multi-line buffer (AR-10, e.g. a pasted snippet): render with
               ! \n -> \r\n so each logical line starts at column 0. Highlight
               ! still applies (tokenize_v2 treats \n as a separator). This path
@@ -1631,20 +1679,22 @@ contains
                   call rdraw_append(temp_buf(module_input_state%prefix_search_len+1:module_input_state%length))
                 end if
               else
-                call highlight_command_line(temp_buf(:module_input_state%length), &
+                call highlight_command_line(temp_buf(:ap_eff_len), &
                                             module_highlighted_buffer, module_highlighted_len, &
-                                            module_input_state%length)
+                                            ap_eff_len)
                 if (module_highlighted_len > 0 .and. module_highlighted_len <= len(module_highlighted_buffer)) then
                   call rdraw_append(module_highlighted_buffer(:module_highlighted_len))
                 else
-                  call rdraw_append(temp_buf(:module_input_state%length))
+                  call rdraw_append(temp_buf(:ap_eff_len))
                 end if
               end if
 
-              ! Display autosuggestion if present (only when cursor is at end)
+              ! Display autosuggestion if present (only when the cursor is at
+              ! the end of what we just RENDERED — end of buffer normally, or
+              ! end of the typed text when ap_hide_tail parked the closers).
               if (module_input_state%suggestion_length > 0 .and. &
-                  module_input_state%cursor_pos == module_input_state%length) then
-                cursor_visual_pos = prompt_visual_len + 1 + module_input_state%length
+                  module_input_state%cursor_pos == ap_eff_len) then
+                cursor_visual_pos = prompt_visual_len + 1 + ap_eff_len
 
                 if (term_cols > 0 .and. term_cols <= 500) then
                   current_col = mod(cursor_visual_pos, term_cols)
@@ -2161,6 +2211,12 @@ contains
       input_state%dirty = .true.
     end if
 
+    ! AR-11 PAIRS: shift the pending closers over the bytes just inserted. The
+    ! character occupies positions cursor_pos-num_bytes+1 .. cursor_pos now that
+    ! the cursor has advanced past it.
+    call autopair_note_insert_n(input_state%cursor_pos - num_bytes + 1, num_bytes)
+    ap_keep_this_key = .true.
+
     ! Update autosuggestion
     call update_autosuggestion(input_state)
   end subroutine insert_utf8_char
@@ -2278,11 +2334,21 @@ contains
     type(input_state_t), intent(inout) :: input_state
     integer :: i
     integer :: bytes_to_delete, delete_count
+    logical :: ap_consumed
 
     ! Shift-phase (Sprint 3): Backspace on an active selection deletes the
     ! whole range — no further character deletion. The key is "consumed".
     if (input_state%selection_active) then
       call delete_selection(input_state)
+      call update_autosuggestion(input_state)
+      return
+    end if
+
+    ! AR-11 PAIRS: backspacing out of an empty pair we created — cursor sitting
+    ! in "(|)" — removes both halves, so an auto-close is undone by the same
+    ! single keypress that would have undone a plain insert.
+    call autopair_try_backspace(input_state, ap_consumed)
+    if (ap_consumed) then
       call update_autosuggestion(input_state)
       return
     end if
@@ -2347,6 +2413,12 @@ contains
       input_state%dirty = .true.
     end if
 
+    ! AR-11 PAIRS: a plain backspace inside a pair shifts the pending closers
+    ! left; deleting one of them drops the stack (handled inside note_delete).
+    ! Claiming the key keeps the post-dispatch sweep from wiping the rest.
+    call autopair_note_delete(input_state%cursor_pos + 1, bytes_to_delete)
+    ap_keep_this_key = .true.
+
     ! Update autosuggestion after deleting character
     call update_autosuggestion(input_state)
   end subroutine
@@ -2391,6 +2463,10 @@ contains
     end do
 
     input_state%dirty = .true.
+    ! AR-11 PAIRS: as in handle_backspace — shift the pending closers left over
+    ! the span just removed rather than losing them to the sweep.
+    call autopair_note_delete(input_state%cursor_pos + 1, bytes_to_delete)
+    ap_keep_this_key = .true.
     call update_autosuggestion(input_state)
   end subroutine
 
@@ -3824,6 +3900,8 @@ contains
   subroutine update_live_preview(input_state)
     type(input_state_t), intent(in) :: input_state
     integer :: i, j, up_rows, prompt_rows
+    integer :: lp_term_cols, lp_term_rows, lp_col
+    logical :: lp_ok
     integer :: prompt_len, highlighted_len, item_len, preview_len
     character(len=MAX_LINE_LEN) :: preview_line, current_prefix
     character(len=MAX_MENU_ITEM_LEN) :: current_item
@@ -3842,10 +3920,24 @@ contains
     ! row: one per drawn menu line, plus one per prompt row. (The "blank
     ! separator" is just the newline terminating the command line — it
     ! does not occupy a row of its own.)
-    prompt_rows = 1
-    do i = 1, len_trim(input_state%menu_prompt)
-      if (input_state%menu_prompt(i:i) == char(10)) prompt_rows = prompt_rows + 1
-    end do
+    !
+    ! Counting NEWLINES is not enough: a prompt longer than the terminal is
+    ! wide occupies more rows than it has lines, and the up-move then stopped
+    ! short, so this rewrite repainted the prompt on top of the menu — the
+    ! command line appeared twice and the table vanished. It needs the same
+    ! wrap-aware model the redraw uses; cursor_get_row_col returns the 0-based
+    ! row that buffer position 0 lands on, i.e. one less than the rows the
+    ! prompt occupies. Reproduces on every platform with a prompt wider than
+    ! the terminal; CI hit it because runner hostnames are ~60 characters.
+#ifdef __APPLE__
+    call safe_get_terminal_size(lp_term_rows, lp_term_cols)
+#else
+    lp_ok = get_terminal_size(lp_term_rows, lp_term_cols)
+    if (.not. lp_ok) lp_term_cols = 0
+#endif
+    if (lp_term_cols <= 0) lp_term_cols = 80
+    call cursor_get_row_col(input_state%menu_prompt, 0, lp_term_cols, prompt_rows, lp_col)
+    prompt_rows = prompt_rows + 1
     up_rows = input_state%menu_drawn_lines + prompt_rows
 
     call rdraw_append(char(27) // '[?25l')
@@ -3937,7 +4029,7 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: processes(MAX_MENU_ITEMS)
     integer :: pids(MAX_MENU_ITEMS)
-    integer :: num_processes, i
+    integer :: num_processes, i, name_len
 
     ! Get process list
     call get_process_list(processes, pids, num_processes)
@@ -3960,9 +4052,24 @@ contains
     input_state%menu_row_start = 1
     input_state%menu_disclosed = .false.
 
-    ! Store process info in menu items (format: "PID: process_name")
+    ! Store process info in menu items (format: "PID: process_name").
+    ! The name MUST be clamped to what is left of the item after the "%8d: "
+    ! prefix: an internal write past the end of a fixed-size record is a FATAL
+    ! Fortran runtime error, not a truncation, so this aborts the whole shell
+    ! with SIGABRT. processes() is MAX_LINE_LEN (8192) while a menu item is
+    ! MAX_MENU_ITEM_LEN (256), and macOS ps reports full bundle paths that
+    ! routinely exceed that — Ctrl-X killed the shell outright there. Linux
+    ! process names are short enough that it never showed up.
     do i = 1, num_processes
-      write(input_state%menu_items(i), '(i8,a,a)') pids(i), ': ', trim(processes(i))
+      name_len = min(len_trim(processes(i)), MAX_MENU_ITEM_LEN - 10)
+      if (name_len < 0) name_len = 0
+      write(input_state%menu_items(i), '(i8,a,a)') pids(i), ': ', processes(i)(1:name_len)
+      ! The process menu has no description column. Blank it explicitly:
+      ! draw_completion_menu decides whether to render one from
+      ! len_trim(menu_desc_get(...)), and an untouched menu_descs entry holds
+      ! uninitialized bytes rather than blanks, so it reported descriptions
+      ! that did not exist and drew them as a row of '?'.
+      input_state%menu_descs(i) = ''
     end do
 
     ! Store PIDs for later use (we'll extract from menu_items when needed)
@@ -3979,7 +4086,7 @@ contains
     integer, intent(out) :: pids(MAX_MENU_ITEMS)
     integer, intent(out) :: num_processes
 
-    integer :: iostat, pid, line_start, line_end, output_len
+    integer :: iostat, pid, line_start, line_end, output_len, name_pos
     character(len=512) :: line, cmd_name, username
     character(len=:), allocatable :: ps_output
     integer :: stat
@@ -4027,11 +4134,33 @@ contains
       end if
 
       if (len_trim(line) > 0 .and. index(line, 'PID') == 0) then
-        read(line, *, iostat=iostat) pid, cmd_name
+        read(line, *, iostat=iostat) pid
         if (iostat == 0) then
-          num_processes = num_processes + 1
-          pids(num_processes) = pid
-          processes(num_processes) = trim(cmd_name)
+          ! Take the command as the REST of the line, NOT as a second
+          ! list-directed item. In list-directed input a '/' TERMINATES the
+          ! record, so `read(line,*) pid, cmd_name` stopped at the slash of a
+          ! macOS `ps -o comm=` absolute path, left cmd_name unread — with
+          ! iostat still 0 — and the uninitialized buffer rendered as a row of
+          ! '?' after sanitize_for_display. Linux ps prints a bare basename, so
+          ! it never showed there. Reading the remainder also keeps names that
+          ! contain spaces intact.
+          cmd_name = ''
+          name_pos = 1
+          do while (name_pos <= len(line) .and. line(name_pos:name_pos) == ' ')
+            name_pos = name_pos + 1
+          end do
+          do while (name_pos <= len(line) .and. line(name_pos:name_pos) /= ' ')
+            name_pos = name_pos + 1      ! skip the pid we already read
+          end do
+          do while (name_pos <= len(line) .and. line(name_pos:name_pos) == ' ')
+            name_pos = name_pos + 1
+          end do
+          if (name_pos <= len(line)) cmd_name = line(name_pos:)
+          if (len_trim(cmd_name) > 0) then
+            num_processes = num_processes + 1
+            pids(num_processes) = pid
+            processes(num_processes) = trim(cmd_name)
+          end if
         end if
       end if
     end do
@@ -4943,6 +5072,18 @@ contains
 
     old_cursor_pos = input_state%cursor_pos
 
+    ! AR-11 PAIRS: with a live suggestion standing in for the pending closers,
+    ! the cursor is visually at end-of-line even though bytes follow it. Accept
+    ! wins over motion here, or Right would step into a closer the user cannot
+    ! see. Guarded like the end-of-buffer accept below (no shift-extension, and
+    ! not on the press that clears a paste highlight).
+    if (autopair_tail_only(input_state) .and. input_state%suggestion_length > 0 &
+        .and. .not. module_extending_selection &
+        .and. .not. module_paste_hl_cleared_this_key) then
+      call accept_autosuggestion(input_state)
+      return
+    end if
+
     if (input_state%cursor_pos < input_state%length) then
       ! Get terminal size
       call get_terminal_size_from_env(term_cols)
@@ -4973,7 +5114,9 @@ contains
       ! Update module cursor tracking
       module_cursor_screen_row = new_row
       module_cursor_screen_col = new_col
-    else if (input_state%cursor_pos == input_state%length .and. input_state%suggestion_length > 0 &
+    else if ((input_state%cursor_pos == input_state%length .or. &
+              autopair_tail_only(input_state)) &
+             .and. input_state%suggestion_length > 0 &
              .and. .not. module_extending_selection &
              .and. .not. module_paste_hl_cleared_this_key) then
       ! At end of line with suggestion - accept it (but not during shift-extension —
@@ -6749,10 +6892,15 @@ contains
   ! path. No-op for exact-case / history suggestions (replace_len == 0).
   subroutine apply_suggestion_recase(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: j, base
+    integer :: j, base, anchor
     if (input_state%suggestion_replace_len <= 0) return
-    if (input_state%suggestion_replace_len > input_state%length) return
-    base = input_state%length - input_state%suggestion_replace_len
+    ! AR-11 PAIRS: the typed token ends at the CURSOR when pending closers are
+    ! parked to its right, not at end-of-buffer — recasing off the length would
+    ! rewrite the closers themselves.
+    anchor = input_state%length
+    if (autopair_pending_tail(input_state) > 0) anchor = input_state%cursor_pos
+    if (input_state%suggestion_replace_len > anchor) return
+    base = anchor - input_state%suggestion_replace_len
     do j = 1, input_state%suggestion_replace_len
       call state_buffer_set_char(input_state, base + j, &
         input_state%suggestion_replace_text(j:j))
@@ -6762,7 +6910,7 @@ contains
   ! Accept the current autosuggestion
   subroutine accept_autosuggestion(input_state)
     type(input_state_t), intent(inout) :: input_state
-    integer :: j, new_length
+    integer :: j, new_length, ap_tail
 
     if (input_state%suggestion_length == 0) return
 
@@ -6770,6 +6918,19 @@ contains
     if (input_state%selection_active) call collapse_selection(input_state)
 
     call apply_suggestion_recase(input_state)
+
+    ! AR-11 PAIRS: the renderer hid the pending closers behind this suggestion,
+    ! and the suggestion carries its own closing quote. Drop them before
+    ! appending, or accepting leaves `echo "quo"ted hello there"`.
+    ap_tail = autopair_pending_tail(input_state)
+    if (ap_tail > 0) then
+      do j = 1, ap_tail
+        call state_buffer_set_char(input_state, input_state%length - ap_tail + j, ' ')
+      end do
+      input_state%length = input_state%length - ap_tail
+      input_state%cursor_pos = input_state%length
+      call autopair_reset()
+    end if
 
     ! Safety check: ensure we won't overflow
     new_length = input_state%length + input_state%suggestion_length
@@ -6827,6 +6988,29 @@ contains
       if (word_end <= 0) return
     end if
 
+    ! AR-11 PAIRS: a PARTIAL accept stays inside the pair — splice the word in
+    ! at the cursor and let the pending closers slide right, so the closing
+    ! quote is still waiting when the rest of the argument is typed. (A full
+    ! accept, above, consumes them instead: the whole suggestion ends the
+    ! argument and brings its own closer.)
+    if (autopair_pending_tail(input_state) > 0) then
+      if (input_state%length + word_end > MAX_LINE_LEN - 1) return
+      do i = input_state%length, input_state%cursor_pos + 1, -1
+        call state_buffer_set_char(input_state, i + word_end, &
+                                   state_buffer_get_char(input_state, i))
+      end do
+      do i = 1, word_end
+        call state_buffer_set_char(input_state, input_state%cursor_pos + i, &
+                                   input_state%suggestion(i:i))
+      end do
+      input_state%length = input_state%length + word_end
+      call autopair_note_insert_n(input_state%cursor_pos + 1, word_end)
+      input_state%cursor_pos = input_state%cursor_pos + word_end
+      input_state%dirty = .true.
+      call update_autosuggestion(input_state)
+      return
+    end if
+
     ! Append first word to buffer using accessor (handles memory pool + C strings)
     do i = 1, word_end
       call state_buffer_set_char(input_state, input_state%length + i, input_state%suggestion(i:i))
@@ -6846,7 +7030,8 @@ contains
   subroutine forward_word_or_accept(input_state)
     type(input_state_t), intent(inout) :: input_state
 
-    if (input_state%cursor_pos == input_state%length .and. &
+    if ((input_state%cursor_pos == input_state%length .or. &
+         autopair_tail_only(input_state)) .and. &
         input_state%suggestion_length > 0) then
       call accept_autosuggestion_word(input_state)
     else
