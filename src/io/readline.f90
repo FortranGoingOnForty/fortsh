@@ -3900,6 +3900,8 @@ contains
   subroutine update_live_preview(input_state)
     type(input_state_t), intent(in) :: input_state
     integer :: i, j, up_rows, prompt_rows
+    integer :: lp_term_cols, lp_term_rows, lp_col
+    logical :: lp_ok
     integer :: prompt_len, highlighted_len, item_len, preview_len
     character(len=MAX_LINE_LEN) :: preview_line, current_prefix
     character(len=MAX_MENU_ITEM_LEN) :: current_item
@@ -3918,10 +3920,24 @@ contains
     ! row: one per drawn menu line, plus one per prompt row. (The "blank
     ! separator" is just the newline terminating the command line — it
     ! does not occupy a row of its own.)
-    prompt_rows = 1
-    do i = 1, len_trim(input_state%menu_prompt)
-      if (input_state%menu_prompt(i:i) == char(10)) prompt_rows = prompt_rows + 1
-    end do
+    !
+    ! Counting NEWLINES is not enough: a prompt longer than the terminal is
+    ! wide occupies more rows than it has lines, and the up-move then stopped
+    ! short, so this rewrite repainted the prompt on top of the menu — the
+    ! command line appeared twice and the table vanished. It needs the same
+    ! wrap-aware model the redraw uses; cursor_get_row_col returns the 0-based
+    ! row that buffer position 0 lands on, i.e. one less than the rows the
+    ! prompt occupies. Reproduces on every platform with a prompt wider than
+    ! the terminal; CI hit it because runner hostnames are ~60 characters.
+#ifdef __APPLE__
+    call safe_get_terminal_size(lp_term_rows, lp_term_cols)
+#else
+    lp_ok = get_terminal_size(lp_term_rows, lp_term_cols)
+    if (.not. lp_ok) lp_term_cols = 0
+#endif
+    if (lp_term_cols <= 0) lp_term_cols = 80
+    call cursor_get_row_col(input_state%menu_prompt, 0, lp_term_cols, prompt_rows, lp_col)
+    prompt_rows = prompt_rows + 1
     up_rows = input_state%menu_drawn_lines + prompt_rows
 
     call rdraw_append(char(27) // '[?25l')
