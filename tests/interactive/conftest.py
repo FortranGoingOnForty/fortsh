@@ -27,9 +27,16 @@ def find_fortsh_binary() -> str:
         "../fortsh/bin/fortsh",
     ]
 
+    # An explicit FORTSH must be honoured or fail loudly. Falling through to a
+    # discovered binary silently retests the wrong build — a comparison against
+    # an older revision then "passes" while measuring the current one.
     env_path = os.environ.get('FORTSH')
     if env_path:
-        candidates.insert(0, env_path)
+        if not (os.path.isfile(env_path) and os.access(env_path, os.X_OK)):
+            raise RuntimeError(
+                f"FORTSH={env_path!r} is not an executable file; refusing to "
+                f"fall back to a discovered binary")
+        return os.path.abspath(env_path)
 
     for path in candidates:
         if os.path.isfile(path) and os.access(path, os.X_OK):
