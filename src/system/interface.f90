@@ -1535,19 +1535,9 @@ contains
     ! Don't disable VEOF, VERASE, VKILL - we may want to check them
 #endif
 
-    ! Apply raw mode settings with TCSADRAIN: wait for queued output to drain,
-    ! but KEEP pending input. TCSAFLUSH discards it, which threw away anything
-    ! typed before the prompt was ready — type-ahead while a slow command
-    ! finishes just vanished, where every other shell replays it. It also made
-    ! PTY tests unreproducible: a client that had not yet drained our banner
-    ! left us blocked mid-write, and whatever it typed meanwhile was flushed
-    ! when we finally got here.
-    !
-    ! The old comment claimed TCSAFLUSH was needed on macOS for the settings to
-    ! take effect. It is not — the tcgetattr verification just below is what
-    ! actually confirms that, and it passes with TCSADRAIN on macOS 26 (arm64,
-    ! flang) as well as Linux.
-    ret = c_tcsetattr(STDIN_FD, TCSADRAIN, raw_termios)
+    ! Apply raw mode settings - use TCSAFLUSH to discard pending input
+    ! TCSAFLUSH is critical on macOS to ensure settings actually take effect
+    ret = c_tcsetattr(STDIN_FD, TCSAFLUSH, raw_termios)
     ! DEBUG: Commented out - too noisy
     mode_ok = (ret == 0)
     ! DEBUG: Commented out - too noisy
