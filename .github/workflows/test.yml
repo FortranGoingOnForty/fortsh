@@ -333,6 +333,7 @@ jobs:
       # and the process menu not populating. They pass on both Linux runners,
       # so marking them known_failure would blind those too. Each needs its own
       # investigation on macOS hardware; add this step back as they are fixed.
+      # Full writeup: tests/interactive/MACOS_PYTEST_HANDOFF.md
 
   macos-arm64-integration:
     name: "macOS ARM64: Integration Tests"
