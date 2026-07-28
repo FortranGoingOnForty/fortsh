@@ -4013,7 +4013,7 @@ contains
     type(input_state_t), intent(inout) :: input_state
     character(len=MAX_LINE_LEN) :: processes(MAX_MENU_ITEMS)
     integer :: pids(MAX_MENU_ITEMS)
-    integer :: num_processes, i
+    integer :: num_processes, i, name_len
 
     ! Get process list
     call get_process_list(processes, pids, num_processes)
@@ -4036,9 +4036,24 @@ contains
     input_state%menu_row_start = 1
     input_state%menu_disclosed = .false.
 
-    ! Store process info in menu items (format: "PID: process_name")
+    ! Store process info in menu items (format: "PID: process_name").
+    ! The name MUST be clamped to what is left of the item after the "%8d: "
+    ! prefix: an internal write past the end of a fixed-size record is a FATAL
+    ! Fortran runtime error, not a truncation, so this aborts the whole shell
+    ! with SIGABRT. processes() is MAX_LINE_LEN (8192) while a menu item is
+    ! MAX_MENU_ITEM_LEN (256), and macOS ps reports full bundle paths that
+    ! routinely exceed that — Ctrl-X killed the shell outright there. Linux
+    ! process names are short enough that it never showed up.
     do i = 1, num_processes
-      write(input_state%menu_items(i), '(i8,a,a)') pids(i), ': ', trim(processes(i))
+      name_len = min(len_trim(processes(i)), MAX_MENU_ITEM_LEN - 10)
+      if (name_len < 0) name_len = 0
+      write(input_state%menu_items(i), '(i8,a,a)') pids(i), ': ', processes(i)(1:name_len)
+      ! The process menu has no description column. Blank it explicitly:
+      ! draw_completion_menu decides whether to render one from
+      ! len_trim(menu_desc_get(...)), and an untouched menu_descs entry holds
+      ! uninitialized bytes rather than blanks, so it reported descriptions
+      ! that did not exist and drew them as a row of '?'.
+      input_state%menu_descs(i) = ''
     end do
 
     ! Store PIDs for later use (we'll extract from menu_items when needed)
@@ -4055,7 +4070,7 @@ contains
     integer, intent(out) :: pids(MAX_MENU_ITEMS)
     integer, intent(out) :: num_processes
 
-    integer :: iostat, pid, line_start, line_end, output_len
+    integer :: iostat, pid, line_start, line_end, output_len, name_pos
     character(len=512) :: line, cmd_name, username
     character(len=:), allocatable :: ps_output
     integer :: stat
@@ -4103,11 +4118,33 @@ contains
       end if
 
       if (len_trim(line) > 0 .and. index(line, 'PID') == 0) then
-        read(line, *, iostat=iostat) pid, cmd_name
+        read(line, *, iostat=iostat) pid
         if (iostat == 0) then
-          num_processes = num_processes + 1
-          pids(num_processes) = pid
-          processes(num_processes) = trim(cmd_name)
+          ! Take the command as the REST of the line, NOT as a second
+          ! list-directed item. In list-directed input a '/' TERMINATES the
+          ! record, so `read(line,*) pid, cmd_name` stopped at the slash of a
+          ! macOS `ps -o comm=` absolute path, left cmd_name unread — with
+          ! iostat still 0 — and the uninitialized buffer rendered as a row of
+          ! '?' after sanitize_for_display. Linux ps prints a bare basename, so
+          ! it never showed there. Reading the remainder also keeps names that
+          ! contain spaces intact.
+          cmd_name = ''
+          name_pos = 1
+          do while (name_pos <= len(line) .and. line(name_pos:name_pos) == ' ')
+            name_pos = name_pos + 1
+          end do
+          do while (name_pos <= len(line) .and. line(name_pos:name_pos) /= ' ')
+            name_pos = name_pos + 1      ! skip the pid we already read
+          end do
+          do while (name_pos <= len(line) .and. line(name_pos:name_pos) == ' ')
+            name_pos = name_pos + 1
+          end do
+          if (name_pos <= len(line)) cmd_name = line(name_pos:)
+          if (len_trim(cmd_name) > 0) then
+            num_processes = num_processes + 1
+            pids(num_processes) = pid
+            processes(num_processes) = trim(cmd_name)
+          end if
         end if
       end if
     end do
