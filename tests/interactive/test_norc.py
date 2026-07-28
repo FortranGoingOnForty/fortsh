@@ -20,11 +20,34 @@ def _spawn(fortsh_path, home, args):
     env.pop("FORTSH_RC_FILE", None)
     child = pexpect.spawn(fortsh_path, args, env=env, encoding="utf-8",
                           timeout=8, dimensions=(24, 80))
-    time.sleep(1.0)
+
+    # Drain startup output BEFORE typing anything. Sleeping instead is not
+    # enough on macOS, and not because the shell is slow — the prompt is up in
+    # ~30ms. macOS pty output queues are small, so with nobody reading, fortsh
+    # blocks part-way through writing its banner and never reaches readline.
+    # Whatever we typed then sits in the tty input queue until the read
+    # unblocks it, at which point fortsh enters raw mode with TCSAFLUSH
+    # (system/interface.f90) and discards it. The `exit` was echoed in cooked
+    # mode and dropped, so the shell sat at a prompt forever. Linux's much
+    # larger pty buffer hides all of this.
+    out = ""
+    deadline = time.time() + 8.0
+    while time.time() < deadline:
+        try:
+            out += child.read_nonblocking(65536, timeout=0.3)
+        except pexpect.TIMEOUT:
+            if out:
+                break          # output started and then went quiet: prompt is up
+        except pexpect.EOF:
+            break
+
     child.sendline("exit")
-    child.expect(pexpect.EOF)
-    out = child.before or ""
-    child.close()
+    try:
+        child.expect(pexpect.EOF, timeout=8)
+        out += child.before or ""
+    except pexpect.TIMEOUT:
+        pass
+    child.close(force=True)
     return out
 
 
