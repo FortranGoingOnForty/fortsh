@@ -31,12 +31,17 @@ tests:
 
   # The apostrophe must follow a NON-word character to open a pair (guard G2,
   # the one that keeps "don't" intact), hence the space before it here.
+  #
+  # The arithmetic goes BEFORE the quote so this stays a single step: if the
+  # trailing quote were not auto-closed the line would be unterminated, the
+  # shell would sit in continuation, and nothing would run at all — so any
+  # output proves the close. The earlier two-step form (run, then run a second
+  # line and look for its output) timed out on the slower macOS runner.
   - name: "Unclosed single quote does not hang the line in continuation"
     steps:
-      - send: "echo 'q"
+      - send: "echo $((6*7)) 'q"
       - send_key: "Enter"
-      - send_line: "echo $((6*7))"
-    expect_output: "42"
+    expect_output: "42 q"
     match_type: "contains"
 
   - name: "Unclosed command substitution paren is auto-closed"
@@ -117,20 +122,21 @@ tests:
     match_type: "contains"
 
   # =============================================================
-  # AUTOSUGGESTIONS — the pending closer must not survive an accept
+  # MOVING PAST A PENDING CLOSER
   # =============================================================
-  # If accepting left the hidden closer behind, the line would end
-  # `...))""` — an unclosed quote — and the shell would sit in continuation,
-  # swallowing the next line instead of running it. Expecting 72 from that
-  # NEXT line is what proves the accept was clean.
-  - name: "Accepting a suggestion inside a pair leaves no stray closer"
+  # NOT an autosuggestion test: FORTSH_TEST_MODE disables autosuggestions
+  # outright (update_autosuggestion returns early), so nothing here can
+  # exercise the accept path — an earlier version of this case claimed to and
+  # passed for the wrong reason. What it does check is that Right-ing over a
+  # pending closer leaves a well-formed line. The real accept coverage lives in
+  # test_autopair.py, which runs the true renderer and reads the shadow-text
+  # colour to tell an accepted suggestion from a displayed one.
+  - name: "Right past a pending closer leaves the line well-formed"
     steps:
-      - send_line: 'echo "pair $((6*7))"'
-      - send: 'echo "pa'
+      - send: 'echo $((6*7)) "pa'
       - send_key: "Right"
       - send_key: "Enter"
-      - send_line: "echo $((8*9))"
-    expect_output: "72"
+    expect_output: "42 pa"
     match_type: "contains"
 
   # =============================================================
