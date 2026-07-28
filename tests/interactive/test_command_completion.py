@@ -52,6 +52,16 @@ def _drive(tmp_path, keys, settle=1.2):
 
     time.sleep(1.0)
     drain(1.0)
+    # Pin the prompt before doing anything layout-sensitive. fortsh's default
+    # prompt is user@host :: cwd, taken from gethostname(), and CI runners have
+    # ~60-character hostnames — on the macOS runner the prompt alone consumed
+    # the terminal, wrecking the geometry these assertions depend on. PS1 is
+    # not read from the environment at startup, so it has to be set as a
+    # command. This removes the host dependence; it does not paper over the
+    # separate, pre-existing narrow-terminal rendering bug (present in 1.9.0
+    # too), which deserves its own test.
+    child.sendline(b"PS1='> '")
+    drain(1.0)
     for k in keys:
         child.send(k)
         drain(settle)
