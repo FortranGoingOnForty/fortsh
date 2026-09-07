@@ -1,38 +1,96 @@
 # Fortran Shell (Fortsh) Makefile
 # ====================================
 
-# Compiler settings
-# Use LLVM Flang on macOS ARM64 for better stability
+# Compiler settings. Keep flang-new as the Apple Silicon default, but respect
+# an explicitly selected compiler and apply flags for that compiler family.
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 
-ifeq ($(UNAME_S),Darwin)
+ifneq ($(filter undefined default,$(origin FC)),)
+  ifeq ($(UNAME_S),Darwin)
     ifeq ($(UNAME_M),arm64)
-        # macOS ARM64: Use LLVM Flang for better stability
-        FC = flang-new
-        PLATFORM_FLAGS = -D__APPLE__ -cpp
-        $(info Using flang-new on macOS ARM64)
+      FC := flang-new
     else
-        # macOS Intel: Use gfortran with fixes
-        FC = gfortran
-        PLATFORM_FLAGS = -D__APPLE__ -cpp -frecursive
-        $(info Using gfortran on macOS Intel)
+      FC := gfortran
     endif
-else ifeq ($(UNAME_S),FreeBSD)
-    # FreeBSD: Use gfortran, must define __FreeBSD__ for cpp
-    FC = gfortran
-    PLATFORM_FLAGS = -cpp -D__FreeBSD__ -DUSE_C_STAT
-    $(info Using gfortran on FreeBSD — C stat helpers enabled)
+  else
+    FC := gfortran
+  endif
+endif
+
+FC_BASENAME := $(notdir $(FC))
+ifneq ($(filter armfortas afs,$(FC_BASENAME)),)
+  FC_KIND := armfortas
+else ifeq ($(FC_BASENAME),flang-new)
+  FC_KIND := flang-new
 else
-    # Linux: Use gfortran
-    FC = gfortran
-    ifeq ($(UNAME_M),aarch64)
-        PLATFORM_FLAGS = -cpp -DUSE_C_STAT
-        $(info Using gfortran on Linux aarch64 — C stat helpers enabled)
+  FC_KIND := gfortran
+endif
+
+ifeq ($(UNAME_S),Darwin)
+  PLATFORM_DEFINES = -D__APPLE__
+  ifeq ($(UNAME_M),arm64)
+    ifeq ($(FC_KIND),armfortas)
+      $(info Using armfortas on macOS ARM64: $(FC))
+    else ifeq ($(FC_KIND),flang-new)
+      $(info Using flang-new on macOS ARM64: $(FC))
     else
-        PLATFORM_FLAGS = -cpp
-        $(info Using gfortran on Linux)
+      $(info Using $(FC_BASENAME) on macOS ARM64)
     endif
+  else
+    $(info Using $(FC_BASENAME) on macOS Intel)
+  endif
+else ifeq ($(UNAME_S),FreeBSD)
+  PLATFORM_DEFINES = -D__FreeBSD__ -DUSE_C_STAT
+  $(info Using $(FC_BASENAME) on FreeBSD — C stat helpers enabled)
+else
+  PLATFORM_DEFINES =
+  ifeq ($(UNAME_M),aarch64)
+    PLATFORM_DEFINES += -DUSE_C_STAT
+    $(info Using $(FC_BASENAME) on Linux aarch64 — C stat helpers enabled)
+  else
+    $(info Using $(FC_BASENAME) on Linux)
+  endif
+endif
+
+ifeq ($(FC_KIND),armfortas)
+  PREPROCESS_FLAG =
+  COMPILER_DEFINES = -DFORTSH_NATIVE_LONG_STRINGS
+  STD_FLAG = --std=f2018
+  PIC_FLAG =
+  DEBUG_FLAG =
+  WARN_FLAGS =
+  WARN_FLAGS_RELEASE =
+  INTRINSICS_FLAG =
+else ifeq ($(FC_KIND),flang-new)
+  PREPROCESS_FLAG = -cpp
+  COMPILER_DEFINES =
+  STD_FLAG = -std=f2018
+  PIC_FLAG = -fPIC
+  DEBUG_FLAG = -g
+  WARN_FLAGS =
+  WARN_FLAGS_RELEASE =
+  # flang-new supports F2018 flush() natively; -fall-intrinsics is gfortran-only
+  INTRINSICS_FLAG =
+else
+  PREPROCESS_FLAG = -cpp
+  COMPILER_DEFINES =
+  STD_FLAG = -std=f2018
+  PIC_FLAG = -fPIC
+  DEBUG_FLAG = -g
+  WARN_FLAGS = -Wall -Wextra
+  WARN_FLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation
+  # -fall-intrinsics allows GNU extensions like flush() with -std=f2018
+  INTRINSICS_FLAG = -fall-intrinsics
+endif
+
+PLATFORM_FLAGS = $(PREPROCESS_FLAG) $(PLATFORM_DEFINES) $(COMPILER_DEFINES)
+ifeq ($(UNAME_S),Darwin)
+  ifeq ($(UNAME_M),x86_64)
+    ifeq ($(FC_KIND),gfortran)
+      PLATFORM_FLAGS += -frecursive
+    endif
+  endif
 endif
 
 # Memory pooling (enabled by default, set NO_MEMPOOL=1 to disable)
@@ -58,35 +116,23 @@ else
   CFLAGS = -Wall -Wextra -fPIC -g -O2
 endif
 
-# Warning flags and intrinsics (flang-new doesn't support -Wall/-Wextra/-fall-intrinsics)
-ifeq ($(FC),flang-new)
-    WARN_FLAGS =
-    WARN_FLAGS_RELEASE =
-    # flang-new supports F2018 flush() natively; -fall-intrinsics is gfortran-only
-    INTRINSICS_FLAG =
-else
-    WARN_FLAGS = -Wall -Wextra
-    WARN_FLAGS_RELEASE = -Wall -Wno-unused-variable -Wno-unused-dummy-argument -Wno-maybe-uninitialized -Wno-function-elimination -Wno-surprising -Wno-character-truncation
-    # -fall-intrinsics allows GNU extensions like flush() with -std=f2018
-    INTRINSICS_FLAG = -fall-intrinsics
-endif
+# Development flags
+MODULE_SEARCH_FLAGS = -I$(BUILDDIR)
+FCFLAGS = $(WARN_FLAGS) $(STD_FLAG) $(INTRINSICS_FLAG) $(PIC_FLAG) $(DEBUG_FLAG) -O0 $(PLATFORM_FLAGS) $(MODULE_SEARCH_FLAGS) $(POOL_FLAGS)
+# Production flags
+FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) $(STD_FLAG) $(INTRINSICS_FLAG) $(PIC_FLAG) -O2 $(PLATFORM_FLAGS) $(MODULE_SEARCH_FLAGS) $(POOL_FLAGS)
 
-# Development flags (verbose warnings, debug symbols)
-FCFLAGS = $(WARN_FLAGS) -std=f2018 $(INTRINSICS_FLAG) -fPIC -g -O0 $(PLATFORM_FLAGS) $(POOL_FLAGS)
-# Production flags (minimal warnings, optimized, no debug symbols)
-FCFLAGS_RELEASE = $(WARN_FLAGS_RELEASE) -std=f2018 $(INTRINSICS_FLAG) -fPIC -O2 $(PLATFORM_FLAGS) $(POOL_FLAGS)
-
-# C string library (flang-new workaround for allocatable heap corruption)
-# Auto-enable when using flang-new on any platform (macOS ARM64, Asahi Linux, etc.)
+# C string library (flang-new fallback workaround for allocatable heap corruption)
+# Auto-enable when using flang-new. armfortas defaults to native Fortran strings.
 # Force override: USE_C_STRINGS=1 make  or  NO_C_STRINGS=1 make
 ifeq ($(NO_C_STRINGS),1)
   USE_C_STRINGS = 0
-else ifeq ($(FC),flang-new)
+else ifeq ($(USE_C_STRINGS),1)
   USE_C_STRINGS = 1
-else ifeq ($(UNAME_S),Darwin)
-  ifeq ($(UNAME_M),arm64)
-    USE_C_STRINGS = 1
-  endif
+else ifeq ($(FC_KIND),flang-new)
+  USE_C_STRINGS = 1
+else
+  USE_C_STRINGS = 0
 endif
 
 # Core C objects needed on all platforms (fd operations, terminal size, string ops)
@@ -447,8 +493,10 @@ test: test-posix-full test-bench
 	@echo ""
 	@echo "All tests passed!"
 
-ifeq ($(FC),flang-new)
+ifeq ($(FC_KIND),flang-new)
 debug: FCFLAGS += -g
+else ifeq ($(FC_KIND),armfortas)
+debug: FCFLAGS += -fcheck=bounds
 else
 debug: FCFLAGS += -g -fbacktrace -fcheck=bounds
 endif
@@ -464,7 +512,7 @@ release:
 	@echo "Release build complete! Binary size: $$(du -h $(TARGET) | cut -f1)"
 
 # Test suite targets
-FORTSH_ABS = $(CURDIR)/$(TARGET)
+FORTSH_ABS = $(abspath $(TARGET))
 
 # POSIX compliance: single canonical test script (fastest)
 test-posix: $(TARGET)
