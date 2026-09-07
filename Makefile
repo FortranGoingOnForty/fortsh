@@ -129,7 +129,12 @@ ifeq ($(NO_C_STRINGS),1)
   USE_C_STRINGS = 0
 else ifeq ($(USE_C_STRINGS),1)
   USE_C_STRINGS = 1
+else ifeq ($(FC_KIND),armfortas)
+  USE_C_STRINGS = 0
 else ifeq ($(FC_KIND),flang-new)
+  USE_C_STRINGS = 1
+else ifeq ($(UNAME_S)-$(UNAME_M),Darwin-arm64)
+  # Preserve the established fallback for explicitly selected gfortran builds.
   USE_C_STRINGS = 1
 else
   USE_C_STRINGS = 0
