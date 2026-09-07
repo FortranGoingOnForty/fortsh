@@ -16,6 +16,7 @@ brew install coreutils bash llvm@22
 readonly brew_prefix="$(brew --prefix)"
 readonly brew_cellar="$(brew --cellar)"
 readonly flang_keg="${brew_cellar}/flang/${flang_version}"
+readonly flang_opt_link="${brew_prefix}/opt/flang"
 readonly llvm_compat_link="${brew_prefix}/opt/llvm"
 
 if [[ -e "${flang_keg}" || -L "${flang_keg}" ]]; then
@@ -47,6 +48,14 @@ if [[ -e "${llvm_compat_link}" || -L "${llvm_compat_link}" ]]; then
   exit 1
 fi
 ln -s "${brew_prefix}/opt/llvm@22" "${llvm_compat_link}"
+
+# Linked programs record the stable Homebrew opt path for the flang runtime.
+if [[ -e "${flang_opt_link}" || -L "${flang_opt_link}" ]]; then
+  echo "Refusing to replace existing flang opt path: ${flang_opt_link}" >&2
+  exit 1
+fi
+ln -s "${flang_keg}" "${flang_opt_link}"
+test -r "${flang_opt_link}/lib/clang/22/lib/darwin/libflang_rt.runtime.dylib"
 
 echo "${flang_keg}/bin" >> "${GITHUB_PATH}"
 "${flang_keg}/bin/flang-new" --version
