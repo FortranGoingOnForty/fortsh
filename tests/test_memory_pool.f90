@@ -11,6 +11,7 @@ program test_memory_pool
   integer :: allocs, deallocs, current, peak
   integer :: intern_before, intern_after
   real :: hit_rate
+  logical :: bucket_fallback_ok
   integer(int64) :: start_time, end_time, clock_rate
 
   all_tests_passed = .true.
@@ -97,6 +98,21 @@ program test_memory_pool
     print *, "  PASSED: String interning allocates and releases cleanly"
   end if
 
+  ref1 = pool_intern_string(repeat("x", 200))
+  if (.not. associated(ref1%data)) then
+    print *, "  FAILED: Long interned string not allocated"
+    all_tests_passed = .false.
+  else if (ref1%str_len /= 200 .or. len(ref1%data) /= 200) then
+    print *, "  FAILED: Long interned string length mismatch"
+    all_tests_passed = .false.
+  else if (ref1%data /= repeat("x", 200)) then
+    print *, "  FAILED: Long interned string content mismatch"
+    all_tests_passed = .false.
+  else
+    print *, "  PASSED: Long string interning works"
+  end if
+  call pool_release_string(ref1)
+
   ! Test 5: Stress test - rapid allocation/deallocation
   print *, "Test 5: Stress test (1000 allocations)..."
   call system_clock(start_time, clock_rate)
@@ -136,7 +152,29 @@ program test_memory_pool
 
   call pool_release_string(ref1)
 
-  ! Test 7: Statistics
+  ! The 16384-byte bucket has ten slots. An eleventh live string must fall
+  ! back to a standalone allocation without losing its requested length.
+  print *, "Test 7: Full-bucket allocation fallback..."
+  bucket_fallback_ok = .true.
+  do i = 1, 11
+    refs(i) = pool_get_string(5000)
+    if (.not. associated(refs(i)%data)) bucket_fallback_ok = .false.
+  end do
+  if (bucket_fallback_ok) then
+    refs(11)%data(4996:5000) = "Final"
+    if (refs(11)%data(4996:5000) /= "Final") bucket_fallback_ok = .false.
+  end if
+  if (bucket_fallback_ok) then
+    print *, "  PASSED: Full bucket falls back to direct allocation"
+  else
+    print *, "  FAILED: Full-bucket fallback lost a long string"
+    all_tests_passed = .false.
+  end if
+  do i = 1, 11
+    call pool_release_string(refs(i))
+  end do
+
+  ! Test 8: Statistics
   print *, ""
   print *, "Pool Statistics:"
   call pool_statistics(allocs, deallocs, current, peak, hit_rate)
@@ -149,9 +187,9 @@ program test_memory_pool
   ! Cleanup
   call pool_cleanup()
 
-  ! Test 8: Verify cleanup
+  ! Test 9: Verify cleanup
   print *, ""
-  print *, "Test 8: Cleanup verification..."
+  print *, "Test 9: Cleanup verification..."
   call pool_statistics(allocs, deallocs, current, peak, hit_rate)
   if (current /= 0) then
     print *, "  FAILED: Memory leak detected after cleanup"

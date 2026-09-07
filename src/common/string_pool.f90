@@ -185,9 +185,10 @@ contains
       ! library is enabled (which handles dangerous operations safely)
       bucket_idx = 0
       slot_idx = -1
-#if defined(__APPLE__) && !defined(USE_C_STRINGS)
-      ! On macOS WITHOUT C string library, cap direct allocations at 127 bytes
-      ! When USE_C_STRINGS is defined, the C library handles large strings safely
+#if defined(__APPLE__) && !defined(USE_C_STRINGS) && !defined(FORTSH_NATIVE_LONG_STRINGS)
+      ! On macOS without a long-string-capable implementation, cap direct
+      ! allocations at 127 bytes. The C library and capable native compilers
+      ! both bypass this legacy flang-new workaround.
       if (length > 127) then
         ! Allocation would exceed safe limit - return null ref
         ref%pool_index = 0
@@ -214,9 +215,8 @@ contains
       ! (MEM-3 use-after-free), so satisfy this request with a standalone
       ! allocation instead. Only reached when more than INITIAL_SLOTS strings
       ! in one bucket are live at once — rare in normal shell use.
-#if defined(__APPLE__) && !defined(USE_C_STRINGS)
-      ! Same 127-byte guard the direct path uses: flang-new mishandles longer
-      ! standalone allocatable strings without the C string library.
+#if defined(__APPLE__) && !defined(USE_C_STRINGS) && !defined(FORTSH_NATIVE_LONG_STRINGS)
+      ! Same 127-byte guard the direct path uses for legacy flang-new builds.
       if (length > 127) then
         ref%pool_index = 0
         ref%ref_count = 0
@@ -441,9 +441,9 @@ contains
 
     str_len = len_trim(str)
 
-#if defined(__APPLE__) && !defined(USE_C_STRINGS)
-    ! On macOS WITHOUT C string library, cap interned string length to 127 bytes
-    ! When USE_C_STRINGS is defined, the C library handles large strings safely
+#if defined(__APPLE__) && !defined(USE_C_STRINGS) && !defined(FORTSH_NATIVE_LONG_STRINGS)
+    ! Retain the legacy flang-new cap unless the selected string
+    ! implementation explicitly supports native long strings.
     if (str_len > 127) then
       ! String too long for safe interning on macOS - use regular pool instead
       ref = pool_get_string(min(str_len, 127))
