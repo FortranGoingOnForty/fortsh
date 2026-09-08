@@ -70,7 +70,7 @@ Pretty much everything:
 ## Building
 
 Requires:
-- A Fortran 2018 compiler (gfortran 8+, or flang-new for macOS ARM64)
+- A Fortran 2018 compiler (`armfortas`, gfortran 8+, or flang-new)
 - GNU Make
 - A C compiler (gcc or clang)
 - POSIX system (Linux, macOS)
@@ -90,7 +90,7 @@ make clean          # remove build/ and bin/
 | Linux x86_64 | gfortran | Primary target |
 | Linux aarch64 | gfortran | Auto-enables C stat helpers for struct layout differences |
 | macOS Intel | gfortran | Works with `-frecursive` |
-| macOS ARM64 | flang-new (LLVM) | Required -- gfortran has 7+ critical bugs. Auto-enables C string library. Install via `brew install flang`. |
+| macOS ARM64 | flang-new by default, or armfortas when selected explicitly | flang-new auto-enables the C string library; armfortas uses native Fortran strings. |
 
 The Makefile auto-detects your platform and selects the right compiler and flags. Just run `make`.
 
@@ -623,12 +623,17 @@ Every builtin has detailed help: `help cd`, `help export`, `help trap`, etc.
 
 ## macOS ARM64 Notes
 
-Both Fortran compilers have issues on Apple Silicon. fortsh uses flang-new (LLVM) with C interop workarounds. The Makefile handles everything automatically.
+fortsh defaults to flang-new (LLVM) with C interop workarounds. The Makefile also supports an explicitly selected armfortas compiler and its native Fortran string path:
 
-Install flang-new via `brew install flang`. See `COMPILER_NOTES.md` for the full story on compiler bugs and workarounds.
+```bash
+make FC=/path/to/armfortas release
+AFS_LD_PATH=/path/to/afs-ld make FC=/path/to/armfortas release
+```
+
+Install flang-new via `brew install flang` for the default path. See `COMPILER_NOTES.md` for the full story on compiler behavior and workarounds.
 
 Key differences from Linux builds:
-- C string library auto-enabled (works around flang-new string buffer limitations)
+- C string library auto-enabled on the flang-new path
 - Platform-specific constants for signals, terminal I/O, file flags, and resource limits
 - Builtin output uses C-level `write()` to respect fd redirections (flang-new's Fortran I/O caches file descriptors)
 

@@ -259,8 +259,8 @@ jobs:
       BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new and coreutils
-        run: brew install flang coreutils bash
+      - name: Install pinned flang-new and test tools
+        run: .github/scripts/install-flang-22-macos.sh
       - name: Build fortsh
         run: make release
       - name: Run POSIX tests
@@ -274,8 +274,8 @@ jobs:
       BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new and coreutils
-        run: brew install flang coreutils bash
+      - name: Install pinned flang-new and test tools
+        run: .github/scripts/install-flang-22-macos.sh
       - name: Build fortsh
         run: make release
       - name: Run builtin tests
@@ -289,8 +289,8 @@ jobs:
       BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new and coreutils
-        run: brew install flang coreutils bash
+      - name: Install pinned flang-new and test tools
+        run: .github/scripts/install-flang-22-macos.sh
       - name: Build fortsh
         run: make release
       - name: Run stress tests
@@ -306,8 +306,8 @@ jobs:
       BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new and coreutils
-        run: brew install flang coreutils bash
+      - name: Install pinned flang-new and test tools
+        run: .github/scripts/install-flang-22-macos.sh
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -344,8 +344,8 @@ jobs:
       BASH_REF: /opt/homebrew/bin/bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install flang-new and coreutils
-        run: brew install flang coreutils bash
+      - name: Install pinned flang-new and test tools
+        run: .github/scripts/install-flang-22-macos.sh
       - name: Build fortsh
         run: make release
       - name: Run integration tests

@@ -4,12 +4,12 @@
 
 - **Linux x86_64**: Use `gfortran` (works great)
 - **Linux aarch64**: Use `gfortran` (auto-enables C stat helpers for struct layout differences)
-- **macOS ARM64 (M1/M2/M3/M4)**: Use **LLVM Flang (`flang-new`)** — gfortran has serious bugs
+- **macOS ARM64 (M1/M2/M3/M4)**: Uses **LLVM Flang (`flang-new`)** by default; `armfortas` is supported when selected explicitly
 - **macOS x86_64**: Use `gfortran` with `-frecursive`
 
 The Makefile auto-detects your platform and selects the right compiler. Just run `make`.
 
-## macOS ARM64: Why flang-new?
+## macOS ARM64 Compilers
 
 gfortran on Apple Silicon has at least 8 confirmed bugs that make it unusable:
 
@@ -22,6 +22,15 @@ gfortran on Apple Silicon has at least 8 confirmed bugs that make it unusable:
 7. **Empty string assignment corruption** — `buffer = ''` corrupts heap
 8. **flush() in loops corruption** — Frequent stderr flush in tight loops corrupts heap
 
+The Makefile has an armfortas profile when `FC=armfortas` or `FC` names a local armfortas binary. It uses the flags armfortas supports, searches the shared build directory for module files, and enables fortsh's native long-string path. To use the standalone ARMFORTAS linker as well, set `AFS_LD_PATH` when invoking Make:
+
+```bash
+make FC=/path/to/armfortas release
+AFS_LD_PATH=/path/to/afs-ld make FC=/path/to/armfortas release
+```
+
+The default remains flang-new so existing Apple Silicon builds retain their established compiler and workaround path.
+
 Install flang-new:
 ```bash
 brew install flang
@@ -31,7 +40,7 @@ brew install flang
 
 flang-new has a known issue where Fortran string operations (substring slicing, direct assignment) on buffers larger than 128 bytes can cause heap corruption.
 
-**This limitation has been fully worked around** via the C string library (`src/c_interop/fortsh_strings.c`), which routes all critical string operations through C code instead of flang-new's Fortran runtime. The C string library is auto-enabled for all flang-new builds (`USE_C_STRINGS`).
+**This limitation has been fully worked around** via the C string library (`src/c_interop/fortsh_strings.c`), which routes all critical string operations through C code instead of flang-new's Fortran runtime. The C string library is auto-enabled for flang-new builds (`USE_C_STRINGS`).
 
 Additionally, a `safe_assign_alloc_str` routine performs char-by-char copies for allocatable strings >16 bytes, and the expansion pipeline uses C-backed growing buffers (`buffer_grow`, `buffer_append_chars`) for all variable and parameter expansion.
 
@@ -60,12 +69,14 @@ glibc on aarch64 uses a different `struct stat` layout than x86_64:
 Force a specific compiler:
 ```bash
 make FC=gfortran clean all    # Force gfortran
+make FC=armfortas clean all   # Select armfortas and native Fortran strings
 make FC=flang-new clean all   # Force LLVM Flang
 ```
 
 Build flags:
 ```bash
-make NO_C_STRINGS=1     # Disable C string library (will crash on flang-new)
+make NO_C_STRINGS=1     # Force native Fortran strings
+make USE_C_STRINGS=1    # Force the C-string fallback path
 make NO_MEMPOOL=1       # Disable memory pooling
 make MEMPOOL_DEBUG=1    # Enable memory pool debug output
 ```

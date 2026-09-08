@@ -51,8 +51,8 @@ module readline_constants
   ! MAX_HISTORY can be increased safely because it uses array allocation, not per-element size
 #ifdef __APPLE__
   integer, parameter :: MAX_HISTORY = 100      ! Increased from 10 (heap-allocated array, safe)
-#ifdef USE_C_STRINGS
-  ! C string library enabled - use larger buffers (tested working with flang-new 21.x)
+#if defined(USE_C_STRINGS) || defined(FORTSH_NATIVE_LONG_STRINGS)
+  ! The active string implementation supports the full interactive line buffer.
   integer, parameter :: MAX_LINE_LEN = 8192
 #else
   ! Legacy limit for older flang-new versions without C string library. Raised
